@@ -586,3 +586,105 @@ async def update_credential_settings(update: CredentialSecurityUpdate) -> Creden
         early_warning_enabled=defaults.credential_early_warning_enabled,
         early_warning_percent=defaults.credential_early_warning_percent,
     )
+
+
+# --- Public Registration Settings ---
+
+
+class RegistrationSettings(BaseModel):
+    """Public registration settings."""
+
+    enabled: bool = False
+    default_level: str = "researcher"
+    email_configured: bool = False
+    email_required_warning: Optional[str] = None
+
+
+class RegistrationSettingsUpdate(BaseModel):
+    """Update for registration settings."""
+
+    enabled: Optional[bool] = None
+    default_level: Optional[str] = None
+
+
+@router.get("/settings/registration", response_model=RegistrationSettings)
+async def get_registration_settings() -> RegistrationSettings:
+    """Get public registration settings."""
+    from ...services.cloud.notification import ChannelType, get_notification_service
+    from ...services.webui_state import WebUIStateStore
+
+    defaults = WebUIStateStore().load_defaults()
+
+    # Use getattr with defaults for backwards compatibility with existing saved state
+    enabled = getattr(defaults, "public_registration_enabled", False) or False
+    default_level = getattr(defaults, "public_registration_default_level", "researcher") or "researcher"
+
+    # Check if email is configured
+    email_configured = False
+    try:
+        svc = get_notification_service()
+        channels = await svc.get_channels(enabled_only=True)
+        email_configured = any(c.channel_type == ChannelType.EMAIL for c in channels)
+    except Exception:
+        pass
+
+    warning = None
+    if enabled and not email_configured:
+        warning = "Email is not configured. Password reset and email verification will not work for new users."
+
+    return RegistrationSettings(
+        enabled=enabled,
+        default_level=default_level,
+        email_configured=email_configured,
+        email_required_warning=warning,
+    )
+
+
+@router.put("/settings/registration", response_model=RegistrationSettings)
+async def update_registration_settings(update: RegistrationSettingsUpdate) -> RegistrationSettings:
+    """Update public registration settings.
+
+    Requires admin privileges.
+    """
+    from ...services.cloud.notification import ChannelType, get_notification_service
+    from ...services.webui_state import WebUIStateStore
+
+    store = WebUIStateStore()
+    defaults = store.load_defaults()
+
+    if update.enabled is not None:
+        defaults.public_registration_enabled = update.enabled
+    if update.default_level is not None:
+        defaults.public_registration_default_level = update.default_level
+
+    store.save_defaults(defaults)
+
+    # Use getattr with defaults for reading back
+    enabled = getattr(defaults, "public_registration_enabled", False) or False
+    default_level = getattr(defaults, "public_registration_default_level", "researcher") or "researcher"
+
+    logger.info(
+        "Registration settings updated: enabled=%s, default_level=%s",
+        enabled,
+        default_level,
+    )
+
+    # Check if email is configured
+    email_configured = False
+    try:
+        svc = get_notification_service()
+        channels = await svc.get_channels(enabled_only=True)
+        email_configured = any(c.channel_type == ChannelType.EMAIL for c in channels)
+    except Exception:
+        pass
+
+    warning = None
+    if enabled and not email_configured:
+        warning = "Email is not configured. Password reset and email verification will not work for new users."
+
+    return RegistrationSettings(
+        enabled=enabled,
+        default_level=default_level,
+        email_configured=email_configured,
+        email_required_warning=warning,
+    )

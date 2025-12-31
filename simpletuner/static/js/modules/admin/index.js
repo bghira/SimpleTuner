@@ -26,6 +26,7 @@ window.adminPanelComponent = function() {
             auth: true,
             orgs: true,
             notifications: true,
+            registration: true,
         },
         hintsLoading: false,
 
@@ -243,6 +244,15 @@ window.adminPanelComponent = function() {
         },
         savingCredentialSettings: false,
 
+        // Registration settings state
+        registrationLoading: false,
+        registrationSettings: {
+            enabled: false,
+            default_level: 'researcher',
+            email_configured: false,
+            email_required_warning: null,
+        },
+
         // Permission overrides state
         permissionOverridesModalOpen: false,
         permissionOverridesLoading: false,
@@ -394,6 +404,7 @@ window.adminPanelComponent = function() {
             this.loadHints();
             this.loadEnterpriseOnboardingState();
             this.loadCredentialSecuritySettings();
+            this.loadRegistrationSettings();
             this.loadUsers();
             this.loadLevels();
             this.loadResourceRules();
@@ -415,6 +426,10 @@ window.adminPanelComponent = function() {
             // Lazy-load notifications when tab is selected
             if (tabName === 'notifications') {
                 this.loadNotificationsIfNeeded();
+            }
+            // Refresh registration settings when tab is selected
+            if (tabName === 'registration') {
+                this.loadRegistrationSettings();
             }
         },
 
@@ -439,6 +454,7 @@ window.adminPanelComponent = function() {
         ...(window.adminCredentialMethods || {}),
         ...(window.adminEnterpriseOnboardingMethods || {}),
         ...(window.adminNotificationMethods || {}),
+        ...(window.adminRegistrationMethods || {}),
 
         // Getters must be defined here, not in spread modules, to avoid evaluation issues
         get anyHintsDismissed() {

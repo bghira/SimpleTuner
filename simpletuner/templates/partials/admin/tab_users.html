@@ -1,20 +1,5 @@
 <!-- Admin - Users Tab -->
 <div x-show="activeTab === 'users'" x-transition>
-    <!-- Users Hint -->
-    <div class="admin-hint admin-hint-inline" x-show="hints.users" x-transition>
-        <div class="d-flex justify-content-between align-items-start">
-            <div class="small">
-                <i class="fas fa-lightbulb text-warning me-2"></i>
-                <strong>User Management:</strong>
-                Creating a user here creates a <em>local account</em> with username/password login.
-                Users log in at <code>/login</code> and can log out from their profile.
-                For SSO, configure an auth provider in the <strong>Auth</strong> tab - users will be auto-provisioned on first login.
-                Each user can also generate <strong>API keys</strong> for automation (prefixed with <code>st_</code>).
-            </div>
-            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('users')"><i class="fas fa-times"></i></button>
-        </div>
-    </div>
-
     <!-- Toolbar -->
     <div class="admin-toolbar">
         <div class="d-flex gap-2 align-items-center flex-wrap">

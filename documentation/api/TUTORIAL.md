@@ -141,6 +141,74 @@ services:
 ```
 </details>
 
+## Authentication
+
+SimpleTuner supports multi-user authentication. On first launch, you'll need to create an admin account.
+
+### First-time setup
+
+Check if setup is needed:
+
+```bash
+curl -s http://localhost:8001/api/cloud/auth/setup/status | jq
+```
+
+If `needs_setup` is `true`, create the first admin:
+
+```bash
+curl -s -X POST http://localhost:8001/api/cloud/auth/setup/first-admin \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "admin@example.com",
+    "username": "admin",
+    "password": "your-secure-password"
+  }'
+```
+
+### API keys
+
+For scripted access, generate an API key after logging in:
+
+```bash
+# Login first (stores session cookie)
+curl -s -X POST http://localhost:8001/api/cloud/auth/login \
+  -H 'Content-Type: application/json' \
+  -c cookies.txt \
+  -d '{"username": "admin", "password": "your-secure-password"}'
+
+# Create an API key
+curl -s -X POST http://localhost:8001/api/cloud/auth/api-keys \
+  -H 'Content-Type: application/json' \
+  -b cookies.txt \
+  -d '{"name": "automation-key"}' | jq
+```
+
+Use the returned key (prefixed with `st_`) in subsequent requests:
+
+```bash
+curl -s http://localhost:8001/api/training/status \
+  -H 'X-API-Key: st_your_key_here'
+```
+
+### User management
+
+Admins can create additional users via the API or the WebUI's **Manage Users** page:
+
+```bash
+# Create a new user (requires admin session)
+curl -s -X POST http://localhost:8001/api/users \
+  -H 'Content-Type: application/json' \
+  -b cookies.txt \
+  -d '{
+    "email": "researcher@example.com",
+    "username": "researcher",
+    "password": "their-password",
+    "level_names": ["researcher"]
+  }'
+```
+
+> **Note:** Public registration is disabled by default. Admins can enable it in **Manage Users → Registration** tab, but it's recommended to keep it disabled for private deployments.
+
 ## Discover the API
 
 FastAPI serves interactive docs and the OpenAPI schema:
