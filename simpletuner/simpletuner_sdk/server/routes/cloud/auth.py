@@ -89,6 +89,7 @@ class SetupStatusResponse(BaseModel):
     needs_setup: bool
     has_admin: bool
     user_count: int
+    registration_enabled: bool = False
 
 
 class FirstRunSetupRequest(BaseModel):
@@ -117,7 +118,10 @@ async def get_setup_status() -> SetupStatusResponse:
 
     Returns whether setup is needed (no real users, or only auto-created local user).
     Use this to determine if the setup wizard should be shown.
+    Also returns whether public registration is enabled.
     """
+    from ...services.webui_state import WebUIStateStore
+
     store = _get_store()
     user_count = await store.get_user_count()
 
@@ -129,10 +133,15 @@ async def get_setup_status() -> SetupStatusResponse:
     # Setup is needed if no users exist, or only the auto-created local user exists
     needs_setup = await store.needs_first_admin_setup()
 
+    # Check if public registration is enabled
+    defaults = WebUIStateStore().load_defaults()
+    registration_enabled = getattr(defaults, "public_registration_enabled", False) or False
+
     return SetupStatusResponse(
         needs_setup=needs_setup,
         has_admin=has_admin,
         user_count=user_count,
+        registration_enabled=registration_enabled,
     )
 
 
@@ -469,18 +478,31 @@ async def register(
 ) -> LoginResponse:
     """Register a new user account.
 
-    Note: This endpoint may be disabled in production environments.
-    Check /setup/status for registration availability.
+    Note: This endpoint is disabled by default and must be enabled by an admin.
+    Check /api/cloud/settings/registration for registration availability.
     """
+    from ...services.webui_state import WebUIStateStore
+
     store = _get_store()
 
-    # Check if registration is allowed (you might want to make this configurable)
-    # For now, allow registration only if there are existing users (post-setup)
+    # Check if registration is allowed (must be explicitly enabled by admin)
     if not await store.has_any_users():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Use /setup/first-admin for initial setup",
         )
+
+    # Check if public registration is enabled
+    defaults = WebUIStateStore().load_defaults()
+    enabled = getattr(defaults, "public_registration_enabled", False) or False
+    if not enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is disabled. Contact an administrator to create an account.",
+        )
+
+    # Get the default level for new users
+    default_level = getattr(defaults, "public_registration_default_level", "researcher") or "researcher"
 
     try:
         user = await store.create_user(
@@ -488,7 +510,7 @@ async def register(
             username=data.username,
             password=data.password,
             display_name=data.display_name,
-            level_names=["researcher"],  # Default level for new users
+            level_names=[default_level],
         )
 
         # Auto-login after registration

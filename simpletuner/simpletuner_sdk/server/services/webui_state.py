@@ -222,6 +222,11 @@ class WebUIDefaults:
     audit_export_webhook_url: Optional[str] = None
     audit_export_auth_token: Optional[str] = None
     audit_export_security_only: bool = False
+    # Public registration settings
+    # Whether public registration is enabled (admin can always create users)
+    public_registration_enabled: bool = False
+    # Default permission level for newly registered users
+    public_registration_default_level: str = "researcher"
 
 
 @dataclass

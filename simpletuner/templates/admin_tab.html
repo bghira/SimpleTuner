@@ -16,7 +16,30 @@
                 <h4 class="mb-1"><i class="fas fa-users-cog me-2"></i>Manage Users</h4>
                 <p class="text-muted small mb-0">Manage users, access levels, rules, approvals, and authentication providers</p>
             </div>
-            <div class="d-flex gap-2 align-items-center">
+            <div class="d-flex gap-3 align-items-center">
+                <!-- Inline Stats -->
+                <div class="d-flex gap-3 align-items-center" x-show="!shouldShowEnterpriseOnboarding()">
+                    <div class="stat-item">
+                        <span class="stat-value" x-text="stats.userCount"></span>
+                        <span class="stat-label">Users</span>
+                    </div>
+                    <div class="stat-item" x-show="stats.externalUserCount > 0">
+                        <span class="stat-value" x-text="stats.externalUserCount"></span>
+                        <span class="stat-label">External</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value" x-text="stats.levelCount"></span>
+                        <span class="stat-label">Levels</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value" x-text="stats.ruleCount"></span>
+                        <span class="stat-label">Rules</span>
+                    </div>
+                    <div class="stat-item" x-show="stats.pendingApprovals > 0">
+                        <span class="stat-value text-warning" x-text="stats.pendingApprovals"></span>
+                        <span class="stat-label">Pending</span>
+                    </div>
+                </div>
                 <button class="btn btn-sm btn-outline-secondary"
                         x-show="anyHintsDismissed"
                         @click="restoreAllHints()"
@@ -45,7 +68,10 @@
                     <div class="row g-3 small">
                         <div class="col-md-4">
                             <strong><i class="fas fa-users me-1"></i>Users</strong>
-                            <p class="text-muted mb-0">Create local accounts or connect external identity providers (OIDC, LDAP)</p>
+                            <p class="text-muted mb-0">
+                                Create local accounts (username/password) or configure SSO via <strong>Auth Providers</strong> tab.
+                                Users log in at <code>/login</code> and can generate API keys (<code>st_</code> prefix) for automation.
+                            </p>
                         </div>
                         <div class="col-md-4">
                             <strong><i class="fas fa-layer-group me-1"></i>Levels & Rules</strong>
@@ -70,34 +96,6 @@
     <!-- Main Admin Content (hidden while enterprise onboarding is active) -->
     <template x-if="!shouldShowEnterpriseOnboarding()">
         <div class="admin-main-content">
-
-    <!-- Stats Bar -->
-    <div class="admin-stats-bar">
-        <div class="stat-item">
-            <span class="stat-value" x-text="stats.userCount"></span>
-            <span class="stat-label">Users</span>
-        </div>
-        <div class="stat-item" x-show="stats.externalUserCount > 0">
-            <span class="stat-value" x-text="stats.externalUserCount"></span>
-            <span class="stat-label">External</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-value" x-text="stats.levelCount"></span>
-            <span class="stat-label">Levels</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-value" x-text="stats.ruleCount"></span>
-            <span class="stat-label">Rules</span>
-        </div>
-        <div class="stat-item" x-show="stats.quotaCount > 0">
-            <span class="stat-value" x-text="stats.quotaCount"></span>
-            <span class="stat-label">Quotas</span>
-        </div>
-        <div class="stat-item" x-show="stats.pendingApprovals > 0">
-            <span class="stat-value text-warning" x-text="stats.pendingApprovals"></span>
-            <span class="stat-label">Pending</span>
-        </div>
-    </div>
 
     <!-- Tab Navigation -->
     <div class="admin-tabs">
@@ -139,6 +137,12 @@
                     <i class="fas fa-key me-1"></i>Auth Providers
                 </button>
             </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'registration' }"
+                        @click="activeTab = 'registration'">
+                    <i class="fas fa-user-plus me-1"></i>Registration
+                </button>
+            </li>
         </ul>
     </div>
 
@@ -162,6 +166,9 @@
 
         <!-- Auth Providers Tab -->
         {% include 'partials/admin/tab_auth.html' %}
+
+        <!-- Registration Settings Tab -->
+        {% include 'partials/admin/tab_registration.html' %}
 
     </div>
 
