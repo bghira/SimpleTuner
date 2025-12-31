@@ -1,14 +1,36 @@
-<!-- Admin - Auth Tab -->
+<!-- Admin - Auth Providers Tab -->
 <div x-show="activeTab === 'auth'" x-transition>
     <!-- Auth Hint -->
     <div class="admin-hint admin-hint-inline" x-show="hints.auth" x-transition>
         <div class="d-flex justify-content-between align-items-start">
             <div class="small">
-                <i class="fas fa-lightbulb text-warning me-2"></i>
-                <strong>External Authentication:</strong>
-                Connect identity providers for single sign-on. Supported: <strong>OIDC</strong> (Keycloak, Auth0, Okta, Azure AD, Google)
-                and <strong>LDAP</strong> (Active Directory). Users are auto-provisioned on first login with default level "researcher".
-                Configure group/role mapping to assign levels automatically based on identity provider groups.
+                <div class="d-flex align-items-start mb-2">
+                    <i class="fas fa-lightbulb text-warning me-2 mt-1"></i>
+                    <strong>External Authentication Providers</strong>
+                </div>
+                <p class="mb-2">
+                    Connect identity providers for single sign-on. Users are auto-provisioned on first login
+                    with default level "researcher". Configure group/role mapping to assign levels automatically.
+                </p>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <strong>OIDC Providers:</strong>
+                        <ul class="mb-0 ps-3 mt-1">
+                            <li>Keycloak</li>
+                            <li>Auth0</li>
+                            <li>Okta</li>
+                            <li>Azure AD</li>
+                            <li>Google</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>LDAP Providers:</strong>
+                        <ul class="mb-0 ps-3 mt-1">
+                            <li>Active Directory</li>
+                            <li>OpenLDAP</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
             <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('auth')"><i class="fas fa-times"></i></button>
         </div>

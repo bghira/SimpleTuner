@@ -43,8 +43,11 @@ class TabType(str, Enum):
     CLOUD = "cloud"
     UI_SETTINGS = "ui_settings"
     ADMIN = "admin"
+    USERS = "users"  # Alias for admin (URL uses #users)
     AUDIT = "audit"
     METRICS = "metrics"
+    NOTIFICATIONS = "notifications"
+    QUOTAS = "quotas"
 
 
 @dataclass
@@ -202,6 +205,30 @@ class TabService:
                 description="Prometheus metrics export configuration",
                 extra_context_handler=self._metrics_tab_context,
             ),
+            TabType.USERS: TabConfig(
+                id="admin-panel",
+                title="Manage Users",
+                icon="fas fa-users-cog",
+                template="admin_tab.html",
+                description="User management and access control",
+                extra_context_handler=None,
+            ),
+            TabType.NOTIFICATIONS: TabConfig(
+                id="notifications-panel",
+                title="Notifications",
+                icon="fas fa-bell",
+                template="notifications_tab.html",
+                description="Notification channels and event routing",
+                extra_context_handler=None,
+            ),
+            TabType.QUOTAS: TabConfig(
+                id="quotas-panel",
+                title="Quotas",
+                icon="fas fa-tachometer-alt",
+                template="quotas_tab.html",
+                description="Spending limits and job quotas",
+                extra_context_handler=None,
+            ),
         }
 
     def get_tab_config(self, tab_name: str) -> TabConfig:
@@ -230,8 +257,11 @@ class TabService:
         if tab_type == TabType.ADMIN and not self._admin_tab_enabled():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
 
-        # Audit tab follows the same access rules as admin tab
-        if tab_type == TabType.AUDIT and not self._admin_tab_enabled():
+        # These tabs follow the same access rules as admin tab
+        if (
+            tab_type in (TabType.USERS, TabType.AUDIT, TabType.NOTIFICATIONS, TabType.QUOTAS)
+            and not self._admin_tab_enabled()
+        ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
 
         if tab_type == TabType.METRICS and not self._metrics_tab_enabled():

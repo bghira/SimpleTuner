@@ -4,12 +4,32 @@
     <div class="admin-hint admin-hint-inline" x-show="hints.quotas" x-transition>
         <div class="d-flex justify-content-between align-items-start">
             <div class="small">
-                <i class="fas fa-lightbulb text-warning me-2"></i>
-                <strong>Quotas:</strong>
-                Limit spending and job submissions. Quota types: <code>COST_MONTHLY</code>/<code>COST_DAILY</code> (USD limits),
-                <code>CONCURRENT_JOBS</code>, <code>JOBS_PER_DAY</code>, <code>JOBS_PER_HOUR</code>.
-                Actions: <strong>BLOCK</strong> (reject), <strong>WARN</strong> (allow with warning), <strong>REQUIRE_APPROVAL</strong>.
-                Quotas can be global, per-level, or per-user. User-specific quotas take highest priority.
+                <div class="d-flex align-items-start mb-2">
+                    <i class="fas fa-lightbulb text-warning me-2 mt-1"></i>
+                    <strong>About Quotas</strong>
+                </div>
+                <p class="mb-2">
+                    Limit spending and job submissions. Quotas can be global, per-level, or per-user.
+                    User-specific quotas take highest priority.
+                </p>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <strong>Quota Types:</strong>
+                        <ul class="mb-0 ps-3 mt-1">
+                            <li><code>COST_MONTHLY</code> / <code>COST_DAILY</code> - USD limits</li>
+                            <li><code>CONCURRENT_JOBS</code> - Max simultaneous jobs</li>
+                            <li><code>JOBS_PER_DAY</code> / <code>JOBS_PER_HOUR</code> - Rate limits</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Actions When Exceeded:</strong>
+                        <ul class="mb-0 ps-3 mt-1">
+                            <li><strong>BLOCK</strong> - Reject the job</li>
+                            <li><strong>WARN</strong> - Allow with warning</li>
+                            <li><strong>REQUIRE_APPROVAL</strong> - Queue for approval</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
             <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('quotas')"><i class="fas fa-times"></i></button>
         </div>

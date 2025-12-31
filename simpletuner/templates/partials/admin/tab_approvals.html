@@ -4,18 +4,24 @@
     <div class="admin-hint admin-hint-inline" x-show="hints.approvals" x-transition>
         <div class="d-flex justify-content-between align-items-start">
             <div class="small">
-                <i class="fas fa-lightbulb text-warning me-2"></i>
-                <strong>Approval Workflows:</strong>
-                Require manager approval for certain jobs. Triggers include:
-                <code>cost_exceeds</code> (jobs over $X),
-                <code>hardware_type</code> (specific GPUs),
-                <code>provider</code> (specific cloud),
-                <code>user_level</code> (below threshold),
-                <code>daily_jobs_exceed</code> (rate limit),
-                <code>first_job</code> (new users),
-                <code>config_pattern</code> (name matching).
-                Approvers are users with the specified <strong>required level</strong>.
-                Pending requests auto-expire after 24 hours.
+                <div class="d-flex align-items-start mb-2">
+                    <i class="fas fa-lightbulb text-warning me-2 mt-1"></i>
+                    <strong>Approval Workflows</strong>
+                </div>
+                <p class="mb-2">
+                    Require manager approval for certain jobs. Approvers are users with the specified <strong>required level</strong>.
+                    Pending requests auto-expire after 24 hours.
+                </p>
+                <div class="mb-1"><strong>Available Triggers:</strong></div>
+                <ul class="mb-0 ps-3">
+                    <li><code>cost_exceeds</code> - Jobs over $X threshold</li>
+                    <li><code>hardware_type</code> - Specific GPU types</li>
+                    <li><code>provider</code> - Specific cloud providers</li>
+                    <li><code>user_level</code> - Users below threshold level</li>
+                    <li><code>daily_jobs_exceed</code> - Rate limiting</li>
+                    <li><code>first_job</code> - New users' first job</li>
+                    <li><code>config_pattern</code> - Config name matching</li>
+                </ul>
             </div>
             <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('approvals')"><i class="fas fa-times"></i></button>
         </div>

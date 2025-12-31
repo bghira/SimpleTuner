@@ -6101,15 +6101,37 @@ function trainerComponent() {
             <div class="nav-section nav-section-bottom" x-show="$store.cloudAuth.shouldShowAdminTab" x-cloak>
                 <div class="nav-section-title">Administration</div>
                 <button type="button"
-                        class="tab-btn admin-btn"
-                        data-tab="admin"
-                        :class="{ 'active': activeTab === 'admin' }"
-                        hx-get="/web/trainer/tabs/admin"
+                        class="tab-btn users-btn"
+                        data-tab="users"
+                        :class="{ 'active': activeTab === 'users' }"
+                        hx-get="/web/trainer/tabs/users"
                         hx-target="#tab-content"
                         hx-swap="innerHTML"
-                        @click="switchTab('admin'); closeSidebar()"
-                        title="Manage users and resource rules">
+                        @click="switchTab('users'); closeSidebar()"
+                        title="Manage users, levels, rules, and access control">
                     <i class="fas fa-users-cog"></i> Manage Users
+                </button>
+                <button type="button"
+                        class="tab-btn notifications-btn"
+                        data-tab="notifications"
+                        :class="{ 'active': activeTab === 'notifications' }"
+                        hx-get="/web/trainer/tabs/notifications"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('notifications'); closeSidebar()"
+                        title="Configure notification channels and event routing">
+                    <i class="fas fa-bell"></i> Notifications
+                </button>
+                <button type="button"
+                        class="tab-btn quotas-btn"
+                        data-tab="quotas"
+                        :class="{ 'active': activeTab === 'quotas' }"
+                        hx-get="/web/trainer/tabs/quotas"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('quotas'); closeSidebar()"
+                        title="Manage spending limits and job quotas">
+                    <i class="fas fa-tachometer-alt"></i> Quotas
                 </button>
                 <button type="button"
                         class="tab-btn audit-btn"
