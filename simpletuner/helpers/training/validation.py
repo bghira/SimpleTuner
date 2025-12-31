@@ -955,9 +955,9 @@ class ValidationPreviewer:
     def _ensure_decoder(self) -> bool:
         if not self.enabled or self._decoder_failed:
             return False
-        if self._decoder is None:
-            self._decoder = self.model.get_validation_preview_decoder()
-        if self._decoder is None:
+        # Check if model can provide a TAE decoder (cached internally by ModelFoundation)
+        decoder = self.model.get_validation_preview_decoder()
+        if decoder is None:
             if not self._warned_unsupported:
                 logger.warning("validation_preview requested but no Tiny AutoEncoder could be loaded.")
                 self._warned_unsupported = True
@@ -1021,18 +1021,13 @@ class ValidationPreviewer:
         self._emit_event(image_payloads, video_payloads, metadata, step, timestep_value)
 
     def _decode_preview(self, latents: torch.Tensor):
-        decoder = self._decoder
-        latents = latents.detach()
-        dtype = getattr(decoder, "dtype", torch.float32)
-        device = getattr(decoder, "device", latents.device)
-        latents = latents.to(device=device, dtype=torch.float32)
-        if getattr(decoder, "requires_vae_rescaling", False):
-            latents = self.model.denormalize_latents_for_preview(latents)
-        latents = self.model.pre_validation_preview_decode(latents)
-        latents = latents.to(dtype=dtype)
-        decoded = decoder.decode(latents)
-        if self._decoder.is_video:
-            frames = decoded[0]
+        # Use unified decode interface - always TAE for validation preview
+        decoded = self.model.decode_latents_to_pixels(latents, use_tae=True)
+        # decoded is (B, T, C, H, W) in [0, 1] range
+
+        if decoded.shape[1] > 1:
+            # Video: multiple frames
+            frames = decoded[0]  # First batch item: (T, C, H, W)
             pil_frames = [self._tensor_to_pil(frame) for frame in frames]
             # Single-frame videos should be returned as static images, not GIFs
             if len(pil_frames) == 1:
@@ -1042,7 +1037,8 @@ class ValidationPreviewer:
             images = [first_frame] if first_frame else []
             return images, video_payload
         else:
-            image = decoded[0]
+            # Image: single frame
+            image = decoded[0, 0]  # First batch, first (only) frame: (C, H, W)
             return [self._tensor_to_pil(image)], None
 
     def _tensor_to_pil(self, tensor: torch.Tensor) -> Image.Image:
