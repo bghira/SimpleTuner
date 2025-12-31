@@ -83,6 +83,32 @@ ssh -L 8080:localhost:8080 user@remote-server
 >
 > This is equivalent to starting the server and then manually clicking "Start Training" in the WebUI, but allows for unattended startup.
 
+## First-time setup: Creating an admin account
+
+On first launch, SimpleTuner requires you to create an administrator account. When you visit the WebUI for the first time, you'll see a setup screen prompting you to create the first admin user.
+
+Enter your email, username, and a secure password. This account will have full administrative privileges.
+
+### Managing users
+
+After setup, you can manage users from the **Manage Users** page (accessible from the sidebar when logged in as an admin):
+
+- **Users tab**: Create, edit, and delete user accounts. Assign permission levels (viewer, researcher, lead, admin).
+- **Levels tab**: Define custom permission levels with fine-grained access control.
+- **Auth Providers tab**: Configure external authentication (OIDC, LDAP) for single sign-on.
+- **Registration tab**: Control whether new users can self-register (disabled by default).
+
+### API keys for automation
+
+Users can generate API keys for scripted access from their profile or the admin panel. API keys use the `st_` prefix and can be used with the `X-API-Key` header:
+
+```bash
+curl -s http://localhost:8080/api/training/status \
+  -H 'X-API-Key: st_your_key_here'
+```
+
+> **Note:** For private/internal deployments, keep public registration disabled and create user accounts manually through the admin panel.
+
 ## Using the WebUI
 
 ### Onboarding steps
