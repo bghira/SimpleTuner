@@ -330,6 +330,50 @@ class TestDataloaderIterator(unittest.TestCase):
         with self.assertRaises((IndexError, KeyError, ValueError)):
             select_dataloader_index(step=100, backends=backends)
 
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    def test_select_dataloader_index_no_active_misconfig(self, mock_state_tracker):
+        """Test select_dataloader_index raises error when no active backends and no exhausted backends"""
+        # Set up mock to indicate no exhausted backends (misconfiguration)
+        mock_state_tracker.exhausted_backends = []
+        mock_state_tracker.get_epoch.return_value = 1
+        mock_state_tracker.get_global_step.return_value = 0
+        mock_state_tracker.get_data_backend_config.return_value = {"start_epoch": 5}
+
+        # Backend with start_epoch in the future
+        backend_config = {"start_epoch": 5}
+        backends = {"future_backend": backend_config}
+
+        with self.assertRaises(ValueError) as context:
+            select_dataloader_index(step=100, backends=backends)
+
+        self.assertIn("No active datasets available", str(context.exception))
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    def test_select_dataloader_index_no_active_with_exhausted(self, mock_state_tracker):
+        """Test select_dataloader_index returns None when no active backends but some exhausted"""
+        # Set up mock to indicate some exhausted backends (normal epoch end)
+        mock_state_tracker.exhausted_backends = ["exhausted_backend1"]
+        mock_state_tracker.get_data_backend_config.return_value = {"start_epoch": 5}
+
+        # Backend with start_epoch in the future
+        backend_config = {"start_epoch": 5}
+        backends = {"future_backend": backend_config}
+
+        result = select_dataloader_index(step=100, backends=backends)
+        self.assertIsNone(result)
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    def test_random_dataloader_iterator_returns_false_on_no_active(self, mock_state_tracker, mock_select):
+        """Test random_dataloader_iterator returns False when select_dataloader_index returns None"""
+        mock_select.return_value = None
+        mock_state_tracker.get_args.return_value = Mock(gradient_accumulation_steps=1)
+        backends = {"backend1": self.mock_backend1}
+
+        result = random_dataloader_iterator(step=100, backends=backends)
+
+        self.assertFalse(result)
+
     @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
     def test_random_dataloader_iterator_single_backend(self, mock_select):
         """Test random_dataloader_iterator with single backend"""
