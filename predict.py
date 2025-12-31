@@ -1,8 +1,9 @@
 """Cog predictor entrypoint using the SimpleTuner trainer directly."""
 
 import json
+import os
 import pathlib
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from cog import BasePredictor, Input, Path, Secret
 
@@ -42,10 +43,6 @@ class Predictor(BasePredictor):
             description="Zip or tar archive of training images. Not required if dataloader_json points to external data.",
             default=None,
         ),
-        hf_token: Secret = Input(
-            description="Hugging Face token for model downloads (set if the base model requires auth).",
-            default=None,
-        ),
         config_json: str = Input(
             description="Training config: either a JSON string or path to config.json. Defaults to config/config.json if present.",
             default=None,
@@ -58,12 +55,54 @@ class Predictor(BasePredictor):
             description="Override --max_train_steps for quicker Cog runs.",
             default=None,
         ),
+        # S3 publishing options (override config)
+        s3_bucket: Optional[str] = Input(
+            description="S3-compatible bucket for publishing checkpoints (overrides config).",
+            default=None,
+        ),
+        s3_region: Optional[str] = Input(
+            description="S3 region (optional).",
+            default=None,
+        ),
+        s3_endpoint_url: Optional[str] = Input(
+            description="Custom S3 endpoint URL (for non-AWS providers like Backblaze B2, Cloudflare R2).",
+            default=None,
+        ),
+        s3_base_path: Optional[str] = Input(
+            description="Prefix inside the bucket (defaults to simpletuner/{job_id}).",
+            default=None,
+        ),
+        s3_public_base_url: Optional[str] = Input(
+            description="Public base URL to build shareable links (optional).",
+            default=None,
+        ),
+        s3_access_key: Optional[Secret] = Input(
+            description="S3 access key (leave blank to use IAM/instance roles).",
+            default=None,
+        ),
+        s3_secret_key: Optional[Secret] = Input(
+            description="S3 secret key (leave blank to use IAM/instance roles).",
+            default=None,
+        ),
+        # HuggingFace Hub publishing options (override config)
+        hub_model_id: Optional[str] = Input(
+            description="HuggingFace Hub repo ID (e.g., 'username/my-lora') - overrides config.",
+            default=None,
+        ),
+        hf_token: Secret = Input(
+            description="Hugging Face token for model downloads and Hub publishing.",
+            default=None,
+        ),
+        lycoris_config: str = Input(
+            description="LyCORIS config: either a JSON string or path to lycoris_config.json. Required when lora_type is 'lycoris'.",
+            default=None,
+        ),
         return_logs: bool = Input(
             description="Print the tail of debug.log to Cog output.",
             default=True,
         ),
-    ) -> Path:
-        """Launch a SimpleTuner training job and return a zipped output directory."""
+    ) -> str:
+        """Launch a SimpleTuner training job and return the output location."""
 
         token_value = hf_token.get_secret_value() if hf_token else None
         dataset_archive = pathlib.Path(images) if images else None
@@ -80,6 +119,58 @@ class Predictor(BasePredictor):
         if dataloader_json:
             dataloader_path, dataloader_dict = self._parse_json_or_path(dataloader_json, "dataloader_json")
 
+        # Parse lycoris_config - can be JSON string or file path
+        lycoris_config_path = None
+        if lycoris_config:
+            lycoris_path, lycoris_dict = self._parse_json_or_path(lycoris_config, "lycoris_config")
+            if lycoris_dict is not None:
+                # Write inline JSON to disk
+                lycoris_config_path = pathlib.Path("config") / "cog" / "lycoris_config.json"
+                lycoris_config_path.parent.mkdir(parents=True, exist_ok=True)
+                with lycoris_config_path.open("w", encoding="utf-8") as handle:
+                    json.dump(lycoris_dict, handle, indent=2)
+            else:
+                lycoris_config_path = lycoris_path
+
+        # Build config overrides for publishing
+        config_overrides: Dict[str, Any] = {}
+
+        # LyCORIS config
+        if lycoris_config_path:
+            config_overrides["--lycoris_config"] = str(lycoris_config_path)
+
+        # S3 publishing config
+        publishing_config: Optional[List[Dict[str, Any]]] = None
+        if s3_bucket:
+            s3_access_value = s3_access_key.get_secret_value() if s3_access_key else None
+            s3_secret_value = s3_secret_key.get_secret_value() if s3_secret_key else None
+            publishing_config = self._build_s3_publishing_config(
+                bucket=s3_bucket,
+                base_path=s3_base_path,
+                region=s3_region,
+                endpoint_url=s3_endpoint_url,
+                access_key=s3_access_value,
+                secret_key=s3_secret_value,
+                public_base_url=s3_public_base_url,
+            )
+            config_overrides["publishing_config"] = publishing_config
+
+        # HuggingFace Hub publishing config
+        if hub_model_id:
+            if not token_value:
+                raise ValueError("hf_token is required when using hub_model_id for HuggingFace Hub publishing.")
+            # Strip any URL prefix from hub_model_id (Replicate's proxy can add prefixes)
+            clean_hub_model_id = hub_model_id
+            for prefix in ["https://huggingface.co/", "http://huggingface.co/", "huggingface.co/"]:
+                if clean_hub_model_id.startswith(prefix):
+                    clean_hub_model_id = clean_hub_model_id[len(prefix):]
+                    break
+            # Override HF_ENDPOINT to bypass Replicate's proxy for Hub uploads
+            os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+            config_overrides["--push_to_hub"] = True
+            config_overrides["--hub_model_id"] = clean_hub_model_id
+            config_overrides["--push_checkpoints_to_hub"] = True
+
         # Start the webhook receiver to capture training events in Cog logs
         from simpletuner.cog import CogWebhookReceiver
 
@@ -93,11 +184,10 @@ class Predictor(BasePredictor):
                 base_config_dict=config_dict,
                 dataloader_config_path=dataloader_path,
                 dataloader_config_dict=dataloader_dict,
+                config_overrides=config_overrides,
                 max_train_steps=max_train_steps,
                 webhook_config=webhook_config,
             )
-
-        archive_path = self.runner.package_output(pathlib.Path(run_result["output_dir"]))
 
         if return_logs:
             log_tail = self.runner.read_debug_log()
@@ -105,4 +195,52 @@ class Predictor(BasePredictor):
                 print("\n=== debug.log tail ===")
                 print(log_tail[-5000:])
 
-        return Path(archive_path)
+        # Build output URL based on publishing destination
+        if s3_bucket and publishing_config:
+            path_prefix = publishing_config[0].get("base_path", "").lstrip("/")
+            if s3_public_base_url:
+                output_url = f"{s3_public_base_url.rstrip('/')}/{path_prefix}"
+            elif s3_endpoint_url:
+                output_url = f"{s3_endpoint_url.rstrip('/')}/{s3_bucket}/{path_prefix}"
+            else:
+                output_url = f"s3://{s3_bucket}/{path_prefix}"
+            print(f"\nCheckpoints published to: {output_url}")
+        elif hub_model_id:
+            output_url = f"https://huggingface.co/{hub_model_id}"
+            print(f"\nModel published to: {output_url}")
+        else:
+            # Publishing configured via config_json
+            output_url = f"Training complete. Output: {run_result['output_dir']}"
+            print(f"\n{output_url}")
+
+        return output_url
+
+    @staticmethod
+    def _build_s3_publishing_config(
+        *,
+        bucket: str,
+        base_path: Optional[str] = None,
+        region: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        access_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        public_base_url: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build S3 publishing config for SimpleTuner."""
+        path_prefix = base_path or "simpletuner"
+        entry: Dict[str, Any] = {
+            "provider": "s3",
+            "bucket": bucket,
+            "base_path": path_prefix,
+        }
+        if region:
+            entry["region"] = region
+        if endpoint_url:
+            entry["endpoint_url"] = endpoint_url
+        if access_key:
+            entry["access_key"] = access_key
+        if secret_key:
+            entry["secret_key"] = secret_key
+        if public_base_url:
+            entry["public_base_url"] = public_base_url
+        return [entry]
