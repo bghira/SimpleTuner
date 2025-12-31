@@ -382,6 +382,8 @@ class HunyuanVideo(VideoModelFoundation):
             if hasattr(self.config, "vae_dtype") and self.config.vae_dtype == "fp32":
                 _vae_dtype = torch.float32
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
+        self.vae.requires_grad_(False)
+        self.vae.eval()
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
