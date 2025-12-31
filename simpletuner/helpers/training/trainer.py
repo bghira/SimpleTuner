@@ -3681,8 +3681,10 @@ class Trainer:
                 return None
             return value if value > 0 else None
 
+        eval_loss_disable = getattr(self.config, "eval_loss_disable", False)
         has_eval_schedule = bool(
-            _normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float)
+            not eval_loss_disable
+            and (_normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float))
         )
         if has_eval_schedule:
             from simpletuner.helpers.training.validation import Evaluation

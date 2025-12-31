@@ -57,12 +57,22 @@ To configure and enable evaluation loss calculations:
     "--eval_steps_interval": 10,
     "--eval_epoch_interval": 0.5,
     "--num_eval_images": 1,
-    "--report_to": "wandb",
+    "--report_to": "wandb"
 }
 ```
 
 Evaluations can now be scheduled by step or by epoch. `--eval_epoch_interval` accepts decimal values, so `0.5`
 will run evaluation twice per epoch. If you set both `--eval_steps_interval` and `--eval_epoch_interval`, the
 trainer will log a warning and run evaluations on both schedules.
+
+To disable evaluation loss calculations while keeping eval datasets configured (e.g., for CLIP scoring only):
+
+```json
+{
+    "--eval_loss_disable": true
+}
+```
+
+This is useful when you want to use eval datasets for CLIP score metrics (`--evaluation_type clip`) without the overhead of computing validation loss at each timestep.
 
 > **Note**: Weights & Biases (wandb) is currently required for the full evaluation charting functionality. Other trackers only receive the single mean value.

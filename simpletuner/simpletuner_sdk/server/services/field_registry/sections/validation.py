@@ -280,6 +280,23 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Disable Validation Loss
+    registry._add_field(
+        ConfigField(
+            name="eval_loss_disable",
+            arg_name="--eval_loss_disable",
+            ui_label="Disable Validation Loss",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="evaluation",
+            default_value=False,
+            help_text="Disable validation loss computation on eval datasets",
+            tooltip="Skip computing loss on evaluation datasets during training. CLIP scoring (if enabled) still runs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+        )
+    )
+
     # Evaluation Type
     registry._add_field(
         ConfigField(
