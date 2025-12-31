@@ -126,6 +126,18 @@ class WanS2V(VideoModelFoundation):
         """S2V always requires audio datasets."""
         return True
 
+    def requires_s2v_validation_inputs(self) -> bool:
+        """S2V validation requires audio inputs."""
+        return True
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        """S2V requires conditioning (reference image + audio) for validation."""
+        return True
+
+    def conditioning_validation_dataset_type(self) -> str:
+        """S2V uses video datasets for conditioning validation samples."""
+        return "video"
+
     def encode_audio(self, audio_path: str) -> torch.Tensor:
         """
         Encode audio file to Wav2Vec2 embeddings.
@@ -454,6 +466,38 @@ class WanS2V(VideoModelFoundation):
 
         self.pipelines[pipeline_type] = pipeline
         return pipeline
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs: dict) -> dict:
+        """
+        Update pipeline kwargs for S2V validation.
+
+        Handles loading audio from the validation conditioning if provided.
+        """
+        # Check if audio path is in conditioning
+        conditioning = pipeline_kwargs.get("_s2v_conditioning")
+        if conditioning is not None:
+            audio_path = conditioning.get("audio_path")
+            if audio_path is not None:
+                # Load audio waveform for pipeline
+                waveform, sample_rate = torchaudio.load(audio_path)
+                if sample_rate != self.AUDIO_SAMPLE_RATE:
+                    resampler = torchaudio.transforms.Resample(sample_rate, self.AUDIO_SAMPLE_RATE)
+                    waveform = resampler(waveform)
+                if waveform.shape[0] > 1:
+                    waveform = waveform.mean(dim=0, keepdim=True)
+                # Pipeline expects audio as 1D tensor
+                pipeline_kwargs["audio"] = waveform.squeeze(0)
+                logger.debug(f"Loaded audio for S2V validation from: {audio_path}")
+
+            # Handle reference image from conditioning
+            ref_image = conditioning.get("image")
+            if ref_image is not None:
+                pipeline_kwargs["image"] = ref_image
+
+            # Remove internal conditioning key
+            del pipeline_kwargs["_s2v_conditioning"]
+
+        return pipeline_kwargs
 
     def setup_model_flavour(self):
         """Configure model based on flavour."""

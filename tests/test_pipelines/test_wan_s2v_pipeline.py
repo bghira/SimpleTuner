@@ -142,5 +142,52 @@ class TestWanS2VAudioInterpolation(unittest.TestCase):
         self.assertTrue(hasattr(WanS2V, "interpolate_audio_to_frames"))
 
 
+class TestWanS2VValidationSupport(unittest.TestCase):
+    """Test S2V validation support methods."""
+
+    def test_requires_s2v_validation_inputs(self):
+        """Test that S2V model requires S2V validation inputs."""
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        self.assertTrue(hasattr(WanS2V, "requires_s2v_validation_inputs"))
+
+    def test_requires_conditioning_validation_inputs(self):
+        """Test that S2V model requires conditioning validation inputs."""
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        self.assertTrue(hasattr(WanS2V, "requires_conditioning_validation_inputs"))
+
+    def test_conditioning_validation_dataset_type(self):
+        """Test that S2V model specifies video dataset type for validation."""
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        self.assertTrue(hasattr(WanS2V, "conditioning_validation_dataset_type"))
+
+    def test_update_pipeline_call_kwargs(self):
+        """Test that S2V model has update_pipeline_call_kwargs method."""
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        self.assertTrue(hasattr(WanS2V, "update_pipeline_call_kwargs"))
+
+
+class TestValidationS2VFunction(unittest.TestCase):
+    """Test retrieve_validation_s2v_samples function exists."""
+
+    def test_retrieve_validation_s2v_samples_exists(self):
+        """Test that the S2V validation retrieval function exists."""
+        from simpletuner.helpers.training.validation import retrieve_validation_s2v_samples
+
+        self.assertIsNotNone(retrieve_validation_s2v_samples)
+
+    def test_retrieve_validation_images_checks_s2v(self):
+        """Test that retrieve_validation_images checks for S2V models."""
+        import inspect
+
+        from simpletuner.helpers.training.validation import retrieve_validation_images
+
+        source = inspect.getsource(retrieve_validation_images)
+        self.assertIn("requires_s2v_validation_inputs", source)
+
+
 if __name__ == "__main__":
     unittest.main()
