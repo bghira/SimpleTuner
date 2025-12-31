@@ -599,6 +599,11 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **Options**: "none" or "clip"
 - **Scheduling**: Use `--eval_steps_interval` for step-based scheduling or `--eval_epoch_interval` for epoch-based scheduling (fractions like `0.5` run multiple times per epoch). If both are set, the trainer logs a warning and runs both schedules.
 
+### `--eval_loss_disable`
+
+- **What**: Disable evaluation loss calculation during validation.
+- **Why**: When an eval dataset is configured, loss will automatically be calculated. If CLIP evaluation is also enabled, they will both run. This flag will allow you to selectively disable eval loss while keeping CLIP evaluation enabled.
+
 ### `--caption_strategy`
 
 - **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
