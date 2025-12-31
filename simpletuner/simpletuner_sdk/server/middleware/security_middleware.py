@@ -46,8 +46,10 @@ class RateLimitRule:
 
 
 # Default rate limit rules - more restrictive for sensitive endpoints
+# Note: Unauthenticated requests use DEFAULT_ANONYMOUS_RATE_LIMIT (below)
+# Authenticated users get much higher limits via AUTHENTICATED_USER_MULTIPLIER
 DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
-    # Authentication - strict limits
+    # Authentication - strict limits (these apply regardless of auth status)
     (r"^/api/cloud/auth/login$", 5, 60, ["POST"]),  # 5 login attempts/min
     (r"^/api/cloud/auth/register$", 3, 60, ["POST"]),  # 3 registrations/min
     (r"^/api/cloud/auth/api-keys$", 10, 60, ["POST"]),  # 10 key creations/min
@@ -61,6 +63,14 @@ DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
     # Quotas - moderate limits
     (r"^/api/cloud/quotas/", 30, 60, None),
 ]
+
+# Default rate limit for unauthenticated/anonymous requests
+# This is intentionally low to prevent abuse
+DEFAULT_ANONYMOUS_RATE_LIMIT = 60  # calls per period
+
+# Multiplier for authenticated users (they get this many times more requests)
+# e.g., if anonymous limit is 60/min, authenticated users get 600/min
+AUTHENTICATED_USER_MULTIPLIER = 10
 
 
 def setup_cors_middleware(app: FastAPI) -> None:
@@ -150,12 +160,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.default_calls = calls
         self.default_period = period
         self.exclude_paths = exclude_paths or [
+            # Health and monitoring
             "/health",
             "/api/events/stream",
+            "/api/events",
             "/static/",
-            "/api/cloud/hints",  # UI state, not security-sensitive
-            "/api/cloud/users/me",  # Current user check
-            "/api/cloud/providers",  # Provider list
+            # UI state (read-only, not security-sensitive)
+            "/api/cloud/hints",
+            "/api/cloud/users/me",
+            "/api/cloud/providers",
+            "/api/webui/state",
+            "/api/webui/ui-state/",
+            # Read-only data endpoints (high frequency during UI interaction)
+            "/api/configs/",  # Config listing
+            "/api/fields/",  # Field metadata
+            "/api/datasets/blueprints",
+            "/api/datasets/plan",
+            "/api/prompt-libraries/",
+            "/api/caption-filters",
+            "/api/training/status",
+            # Setup status (needed during onboarding)
+            "/api/cloud/auth/setup/status",
         ]
         self.enable_audit = enable_audit
         self._lock = threading.Lock()
@@ -194,6 +219,31 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Fall back to direct connection
         return request.client.host if request.client else "unknown"
 
+    def _is_authenticated(self, request: Request) -> bool:
+        """Check if request appears to be from an authenticated user.
+
+        This is a lightweight check - we just verify presence of auth tokens,
+        not their validity (that happens in the route handlers).
+        """
+        # Check for session cookie (SimpleTuner uses "simpletuner_session")
+        if request.cookies.get("simpletuner_session"):
+            return True
+
+        # Check for API key in header
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") or auth_header.startswith("ApiKey "):
+            return True
+
+        # Check for X-API-Key header (standard SimpleTuner API key header)
+        if request.headers.get("X-API-Key"):
+            return True
+
+        # Check for API key in query params (some endpoints allow this)
+        if request.query_params.get("api_key"):
+            return True
+
+        return False
+
     def _find_matching_rule(self, path: str, method: str) -> Optional[RateLimitRule]:
         """Find the first matching rate limit rule."""
         for rule in self._rules:
@@ -231,8 +281,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client_ip: str,
         path: str,
         method: str,
+        is_authenticated: bool = False,
     ) -> Tuple[bool, int, int, int]:
         """Check if request is allowed and return limit info.
+
+        Args:
+            client_ip: Client IP address
+            path: Request path
+            method: HTTP method
+            is_authenticated: Whether the request has authentication credentials
 
         Returns:
             (allowed, limit, remaining, reset_time)
@@ -241,7 +298,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         rule = self._find_matching_rule(path, method)
         rate_key = self._get_rate_limit_key(client_ip, rule)
 
-        limit = rule.calls if rule else self.default_calls
+        # Determine base limit
+        if rule:
+            limit = rule.calls
+        else:
+            limit = self.default_calls
+
+        # Apply authenticated user multiplier for non-rule-matched requests
+        # (specific rules like login attempts should stay strict)
+        if is_authenticated and not rule:
+            limit = limit * AUTHENTICATED_USER_MULTIPLIER
+
         period = rule.period if rule else self.default_period
         cutoff = now - period
 
@@ -304,7 +371,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Skip rate limiting for localhost in development
         if client_ip in ("127.0.0.1", "::1", "localhost"):
             return await call_next(request)
-        allowed, limit, remaining, reset_time = self._check_rate_limit(client_ip, path, request.method)
+
+        # Check if user appears authenticated (higher rate limits)
+        is_authenticated = self._is_authenticated(request)
+
+        allowed, limit, remaining, reset_time = self._check_rate_limit(client_ip, path, request.method, is_authenticated)
 
         if not allowed:
             # Log the rate limit event
@@ -349,11 +420,15 @@ def setup_security_middleware(app: FastAPI) -> None:
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Add rate limiting
-    rate_limit_calls = int(os.getenv("RATE_LIMIT_CALLS", "100"))
+    # Default base rate is for anonymous users; authenticated users get AUTHENTICATED_USER_MULTIPLIER times more
+    rate_limit_calls = int(os.getenv("RATE_LIMIT_CALLS", str(DEFAULT_ANONYMOUS_RATE_LIMIT)))
     rate_limit_period = int(os.getenv("RATE_LIMIT_PERIOD", "60"))
 
     if rate_limit_calls > 0:  # Allow disabling with 0
         app.add_middleware(RateLimitMiddleware, calls=rate_limit_calls, period=rate_limit_period)
-        logger.info(f"Rate limiting enabled: {rate_limit_calls} calls per {rate_limit_period} seconds")
+        logger.info(
+            f"Rate limiting enabled: {rate_limit_calls} calls/{rate_limit_period}s (anonymous), "
+            f"{rate_limit_calls * AUTHENTICATED_USER_MULTIPLIER} calls/{rate_limit_period}s (authenticated)"
+        )
 
     logger.info("Security middleware configured successfully")

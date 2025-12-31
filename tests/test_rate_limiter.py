@@ -102,13 +102,19 @@ class TestRateLimitMiddleware(unittest.IsolatedAsyncioTestCase):
         method: str = "GET",
         client_ip: str = "192.168.1.100",
         headers: dict | None = None,
+        cookies: dict | None = None,
     ) -> Request:
         """Create a mock Request object."""
         mock_request = MagicMock(spec=Request)
         mock_request.url.path = path
         mock_request.method = method
         mock_request.client.host = client_ip
+        # Use a real dict for headers so .get() works correctly
         mock_request.headers = headers or {}
+        # Use a real dict for cookies so .get() works correctly (returns None if missing)
+        mock_request.cookies = cookies or {}
+        # Mock query_params to return None for missing keys
+        mock_request.query_params = {}
         return mock_request
 
     async def test_rate_limit_kicks_in_after_threshold(self):
@@ -451,6 +457,75 @@ class TestRateLimitMiddleware(unittest.IsolatedAsyncioTestCase):
 
             # Audit log should have been called (or at least attempted)
             # Note: Due to asyncio.create_task, the call might not be immediate
+
+    async def test_authenticated_users_get_higher_limits(self):
+        """Test that authenticated users get higher rate limits."""
+        from simpletuner.simpletuner_sdk.server.middleware.security_middleware import AUTHENTICATED_USER_MULTIPLIER
+
+        base_limit = 5
+        middleware = self._create_middleware(calls=base_limit, period=60)
+
+        async def mock_call_next(req):
+            return Response(content="OK", status_code=200)
+
+        # Anonymous user (no session cookie) - should get base limit
+        anon_request = self._create_mock_request("/api/test", "GET", client_ip="10.0.0.1", cookies={})
+
+        for _ in range(base_limit):
+            response = await middleware.dispatch(anon_request, mock_call_next)
+            self.assertEqual(response.status_code, 200)
+
+        # Next request should be rate limited
+        response = await middleware.dispatch(anon_request, mock_call_next)
+        self.assertEqual(response.status_code, 429)
+
+        # Authenticated user (has session cookie) - should get multiplied limit
+        auth_request = self._create_mock_request(
+            "/api/test",
+            "GET",
+            client_ip="10.0.0.2",  # Different IP
+            cookies={"simpletuner_session": "valid-session-token"},
+        )
+
+        # Should be able to make many more requests
+        expected_limit = base_limit * AUTHENTICATED_USER_MULTIPLIER
+        for _ in range(expected_limit):
+            response = await middleware.dispatch(auth_request, mock_call_next)
+            self.assertEqual(response.status_code, 200)
+
+        # Next request should be rate limited
+        response = await middleware.dispatch(auth_request, mock_call_next)
+        self.assertEqual(response.status_code, 429)
+
+        # Verify the limit header shows the higher value
+        self.assertEqual(response.headers["X-RateLimit-Limit"], str(expected_limit))
+
+    async def test_api_key_auth_gets_higher_limits(self):
+        """Test that API key authenticated users get higher rate limits."""
+        from simpletuner.simpletuner_sdk.server.middleware.security_middleware import AUTHENTICATED_USER_MULTIPLIER
+
+        base_limit = 3
+        middleware = self._create_middleware(calls=base_limit, period=60)
+
+        async def mock_call_next(req):
+            return Response(content="OK", status_code=200)
+
+        # User with X-API-Key header
+        api_key_request = self._create_mock_request(
+            "/api/test",
+            "GET",
+            client_ip="10.0.0.3",
+            headers={"X-API-Key": "test-api-key-12345"},
+        )
+
+        expected_limit = base_limit * AUTHENTICATED_USER_MULTIPLIER
+        for _ in range(expected_limit):
+            response = await middleware.dispatch(api_key_request, mock_call_next)
+            self.assertEqual(response.status_code, 200)
+
+        # Next request should be rate limited
+        response = await middleware.dispatch(api_key_request, mock_call_next)
+        self.assertEqual(response.status_code, 429)
 
 
 if __name__ == "__main__":
