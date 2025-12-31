@@ -343,6 +343,26 @@ def compute_validations(
             )
         )
 
+    # Check that at least one training dataset is immediately available
+    # (not delayed by start_epoch or start_step scheduling)
+    training_datasets = [
+        dataset
+        for dataset in datasets
+        if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO}
+        and not dataset.get("disabled")
+    ]
+    if training_datasets:
+        immediate_datasets = [dataset for dataset in training_datasets if _is_immediately_available(dataset)]
+        if not immediate_datasets:
+            validations.append(
+                ValidationMessage(
+                    field="scheduling",
+                    message="at least one dataset must be available from the start of training (start_epoch <= 1 and start_step <= 0)",
+                    level="error",
+                    suggestion="Set one dataset to use 'Immediate' scheduling mode or set start_epoch=1 and start_step=0",
+                )
+            )
+
     if blueprints is None:
         blueprints = get_dataset_blueprints()
 
@@ -397,6 +417,20 @@ def _dataset_type(dataset: Dict[str, Any]) -> Optional[DatasetType]:
         return DatasetType.from_value(value)
     except ValueError:
         return None
+
+
+def _is_immediately_available(dataset: Dict[str, Any]) -> bool:
+    """Check if a dataset is available from the start of training."""
+    start_epoch = dataset.get("start_epoch")
+    start_step = dataset.get("start_step")
+
+    # Normalize start_epoch: not set or <= 1 means available from epoch 1
+    epoch_ok = start_epoch is None or (isinstance(start_epoch, (int, float)) and start_epoch <= 1)
+
+    # Normalize start_step: not set or <= 0 means available from step 0
+    step_ok = start_step is None or (isinstance(start_step, (int, float)) and start_step <= 0)
+
+    return epoch_ok and step_ok
 
 
 def _resolve_distiller_profile(distillation_method: Optional[str]) -> DistillerRequirementProfile:
