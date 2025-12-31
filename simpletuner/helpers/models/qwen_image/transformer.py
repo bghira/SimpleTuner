@@ -405,8 +405,8 @@ class QwenEmbedRope(nn.Module):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
-        pos_index = torch.arange(4096)
-        neg_index = torch.arange(4096).flip(0) * -1 - 1
+        pos_index = torch.arange(8192)
+        neg_index = torch.arange(8192).flip(0) * -1 - 1
         self.pos_freqs = torch.cat(
             [
                 self.rope_params(pos_index, self.axes_dim[0], self.theta),

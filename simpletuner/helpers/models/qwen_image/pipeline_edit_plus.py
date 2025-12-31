@@ -228,7 +228,6 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         image: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
-        max_sequence_length: int = 1024,
     ):
         device = device or self._execution_device
         dtype = dtype or self.text_encoder.dtype
@@ -253,8 +252,6 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             text=txt,
             images=image,
             padding=True,
-            truncation=True,
-            max_length=max_sequence_length,
             return_tensors="pt",
         ).to(device)
 
@@ -289,7 +286,6 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         num_images_per_prompt: int = 1,
         prompt_embeds: Optional[torch.Tensor] = None,
         prompt_embeds_mask: Optional[torch.Tensor] = None,
-        max_sequence_length: int = 1024,
     ):
         r"""
 

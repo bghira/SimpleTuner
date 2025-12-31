@@ -225,7 +225,6 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         image: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
-        max_sequence_length: int = 1024,
     ):
         device = device or self._execution_device
         dtype = dtype or self.text_encoder.dtype
@@ -240,8 +239,6 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             text=txt,
             images=image,
             padding=True,
-            truncation=True,
-            max_length=max_sequence_length,
             return_tensors="pt",
         ).to(device)
 
@@ -275,7 +272,6 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         num_images_per_prompt: int = 1,
         prompt_embeds: Optional[torch.Tensor] = None,
         prompt_embeds_mask: Optional[torch.Tensor] = None,
-        max_sequence_length: int = 1024,
     ):
         r"""
 
@@ -298,9 +294,7 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         batch_size = len(prompt) if prompt_embeds is None else prompt_embeds.shape[0]
 
         if prompt_embeds is None:
-            prompt_embeds, prompt_embeds_mask = self._get_qwen_prompt_embeds(
-                prompt, image, device, max_sequence_length=max_sequence_length
-            )
+            prompt_embeds, prompt_embeds_mask = self._get_qwen_prompt_embeds(prompt, image, device)
 
         _, seq_len, _ = prompt_embeds.shape
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
