@@ -40,9 +40,9 @@ class TestQueueStoreGPUSchema(unittest.TestCase):
             self.db_path.unlink()
         QueueStore._instance = None
 
-    def test_schema_version_is_3(self):
-        """Verify current schema version is 3."""
-        self.assertEqual(SCHEMA_VERSION, 3)
+    def test_schema_version_is_4(self):
+        """Verify current schema version is 4."""
+        self.assertEqual(SCHEMA_VERSION, 4)
 
     def test_schema_has_gpu_columns(self):
         """Test schema includes GPU-related columns."""
