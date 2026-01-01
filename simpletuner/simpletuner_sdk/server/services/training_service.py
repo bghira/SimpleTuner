@@ -1060,6 +1060,9 @@ def start_training_job(
     *,
     no_wait: bool = False,
     any_gpu: bool = False,
+    for_approval: bool = False,
+    org_id: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> TrainingJobResult:
     """Submit a training job via the process keeper and return the job result.
 
@@ -1068,6 +1071,9 @@ def start_training_job(
         env_name: Optional environment/config directory name for display purposes.
         no_wait: If True, reject immediately if GPUs unavailable (default: queue).
         any_gpu: If True, use any available GPUs instead of configured device IDs.
+        for_approval: If True, request approval when exceeding org GPU quota.
+        org_id: Organization ID for org-level quota checks.
+        user_id: User ID for the submitting user.
 
     Returns:
         TrainingJobResult with job_id, status, and optionally allocated GPUs.
@@ -1091,6 +1097,8 @@ def start_training_job(
                 required_count=num_processes,
                 preferred_gpus=preferred_gpus,
                 any_gpu=any_gpu,
+                org_id=org_id,
+                for_approval=for_approval,
             )
 
         try:
@@ -1108,6 +1116,22 @@ def start_training_job(
     can_start, gpus_to_use, reason = _check_and_allocate()
 
     if not can_start:
+        # Check if this is an approval-required situation
+        if reason and reason.startswith("APPROVAL_REQUIRED:"):
+            approval_reason = reason[len("APPROVAL_REQUIRED:") :]
+            return _queue_training_job(
+                job_id=job_id,
+                runtime_config=runtime_config,
+                env_name=env_name,
+                num_processes=num_processes,
+                preferred_gpus=preferred_gpus,
+                any_gpu=any_gpu,
+                org_id=org_id,
+                user_id=user_id,
+                requires_approval=True,
+                approval_reason=approval_reason,
+            )
+
         if no_wait:
             return TrainingJobResult(
                 job_id=None,
@@ -1122,25 +1146,59 @@ def start_training_job(
             num_processes=num_processes,
             preferred_gpus=preferred_gpus,
             any_gpu=any_gpu,
+            org_id=org_id,
+            user_id=user_id,
         )
 
-    # GPUs are available - allocate and start
+    # GPUs are available - create queue entry and allocate
+    config_name = (
+        env_name
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+        or runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or "local"
+    )
 
-    def _allocate_gpus():
-        async def _async_allocate():
-            await allocator.allocate(job_id, gpus_to_use)
+    def _create_running_entry():
+        """Create a queue entry with status=running and allocated GPUs."""
+        from .cloud.queue import QueueStore
+        from .cloud.queue.models import QueuePriority, QueueStatus
+
+        async def _async_create():
+            queue_store = QueueStore()
+            # Create entry directly as running with allocated GPUs
+            entry = await queue_store.add_to_queue(
+                job_id=job_id,
+                user_id=user_id,
+                org_id=org_id,
+                provider="local",
+                config_name=config_name,
+                priority=QueuePriority.NORMAL,
+                job_type="local",
+                num_processes=num_processes,
+                allocated_gpus=gpus_to_use,
+                metadata={
+                    "runtime_config": runtime_config,
+                    "env_name": env_name,
+                    "any_gpu": any_gpu,
+                },
+            )
+            # Mark as running immediately
+            await queue_store.mark_running(entry.id)
+            return entry
 
         try:
             loop = asyncio.get_running_loop()
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(lambda: asyncio.run(_async_allocate()))
-                future.result(timeout=10)
+                future = pool.submit(lambda: asyncio.run(_async_create()))
+                return future.result(timeout=10)
         except RuntimeError:
-            asyncio.run(_async_allocate())
+            return asyncio.run(_async_create())
 
-    _allocate_gpus()
+    _create_running_entry()
 
     # Update runtime config with allocated GPUs
     if gpus_to_use:
@@ -1298,10 +1356,18 @@ def _queue_training_job(
     num_processes: int,
     preferred_gpus: Optional[List[int]],
     any_gpu: bool,
+    org_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    requires_approval: bool = False,
+    approval_reason: Optional[str] = None,
 ) -> TrainingJobResult:
     """Queue a training job when GPUs are not immediately available.
 
     The job will be started automatically when GPUs become available.
+
+    Args:
+        requires_approval: If True, job requires admin approval before running.
+        approval_reason: Reason why approval is required (e.g., exceeds org quota).
     """
     import asyncio
 
@@ -1322,19 +1388,23 @@ def _queue_training_job(
             queue_store = QueueStore()
             entry = await queue_store.add_to_queue(
                 job_id=job_id,
+                user_id=user_id,
+                org_id=org_id,
                 provider="local",
                 config_name=config_name,
                 priority=QueuePriority.NORMAL,
                 job_type="local",
                 num_processes=num_processes,
                 allocated_gpus=preferred_gpus if not any_gpu else None,
+                requires_approval=requires_approval,
                 metadata={
                     "runtime_config": runtime_config,
                     "env_name": env_name,
                     "any_gpu": any_gpu,
+                    "approval_reason": approval_reason,
                 },
             )
-            return entry.position
+            return entry.position, entry.status.value
 
         try:
             loop = asyncio.get_running_loop()
@@ -1346,7 +1416,58 @@ def _queue_training_job(
         except RuntimeError:
             return asyncio.run(_async_add())
 
-    position = _add_to_queue()
+    position, status = _add_to_queue()
+
+    # Also create a JobStore entry so the job appears in jobs list
+    try:
+        UnifiedJob = _get_unified_job_class()
+        CloudJobStatus = _get_cloud_job_status()
+        job_store = _get_job_store()
+
+        output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+        run_name = runtime_config.get("--tracker_run_name") or runtime_config.get("tracker_run_name")
+
+        local_job = UnifiedJob.create_local(
+            job_id=job_id,
+            config_name=config_name,
+            hardware_type=_detect_local_hardware(),
+        )
+        local_job.output_url = output_url
+        local_job.status = CloudJobStatus.QUEUED.value if not requires_approval else CloudJobStatus.PENDING.value
+        local_job.user_id = user_id
+
+        if run_name:
+            local_job.metadata["run_name"] = run_name
+
+        # Store job asynchronously
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(job_store.add_job(local_job))
+        except RuntimeError:
+            import threading
+
+            def _add_job():
+                import asyncio as aio
+
+                aio.run(job_store.add_job(local_job))
+
+            threading.Thread(target=_add_job, daemon=True).start()
+    except Exception as exc:
+        logger.warning("Failed to track queued job in JobStore: %s", exc)
+
+    if requires_approval:
+        logger.info(
+            "Queued training job %s for approval at position %d (reason: %s)",
+            job_id,
+            position,
+            approval_reason,
+        )
+        return TrainingJobResult(
+            job_id=job_id,
+            status="blocked",
+            queue_position=position,
+            reason=approval_reason or "Requires admin approval",
+        )
 
     logger.info(
         "Queued training job %s at position %d (needs %d GPUs)",

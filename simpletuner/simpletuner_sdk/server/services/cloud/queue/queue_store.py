@@ -15,7 +15,7 @@ from .models import QueueEntry, QueuePriority, QueueStatus
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class QueueStore:
@@ -179,10 +179,23 @@ class QueueStore:
 
             logger.info("Migrated queue schema to v3 (added allocated_gpus, job_type, num_processes)")
 
+        if from_version < 4 <= to_version:
+            # Add org_id for org-level GPU quotas
+            try:
+                cursor.execute("ALTER TABLE queue ADD COLUMN org_id INTEGER")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            # Index for org-based queries
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_queue_org_id ON queue(org_id)")
+
+            logger.info("Migrated queue schema to v4 (added org_id)")
+
     async def add_to_queue(
         self,
         job_id: str,
         user_id: Optional[int] = None,
+        org_id: Optional[int] = None,
         team_id: Optional[str] = None,
         provider: str = "replicate",
         config_name: Optional[str] = None,
@@ -220,14 +233,15 @@ class QueueStore:
             cursor.execute(
                 """
                 INSERT INTO queue (
-                    job_id, user_id, team_id, provider, config_name, priority,
+                    job_id, user_id, org_id, team_id, provider, config_name, priority,
                     priority_override, status, position, queued_at, estimated_cost,
                     requires_approval, metadata, allocated_gpus, job_type, num_processes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
                     user_id,
+                    org_id,
                     team_id,
                     provider,
                     config_name,
@@ -253,6 +267,7 @@ class QueueStore:
             id=entry_id,
             job_id=job_id,
             user_id=user_id,
+            org_id=org_id,
             team_id=team_id,
             provider=provider,
             config_name=config_name,
@@ -475,7 +490,10 @@ class QueueStore:
         return await self._run_query(_count)
 
     async def list_pending_by_priority(self, limit: int = 50) -> List[QueueEntry]:
-        """List pending entries by priority."""
+        """List pending entries by priority.
+
+        Note: Excludes local jobs which are processed by LocalGPUAllocator.
+        """
 
         def _list():
             conn = self._get_connection()
@@ -484,6 +502,7 @@ class QueueStore:
                 """
                 SELECT * FROM queue
                 WHERE status IN ('pending', 'ready')
+                  AND job_type != 'local'
                 ORDER BY priority DESC, queued_at ASC
                 LIMIT ?
                 """,
@@ -607,6 +626,7 @@ class QueueStore:
         allocated_gpus = None
         job_type = "cloud"
         num_processes = 1
+        org_id = None
         try:
             team_id = row["team_id"]
             priority_override = row["priority_override"]
@@ -623,10 +643,17 @@ class QueueStore:
         except (IndexError, KeyError):
             pass
 
+        # Handle v4 columns
+        try:
+            org_id = row["org_id"]
+        except (IndexError, KeyError):
+            pass
+
         return QueueEntry(
             id=row["id"],
             job_id=row["job_id"],
             user_id=row["user_id"],
+            org_id=org_id,
             team_id=team_id,
             provider=row["provider"],
             config_name=row["config_name"],
@@ -732,5 +759,62 @@ class QueueStore:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) as cnt FROM queue WHERE job_type = 'local' AND status = 'running'")
             return cursor.fetchone()["cnt"]
+
+        return await self._run_query(_count)
+
+    async def count_gpus_by_org(self) -> Dict[int, int]:
+        """Get count of allocated GPUs per organization for running local jobs.
+
+        Returns:
+            Dict mapping org_id -> count of allocated GPUs
+        """
+
+        def _count():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT org_id, allocated_gpus FROM queue
+                WHERE job_type = 'local' AND status = 'running'
+                AND org_id IS NOT NULL AND allocated_gpus IS NOT NULL
+                """
+            )
+            org_gpu_counts: Dict[int, int] = {}
+            for row in cursor.fetchall():
+                org_id = row["org_id"]
+                gpus = json.loads(row["allocated_gpus"])
+                if isinstance(gpus, list):
+                    org_gpu_counts[org_id] = org_gpu_counts.get(org_id, 0) + len(gpus)
+            return org_gpu_counts
+
+        return await self._run_query(_count)
+
+    async def get_org_gpu_usage(self, org_id: int) -> int:
+        """Get the number of GPUs currently used by a specific organization.
+
+        Args:
+            org_id: Organization ID to check
+
+        Returns:
+            Number of GPUs allocated to running local jobs for this org
+        """
+
+        def _count():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT allocated_gpus FROM queue
+                WHERE job_type = 'local' AND status = 'running'
+                AND org_id = ? AND allocated_gpus IS NOT NULL
+                """,
+                (org_id,),
+            )
+            total_gpus = 0
+            for row in cursor.fetchall():
+                gpus = json.loads(row["allocated_gpus"])
+                if isinstance(gpus, list):
+                    total_gpus += len(gpus)
+            return total_gpus
 
         return await self._run_query(_count)

@@ -157,16 +157,33 @@ async def start_training(request: Request):
 
     try:
         training_service.persist_config_bundle(bundle)
-        job_id = training_service.start_training_job(
+        result = training_service.start_training_job(
             bundle.complete_config,
             env_name=bundle.active_config,
         )
+
+        if result.status == "rejected":
+            return f"""
+            <div class="alert alert-warning">
+                <h6><i class="fas fa-exclamation-triangle"></i> Training Rejected</h6>
+                <p>{result.reason or "Required GPUs unavailable"}</p>
+            </div>
+            """
+
+        if result.status == "queued":
+            return f"""
+            <div class="alert alert-info">
+                <h6><i class="fas fa-clock"></i> Training Queued</h6>
+                <p>Your job is queued at position {result.queue_position}.</p>
+                <p class="mb-0"><small>Job ID: {result.job_id}</small></p>
+            </div>
+            """
 
         return f"""
         <div class="alert alert-info">
             <h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6>
             <p>Your training job is being initialized.</p>
-            <p class="mb-0"><small>Job ID: {job_id}</small></p>
+            <p class="mb-0"><small>Job ID: {result.job_id}</small></p>
         </div>
         """
     except Exception as exc:

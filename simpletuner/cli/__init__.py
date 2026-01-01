@@ -360,6 +360,11 @@ def _add_jobs_parser(subparsers):
         action="store_true",
         help="Use any available GPUs instead of configured device IDs",
     )
+    submit_parser.add_argument(
+        "--for-approval",
+        action="store_true",
+        help="Request approval to exceed org GPU quota (requires org admin opt-in)",
+    )
 
     # cancel
     cancel_parser = jobs_subparsers.add_parser(
