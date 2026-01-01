@@ -232,6 +232,50 @@ class TestReleaseJobGPUs(unittest.TestCase):
         # - test_local_gpu_allocator.py::TestLocalGPUAllocatorAllocation
         pass
 
+    def test_cancellation_does_not_process_pending_jobs(self):
+        """Cancellation should release GPUs but not process pending jobs.
+
+        This prevents race conditions during bulk cancellation (cancel --all)
+        where pending jobs would start before they could be cancelled.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator"
+        ) as mock_get_allocator:
+            mock_allocator = MagicMock()
+            mock_allocator.release = AsyncMock()
+            mock_allocator.process_pending_jobs = AsyncMock(return_value=[])
+            mock_get_allocator.return_value = mock_allocator
+
+            from simpletuner.simpletuner_sdk.server.services.training_service import _release_job_gpus
+
+            # Test cancellation - should NOT call process_pending_jobs
+            _release_job_gpus("test-job", process_pending=False)
+
+            mock_allocator.release.assert_called_once_with("test-job")
+            mock_allocator.process_pending_jobs.assert_not_called()
+
+    def test_completion_does_process_pending_jobs(self):
+        """Completion should release GPUs AND process pending jobs."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator"
+        ) as mock_get_allocator:
+            mock_allocator = MagicMock()
+            mock_allocator.release = AsyncMock()
+            mock_allocator.process_pending_jobs = AsyncMock(return_value=["job-2"])
+            mock_get_allocator.return_value = mock_allocator
+
+            from simpletuner.simpletuner_sdk.server.services.training_service import _release_job_gpus
+
+            # Test completion - should call process_pending_jobs
+            _release_job_gpus("test-job", process_pending=True)
+
+            mock_allocator.release.assert_called_once_with("test-job")
+            mock_allocator.process_pending_jobs.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
