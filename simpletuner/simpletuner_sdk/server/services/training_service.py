@@ -1166,6 +1166,10 @@ def start_training_job(
         from .cloud.queue.models import QueuePriority, QueueStatus
 
         async def _async_create():
+            # Pre-initialize AsyncJobStore in async context before QueueStore needs it
+            from .cloud.async_job_store import AsyncJobStore
+
+            await AsyncJobStore.get_instance()
             queue_store = QueueStore()
             # Create entry directly as running with allocated GPUs
             entry = await queue_store.add_to_queue(
