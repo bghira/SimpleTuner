@@ -5,10 +5,28 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Dict, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from simpletuner.simpletuner_sdk.server.services import training_service
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults
+
+
+class MockGPUAllocator:
+    """Mock GPU allocator that always allows allocation."""
+
+    async def can_allocate(self, required_count, preferred_gpus=None, any_gpu=False):
+        gpus = list(range(required_count))
+        return (True, gpus, "")
+
+    async def allocate(self, job_id, gpu_indices):
+        return True
+
+    async def release(self, job_id):
+        return True
+
+
+def _mock_get_gpu_allocator():
+    return MockGPUAllocator()
 
 
 class DummyValidation:
@@ -272,8 +290,12 @@ class TrainingServiceTests(unittest.TestCase):
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
-            job_id = training_service.start_training_job({"--foo": "bar"})
+            result = training_service.start_training_job({"--foo": "bar"})
+            job_id = result.job_id
 
         self.assertEqual(job_id, captured["job_id"])
         self.assertIs(captured["func"], training_service.run_trainer_job)
@@ -301,8 +323,12 @@ class TrainingServiceTests(unittest.TestCase):
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
-            job_id = training_service.start_training_job(payload)
+            result = training_service.start_training_job(payload)
+            job_id = result.job_id
 
         self.assertEqual(job_id, captured["job_id"])
         self.assertEqual(captured["config"].get("accelerate_visible_devices"), [1])
@@ -319,10 +345,14 @@ class TrainingServiceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmpdir,
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
             source = Path(tmpdir) / "library.json"
             source.write_text(json.dumps({"prompt": "value"}), encoding="utf-8")
-            job_id = training_service.start_training_job({"--user_prompt_library": str(source)})
+            result = training_service.start_training_job({"--user_prompt_library": str(source)})
+            job_id = result.job_id
 
         runtime_path = Path(captured["config"]["--user_prompt_library"])
         self.assertEqual(job_id, captured["job_id"])
@@ -334,6 +364,9 @@ class TrainingServiceTests(unittest.TestCase):
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=AssertionError("should not submit")),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
             with self.assertRaises(FileNotFoundError):
                 training_service.start_training_job({"--user_prompt_library": "/missing/library.json"})
