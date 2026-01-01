@@ -69,6 +69,51 @@ def _detect_local_hardware() -> str:
     return "CPU"
 
 
+def get_gpu_requirements(runtime_config: Dict[str, Any]) -> Tuple[int, Optional[List[int]]]:
+    """Extract GPU requirements from a training config.
+
+    Args:
+        runtime_config: The training configuration dictionary.
+
+    Returns:
+        Tuple of (num_processes, preferred_device_ids)
+    """
+    # Get num_processes from various sources
+    num_processes = runtime_config.get("--num_processes") or runtime_config.get("num_processes") or 1
+    try:
+        num_processes = max(1, int(num_processes))
+    except (TypeError, ValueError):
+        num_processes = 1
+
+    # Get device_ids if specified
+    device_ids: Optional[List[int]] = None
+    raw_device_ids = runtime_config.get("--accelerate_visible_devices") or runtime_config.get("accelerate_visible_devices")
+
+    if raw_device_ids:
+        if isinstance(raw_device_ids, str):
+            parsed = []
+            for token in raw_device_ids.split(","):
+                token = token.strip()
+                if token:
+                    try:
+                        parsed.append(int(token))
+                    except ValueError:
+                        pass
+            if parsed:
+                device_ids = parsed
+        elif isinstance(raw_device_ids, (list, tuple)):
+            parsed = []
+            for item in raw_device_ids:
+                try:
+                    parsed.append(int(item))
+                except (TypeError, ValueError):
+                    pass
+            if parsed:
+                device_ids = parsed
+
+    return (num_processes, device_ids)
+
+
 _PROMPT_LIBRARY_RUNTIME_ROOT = Path(tempfile.gettempdir()) / "simpletuner_prompt_libraries"
 
 
@@ -998,14 +1043,109 @@ def validate_training_config(
     )
 
 
-def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] = None) -> str:
-    """Submit a training job via the process keeper and return the job identifier.
+@dataclass
+class TrainingJobResult:
+    """Result of a training job submission."""
+
+    job_id: Optional[str]
+    status: str  # "running", "queued", "rejected"
+    allocated_gpus: Optional[List[int]] = None
+    queue_position: Optional[int] = None
+    reason: Optional[str] = None
+
+
+def start_training_job(
+    runtime_config: Dict[str, Any],
+    env_name: Optional[str] = None,
+    *,
+    no_wait: bool = False,
+    any_gpu: bool = False,
+) -> TrainingJobResult:
+    """Submit a training job via the process keeper and return the job result.
 
     Args:
         runtime_config: The training configuration dictionary.
         env_name: Optional environment/config directory name for display purposes.
+        no_wait: If True, reject immediately if GPUs unavailable (default: queue).
+        any_gpu: If True, use any available GPUs instead of configured device IDs.
+
+    Returns:
+        TrainingJobResult with job_id, status, and optionally allocated GPUs.
     """
+    import asyncio
+
+    from .local_gpu_allocator import get_gpu_allocator
+
     job_id = str(uuid.uuid4())[:8]
+
+    # Extract GPU requirements
+    num_processes, preferred_gpus = get_gpu_requirements(runtime_config)
+
+    # Check GPU availability
+    allocator = get_gpu_allocator()
+
+    # Run async GPU check synchronously
+    def _check_and_allocate():
+        async def _async_check():
+            return await allocator.can_allocate(
+                required_count=num_processes,
+                preferred_gpus=preferred_gpus,
+                any_gpu=any_gpu,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context, create a task
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(lambda: asyncio.run(_async_check()))
+                return future.result(timeout=10)
+        except RuntimeError:
+            # No running event loop
+            return asyncio.run(_async_check())
+
+    can_start, gpus_to_use, reason = _check_and_allocate()
+
+    if not can_start:
+        if no_wait:
+            return TrainingJobResult(
+                job_id=None,
+                status="rejected",
+                reason=reason or "Required GPUs unavailable",
+            )
+        # Queue the job
+        return _queue_training_job(
+            job_id=job_id,
+            runtime_config=runtime_config,
+            env_name=env_name,
+            num_processes=num_processes,
+            preferred_gpus=preferred_gpus,
+            any_gpu=any_gpu,
+        )
+
+    # GPUs are available - allocate and start
+
+    def _allocate_gpus():
+        async def _async_allocate():
+            await allocator.allocate(job_id, gpus_to_use)
+
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(lambda: asyncio.run(_async_allocate()))
+                future.result(timeout=10)
+        except RuntimeError:
+            asyncio.run(_async_allocate())
+
+    _allocate_gpus()
+
+    # Update runtime config with allocated GPUs
+    if gpus_to_use:
+        runtime_config["--accelerate_visible_devices"] = ",".join(str(g) for g in gpus_to_use)
+        runtime_config["--num_processes"] = len(gpus_to_use)
 
     runtime_payload = dict(runtime_config)
 
@@ -1144,7 +1284,83 @@ def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] =
         logger.warning("Failed to track local job in JobStore: %s", exc)
 
     APIState.set_state("current_job_id", job_id)
-    return job_id
+    return TrainingJobResult(
+        job_id=job_id,
+        status="running",
+        allocated_gpus=gpus_to_use,
+    )
+
+
+def _queue_training_job(
+    job_id: str,
+    runtime_config: Dict[str, Any],
+    env_name: Optional[str],
+    num_processes: int,
+    preferred_gpus: Optional[List[int]],
+    any_gpu: bool,
+) -> TrainingJobResult:
+    """Queue a training job when GPUs are not immediately available.
+
+    The job will be started automatically when GPUs become available.
+    """
+    import asyncio
+
+    from .cloud.queue import QueueStore
+    from .cloud.queue.models import QueuePriority
+
+    config_name = (
+        env_name
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+        or runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or "local"
+    )
+
+    def _add_to_queue():
+        async def _async_add():
+            queue_store = QueueStore()
+            entry = await queue_store.add_to_queue(
+                job_id=job_id,
+                provider="local",
+                config_name=config_name,
+                priority=QueuePriority.NORMAL,
+                job_type="local",
+                num_processes=num_processes,
+                allocated_gpus=preferred_gpus if not any_gpu else None,
+                metadata={
+                    "runtime_config": runtime_config,
+                    "env_name": env_name,
+                    "any_gpu": any_gpu,
+                },
+            )
+            return entry.position
+
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(lambda: asyncio.run(_async_add()))
+                return future.result(timeout=10)
+        except RuntimeError:
+            return asyncio.run(_async_add())
+
+    position = _add_to_queue()
+
+    logger.info(
+        "Queued training job %s at position %d (needs %d GPUs)",
+        job_id,
+        position,
+        num_processes,
+    )
+
+    return TrainingJobResult(
+        job_id=job_id,
+        status="queued",
+        queue_position=position,
+        reason=f"Waiting for {num_processes} GPU(s) to become available",
+    )
 
 
 def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: bool) -> bool:
@@ -1158,6 +1374,9 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
         APIState.set_state("training_status", status)
         if clear_job_id:
             APIState.set_state("current_job_id", None)
+
+        # Release GPUs allocated to this job
+        _release_job_gpus(job_id)
 
         # Update job status in JobStore
         try:
@@ -1195,6 +1414,36 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
             logger.warning("Failed to update job status in JobStore: %s", exc)
 
     return terminated
+
+
+def _release_job_gpus(job_id: str) -> None:
+    """Release GPUs allocated to a job and process pending jobs."""
+    import asyncio
+
+    from .local_gpu_allocator import get_gpu_allocator
+
+    def _release():
+        async def _async_release():
+            allocator = get_gpu_allocator()
+            await allocator.release(job_id)
+            # Process pending jobs to start the next one if GPUs are available
+            started = await allocator.process_pending_jobs()
+            if started:
+                logger.info("Started %d pending jobs after GPU release", len(started))
+
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pool.submit(lambda: asyncio.run(_async_release()))
+        except RuntimeError:
+            asyncio.run(_async_release())
+
+    try:
+        _release()
+    except Exception as exc:
+        logger.warning("Failed to release GPUs for job %s: %s", job_id, exc)
 
 
 def request_manual_validation(job_id: Optional[str] = None) -> str:

@@ -40,18 +40,49 @@ class SystemStatusService:
     def __init__(self) -> None:
         self._offload_cache: Dict[str, Any] = {}
 
-    def get_status(self) -> Dict[str, Any]:
-        """Collect system metrics for the API response."""
+    def get_status(self, include_gpu_allocation: bool = False) -> Dict[str, Any]:
+        """Collect system metrics for the API response.
+
+        Args:
+            include_gpu_allocation: If True, include GPU allocation info for local jobs.
+                                   Requires async context, so caller must provide allocation data.
+        """
+        inventory = detect_gpu_inventory()
         status = {
             "timestamp": time.time(),
             "load_avg_5min": self._get_load_average_5min(),
             "memory_percent": self._get_memory_percent(),
             "gpus": self._get_gpu_utilisation(),
+            "gpu_inventory": {
+                "backend": inventory.get("backend"),
+                "count": inventory.get("count", 0),
+                "capabilities": inventory.get("capabilities", {}),
+            },
         }
         offload = self._get_deepspeed_offload_usage()
         if offload:
             status["deepspeed_offload"] = offload
         return status
+
+    def get_gpu_inventory(self) -> Dict[str, Any]:
+        """Get GPU hardware inventory without utilization metrics.
+
+        Returns backend, count, device list with memory info.
+        """
+        inventory = detect_gpu_inventory()
+        return {
+            "backend": inventory.get("backend"),
+            "count": inventory.get("count", 0),
+            "devices": [
+                {
+                    "index": d.get("index"),
+                    "name": d.get("name"),
+                    "memory_gb": d.get("memory_gb"),
+                }
+                for d in inventory.get("devices", [])
+            ],
+            "capabilities": inventory.get("capabilities", {}),
+        }
 
     def _get_load_average_5min(self) -> Optional[float]:
         try:

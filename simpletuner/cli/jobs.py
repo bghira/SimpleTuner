@@ -368,6 +368,8 @@ def _jobs_submit(args) -> int:
     """Submit a local training job."""
     config_name = getattr(args, "config", None)
     dry_run = getattr(args, "dry_run", False)
+    no_wait = getattr(args, "no_wait", False)
+    any_gpu = getattr(args, "any_gpu", False)
 
     if not config_name:
         print("Error: Config name is required.")
@@ -375,10 +377,12 @@ def _jobs_submit(args) -> int:
         return 1
 
     if dry_run:
-        return _jobs_submit_dry_run(config_name)
+        return _jobs_submit_dry_run(config_name, any_gpu=any_gpu)
 
     request_data = {
         "config_name": config_name,
+        "no_wait": no_wait,
+        "any_gpu": any_gpu,
     }
 
     print(f"Submitting local job with config '{config_name}'...")
@@ -388,16 +392,24 @@ def _jobs_submit(args) -> int:
     if result.get("success"):
         job_id = result.get("job_id", "unknown")
         status = result.get("status", "unknown")
+        allocated_gpus = result.get("allocated_gpus")
+        queue_position = result.get("queue_position")
+
         print("Job submitted successfully!")
         print(f"  Job ID: {job_id}")
         print(f"  Status: {status}")
+        if allocated_gpus:
+            print(f"  GPUs:   {allocated_gpus}")
+        if queue_position is not None:
+            print(f"  Queue Position: {queue_position}")
         return 0
     else:
-        print(f"Error: {result.get('error', result.get('detail', 'Unknown error'))}")
+        error = result.get("error") or result.get("detail") or result.get("reason") or "Unknown error"
+        print(f"Error: {error}")
         return 1
 
 
-def _jobs_submit_dry_run(config_name: str) -> int:
+def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False) -> int:
     """Preview what would be submitted without actually submitting."""
     print(f"[DRY RUN] Previewing job submission for config '{config_name}'...")
     print()
@@ -427,6 +439,64 @@ def _jobs_submit_dry_run(config_name: str) -> int:
     print(f"  Max Steps:       {config.get('max_train_steps', '-')}")
     print(f"  Learning Rate:   {config.get('learning_rate', '-')}")
     print()
+
+    # Get GPU requirements from config
+    num_processes = config.get("num_processes") or config.get("--num_processes") or 1
+    try:
+        num_processes = int(num_processes)
+    except (TypeError, ValueError):
+        num_processes = 1
+    configured_gpus = config.get("accelerate_visible_devices") or config.get("--accelerate_visible_devices")
+
+    print("GPU Requirements:")
+    print("=" * 50)
+    print(f"  num_processes:   {num_processes}")
+    print(f"  configured_gpus: {configured_gpus or 'auto'}")
+    if any_gpu:
+        print(f"  --any-gpu:       enabled (will use any available GPUs)")
+    print()
+
+    # Get GPU status
+    try:
+        gpu_result = cloud_api_request("GET", "/api/queue/local/gpu-status")
+        total_gpus = gpu_result.get("total_gpus", 0)
+        allocated_gpus = gpu_result.get("allocated_gpus", [])
+        available_gpus = gpu_result.get("available_gpus", [])
+        devices = gpu_result.get("devices", [])
+        running_local_jobs = gpu_result.get("running_local_jobs", 0)
+
+        print("Available GPUs:")
+        print("=" * 50)
+        for device in devices:
+            idx = device.get("index", 0)
+            name = device.get("name", f"GPU {idx}")
+            allocated = device.get("allocated", False)
+            job_id = device.get("job_id")
+            status = f"[allocated - job {job_id}]" if allocated else "[available]"
+            print(f"  GPU {idx}: {name} {status}")
+        if not devices:
+            print("  No GPUs detected")
+        print()
+
+        print("GPU Status:")
+        print("=" * 50)
+        print(f"  Total GPUs:         {total_gpus}")
+        print(f"  Available GPUs:     {len(available_gpus)}")
+        print(f"  Running local jobs: {running_local_jobs}")
+
+        # Determine if job can start
+        can_start = len(available_gpus) >= num_processes
+        if can_start:
+            gpus_to_use = available_gpus[:num_processes]
+            print(f"  [+] Job can start immediately using GPUs: {gpus_to_use}")
+        else:
+            print(f"  [.] Job will be queued (need {num_processes} GPUs, {len(available_gpus)} available)")
+        print()
+    except SystemExit:
+        print("GPU Status:")
+        print("=" * 50)
+        print("  Unable to fetch GPU status")
+        print()
 
     # Get queue status
     try:

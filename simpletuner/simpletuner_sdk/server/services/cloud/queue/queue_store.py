@@ -9,13 +9,13 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .models import QueueEntry, QueuePriority, QueueStatus
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class QueueStore:
@@ -153,6 +153,32 @@ class QueueStore:
 
             logger.info("Migrated queue schema to v2 (added team_id, priority_override)")
 
+        if from_version < 3 <= to_version:
+            # Add GPU allocation tracking for local jobs
+            try:
+                cursor.execute("ALTER TABLE queue ADD COLUMN allocated_gpus TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            try:
+                cursor.execute("ALTER TABLE queue ADD COLUMN job_type TEXT DEFAULT 'cloud'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            try:
+                cursor.execute("ALTER TABLE queue ADD COLUMN num_processes INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            # Index for local job queries
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_queue_job_type ON queue(job_type)")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_queue_local_running "
+                "ON queue(job_type, status) WHERE job_type = 'local' AND status = 'running'"
+            )
+
+            logger.info("Migrated queue schema to v3 (added allocated_gpus, job_type, num_processes)")
+
     async def add_to_queue(
         self,
         job_id: str,
@@ -165,6 +191,9 @@ class QueueStore:
         estimated_cost: float = 0.0,
         requires_approval: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
+        allocated_gpus: Optional[List[int]] = None,
+        job_type: str = "cloud",
+        num_processes: int = 1,
     ) -> QueueEntry:
         """Add a job to the queue."""
 
@@ -174,6 +203,7 @@ class QueueStore:
 
             now = datetime.now(timezone.utc).isoformat()
             metadata_json = json.dumps(metadata or {})
+            allocated_gpus_json = json.dumps(allocated_gpus) if allocated_gpus else None
 
             # Calculate position
             cursor.execute(
@@ -192,8 +222,8 @@ class QueueStore:
                 INSERT INTO queue (
                     job_id, user_id, team_id, provider, config_name, priority,
                     priority_override, status, position, queued_at, estimated_cost,
-                    requires_approval, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    requires_approval, metadata, allocated_gpus, job_type, num_processes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -209,6 +239,9 @@ class QueueStore:
                     estimated_cost,
                     1 if requires_approval else 0,
                     metadata_json,
+                    allocated_gpus_json,
+                    job_type,
+                    num_processes,
                 ),
             )
             conn.commit()
@@ -231,6 +264,9 @@ class QueueStore:
             estimated_cost=estimated_cost,
             requires_approval=requires_approval,
             metadata=metadata or {},
+            allocated_gpus=allocated_gpus,
+            job_type=job_type,
+            num_processes=num_processes,
         )
 
     async def get_entry(self, queue_id: int) -> Optional[QueueEntry]:
@@ -568,9 +604,22 @@ class QueueStore:
         # Handle new columns that may not exist in older databases
         team_id = None
         priority_override = None
+        allocated_gpus = None
+        job_type = "cloud"
+        num_processes = 1
         try:
             team_id = row["team_id"]
             priority_override = row["priority_override"]
+        except (IndexError, KeyError):
+            pass
+
+        # Handle v3 columns
+        try:
+            allocated_gpus_str = row["allocated_gpus"]
+            if allocated_gpus_str:
+                allocated_gpus = json.loads(allocated_gpus_str)
+            job_type = row["job_type"] or "cloud"
+            num_processes = row["num_processes"] or 1
         except (IndexError, KeyError):
             pass
 
@@ -595,4 +644,93 @@ class QueueStore:
             max_attempts=row["max_attempts"] or 3,
             error_message=row["error_message"],
             metadata=metadata,
+            allocated_gpus=allocated_gpus,
+            job_type=job_type,
+            num_processes=num_processes,
         )
+
+    # --- GPU Allocation Methods ---
+
+    async def get_allocated_gpus(self) -> Set[int]:
+        """Get all GPU indices currently allocated to running local jobs."""
+
+        def _get():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT allocated_gpus FROM queue
+                WHERE job_type = 'local' AND status = 'running' AND allocated_gpus IS NOT NULL
+                """
+            )
+            allocated: Set[int] = set()
+            for row in cursor.fetchall():
+                gpus = json.loads(row["allocated_gpus"])
+                if isinstance(gpus, list):
+                    allocated.update(gpus)
+            return allocated
+
+        return await self._run_query(_get)
+
+    async def get_running_local_jobs(self) -> List[QueueEntry]:
+        """Get all running local jobs."""
+
+        def _get():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM queue
+                WHERE job_type = 'local' AND status = 'running'
+                ORDER BY started_at ASC
+                """
+            )
+            return cursor.fetchall()
+
+        rows = await self._run_query(_get)
+        return [self._row_to_entry(row) for row in rows]
+
+    async def get_pending_local_jobs(self) -> List[QueueEntry]:
+        """Get all pending local jobs awaiting GPU allocation."""
+
+        def _get():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM queue
+                WHERE job_type = 'local' AND status IN ('pending', 'ready')
+                ORDER BY priority DESC, queued_at ASC
+                """
+            )
+            return cursor.fetchall()
+
+        rows = await self._run_query(_get)
+        return [self._row_to_entry(row) for row in rows]
+
+    async def update_allocated_gpus(self, job_id: str, gpus: Optional[List[int]]) -> bool:
+        """Update the allocated GPUs for a job."""
+
+        def _update():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            gpus_json = json.dumps(gpus) if gpus else None
+            cursor.execute(
+                "UPDATE queue SET allocated_gpus = ? WHERE job_id = ?",
+                (gpus_json, job_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+        return await self._run_query(_update)
+
+    async def count_running_local_jobs(self) -> int:
+        """Count the number of running local jobs."""
+
+        def _count():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as cnt FROM queue WHERE job_type = 'local' AND status = 'running'")
+            return cursor.fetchone()["cnt"]
+
+        return await self._run_query(_count)

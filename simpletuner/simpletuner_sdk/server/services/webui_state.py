@@ -227,6 +227,11 @@ class WebUIDefaults:
     public_registration_enabled: bool = False
     # Default permission level for newly registered users
     public_registration_default_level: str = "researcher"
+    # Local GPU concurrency settings
+    # Maximum number of GPUs that can be in use by local jobs (None = all available)
+    local_gpu_max_concurrent: Optional[int] = None
+    # Maximum number of local jobs that can run simultaneously
+    local_job_max_concurrent: int = 1
 
 
 @dataclass
@@ -615,6 +620,26 @@ class WebUIStateStore:
             defaults.audit_export_security_only = security_only.lower() in {"true", "1", "yes", "on"}
         else:
             defaults.audit_export_security_only = bool(security_only)
+
+        # Normalise local GPU concurrency settings
+        local_gpu_max = payload.get("local_gpu_max_concurrent")
+        if local_gpu_max is None:
+            defaults.local_gpu_max_concurrent = None
+        else:
+            try:
+                val = int(local_gpu_max)
+                defaults.local_gpu_max_concurrent = max(1, val) if val > 0 else None
+            except (TypeError, ValueError):
+                defaults.local_gpu_max_concurrent = None
+
+        local_job_max = payload.get("local_job_max_concurrent")
+        if local_job_max is None:
+            defaults.local_job_max_concurrent = 1
+        else:
+            try:
+                defaults.local_job_max_concurrent = max(1, int(local_job_max))
+            except (TypeError, ValueError):
+                defaults.local_job_max_concurrent = 1
 
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults
