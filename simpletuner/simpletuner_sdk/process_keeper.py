@@ -1023,12 +1023,19 @@ logger.info("Subprocess exiting")
         }
 
         self._update_training_state_from_subprocess(status="cancelled")
-        # Release GPUs when job is cancelled
-        self._release_gpus()
+        # Release GPUs when job is cancelled, but don't process pending jobs.
+        # This prevents starting new jobs during bulk cancellation operations.
+        self._release_gpus(process_pending=False)
         self._dispatch_callback_event(payload)
 
-    def _release_gpus(self) -> None:
-        """Release GPUs allocated to this job and process pending jobs."""
+    def _release_gpus(self, *, process_pending: bool = True) -> None:
+        """Release GPUs allocated to this job.
+
+        Args:
+            process_pending: If True, process pending jobs after release.
+                Set to False during cancellation to avoid starting jobs
+                that may also be about to be cancelled.
+        """
         try:
             import asyncio
 
@@ -1038,14 +1045,15 @@ logger.info("Subprocess exiting")
                 async def _async_release():
                     allocator = get_gpu_allocator()
                     await allocator.release(self.job_id)
-                    # Process pending jobs to start the next one if GPUs are available
-                    started = await allocator.process_pending_jobs()
-                    if started:
-                        logger.info(
-                            "Started %d pending job(s) after GPU release from job %s",
-                            len(started),
-                            self.job_id,
-                        )
+                    if process_pending:
+                        # Process pending jobs to start the next one if GPUs are available
+                        started = await allocator.process_pending_jobs()
+                        if started:
+                            logger.info(
+                                "Started %d pending job(s) after GPU release from job %s",
+                                len(started),
+                                self.job_id,
+                            )
 
                 try:
                     loop = asyncio.get_running_loop()

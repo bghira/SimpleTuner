@@ -1496,8 +1496,11 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
         if clear_job_id:
             APIState.set_state("current_job_id", None)
 
-        # Release GPUs allocated to this job
-        _release_job_gpus(job_id)
+        # Release GPUs allocated to this job.
+        # Don't process pending jobs on cancellation to avoid starting jobs
+        # that may also be about to be cancelled (e.g., during bulk cancel).
+        is_cancellation = status in {"stopped", "cancelled"}
+        _release_job_gpus(job_id, process_pending=not is_cancellation)
 
         # Update job status in JobStore
         try:
@@ -1537,8 +1540,15 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
     return terminated
 
 
-def _release_job_gpus(job_id: str) -> None:
-    """Release GPUs allocated to a job and process pending jobs."""
+def _release_job_gpus(job_id: str, *, process_pending: bool = True) -> None:
+    """Release GPUs allocated to a job.
+
+    Args:
+        job_id: The job ID to release GPUs for.
+        process_pending: If True, process pending jobs after release.
+            Set to False during cancellation to avoid starting jobs
+            that may also be about to be cancelled.
+    """
     import asyncio
 
     from .local_gpu_allocator import get_gpu_allocator
@@ -1547,10 +1557,11 @@ def _release_job_gpus(job_id: str) -> None:
         async def _async_release():
             allocator = get_gpu_allocator()
             await allocator.release(job_id)
-            # Process pending jobs to start the next one if GPUs are available
-            started = await allocator.process_pending_jobs()
-            if started:
-                logger.info("Started %d pending jobs after GPU release", len(started))
+            if process_pending:
+                # Process pending jobs to start the next one if GPUs are available
+                started = await allocator.process_pending_jobs()
+                if started:
+                    logger.info("Started %d pending jobs after GPU release", len(started))
 
         try:
             loop = asyncio.get_running_loop()
