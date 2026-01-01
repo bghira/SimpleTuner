@@ -147,7 +147,16 @@ async def handle_callback(request: Request):
     """
     Endpoint to receive incoming callbacks and store them as events.
     """
-    data = await request.json()
+    from starlette.requests import ClientDisconnect
+
+    try:
+        data = await request.json()
+    except ClientDisconnect:
+        # Client disconnected before we could read the body.
+        # This typically happens during job cancellation when the process
+        # is killed mid-callback. Safe to ignore.
+        logger.debug("Client disconnected before callback body could be read")
+        return {"message": "Client disconnected"}
 
     callback_service = _get_callback_service(request)
 
