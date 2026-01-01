@@ -67,7 +67,9 @@ class TeamMembershipRequest(BaseModel):
 class SetOrgQuotaRequest(BaseModel):
     """Request to set an organization quota ceiling."""
 
-    quota_type: str = Field(..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly)$")
+    quota_type: str = Field(
+        ..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly|local_gpus)$"
+    )
     limit_value: float = Field(..., gt=0)
     action: str = Field(default="block", pattern=r"^(block|warn|require_approval)$")
 
@@ -75,7 +77,9 @@ class SetOrgQuotaRequest(BaseModel):
 class SetTeamQuotaRequest(BaseModel):
     """Request to set a team quota ceiling."""
 
-    quota_type: str = Field(..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly)$")
+    quota_type: str = Field(
+        ..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly|local_gpus)$"
+    )
     limit_value: float = Field(..., gt=0)
     action: str = Field(default="block", pattern=r"^(block|warn|require_approval)$")
 

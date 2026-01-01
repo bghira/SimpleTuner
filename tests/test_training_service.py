@@ -14,7 +14,14 @@ from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefault
 class MockGPUAllocator:
     """Mock GPU allocator that always allows allocation."""
 
-    async def can_allocate(self, required_count, preferred_gpus=None, any_gpu=False):
+    async def can_allocate(
+        self,
+        required_count,
+        preferred_gpus=None,
+        any_gpu=False,
+        org_id=None,
+        for_approval=False,
+    ):
         gpus = list(range(required_count))
         return (True, gpus, "")
 

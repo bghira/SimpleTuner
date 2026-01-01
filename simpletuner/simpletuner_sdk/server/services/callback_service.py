@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _update_job_store_status(job_id: str | None, status: str) -> None:
-    """Update job status in unified JobStore for local jobs.
+    """Update job status in unified JobStore and QueueStore for local jobs.
 
     This is called when training completes or fails via webhook callbacks,
     ensuring local job status is properly reflected in the Job Queue.
@@ -33,8 +33,10 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
 
         from .cloud.base import CloudJobStatus
         from .cloud.container import get_job_store
+        from .cloud.queue import QueueStore
 
         job_store = get_job_store()
+        queue_store = QueueStore()
 
         # Map callback status to CloudJobStatus
         if status in {"completed", "success"}:
@@ -51,16 +53,34 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
 
+        async def _do_updates():
+            # Update JobStore
+            await job_store.update_job(job_id, updates)
+            # Update QueueStore entry status
+            entry = await queue_store.get_entry_by_job_id(job_id)
+            if entry:
+                if new_status == CloudJobStatus.COMPLETED.value:
+                    await queue_store.mark_completed(entry.id)
+                elif new_status == CloudJobStatus.FAILED.value:
+                    await queue_store.mark_failed(entry.id, "Job failed")
+                elif new_status == CloudJobStatus.CANCELLED.value:
+                    await queue_store.mark_cancelled(entry.id)
+                # Release GPUs
+                from .local_gpu_allocator import get_gpu_allocator
+
+                allocator = get_gpu_allocator()
+                await allocator.release(job_id)
+
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(job_store.update_job(job_id, updates))
+            loop.create_task(_do_updates())
         except RuntimeError:
             # No running event loop, use thread
             import threading
 
             def _update():
                 try:
-                    asyncio.run(job_store.update_job(job_id, updates))
+                    asyncio.run(_do_updates())
                 except Exception as thread_exc:
                     # Best-effort background update - log the failure but don't propagate.
                     # During testing, the database or logger may be unavailable during cleanup,

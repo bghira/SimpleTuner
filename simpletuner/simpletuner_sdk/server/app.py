@@ -350,6 +350,17 @@ async def lifespan(app: FastAPI):
     await initialize_sse_manager()
     logger.info("SSE manager started")
 
+    # Process any pending local jobs in the queue
+    try:
+        from simpletuner.simpletuner_sdk.server.services.local_gpu_allocator import get_gpu_allocator
+
+        allocator = get_gpu_allocator()
+        started = await allocator.process_pending_jobs()
+        if started:
+            logger.info("Started %d pending local jobs on startup: %s", len(started), started)
+    except Exception as e:
+        logger.warning("Failed to process pending jobs on startup: %s", e)
+
     # Auto-start training if --env was specified
     autostart_env = os.environ.get("SIMPLETUNER_SERVER_AUTOSTART_ENV")
     if autostart_env:

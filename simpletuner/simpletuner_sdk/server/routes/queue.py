@@ -199,17 +199,8 @@ async def get_queue_stats(
     scheduler = get_scheduler()
     overview = await scheduler.get_queue_overview()
 
-    # Also count running local jobs from the job store (they bypass the queue)
+    # Running count comes from the queue table (local jobs are now tracked there too)
     running_count = overview.get("running", 0)
-    try:
-        from ..services.cloud.async_job_store import AsyncJobStore
-        from ..services.cloud.base import JobType
-
-        job_store = await AsyncJobStore.get_instance()
-        local_running = await job_store.list_jobs(status="running", job_type=JobType.LOCAL, limit=100)
-        running_count += len(local_running)
-    except Exception:
-        pass
 
     # Get local GPU allocation info
     local_stats = None
@@ -546,6 +537,7 @@ class LocalJobSubmitRequest(BaseModel):
     config_name: str = Field(..., description="Name of config to load from disk")
     no_wait: bool = Field(False, description="Reject immediately if GPUs unavailable")
     any_gpu: bool = Field(False, description="Use any available GPUs instead of configured device IDs")
+    for_approval: bool = Field(False, description="Request approval to exceed org GPU quota")
 
 
 class LocalJobSubmitResponse(BaseModel):
@@ -553,9 +545,10 @@ class LocalJobSubmitResponse(BaseModel):
 
     success: bool
     job_id: Optional[str] = None
-    status: Optional[str] = None  # "running", "queued", "rejected"
+    status: Optional[str] = None  # "running", "queued", "rejected", "blocked"
     allocated_gpus: Optional[List[int]] = None
     queue_position: Optional[int] = None
+    requires_approval: bool = False
     error: Optional[str] = None
     reason: Optional[str] = None
 
@@ -598,12 +591,18 @@ async def submit_local_job(
                 error=f"Config '{request.config_name}' not found",
             )
 
+        # Get user's org_id for quota checks
+        user_org_id = user.org_id if user else None
+
         # Start the training job (path resolution happens inside start_training_job)
         result = start_training_job(
             config,
             env_name=request.config_name,
             no_wait=request.no_wait,
             any_gpu=request.any_gpu,
+            for_approval=request.for_approval,
+            org_id=user_org_id,
+            user_id=user.id if user else None,
         )
 
         # Handle rejected jobs
@@ -612,6 +611,17 @@ async def submit_local_job(
                 success=False,
                 status="rejected",
                 error=result.reason or "Required GPUs unavailable",
+                reason=result.reason,
+            )
+
+        # Handle jobs requiring approval
+        if result.status == "blocked":
+            return LocalJobSubmitResponse(
+                success=True,
+                job_id=result.job_id,
+                status="blocked",
+                queue_position=result.queue_position,
+                requires_approval=True,
                 reason=result.reason,
             )
 

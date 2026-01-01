@@ -43,6 +43,7 @@ class QueueEntry:
     id: int
     job_id: str  # Links to UnifiedJob
     user_id: Optional[int]  # User who submitted
+    org_id: Optional[int] = None  # Organization for org-level quotas
     team_id: Optional[str] = None  # Team/department for fair-share scheduling
     provider: str = "replicate"  # Target provider (replicate, simpletuner_io, etc.)
     config_name: Optional[str] = None  # Config being trained
@@ -89,6 +90,7 @@ class QueueEntry:
             "id": self.id,
             "job_id": self.job_id,
             "user_id": self.user_id,
+            "org_id": self.org_id,
             "team_id": self.team_id,
             "provider": self.provider,
             "config_name": self.config_name,
@@ -130,6 +132,7 @@ class QueueEntry:
             id=data.get("id", 0),
             job_id=data["job_id"],
             user_id=data.get("user_id"),
+            org_id=data.get("org_id"),
             team_id=data.get("team_id"),
             provider=data.get("provider", "replicate"),
             config_name=data.get("config_name"),

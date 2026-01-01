@@ -185,6 +185,22 @@ async def cancel_job(
         },
     )
 
+    # Update queue entry and release GPUs for local jobs
+    if job.job_type == JobType.LOCAL:
+        try:
+            from ...services.cloud.queue import QueueStore
+            from ...services.local_gpu_allocator import get_gpu_allocator
+
+            queue_store = QueueStore()
+            entry = await queue_store.get_entry_by_job_id(job_id)
+            if entry:
+                await queue_store.mark_cancelled(entry.id)
+
+            allocator = get_gpu_allocator()
+            await allocator.release(job_id)
+        except Exception as exc:
+            logger.warning("Could not update queue/release GPUs for %s: %s", job_id, exc)
+
     store.log_audit_event(
         action="job.cancelled",
         job_id=job_id,
