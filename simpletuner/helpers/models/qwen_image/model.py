@@ -77,9 +77,10 @@ class QwenImage(ImageModelFoundation):
     ZERO_COND_T_FLAVOURS = frozenset({"edit-v2+", "edit-v3"})
 
     # Default model flavor
-    DEFAULT_MODEL_FLAVOUR = "v1.0"
+    DEFAULT_MODEL_FLAVOUR = "v2.0"
     HUGGINGFACE_PATHS = {
         "v1.0": "Qwen/Qwen-Image",
+        "v2.0": "Qwen/Qwen-Image-2512",
         "edit-v1": "Qwen/Qwen-Image-Edit",
         "edit-v2": "Qwen/Qwen-Image-Edit-2509",
         "edit-v2+": "Qwen/Qwen-Image-Edit-2509",
