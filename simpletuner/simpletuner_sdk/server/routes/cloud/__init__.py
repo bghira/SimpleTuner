@@ -5,6 +5,8 @@ provider configuration, and cloud-specific functionality.
 
 NOTE: Many routes have been moved to the top-level routes package
 as they are global concepts not specific to cloud providers:
+- auth -> /api/auth
+- external_auth -> /api/auth/external
 - users -> /api/users
 - orgs -> /api/orgs
 - audit -> /api/audit
@@ -15,8 +17,6 @@ as they are global concepts not specific to cloud providers:
 - webhooks -> /api/webhooks
 
 Cloud-specific routes remaining here:
-- auth - Authentication endpoints (login, logout, etc.)
-- external_auth - External auth providers (OIDC, LDAP)
 - jobs - Cloud job submission and management
 - job_utils - Job utilities (configs, hardware, templates)
 - providers - Cloud provider configuration
@@ -31,8 +31,6 @@ from fastapi import APIRouter
 
 # Re-export commonly used items for backwards compatibility
 from ._shared import CloudJobStatus, JobStore, JobType, UnifiedJob, get_job_store
-from .auth import router as auth_router
-from .external_auth import router as external_auth_router
 from .htmx import router as htmx_router
 from .job_utils import router as job_utils_router
 from .jobs import router as jobs_router
@@ -47,8 +45,6 @@ from .storage import router as storage_router
 router = APIRouter(prefix="/api/cloud", tags=["cloud"])
 
 # Include cloud-specific sub-routers
-router.include_router(auth_router)
-router.include_router(external_auth_router)
 router.include_router(jobs_router)
 router.include_router(job_utils_router)
 router.include_router(cloud_metrics_router)  # Cloud metrics (cost-limit, billing, etc.)
@@ -60,6 +56,8 @@ router.include_router(htmx_router)
 router.include_router(storage_router)
 
 # Note: The following routers have been moved to top-level routes package:
+# - auth_router -> routes/auth.py (/api/auth)
+# - external_auth_router -> routes/external_auth.py (/api/auth/external)
 # - users_router -> routes/users.py (/api/users)
 # - orgs_router -> routes/orgs.py (/api/orgs)
 # - audit_router -> routes/audit.py (/api/audit)

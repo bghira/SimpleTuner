@@ -4,6 +4,8 @@ This module provides both the top-level global routes and the cloud-specific rou
 Routes are organized as follows:
 
 Global routes (under /api/):
+- /api/auth - Authentication (login, logout, register, API keys)
+- /api/auth/external - External auth providers (OIDC, LDAP)
 - /api/users - User management
 - /api/orgs - Organization and team management
 - /api/audit - Audit logging
@@ -18,7 +20,6 @@ Global routes (under /api/):
 Cloud-specific routes (under /api/cloud/):
 - /api/cloud/jobs - Cloud job submission
 - /api/cloud/providers - Provider configuration
-- /api/cloud/auth - Authentication
 - /api/cloud/storage - Cloud storage (S3-compatible)
 - /api/cloud/settings - Cloud settings
 - /api/cloud/htmx - UI components
@@ -30,8 +31,10 @@ from fastapi import APIRouter
 from . import webui_state  # noqa: F401
 from .approvals import router as approvals_router
 from .audit import router as audit_router
+from .auth import router as auth_router
 from .backup import router as backup_router
 from .database import router as database_router
+from .external_auth import router as external_auth_router
 from .metrics import router as metrics_router
 from .orgs import router as orgs_router
 from .queue import router as queue_router
@@ -46,6 +49,8 @@ from .webhooks import router as webhooks_router
 global_router = APIRouter()
 
 # Include all global routes (they already have /api/* prefixes)
+global_router.include_router(auth_router)
+global_router.include_router(external_auth_router)
 global_router.include_router(users_router)
 global_router.include_router(orgs_router)
 global_router.include_router(audit_router)
@@ -75,6 +80,8 @@ __all__ = [
     "webui_state",
     "global_router",
     "get_all_routers",
+    "auth_router",
+    "external_auth_router",
     "users_router",
     "orgs_router",
     "audit_router",
