@@ -129,9 +129,31 @@ async def _initiate_shutdown_sequence(delay_seconds: float = _SHUTDOWN_DELAY_SEC
 
 
 @router.get("/status")
-async def get_system_status() -> dict:
-    """Return current system load, memory usage, and GPU utilisation."""
-    return _service.get_status()
+async def get_system_status(include_allocation: bool = False) -> dict:
+    """Return current system load, memory usage, and GPU utilisation.
+
+    Args:
+        include_allocation: If True, include GPU allocation info for local training jobs.
+    """
+    status = _service.get_status()
+
+    if include_allocation:
+        try:
+            from simpletuner.simpletuner_sdk.server.services.local_gpu_allocator import get_gpu_allocator
+
+            allocator = get_gpu_allocator()
+            gpu_status = await allocator.get_gpu_status()
+            status["gpu_allocation"] = {
+                "allocated_gpus": gpu_status.get("allocated_gpus", []),
+                "available_gpus": gpu_status.get("available_gpus", []),
+                "running_local_jobs": gpu_status.get("running_local_jobs", 0),
+                "devices": gpu_status.get("devices", []),
+            }
+        except Exception as exc:
+            logger.debug("Failed to get GPU allocation status: %s", exc)
+            status["gpu_allocation"] = None
+
+    return status
 
 
 @router.post("/maintenance/clear-fsdp-block-cache")

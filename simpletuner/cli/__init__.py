@@ -350,6 +350,16 @@ def _add_jobs_parser(subparsers):
         action="store_true",
         help="Preview what would be submitted without actually submitting",
     )
+    submit_parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Reject immediately if required GPUs are unavailable (default: queue)",
+    )
+    submit_parser.add_argument(
+        "--any-gpu",
+        action="store_true",
+        help="Use any available GPUs instead of configured device IDs",
+    )
 
     # cancel
     cancel_parser = jobs_subparsers.add_parser(

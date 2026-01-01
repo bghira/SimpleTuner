@@ -71,6 +71,18 @@ class QueueListResponse(BaseModel):
     total_running: int = 0
 
 
+class LocalGPUStats(BaseModel):
+    """Local GPU allocation statistics."""
+
+    running_jobs: int = 0
+    pending_jobs: int = 0
+    allocated_gpus: List[int] = Field(default_factory=list)
+    available_gpus: List[int] = Field(default_factory=list)
+    total_gpus: int = 0
+    max_concurrent_gpus: Optional[int] = None
+    max_concurrent_jobs: int = 1
+
+
 class QueueStatsResponse(BaseModel):
     """Response for queue statistics."""
 
@@ -83,6 +95,10 @@ class QueueStatsResponse(BaseModel):
     user_max_concurrent: int = 2
     team_max_concurrent: int = 10
     enable_fair_share: bool = False
+    # Local GPU concurrency
+    local_gpu_max_concurrent: Optional[int] = None
+    local_job_max_concurrent: int = 1
+    local: Optional[LocalGPUStats] = None
 
 
 class UserQueueResponse(BaseModel):
@@ -103,6 +119,9 @@ class ConcurrencyUpdateRequest(BaseModel):
     user_max_concurrent: Optional[int] = Field(None, ge=1, le=20)
     team_max_concurrent: Optional[int] = Field(None, ge=1, le=50)
     enable_fair_share: Optional[bool] = None
+    # Local GPU concurrency limits
+    local_gpu_max_concurrent: Optional[int] = Field(None, ge=1, description="Max GPUs for local jobs (null = unlimited)")
+    local_job_max_concurrent: Optional[int] = Field(None, ge=1, le=10, description="Max local jobs simultaneously")
 
 
 class PriorityUpdateRequest(BaseModel):
@@ -192,6 +211,33 @@ async def get_queue_stats(
     except Exception:
         pass
 
+    # Get local GPU allocation info
+    local_stats = None
+    local_gpu_max = None
+    local_job_max = 1
+    try:
+        from ..services.local_gpu_allocator import get_gpu_allocator
+        from ..services.webui_state import WebUIStateStore
+
+        allocator = get_gpu_allocator()
+        gpu_status = await allocator.get_gpu_status()
+
+        defaults = WebUIStateStore().load_defaults()
+        local_gpu_max = defaults.local_gpu_max_concurrent
+        local_job_max = defaults.local_job_max_concurrent
+
+        local_stats = LocalGPUStats(
+            running_jobs=gpu_status["running_local_jobs"],
+            pending_jobs=len(await allocator._queue_store.get_pending_local_jobs()),
+            allocated_gpus=gpu_status["allocated_gpus"],
+            available_gpus=gpu_status["available_gpus"],
+            total_gpus=gpu_status["total_gpus"],
+            max_concurrent_gpus=local_gpu_max,
+            max_concurrent_jobs=local_job_max,
+        )
+    except Exception:
+        pass
+
     return QueueStatsResponse(
         by_status=overview.get("by_status", {}),
         by_user={str(k): v for k, v in overview.get("by_user", {}).items()},
@@ -202,6 +248,9 @@ async def get_queue_stats(
         user_max_concurrent=overview.get("user_max_concurrent", 2),
         team_max_concurrent=overview.get("team_max_concurrent", 10),
         enable_fair_share=overview.get("enable_fair_share", False),
+        local_gpu_max_concurrent=local_gpu_max,
+        local_job_max_concurrent=local_job_max,
+        local=local_stats,
     )
 
 
@@ -408,7 +457,7 @@ async def update_concurrency_limits(
 ) -> Dict[str, Any]:
     """Update queue concurrency limits (admin only).
 
-    Supports global, per-user, and per-team limits with optional fair-share scheduling.
+    Supports global, per-user, per-team, and local GPU limits with optional fair-share scheduling.
     """
     scheduler = get_scheduler()
 
@@ -419,12 +468,39 @@ async def update_concurrency_limits(
         enable_fair_share=request.enable_fair_share,
     )
 
+    # Update local GPU limits if provided
+    local_gpu_max = None
+    local_job_max = 1
+    if request.local_gpu_max_concurrent is not None or request.local_job_max_concurrent is not None:
+        from ..services.webui_state import WebUIStateStore
+
+        store = WebUIStateStore()
+        defaults = store.load_defaults()
+
+        if request.local_gpu_max_concurrent is not None:
+            defaults.local_gpu_max_concurrent = request.local_gpu_max_concurrent
+        if request.local_job_max_concurrent is not None:
+            defaults.local_job_max_concurrent = request.local_job_max_concurrent
+
+        store.save_defaults(defaults)
+        local_gpu_max = defaults.local_gpu_max_concurrent
+        local_job_max = defaults.local_job_max_concurrent
+    else:
+        # Read current values
+        from ..services.webui_state import WebUIStateStore
+
+        defaults = WebUIStateStore().load_defaults()
+        local_gpu_max = defaults.local_gpu_max_concurrent
+        local_job_max = defaults.local_job_max_concurrent
+
     return {
         "success": True,
         "max_concurrent": scheduler._max_concurrent,
         "user_max_concurrent": scheduler._user_max_concurrent,
         "team_max_concurrent": scheduler._policy.config.team_max_concurrent,
         "enable_fair_share": scheduler._policy.config.enable_fair_share,
+        "local_gpu_max_concurrent": local_gpu_max,
+        "local_job_max_concurrent": local_job_max,
     }
 
 
@@ -468,6 +544,8 @@ class LocalJobSubmitRequest(BaseModel):
     """Request to submit a local training job."""
 
     config_name: str = Field(..., description="Name of config to load from disk")
+    no_wait: bool = Field(False, description="Reject immediately if GPUs unavailable")
+    any_gpu: bool = Field(False, description="Use any available GPUs instead of configured device IDs")
 
 
 class LocalJobSubmitResponse(BaseModel):
@@ -475,8 +553,11 @@ class LocalJobSubmitResponse(BaseModel):
 
     success: bool
     job_id: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[str] = None  # "running", "queued", "rejected"
+    allocated_gpus: Optional[List[int]] = None
+    queue_position: Optional[int] = None
     error: Optional[str] = None
+    reason: Optional[str] = None
 
 
 @router.post("/submit", response_model=LocalJobSubmitResponse)
@@ -487,6 +568,7 @@ async def submit_local_job(
     """Submit a local training job.
 
     Loads the config from disk and starts the training process locally.
+    Respects GPU allocation and queuing when resources are unavailable.
     """
     from pathlib import Path
 
@@ -517,30 +599,49 @@ async def submit_local_job(
             )
 
         # Start the training job (path resolution happens inside start_training_job)
-        job_id = start_training_job(config, env_name=request.config_name)
+        result = start_training_job(
+            config,
+            env_name=request.config_name,
+            no_wait=request.no_wait,
+            any_gpu=request.any_gpu,
+        )
+
+        # Handle rejected jobs
+        if result.status == "rejected":
+            return LocalJobSubmitResponse(
+                success=False,
+                status="rejected",
+                error=result.reason or "Required GPUs unavailable",
+                reason=result.reason,
+            )
 
         # Broadcast SSE event so UI updates in real-time
-        try:
-            from ..services.sse_manager import get_sse_manager
+        if result.status == "running":
+            try:
+                from ..services.sse_manager import get_sse_manager
 
-            sse_manager = get_sse_manager()
-            await sse_manager.broadcast(
-                data={
-                    "type": "training.status",
-                    "status": "starting",
-                    "job_id": job_id,
-                    "config_name": request.config_name,
-                    "message": f"Training job {job_id} starting",
-                },
-                event_type="training.status",
-            )
-        except Exception as exc:
-            logger.warning("Failed to broadcast SSE event: %s", exc)
+                sse_manager = get_sse_manager()
+                await sse_manager.broadcast(
+                    data={
+                        "type": "training.status",
+                        "status": "starting",
+                        "job_id": result.job_id,
+                        "config_name": request.config_name,
+                        "allocated_gpus": result.allocated_gpus,
+                        "message": f"Training job {result.job_id} starting",
+                    },
+                    event_type="training.status",
+                )
+            except Exception as exc:
+                logger.warning("Failed to broadcast SSE event: %s", exc)
 
         return LocalJobSubmitResponse(
             success=True,
-            job_id=job_id,
-            status="starting",
+            job_id=result.job_id,
+            status=result.status,
+            allocated_gpus=result.allocated_gpus,
+            queue_position=result.queue_position,
+            reason=result.reason,
         )
 
     except Exception as exc:

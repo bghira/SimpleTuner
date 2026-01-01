@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class QueueStatus(str, Enum):
@@ -71,6 +71,11 @@ class QueueEntry:
     # Additional metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # GPU allocation tracking for local jobs
+    allocated_gpus: Optional[List[int]] = None  # Device indices allocated to this job
+    job_type: str = "cloud"  # "local" or "cloud"
+    num_processes: int = 1  # Number of GPU processes required
+
     @property
     def effective_priority(self) -> int:
         """Get the effective priority (override if set, else level-based)."""
@@ -103,6 +108,9 @@ class QueueEntry:
             "max_attempts": self.max_attempts,
             "error_message": self.error_message,
             "metadata": self.metadata,
+            "allocated_gpus": self.allocated_gpus,
+            "job_type": self.job_type,
+            "num_processes": self.num_processes,
         }
 
     @classmethod
@@ -139,6 +147,9 @@ class QueueEntry:
             max_attempts=data.get("max_attempts", 3),
             error_message=data.get("error_message"),
             metadata=data.get("metadata", {}),
+            allocated_gpus=data.get("allocated_gpus"),
+            job_type=data.get("job_type", "cloud"),
+            num_processes=data.get("num_processes", 1),
         )
 
 
