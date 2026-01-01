@@ -431,12 +431,107 @@ class TestOrgTeamSerialization(unittest.TestCase):
         self.assertEqual(team.name, "QA")
 
 
+class TestOrgAccessControl(unittest.TestCase):
+    """Tests for organization access control."""
+
+    def _make_user(self, user_id: int, org_id: int, permissions: list[str] | None = None):
+        """Create a mock user for testing."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+
+        user = User(
+            id=user_id,
+            email=f"user{user_id}@test.com",
+            username=f"user{user_id}",
+            org_id=org_id,
+        )
+        # Set internal effective permissions field directly for testing
+        user._effective_permissions = set(permissions or [])
+        return user
+
+    def test_can_access_org_same_org(self):
+        """Test user can access their own organization."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_access_org
+
+        user = self._make_user(user_id=1, org_id=5)
+        self.assertTrue(can_access_org(user, 5))
+
+    def test_can_access_org_different_org_denied(self):
+        """Test user cannot access a different organization."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_access_org
+
+        user = self._make_user(user_id=1, org_id=5)
+        self.assertFalse(can_access_org(user, 10))
+        self.assertFalse(can_access_org(user, 1))
+
+    def test_can_access_org_admin_can_access_any(self):
+        """Test system admin can access any organization."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_access_org
+
+        admin = self._make_user(user_id=1, org_id=5, permissions=["admin.users"])
+        # Admin in org 5 can access org 10
+        self.assertTrue(can_access_org(admin, 10))
+        # Admin in org 5 can access org 1
+        self.assertTrue(can_access_org(admin, 1))
+        # Admin can also access their own org
+        self.assertTrue(can_access_org(admin, 5))
+
+    def test_can_access_org_other_permissions_not_enough(self):
+        """Test non-admin permissions don't grant cross-org access."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_access_org
+
+        # User with org.view permission but not admin.users
+        user = self._make_user(user_id=1, org_id=5, permissions=["org.view", "org.edit", "team.view"])
+        # Cannot access other org despite having org permissions
+        self.assertFalse(can_access_org(user, 10))
+        # Can still access own org
+        self.assertTrue(can_access_org(user, 5))
+
+    def test_require_org_access_allows_same_org(self):
+        """Test require_org_access doesn't raise for same org."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import require_org_access
+
+        user = self._make_user(user_id=1, org_id=5)
+        # Should not raise
+        require_org_access(user, 5)
+
+    def test_require_org_access_denies_different_org(self):
+        """Test require_org_access raises 403 for different org."""
+        from fastapi import HTTPException
+
+        from simpletuner.simpletuner_sdk.server.routes.orgs import require_org_access
+
+        user = self._make_user(user_id=1, org_id=5)
+        with self.assertRaises(HTTPException) as ctx:
+            require_org_access(user, 10)
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("do not have access", ctx.exception.detail)
+
+    def test_require_org_access_allows_admin(self):
+        """Test require_org_access allows admin to any org."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import require_org_access
+
+        admin = self._make_user(user_id=1, org_id=5, permissions=["admin.users"])
+        # Should not raise for any org
+        require_org_access(admin, 10)
+        require_org_access(admin, 1)
+        require_org_access(admin, 999)
+
+    def test_can_access_org_null_org_id(self):
+        """Test user with no org cannot access any org."""
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_access_org
+
+        user = self._make_user(user_id=1, org_id=None)
+        self.assertFalse(can_access_org(user, 1))
+        self.assertFalse(can_access_org(user, 5))
+
+
 class TestRoleHierarchy(unittest.TestCase):
     """Tests for team role hierarchy and permission checking."""
 
     def test_can_manage_role_admin_manages_all(self):
         """Test admin can manage all roles."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import can_manage_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_manage_role
 
         self.assertTrue(can_manage_role("admin", "admin"))
         self.assertTrue(can_manage_role("admin", "lead"))
@@ -444,7 +539,7 @@ class TestRoleHierarchy(unittest.TestCase):
 
     def test_can_manage_role_lead_manages_members_only(self):
         """Test lead can only manage members."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import can_manage_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_manage_role
 
         self.assertTrue(can_manage_role("lead", "member"))
         self.assertFalse(can_manage_role("lead", "lead"))
@@ -452,7 +547,7 @@ class TestRoleHierarchy(unittest.TestCase):
 
     def test_can_manage_role_member_manages_none(self):
         """Test member cannot manage anyone."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import can_manage_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_manage_role
 
         self.assertFalse(can_manage_role("member", "member"))
         self.assertFalse(can_manage_role("member", "lead"))
@@ -460,14 +555,14 @@ class TestRoleHierarchy(unittest.TestCase):
 
     def test_can_manage_role_unknown_role(self):
         """Test unknown roles cannot manage anyone."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import can_manage_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import can_manage_role
 
         self.assertFalse(can_manage_role("unknown", "member"))
         self.assertFalse(can_manage_role("guest", "member"))
 
     def test_get_user_team_role_finds_role(self):
         """Test get_user_team_role finds user's role."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import get_user_team_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import get_user_team_role
 
         members = [
             {"id": 1, "role": "admin"},
@@ -481,7 +576,7 @@ class TestRoleHierarchy(unittest.TestCase):
 
     def test_get_user_team_role_not_found(self):
         """Test get_user_team_role returns None for non-members."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import get_user_team_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import get_user_team_role
 
         members = [
             {"id": 1, "role": "admin"},
@@ -493,7 +588,7 @@ class TestRoleHierarchy(unittest.TestCase):
 
     def test_get_user_team_role_empty_list(self):
         """Test get_user_team_role handles empty list."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.orgs import get_user_team_role
+        from simpletuner.simpletuner_sdk.server.routes.orgs import get_user_team_role
 
         self.assertIsNone(get_user_team_role([], 1))
 
