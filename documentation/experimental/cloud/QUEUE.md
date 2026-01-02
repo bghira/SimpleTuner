@@ -269,8 +269,8 @@ Active jobs (pending, running, blocked) are never removed by cleanup.
 
 | Component | Location | Description |
 |-----------|----------|-------------|
-| `QueueStore` | `queue/queue_store.py` | SQLite-based persistence |
-| `AsyncQueueStore` | `queue/async_queue_store.py` | Async version |
+| `JobRepository` | `storage/job_repository.py` | Unified SQLite persistence for jobs and queue |
+| `JobRepoQueueAdapter` | `queue/job_repo_adapter.py` | Adapter for scheduler compatibility |
 | `QueueScheduler` | `queue/scheduler.py` | Scheduling logic |
 | `SchedulingPolicy` | `queue/scheduler.py` | Priority/fairness algorithm |
 | `QueueDispatcher` | `queue/dispatcher.py` | Handles job dispatch |
@@ -279,7 +279,7 @@ Active jobs (pending, running, blocked) are never removed by cleanup.
 
 ### Database Schema
 
-Queue entries are stored in SQLite (`~/.simpletuner/cloud/queue.db`):
+Queue and job entries are stored in the unified SQLite database (`~/.simpletuner/cloud/jobs.db`):
 
 ```sql
 CREATE TABLE queue (

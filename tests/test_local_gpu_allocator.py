@@ -65,21 +65,19 @@ class MockQueueStore:
             self._allocated_gpus[job_id] = gpus
         return True
 
-    async def mark_running(self, queue_id: int) -> bool:
+    async def mark_running(self, job_id: str) -> bool:
         """Mark a job as running."""
-        for entry in self._entries.values():
-            if entry.id == queue_id:
-                entry.status = QueueStatus.RUNNING
-                return True
+        if job_id in self._entries:
+            self._entries[job_id].status = QueueStatus.RUNNING
+            return True
         return False
 
-    async def mark_failed(self, queue_id: int, error: str) -> bool:
+    async def mark_failed(self, job_id: str, error: str) -> bool:
         """Mark a job as failed."""
-        for entry in self._entries.values():
-            if entry.id == queue_id:
-                entry.status = QueueStatus.FAILED
-                entry.error_message = error
-                return True
+        if job_id in self._entries:
+            self._entries[job_id].status = QueueStatus.FAILED
+            self._entries[job_id].error_message = error
+            return True
         return False
 
     def add_entry(self, entry: QueueEntry, allocated_gpus: Optional[List[int]] = None) -> None:
@@ -111,7 +109,7 @@ class TestLocalGPUAllocatorBasic(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
     def _create_entry(
         self,
@@ -165,7 +163,7 @@ class TestLocalGPUAllocatorAvailability(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
         # Mock GPU inventory - 4 GPUs
         self.mock_inventory = {
@@ -229,7 +227,7 @@ class TestLocalGPUAllocatorCanAllocate(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
         # Mock GPU inventory - 4 GPUs
         self.mock_inventory = {
@@ -408,7 +406,7 @@ class TestLocalGPUAllocatorAllocation(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
     def _create_entry(self, job_id: str, **kwargs) -> QueueEntry:
         """Create a test queue entry."""
@@ -467,7 +465,7 @@ class TestLocalGPUAllocatorProcessPending(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
         # Mock GPU inventory - 4 GPUs
         self.mock_inventory = {
@@ -612,7 +610,7 @@ class TestLocalGPUAllocatorGPUStatus(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
         self.mock_inventory = {
             "backend": "cuda",
@@ -680,7 +678,7 @@ class TestLocalGPUAllocatorOrgQuota(unittest.TestCase):
         """Set up test fixtures."""
         self.mock_queue_store = MockQueueStore()
         self.allocator = LocalGPUAllocator()
-        self.allocator._queue_store = self.mock_queue_store
+        self.allocator._job_repo = self.mock_queue_store
 
         # Mock GPU inventory - 8 GPUs
         self.mock_inventory = {

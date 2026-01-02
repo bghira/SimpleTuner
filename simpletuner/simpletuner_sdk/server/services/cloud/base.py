@@ -131,6 +131,7 @@ class UnifiedJob:
 
     This is the primary domain model for jobs. It encapsulates:
     - Job state and metadata
+    - Queue/scheduling state (formerly in QueueStore)
     - Business rules for state transitions
     - Access control logic
     - Derived properties (duration, terminal status)
@@ -151,6 +152,21 @@ class UnifiedJob:
     upload_token: Optional[str] = None  # Per-job token for S3 upload authentication
     user_id: Optional[int] = None  # User who submitted the job
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Queue/scheduling fields (merged from QueueStore)
+    priority: int = 10  # Higher = more urgent
+    priority_override: Optional[int] = None  # Manual override
+    queue_position: int = 0  # 0 = running or next
+    queued_at: Optional[str] = None  # When job entered queue
+    requires_approval: bool = False  # Needs admin approval
+    approval_id: Optional[int] = None  # Linked approval record
+    attempt: int = 1  # Current retry attempt
+    max_attempts: int = 3  # Maximum retries allowed
+    team_id: Optional[str] = None  # Team for quota tracking
+    org_id: Optional[int] = None  # Organization for quota tracking
+    estimated_cost: float = 0.0  # Pre-execution cost estimate
+    allocated_gpus: Optional[List[int]] = None  # GPU indices for local jobs
+    num_processes: int = 1  # Number of GPUs/processes needed
 
     # --- Business Logic Methods ---
 

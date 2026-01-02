@@ -600,6 +600,8 @@ class TestQueueStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
+        import os
+
         # Reset all storage singletons for test isolation
         AsyncJobStore._instance = None
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -608,26 +610,46 @@ class TestQueueStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.temp_dir = tempfile.mkdtemp()
 
-        from simpletuner.simpletuner_sdk.server.services.cloud.queue import QueuePriority, QueueStatus, QueueStore
+        # Set SIMPLETUNER_CONFIG_DIR for proper test isolation
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
+        # Reset JobRepository singleton to pick up new config dir
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage import job_repository
+
+        job_repository._job_repository = None
+
+        from simpletuner.simpletuner_sdk.server.services.cloud.queue import (
+            JobRepoQueueAdapter,
+            QueuePriority,
+            QueueStatus,
+            get_queue_adapter,
+        )
         from simpletuner.simpletuner_sdk.server.services.cloud.queue.scheduler import QueueScheduler
 
-        QueueStore._instance = None
-        self.queue_store = QueueStore(Path(self.temp_dir) / "queue.db")
+        self.queue_store = get_queue_adapter()
         self.scheduler = QueueScheduler(self.queue_store)
         self.QueuePriority = QueuePriority
         self.QueueStatus = QueueStatus
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
+        import os
         import shutil
 
-        from simpletuner.simpletuner_sdk.server.services.cloud.queue import QueueStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage import job_repository
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
 
-        QueueStore._instance = None
+        job_repository._job_repository = None
         AsyncJobStore._instance = None
         BaseSQLiteStore._instances.clear()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+        # Restore config dir
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
 
     async def test_queue_fifo_ordering(self) -> None:
         """Test that jobs are dequeued in FIFO order within same priority."""
@@ -671,7 +693,7 @@ class TestQueueStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
         # User 1 has one running job
         await self.queue_store.add_to_queue(job_id="user1-running", user_id=1)
-        await self.queue_store.mark_running((await self.queue_store.get_entry_by_job_id("user1-running")).id)
+        await self.queue_store.mark_running_by_job_id("user1-running")
 
         # User 1 has another pending job
         await self.queue_store.add_to_queue(job_id="user1-pending", user_id=1)
@@ -707,8 +729,9 @@ class TestQueueStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
         # Verify queue stats
         stats = await self.queue_store.get_queue_stats()
-        pending_count = stats.get("by_status", {}).get("pending", 0)
-        self.assertEqual(pending_count, 30)
+        # Jobs are stored with status 'queued', check queue_depth which counts pending+queued
+        queue_depth = stats.get("queue_depth", 0)
+        self.assertEqual(queue_depth, 30)
 
 
 if __name__ == "__main__":

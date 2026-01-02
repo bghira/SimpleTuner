@@ -100,14 +100,12 @@ class QueueDispatcher:
             job_id: The completed job ID.
             cost_usd: Final job cost if available.
         """
-        from .queue_store import QueueStore
+        from .job_repo_adapter import get_queue_adapter
 
         try:
-            queue_store = QueueStore()
-            entry = await queue_store.get_entry_by_job_id(job_id)
-            if entry:
-                await queue_store.mark_completed(entry.id)
-                logger.debug("Marked queue entry as completed: %s", job_id)
+            adapter = get_queue_adapter()
+            await adapter.mark_completed_by_job_id(job_id)
+            logger.debug("Marked queue entry as completed: %s", job_id)
         except Exception as exc:
             logger.warning("Failed to update queue on job completion: %s", exc)
 
@@ -118,14 +116,12 @@ class QueueDispatcher:
             job_id: The failed job ID.
             error: Error message.
         """
-        from .queue_store import QueueStore
+        from .job_repo_adapter import get_queue_adapter
 
         try:
-            queue_store = QueueStore()
-            entry = await queue_store.get_entry_by_job_id(job_id)
-            if entry:
-                await queue_store.mark_failed(entry.id, error)
-                logger.debug("Marked queue entry as failed: %s", job_id)
+            adapter = get_queue_adapter()
+            await adapter.mark_failed_by_job_id(job_id, error)
+            logger.debug("Marked queue entry as failed: %s", job_id)
         except Exception as exc:
             logger.warning("Failed to update queue on job failure: %s", exc)
 

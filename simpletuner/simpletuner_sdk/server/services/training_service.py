@@ -1161,25 +1161,28 @@ def start_training_job(
     )
 
     def _create_running_entry():
-        """Create a queue entry with status=running and allocated GPUs."""
-        from .cloud.queue import QueueStore
-        from .cloud.queue.models import QueuePriority, QueueStatus
+        """Create a job entry with status=running and allocated GPUs."""
+        from datetime import datetime, timezone
+
+        from .cloud.base import CloudJobStatus, JobType, UnifiedJob
+        from .cloud.storage.job_repository import get_job_repository
 
         async def _async_create():
-            # Pre-initialize AsyncJobStore in async context before QueueStore needs it
-            from .cloud.async_job_store import AsyncJobStore
+            job_repo = get_job_repository()
 
-            await AsyncJobStore.get_instance()
-            queue_store = QueueStore()
-            # Create entry directly as running with allocated GPUs
-            entry = await queue_store.add_to_queue(
+            # Create job directly as running with allocated GPUs
+            now = datetime.now(timezone.utc).isoformat()
+            job = UnifiedJob(
                 job_id=job_id,
+                job_type=JobType.LOCAL,
+                provider="local",
+                status=CloudJobStatus.RUNNING.value,
+                config_name=config_name,
+                created_at=now,
+                started_at=now,
+                queued_at=now,
                 user_id=user_id,
                 org_id=org_id,
-                provider="local",
-                config_name=config_name,
-                priority=QueuePriority.NORMAL,
-                job_type="local",
                 num_processes=num_processes,
                 allocated_gpus=gpus_to_use,
                 metadata={
@@ -1188,9 +1191,8 @@ def start_training_job(
                     "any_gpu": any_gpu,
                 },
             )
-            # Mark as running immediately
-            await queue_store.mark_running(entry.id)
-            return entry
+            await job_repo.add(job)
+            return job
 
         try:
             loop = asyncio.get_running_loop()
@@ -1374,9 +1376,10 @@ def _queue_training_job(
         approval_reason: Reason why approval is required (e.g., exceeds org quota).
     """
     import asyncio
+    from datetime import datetime, timezone
 
-    from .cloud.queue import QueueStore
-    from .cloud.queue.models import QueuePriority
+    from .cloud.base import CloudJobStatus, JobType, UnifiedJob
+    from .cloud.storage.job_repository import get_job_repository
 
     config_name = (
         env_name
@@ -1387,28 +1390,47 @@ def _queue_training_job(
         or "local"
     )
 
+    output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+    run_name = runtime_config.get("--tracker_run_name") or runtime_config.get("tracker_run_name")
+
     def _add_to_queue():
         async def _async_add():
-            queue_store = QueueStore()
-            entry = await queue_store.add_to_queue(
+            job_repo = get_job_repository()
+
+            # Create job in queued/pending state
+            now = datetime.now(timezone.utc).isoformat()
+            status = CloudJobStatus.PENDING.value if requires_approval else CloudJobStatus.QUEUED.value
+
+            # Calculate queue position
+            stats = await job_repo.get_queue_stats()
+            queue_depth = stats.get("queue_depth", 0)
+
+            job = UnifiedJob(
                 job_id=job_id,
+                job_type=JobType.LOCAL,
+                provider="local",
+                status=status,
+                config_name=config_name,
+                created_at=now,
+                queued_at=now,
                 user_id=user_id,
                 org_id=org_id,
-                provider="local",
-                config_name=config_name,
-                priority=QueuePriority.NORMAL,
-                job_type="local",
                 num_processes=num_processes,
                 allocated_gpus=preferred_gpus if not any_gpu else None,
                 requires_approval=requires_approval,
+                queue_position=queue_depth + 1,
+                output_url=output_url,
+                hardware_type=_detect_local_hardware(),
                 metadata={
                     "runtime_config": runtime_config,
                     "env_name": env_name,
                     "any_gpu": any_gpu,
                     "approval_reason": approval_reason,
+                    "run_name": run_name,
                 },
             )
-            return entry.position, entry.status.value
+            await job_repo.add(job)
+            return job.queue_position, status
 
         try:
             loop = asyncio.get_running_loop()
@@ -1421,43 +1443,6 @@ def _queue_training_job(
             return asyncio.run(_async_add())
 
     position, status = _add_to_queue()
-
-    # Also create a JobStore entry so the job appears in jobs list
-    try:
-        UnifiedJob = _get_unified_job_class()
-        CloudJobStatus = _get_cloud_job_status()
-        job_store = _get_job_store()
-
-        output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
-        run_name = runtime_config.get("--tracker_run_name") or runtime_config.get("tracker_run_name")
-
-        local_job = UnifiedJob.create_local(
-            job_id=job_id,
-            config_name=config_name,
-            hardware_type=_detect_local_hardware(),
-        )
-        local_job.output_url = output_url
-        local_job.status = CloudJobStatus.QUEUED.value if not requires_approval else CloudJobStatus.PENDING.value
-        local_job.user_id = user_id
-
-        if run_name:
-            local_job.metadata["run_name"] = run_name
-
-        # Store job asynchronously
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(job_store.add_job(local_job))
-        except RuntimeError:
-            import threading
-
-            def _add_job():
-                import asyncio as aio
-
-                aio.run(job_store.add_job(local_job))
-
-            threading.Thread(target=_add_job, daemon=True).start()
-    except Exception as exc:
-        logger.warning("Failed to track queued job in JobStore: %s", exc)
 
     if requires_approval:
         logger.info(

@@ -90,7 +90,7 @@ class TestLocalJobQueueEntryCreation(unittest.TestCase):
         mock_store = MagicMock()
         mock_store.get_allocated_gpus = mock_get_allocated
         mock_store.count_running_local_jobs = mock_count_running
-        allocator._queue_store = mock_store
+        allocator._job_repo = mock_store
 
         # Verify can_allocate returns correct GPUs
         can_alloc, gpus, reason = asyncio.run(allocator.can_allocate(required_count=1, any_gpu=True))
@@ -168,7 +168,7 @@ class TestGPUAllocationTracking(unittest.TestCase):
         mock_store = MagicMock()
         mock_store.get_allocated_gpus = mock_get_allocated
         mock_store.count_running_local_jobs = mock_count_running
-        self.allocator._queue_store = mock_store
+        self.allocator._job_repo = mock_store
 
     @patch("simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.detect_gpu_inventory")
     @patch("simpletuner.simpletuner_sdk.server.services.webui_state.WebUIStateStore")
@@ -301,7 +301,7 @@ class TestConcurrencyLimits(unittest.TestCase):
         mock_store = MagicMock()
         mock_store.count_running_local_jobs = mock_count_running
         mock_store.get_allocated_gpus = mock_get_allocated
-        self.allocator._queue_store = mock_store
+        self.allocator._job_repo = mock_store
 
     @patch("simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.detect_gpu_inventory")
     @patch("simpletuner.simpletuner_sdk.server.services.webui_state.WebUIStateStore")
@@ -341,7 +341,7 @@ class TestConcurrencyLimits(unittest.TestCase):
         async def mock_get_allocated():
             return {0}
 
-        self.allocator._queue_store.get_allocated_gpus = mock_get_allocated
+        self.allocator._job_repo.get_allocated_gpus = mock_get_allocated
 
         # Try to allocate 2 more GPUs (would exceed limit)
         can_alloc, gpus, reason = asyncio.run(self.allocator.can_allocate(required_count=2))

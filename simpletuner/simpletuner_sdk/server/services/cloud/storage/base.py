@@ -24,12 +24,20 @@ T = TypeVar("T")
 def get_default_config_dir() -> Path:
     """Get the default configuration directory in a cross-platform manner.
 
+    Environment variable override:
+        SIMPLETUNER_CONFIG_DIR: If set, use this path directly (useful for testing)
+
     Returns:
         Path to the configuration directory:
         - Windows: %APPDATA%/SimpleTuner
         - macOS: ~/Library/Application Support/SimpleTuner
         - Linux: ~/.config/simpletuner or ~/.simpletuner (legacy)
     """
+    # Check for explicit override (testing, custom deployment)
+    override = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+    if override:
+        return Path(override)
+
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         return base / "SimpleTuner"

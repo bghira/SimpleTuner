@@ -208,9 +208,9 @@ class QueueScheduler:
             user_max_concurrent: Maximum running jobs per user
         """
         if queue_store is None:
-            from .queue_store import QueueStore
+            from .job_repo_adapter import get_queue_adapter
 
-            queue_store = QueueStore()
+            queue_store = get_queue_adapter()
 
         self._queue_store: QueueStoreProtocol = queue_store
 
@@ -319,7 +319,7 @@ class QueueScheduler:
             logger.warning("Cannot cancel running job %s via queue", job_id)
             return False
 
-        success = await self._queue_store.mark_cancelled(entry.id)
+        success = await self._queue_store.mark_cancelled_by_job_id(entry.job_id)
         if success:
             logger.info("Cancelled queued job %s", job_id)
         return success
@@ -487,7 +487,7 @@ class QueueScheduler:
             if not entry:
                 break
             # Mark as running immediately to prevent re-selection
-            await self._queue_store.mark_running(entry.id)
+            await self._queue_store.mark_running_by_job_id(entry.job_id)
             entries_to_dispatch.append(entry)
 
         if not entries_to_dispatch:
@@ -516,10 +516,10 @@ class QueueScheduler:
             else:
                 # Mark as failed if out of retries, otherwise requeue
                 if entry.attempt >= entry.max_attempts:
-                    await self._queue_store.mark_failed(entry.id, str(exc))
+                    await self._queue_store.mark_failed_by_job_id(entry.job_id, str(exc))
                 else:
-                    await self._queue_store.update_entry(
-                        entry.id,
+                    await self._queue_store.update_entry_by_job_id(
+                        entry.job_id,
                         {
                             "status": QueueStatus.PENDING.value,
                             "attempt": entry.attempt + 1,
@@ -534,19 +534,11 @@ class QueueScheduler:
 
     async def job_completed(self, job_id: str) -> bool:
         """Mark a job as completed in the queue."""
-        entry = await self._queue_store.get_entry_by_job_id(job_id)
-        if not entry:
-            return False
-
-        return await self._queue_store.mark_completed(entry.id)
+        return await self._queue_store.mark_completed_by_job_id(job_id)
 
     async def job_failed(self, job_id: str, error: str) -> bool:
         """Mark a job as failed in the queue."""
-        entry = await self._queue_store.get_entry_by_job_id(job_id)
-        if not entry:
-            return False
-
-        return await self._queue_store.mark_failed(entry.id, error)
+        return await self._queue_store.mark_failed_by_job_id(job_id, error)
 
     async def start_background_processing(self, interval_seconds: float = 5.0) -> None:
         """Start background queue processing.
@@ -641,8 +633,8 @@ class QueueScheduler:
             logger.warning("Job %s is not blocked (status: %s)", job_id, entry.status)
             return False
 
-        success = await self._queue_store.update_entry(
-            entry.id,
+        success = await self._queue_store.update_entry_by_job_id(
+            entry.job_id,
             {
                 "status": QueueStatus.PENDING.value,
                 "requires_approval": 0,
@@ -673,7 +665,7 @@ class QueueScheduler:
             logger.warning("Job %s is not blocked (status: %s)", job_id, entry.status)
             return False
 
-        return await self._queue_store.mark_failed(entry.id, f"Rejected: {reason}")
+        return await self._queue_store.mark_failed_by_job_id(entry.job_id, f"Rejected: {reason}")
 
     async def set_priority(
         self,
@@ -712,8 +704,8 @@ class QueueScheduler:
             logger.warning("Invalid priority_override %d (must be 0-50)", priority_override)
             return None
 
-        success = await self._queue_store.update_entry(
-            entry.id,
+        success = await self._queue_store.update_entry_by_job_id(
+            entry.job_id,
             {"priority_override": priority_override},
         )
 

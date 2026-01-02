@@ -47,6 +47,11 @@ class APITestEnvironmentMixin:
         dataset_plan = self.tmp_path / "dataset_plan.json"
         os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = str(dataset_plan)
 
+        # Redirect config directory to temp directory for test isolation
+        # This covers JobRepository, QueueStore, and all other storage
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = str(self.tmp_path)
+
         # Redirect auth database to temp directory for test isolation
         self._previous_auth_db = os.environ.get("SIMPLETUNER_AUTH_DB_PATH")
         auth_db = self.tmp_path / "test_auth.db"
@@ -66,6 +71,12 @@ class APITestEnvironmentMixin:
                 os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = self._previous_dataset_plan
             else:
                 os.environ.pop("SIMPLETUNER_DATASET_PLAN_PATH", None)
+
+            # Restore config directory path
+            if self._previous_config_dir is not None:
+                os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+            else:
+                os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
 
             # Restore auth database path
             if self._previous_auth_db is not None:
@@ -161,12 +172,15 @@ class APITestEnvironmentMixin:
         except ImportError:
             pass
 
-        # Reset QueueStore singleton
-        try:
-            from simpletuner.simpletuner_sdk.server.services.cloud.queue import QueueStore
+        # QueueStore is now an alias for JobRepoQueueAdapter (no singleton)
+        # JobRepository singleton is reset above
 
-            QueueStore._instance = None
-        except ImportError:
+        # Reset JobRepository singleton
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.storage import job_repository
+
+            job_repository._job_repository = None
+        except (ImportError, AttributeError):
             pass
 
         # Reset UserStore singleton

@@ -173,10 +173,10 @@ def _create_quota_checker():
 
 
 def _create_queue_manager():
-    """Factory for QueueStore."""
-    from .queue import QueueStore
+    """Factory for queue adapter (uses JobRepository)."""
+    from .queue.job_repo_adapter import get_queue_adapter
 
-    return QueueStore()
+    return get_queue_adapter()
 
 
 def _create_notification_service():

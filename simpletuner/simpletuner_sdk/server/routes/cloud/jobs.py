@@ -6,6 +6,9 @@ Thin route handlers that delegate to service modules.
 from __future__ import annotations
 
 import logging
+import os
+import signal
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -33,6 +36,53 @@ from ._shared import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _kill_process_by_stored_pid(job_id: str) -> bool:
+    """Try to kill an orphaned process using the PID stored in queue metadata.
+
+    Used when process_keeper doesn't have the process (e.g., after server restart).
+
+    Args:
+        job_id: The job ID to look up.
+
+    Returns:
+        True if the process was killed or already dead, False if no PID found.
+    """
+    try:
+        from ...services.cloud.storage.job_repository import get_job_repository
+
+        job_repo = get_job_repository()
+        job = await job_repo.get(job_id)
+
+        if not job or not job.metadata:
+            return False
+
+        pid = job.metadata.get("pid")
+        if not pid:
+            return False
+
+        # Try SIGTERM first, then SIGKILL if needed
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.5)
+            # Check if still alive
+            try:
+                os.kill(pid, 0)  # Signal 0 = check existence
+                # Still alive, force kill
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass  # Already dead from SIGTERM
+            return True
+        except OSError as e:
+            if e.errno == 3:  # ESRCH - No such process
+                return True  # Process already dead
+            logger.warning("Failed to kill PID %d for job %s: %s", pid, job_id, e)
+            return False
+
+    except Exception as exc:
+        logger.warning("Error looking up PID for job %s: %s", job_id, exc)
+        return False
 
 
 @router.post("/jobs/sync")
@@ -171,7 +221,13 @@ async def cancel_job(
 
             success = process_keeper.terminate_process(job_id)
             if not success:
-                logger.warning("Job %s not found in process_keeper registry", job_id)
+                # Process not in registry (server restarted?) - try stored PID
+                logger.warning("Job %s not found in process_keeper registry, trying stored PID", job_id)
+                success = await _kill_process_by_stored_pid(job_id)
+                if success:
+                    logger.info("Killed orphaned process for job %s via stored PID", job_id)
+                else:
+                    logger.warning("Could not kill job %s - no process found", job_id)
         except Exception as exc:
             logger.warning("Could not terminate local process %s: %s", job_id, exc)
 
@@ -185,21 +241,20 @@ async def cancel_job(
         },
     )
 
-    # Update queue entry and release GPUs for local jobs
+    # Release GPUs and process pending jobs for local jobs
     if job.job_type == JobType.LOCAL:
         try:
-            from ...services.cloud.queue import QueueStore
             from ...services.local_gpu_allocator import get_gpu_allocator
-
-            queue_store = QueueStore()
-            entry = await queue_store.get_entry_by_job_id(job_id)
-            if entry:
-                await queue_store.mark_cancelled(entry.id)
 
             allocator = get_gpu_allocator()
             await allocator.release(job_id)
+
+            # Process pending jobs to start the next one if GPUs are available
+            started = await allocator.process_pending_jobs()
+            if started:
+                logger.info("Started %d pending jobs after cancel", len(started))
         except Exception as exc:
-            logger.warning("Could not update queue/release GPUs for %s: %s", job_id, exc)
+            logger.warning("Could not release GPUs for %s: %s", job_id, exc)
 
     store.log_audit_event(
         action="job.cancelled",
@@ -285,6 +340,8 @@ async def delete_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete job",
         )
+
+    # With unified JobRepository, no separate queue store to sync
 
     store.log_audit_event(
         action="job.deleted",
