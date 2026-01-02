@@ -573,6 +573,8 @@ def create_app(
         if filename not in SOUND_FILE_MAP:
             raise HTTPException(status_code=404, detail="Sound not found")
         mapped_name = SOUND_FILE_MAP[filename]
+
+        # Try system sound themes first
         for theme_path in SOUND_THEME_PATHS:
             sound_file = theme_path / mapped_name
             if sound_file.is_file():
@@ -581,6 +583,16 @@ def create_app(
                     media_type="audio/ogg",
                     headers={"Cache-Control": "public, max-age=86400"},
                 )
+
+        # Fall back to bundled sounds in static directory
+        bundled_path = get_static_directory() / "sounds" / mapped_name
+        if bundled_path.is_file():
+            return FileResponse(
+                bundled_path,
+                media_type="audio/ogg",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+
         raise HTTPException(status_code=404, detail="Sound file not available on this system")
 
     # Add routes based on mode
