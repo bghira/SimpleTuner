@@ -1,4 +1,4 @@
-"""Authentication routes for cloud training.
+"""Authentication routes.
 
 Provides login, logout, session management, and API key operations.
 """
@@ -13,15 +13,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
-from ...services.cloud.audit import AuditEventType, audit_log
-from ...services.cloud.auth import UserStore, get_current_user, get_optional_user, require_permission
-from ...services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_client_ip
-from ...services.cloud.auth.models import AuthProvider, User
+from ..services.cloud.audit import AuditEventType, audit_log
+from ..services.cloud.auth import UserStore, get_current_user, get_optional_user, require_permission
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_client_ip
+from ..services.cloud.auth.models import AuthProvider, User
 from .users import UserResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # Lock to prevent TOCTOU race condition in first-admin creation
 _first_admin_lock = asyncio.Lock()
@@ -120,7 +120,7 @@ async def get_setup_status() -> SetupStatusResponse:
     Use this to determine if the setup wizard should be shown.
     Also returns whether public registration is enabled.
     """
-    from ...services.webui_state import WebUIStateStore
+    from ..services.webui_state import WebUIStateStore
 
     store = _get_store()
     user_count = await store.get_user_count()
@@ -479,9 +479,9 @@ async def register(
     """Register a new user account.
 
     Note: This endpoint is disabled by default and must be enabled by an admin.
-    Check /api/cloud/settings/registration for registration availability.
+    Check /api/auth/setup/status for registration availability.
     """
-    from ...services.webui_state import WebUIStateStore
+    from ..services.webui_state import WebUIStateStore
 
     store = _get_store()
 
@@ -489,7 +489,7 @@ async def register(
     if not await store.has_any_users():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Use /setup/first-admin for initial setup",
+            detail="Use /api/auth/setup/first-admin for initial setup",
         )
 
     # Check if public registration is enabled

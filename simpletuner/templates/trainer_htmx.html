@@ -220,7 +220,7 @@ document.addEventListener('alpine:init', () => {
             this.loginForm.error = null;
 
             try {
-                const response = await fetch('/api/cloud/login', {
+                const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -254,7 +254,7 @@ document.addEventListener('alpine:init', () => {
         },
         async logout() {
             try {
-                await fetch('/api/cloud/logout', { method: 'POST' });
+                await fetch('/api/auth/logout', { method: 'POST' });
                 this.currentUser = null;
                 if (window.showToast) {
                     window.showToast('Logged out successfully', 'info');

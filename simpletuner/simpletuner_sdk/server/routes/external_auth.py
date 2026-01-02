@@ -10,16 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from ...services.cloud.auth import get_current_user, require_permission
-from ...services.cloud.auth.middleware import SESSION_COOKIE_NAME
-from ...services.cloud.auth.models import User
-from ...services.cloud.auth.providers import AuthProviderManager
-from ...services.cloud.auth.providers.base import ProviderConfig
-from ...services.cloud.auth.user_store import UserStore
+from ..services.cloud.auth import get_current_user, require_permission
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME
+from ..services.cloud.auth.models import User
+from ..services.cloud.auth.providers import AuthProviderManager
+from ..services.cloud.auth.providers.base import ProviderConfig
+from ..services.cloud.auth.user_store import UserStore
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/external-auth", tags=["external-auth"])
+router = APIRouter(prefix="/api/auth/external", tags=["external-auth"])
 
 
 # --- Request/Response Models ---

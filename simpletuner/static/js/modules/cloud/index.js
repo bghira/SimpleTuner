@@ -155,7 +155,7 @@ if (!window.cloudDashboardComponent) {
 
                 for (let attempt = 0; attempt < maxRetries; attempt++) {
                     try {
-                        const response = await fetch('/api/cloud/setup/status');
+                        const response = await fetch('/api/auth/setup/status');
                         if (response.ok) {
                             const data = await response.json();
                             this.setupState.needsSetup = data.needs_setup;
@@ -193,7 +193,7 @@ if (!window.cloudDashboardComponent) {
 
             async _checkAuthentication() {
                 try {
-                    const response = await fetch('/api/cloud/check');
+                    const response = await fetch('/api/auth/check');
                     if (response.ok) {
                         const data = await response.json();
                         if (data.authenticated) {
@@ -231,7 +231,7 @@ if (!window.cloudDashboardComponent) {
                 this.setupState.error = null;
 
                 try {
-                    const response = await fetch('/api/cloud/login', {
+                    const response = await fetch('/api/auth/login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -288,7 +288,7 @@ if (!window.cloudDashboardComponent) {
                 this.setupState.error = null;
 
                 try {
-                    const response = await fetch('/api/cloud/setup/first-admin', {
+                    const response = await fetch('/api/auth/setup/first-admin', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

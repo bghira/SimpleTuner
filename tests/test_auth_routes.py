@@ -38,7 +38,7 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
 
         # Patch the _get_store function in auth routes to use our temp db
         self._store_patcher = patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.auth._get_store",
+            "simpletuner.simpletuner_sdk.server.routes.auth._get_store",
             lambda: UserStore(self.db_path),
         )
         self._store_patcher.start()
@@ -69,7 +69,7 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
         two simultaneous requests could both pass the has_any_users() check
         before either creates a user, resulting in two admin users.
         """
-        from simpletuner.simpletuner_sdk.server.routes.cloud.auth import FirstRunSetupRequest, create_first_admin
+        from simpletuner.simpletuner_sdk.server.routes.auth import FirstRunSetupRequest, create_first_admin
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
 
         # Mock request and response objects
@@ -134,7 +134,7 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
 
     async def test_first_admin_after_users_exist(self) -> None:
         """Test that first-admin endpoint rejects when users already exist."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.auth import FirstRunSetupRequest, create_first_admin
+        from simpletuner.simpletuner_sdk.server.routes.auth import FirstRunSetupRequest, create_first_admin
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
 
         store = UserStore()
@@ -173,7 +173,7 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
 
     async def test_first_admin_success(self) -> None:
         """Test successful first admin creation when no users exist."""
-        from simpletuner.simpletuner_sdk.server.routes.cloud.auth import FirstRunSetupRequest, create_first_admin
+        from simpletuner.simpletuner_sdk.server.routes.auth import FirstRunSetupRequest, create_first_admin
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
 
         # Mock request and response

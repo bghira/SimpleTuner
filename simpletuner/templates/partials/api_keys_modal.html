@@ -156,7 +156,7 @@ if (!window.apiKeysComponent) {
                 this.loading = true;
                 this.error = null;
                 try {
-                    const response = await fetch('/api/cloud/api-keys');
+                    const response = await fetch('/api/auth/api-keys');
                     if (response.ok) {
                         this.keys = await response.json();
                     } else if (response.status === 401) {
@@ -181,7 +181,7 @@ if (!window.apiKeysComponent) {
                     if (this.newKeyExpires) {
                         body.expires_days = parseInt(this.newKeyExpires);
                     }
-                    const response = await fetch('/api/cloud/api-keys', {
+                    const response = await fetch('/api/auth/api-keys', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body),
@@ -211,7 +211,7 @@ if (!window.apiKeysComponent) {
                 this.revoking = keyId;
                 this.error = null;
                 try {
-                    const response = await fetch(`/api/cloud/api-keys/${keyId}`, {
+                    const response = await fetch(`/api/auth/api-keys/${keyId}`, {
                         method: 'DELETE',
                     });
                     if (response.ok) {
