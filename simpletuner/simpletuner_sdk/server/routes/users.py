@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr, Field
 
 from ..services.cloud.auth import UserStore, require_permission
+from ..services.cloud.auth.middleware import invalidate_single_user_mode
 from ..services.cloud.auth.models import AuthProvider, User
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,14 @@ async def create_user(
 
         # Reload with permissions
         user = await store.get_user(user.id)
+
+        # Clean up placeholder user if this is a real user being created
+        if user.email != "local@localhost":
+            placeholder = await store.get_user_by_username("local")
+            if placeholder and placeholder.email == "local@localhost":
+                await store.delete_user(placeholder.id)
+                invalidate_single_user_mode()
+                logger.info("Removed placeholder local@localhost user")
 
         logger.info("User created by admin %s: %s", admin.username, user.username)
 

@@ -355,7 +355,8 @@ class UserStore:
         return await self._users.update(user_id, {"last_login_at": now})
 
     async def delete_user(self, user_id: int) -> bool:
-        """Delete a user."""
+        """Delete a user and invalidate all their sessions."""
+        await self._sessions.delete_user_sessions(user_id)
         return await self._users.delete(user_id)
 
     async def get_user_count(self) -> int:

@@ -15,7 +15,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from ..services.cloud.audit import AuditEventType, audit_log
 from ..services.cloud.auth import UserStore, get_current_user, get_optional_user, require_permission
-from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_client_ip
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_client_ip, invalidate_single_user_mode
 from ..services.cloud.auth.models import AuthProvider, User
 from .users import UserResponse
 
@@ -172,6 +172,7 @@ async def create_first_admin(
             local_user = await store.get_user_by_username("local")
             if local_user and local_user.email == "local@localhost":
                 await store.delete_user(local_user.id)
+                invalidate_single_user_mode()
 
             # Create the admin user
             user = await store.create_user(

@@ -646,5 +646,397 @@ class TestAPIKeyCreation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keys[0].name, "Permanent Key")
 
 
+class TestSingleUserModeInvalidation(unittest.IsolatedAsyncioTestCase):
+    """Test cases for single-user mode cache invalidation."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import (
+            AuthMiddleware,
+            _auth_middleware,
+            invalidate_single_user_mode,
+        )
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        # Reset global middleware
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+
+        middleware_module._auth_middleware = None
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+
+        middleware_module._auth_middleware = None
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_clear_single_user_cache_resets_state(self) -> None:
+        """Test that clear_single_user_cache resets all cached state."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import AuthMiddleware
+
+        middleware = AuthMiddleware(self.store)
+
+        # Simulate cached single-user mode state
+        middleware._single_user_checked = True
+        middleware._single_user_mode = True
+        middleware._local_admin = MagicMock()
+
+        # Clear the cache
+        middleware.clear_single_user_cache()
+
+        # Verify all state is reset
+        self.assertFalse(middleware._single_user_checked)
+        self.assertFalse(middleware._single_user_mode)
+        self.assertIsNone(middleware._local_admin)
+
+    async def test_invalidate_single_user_mode_clears_global_middleware(self) -> None:
+        """Test that invalidate_single_user_mode clears the global middleware cache."""
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import (
+            get_auth_middleware,
+            invalidate_single_user_mode,
+        )
+
+        # Get the global middleware and set up cached state
+        middleware = get_auth_middleware()
+        middleware._single_user_checked = True
+        middleware._single_user_mode = True
+        middleware._local_admin = MagicMock()
+
+        # Invalidate
+        invalidate_single_user_mode()
+
+        # Verify state is reset
+        self.assertFalse(middleware._single_user_checked)
+        self.assertFalse(middleware._single_user_mode)
+        self.assertIsNone(middleware._local_admin)
+
+    async def test_invalidate_single_user_mode_safe_when_no_middleware(self) -> None:
+        """Test that invalidate_single_user_mode is safe when middleware not initialized."""
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import invalidate_single_user_mode
+
+        # Ensure no middleware exists
+        middleware_module._auth_middleware = None
+
+        # Should not raise
+        invalidate_single_user_mode()
+
+    async def test_middleware_rechecks_after_invalidation(self) -> None:
+        """Test that middleware re-evaluates single-user mode after cache invalidation."""
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import AuthMiddleware
+
+        middleware = AuthMiddleware(self.store)
+
+        # First call: no users, creates placeholder and enters single-user mode
+        result = await middleware._ensure_single_user_mode()
+        self.assertIsNotNone(result)
+        self.assertTrue(middleware._single_user_mode)
+        self.assertEqual(result.username, "local")
+
+        # Create a real user
+        await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Without clearing cache, still returns cached local admin
+        result = await middleware._ensure_single_user_mode()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.username, "local")
+
+        # Clear cache
+        middleware.clear_single_user_cache()
+
+        # Now should detect we're not in single-user mode (real user exists)
+        result = await middleware._ensure_single_user_mode()
+        self.assertIsNone(result)
+        self.assertFalse(middleware._single_user_mode)
+
+
+class TestUserDeletionSessionInvalidation(unittest.IsolatedAsyncioTestCase):
+    """Test cases for session invalidation on user deletion."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_delete_user_invalidates_sessions(self) -> None:
+        """Test that deleting a user also deletes all their sessions."""
+        # Create a user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Create multiple sessions for the user
+        session1 = await self.store.create_session(user.id, duration_hours=24)
+        session2 = await self.store.create_session(user.id, duration_hours=24)
+        session3 = await self.store.create_session(user.id, duration_hours=24)
+
+        # Verify sessions exist and are valid
+        self.assertIsNotNone(await self.store.get_session_user(session1))
+        self.assertIsNotNone(await self.store.get_session_user(session2))
+        self.assertIsNotNone(await self.store.get_session_user(session3))
+
+        # Delete the user
+        await self.store.delete_user(user.id)
+
+        # Verify all sessions are now invalid
+        self.assertIsNone(await self.store.get_session_user(session1))
+        self.assertIsNone(await self.store.get_session_user(session2))
+        self.assertIsNone(await self.store.get_session_user(session3))
+
+    async def test_delete_user_does_not_affect_other_users_sessions(self) -> None:
+        """Test that deleting a user doesn't affect other users' sessions."""
+        # Create two users
+        user1 = await self.store.create_user(
+            email="user1@example.com",
+            username="user1",
+            password="password123",
+            level_names=["researcher"],
+        )
+        user2 = await self.store.create_user(
+            email="user2@example.com",
+            username="user2",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Create sessions for both users
+        session1 = await self.store.create_session(user1.id, duration_hours=24)
+        session2 = await self.store.create_session(user2.id, duration_hours=24)
+
+        # Delete user1
+        await self.store.delete_user(user1.id)
+
+        # User1's session should be invalid
+        self.assertIsNone(await self.store.get_session_user(session1))
+
+        # User2's session should still be valid
+        self.assertIsNotNone(await self.store.get_session_user(session2))
+
+
+class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
+    """Test cases for placeholder user cleanup when creating users via admin panel."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        # Reset global middleware
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+
+        middleware_module._auth_middleware = None
+
+        # Patch _get_store in users routes
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.users._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        self._store_patcher.stop()
+
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+
+        middleware_module._auth_middleware = None
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_placeholder_deleted_when_real_user_created(self) -> None:
+        """Test that placeholder user is deleted when a real user is created via admin panel."""
+        from simpletuner.simpletuner_sdk.server.routes.users import CreateUserRequest, create_user
+
+        # Create the placeholder user (simulating what middleware does)
+        placeholder = await self.store.create_user(
+            email="local@localhost",
+            username="local",
+            password="local",
+            display_name="Local Admin",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Verify placeholder exists
+        users = await self.store.list_users()
+        self.assertEqual(len(users), 1)
+        self.assertEqual(users[0].username, "local")
+
+        # Create a mock admin user for the dependency
+        mock_admin = MagicMock()
+        mock_admin.username = "local"
+
+        # Create a real user via admin panel
+        data = CreateUserRequest(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            display_name="Real Admin",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        await create_user(data, admin=mock_admin)
+
+        # Verify placeholder is deleted and only real user exists
+        users = await self.store.list_users()
+        self.assertEqual(len(users), 1)
+        self.assertEqual(users[0].username, "admin")
+        self.assertEqual(users[0].email, "admin@example.com")
+
+    async def test_placeholder_not_deleted_when_another_placeholder_created(self) -> None:
+        """Test that creating another local@localhost user doesn't cause issues."""
+        from simpletuner.simpletuner_sdk.server.routes.users import CreateUserRequest, create_user
+
+        # Create the placeholder user
+        await self.store.create_user(
+            email="local@localhost",
+            username="local",
+            password="local",
+            display_name="Local Admin",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        mock_admin = MagicMock()
+        mock_admin.username = "local"
+
+        # Create a real user
+        data = CreateUserRequest(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        await create_user(data, admin=mock_admin)
+
+        # Now only the real user exists
+        users = await self.store.list_users()
+        self.assertEqual(len(users), 1)
+
+    async def test_cache_invalidated_when_placeholder_deleted(self) -> None:
+        """Test that single-user mode cache is invalidated when placeholder is deleted."""
+        import simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware as middleware_module
+        from simpletuner.simpletuner_sdk.server.routes.users import CreateUserRequest, create_user
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_auth_middleware
+
+        # Create placeholder
+        await self.store.create_user(
+            email="local@localhost",
+            username="local",
+            password="local",
+            display_name="Local Admin",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Set up middleware with cached single-user mode
+        middleware = get_auth_middleware()
+        middleware._single_user_checked = True
+        middleware._single_user_mode = True
+        middleware._local_admin = MagicMock()
+
+        mock_admin = MagicMock()
+        mock_admin.username = "local"
+
+        # Create real user (should trigger cache invalidation)
+        data = CreateUserRequest(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        await create_user(data, admin=mock_admin)
+
+        # Verify cache was invalidated
+        self.assertFalse(middleware._single_user_checked)
+        self.assertFalse(middleware._single_user_mode)
+        self.assertIsNone(middleware._local_admin)
+
+
 if __name__ == "__main__":
     unittest.main()
