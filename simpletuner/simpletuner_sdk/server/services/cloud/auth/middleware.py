@@ -179,6 +179,12 @@ class AuthMiddleware:
             self._store = UserStore()
         return self._store
 
+    def clear_single_user_cache(self) -> None:
+        """Clear the single-user mode cache, forcing re-evaluation on next request."""
+        self._single_user_checked = False
+        self._single_user_mode = False
+        self._local_admin = None
+
     async def _ensure_single_user_mode(self) -> Optional[User]:
         """Check for single-user mode and ensure a local admin exists.
 
@@ -327,6 +333,15 @@ def get_auth_middleware() -> AuthMiddleware:
     if _auth_middleware is None:
         _auth_middleware = AuthMiddleware()
     return _auth_middleware
+
+
+def invalidate_single_user_mode() -> None:
+    """Invalidate single-user mode cache, forcing re-check on next request.
+
+    Call this when a real user is created or the placeholder user is deleted.
+    """
+    if _auth_middleware is not None:
+        _auth_middleware.clear_single_user_cache()
 
 
 async def get_auth_context(request: Request) -> AuthContext:
