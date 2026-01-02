@@ -4,13 +4,14 @@ Provides queuing, priority, fair scheduling, and concurrency management.
 """
 
 from .dispatcher import QueueDispatcher, get_dispatcher, reset_dispatcher
+from .job_repo_adapter import JobRepoQueueAdapter, get_queue_adapter
 from .models import QueueEntry, QueuePriority, QueueStatus
 from .protocol import QueueStoreProtocol
-from .queue_store import QueueStore
 from .scheduler import QueueScheduler, SchedulingConfig, SchedulingDecision, SchedulingPolicy
 
-# Backwards compatibility alias - QueueStore already has async methods
-AsyncQueueStore = QueueStore
+# Backwards compatibility aliases - use JobRepoQueueAdapter
+QueueStore = JobRepoQueueAdapter
+AsyncQueueStore = JobRepoQueueAdapter
 
 __all__ = [
     # Models
@@ -19,9 +20,11 @@ __all__ = [
     "QueuePriority",
     # Protocol
     "QueueStoreProtocol",
-    # Store
+    # Store (backwards compat aliases)
     "QueueStore",
     "AsyncQueueStore",
+    "JobRepoQueueAdapter",
+    "get_queue_adapter",
     # Scheduler
     "QueueScheduler",
     "SchedulingPolicy",

@@ -20,23 +20,19 @@ logger = logging.getLogger(__name__)
 
 
 def _update_job_store_status(job_id: str | None, status: str) -> None:
-    """Update job status in unified JobStore and QueueStore for local jobs.
+    """Update job status in the unified JobRepository.
 
     This is called when training completes or fails via webhook callbacks,
-    ensuring local job status is properly reflected in the Job Queue.
+    ensuring job status is properly reflected in the Job Queue.
     """
     if not job_id:
         return
 
     try:
-        from datetime import datetime, timezone
+        from .cloud.base import CloudJobStatus, JobType
+        from .cloud.storage.job_repository import get_job_repository
 
-        from .cloud.base import CloudJobStatus
-        from .cloud.container import get_job_store
-        from .cloud.queue import QueueStore
-
-        job_store = get_job_store()
-        queue_store = QueueStore()
+        job_repo = get_job_repository()
 
         # Map callback status to CloudJobStatus
         if status in {"completed", "success"}:
@@ -48,28 +44,30 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
         else:
             return  # Don't update for other statuses
 
-        updates = {
-            "status": new_status,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }
-
         async def _do_updates():
-            # Update JobStore
-            await job_store.update_job(job_id, updates)
-            # Update QueueStore entry status
-            entry = await queue_store.get_entry_by_job_id(job_id)
-            if entry:
-                if new_status == CloudJobStatus.COMPLETED.value:
-                    await queue_store.mark_completed(entry.id)
-                elif new_status == CloudJobStatus.FAILED.value:
-                    await queue_store.mark_failed(entry.id, "Job failed")
-                elif new_status == CloudJobStatus.CANCELLED.value:
-                    await queue_store.mark_cancelled(entry.id)
-                # Release GPUs
+            # Get job to check if it's local
+            job = await job_repo.get(job_id)
+            if not job:
+                return
+
+            # Update job status
+            if new_status == CloudJobStatus.COMPLETED.value:
+                await job_repo.mark_completed(job_id)
+            elif new_status == CloudJobStatus.FAILED.value:
+                await job_repo.mark_failed(job_id, "Job failed")
+            elif new_status == CloudJobStatus.CANCELLED.value:
+                await job_repo.mark_cancelled(job_id)
+
+            # Release GPUs and process pending jobs for local jobs
+            if job.job_type == JobType.LOCAL:
                 from .local_gpu_allocator import get_gpu_allocator
 
                 allocator = get_gpu_allocator()
                 await allocator.release(job_id)
+                # Process pending jobs to start the next one if GPUs are available
+                started = await allocator.process_pending_jobs()
+                if started:
+                    logger.info("Started %d pending jobs after job %s", len(started), new_status)
 
         try:
             loop = asyncio.get_running_loop()
@@ -92,7 +90,7 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
 
             threading.Thread(target=_update, daemon=True).start()
     except Exception as exc:
-        logger.debug("Failed to update job status in JobStore: %s", exc)
+        logger.debug("Failed to update job status in JobRepository: %s", exc)
 
 
 _default_service: CallbackService | None = None

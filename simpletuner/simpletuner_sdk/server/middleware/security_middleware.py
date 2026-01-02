@@ -49,9 +49,9 @@ class RateLimitRule:
 # Note: Unauthenticated requests use DEFAULT_ANONYMOUS_RATE_LIMIT (below)
 # Authenticated users get much higher limits via AUTHENTICATED_USER_MULTIPLIER
 DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
-    # Authentication - strict limits (these apply regardless of auth status)
-    (r"^/api/auth/login$", 5, 60, ["POST"]),  # 5 login attempts/min
-    (r"^/api/auth/register$", 3, 60, ["POST"]),  # 3 user registrations/min
+    # Authentication - moderate limits (allow retries for typos)
+    (r"^/api/auth/login$", 15, 60, ["POST"]),  # 15 login attempts/min
+    (r"^/api/auth/register$", 5, 60, ["POST"]),  # 5 user registrations/min
     (r"^/api/auth/api-keys$", 10, 60, ["POST"]),  # 10 key creations/min
     # Job submission - moderate limits
     (r"^/api/cloud/jobs$", 20, 60, ["POST"]),  # 20 job submissions/min
@@ -179,8 +179,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             "/api/prompt-libraries/",
             "/api/caption-filters",
             "/api/training/status",
-            # Setup status (needed during onboarding)
+            # Auth status checks (needed during login/onboarding flow)
             "/api/auth/setup/status",
+            "/api/auth/check",
         ]
         self.enable_audit = enable_audit
         self._lock = threading.Lock()

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from .hardware_service import detect_gpu_inventory
 
 if TYPE_CHECKING:
-    from .cloud.queue.models import QueueEntry
+    from .cloud.base import UnifiedJob
 
 logger = logging.getLogger(__name__)
 
@@ -27,107 +28,136 @@ def get_gpu_allocator() -> "LocalGPUAllocator":
 class LocalGPUAllocator:
     """Manages GPU allocation state for local training jobs.
 
-    Thread-safe via QueueStore's SQLite WAL mode.
-    GPU state is derived from running queue entries with non-null allocated_gpus.
+    Thread-safe via JobRepository's SQLite WAL mode.
+    GPU state is derived from running jobs with non-null allocated_gpus.
     """
 
     def __init__(self):
-        self._queue_store = None
+        self._job_repo = None
         self._reconciled = False
 
-    async def reconcile_on_startup(self, max_entries: int = 20) -> int:
-        """Reconcile LOCAL queue entries with actual job status.
+    async def reconcile_on_startup(self, max_entries: int = 20) -> Dict[str, int]:
+        """Reconcile LOCAL jobs with actual process status.
 
-        Called on startup to fix orphaned entries where the queue
-        thinks a local job is running but the JobStore shows it's terminal.
-
-        Only checks local jobs on this node (not cloud jobs), limited to
-        max_entries to avoid expensive queries on large installations.
+        Called on startup to check running LOCAL jobs and handle orphaned ones:
+        - Jobs with live PIDs are marked as "adopted" (process alive, IPC broken)
+        - Jobs with dead PIDs are marked as failed
+        - Jobs without PIDs (legacy) are marked as failed
 
         Args:
             max_entries: Maximum number of running entries to check (default 20).
 
         Returns:
-            Number of entries fixed.
+            Dictionary with stats: {"orphaned": N, "adopted": N, "no_pid": N}
         """
-        if self._reconciled:
-            return 0
+        stats = {"orphaned": 0, "adopted": 0, "no_pid": 0}
 
-        queue_store = self._get_queue_store()
+        if self._reconciled:
+            return stats
+
+        job_repo = self._get_job_repo()
         # Only get LOCAL running jobs - this is bounded by the number of
         # GPUs on this machine, so should be small (typically 0-8)
-        running_entries = await queue_store.get_running_local_jobs()
+        running_jobs = await job_repo.get_running_local_jobs()
 
-        if not running_entries:
+        if not running_jobs:
             self._reconciled = True
-            return 0
+            return stats
 
         # Limit entries to check
-        entries_to_check = running_entries[:max_entries]
-        if len(running_entries) > max_entries:
+        jobs_to_check = running_jobs[:max_entries]
+        if len(running_jobs) > max_entries:
             logger.warning(
-                "Found %d running local queue entries, only checking first %d",
-                len(running_entries),
+                "Found %d running local jobs, only checking first %d",
+                len(running_jobs),
                 max_entries,
             )
 
-        fixed = 0
-        try:
-            from .cloud.async_job_store import AsyncJobStore
-            from .cloud.base import CloudJobStatus
+        for job in jobs_to_check:
+            pid = job.metadata.get("pid") if job.metadata else None
 
-            job_store = await AsyncJobStore.get_instance()
-            terminal_statuses = {
-                CloudJobStatus.COMPLETED.value,
-                CloudJobStatus.FAILED.value,
-                CloudJobStatus.CANCELLED.value,
-            }
-
-            for entry in entries_to_check:
-                job = await job_store.get_job(entry.job_id)
-                if job is None or job.status in terminal_statuses:
-                    # Queue says running but job is terminal/missing - fix it
-                    status_to_set = job.status if job else "failed"
-                    if status_to_set == CloudJobStatus.COMPLETED.value:
-                        await queue_store.mark_completed(entry.id)
-                    elif status_to_set == CloudJobStatus.CANCELLED.value:
-                        await queue_store.mark_cancelled(entry.id)
-                    else:
-                        await queue_store.mark_failed(entry.id, "Orphaned entry reconciled on startup")
-
-                    logger.info(
-                        "Reconciled orphaned local queue entry %s (job %s) from running to %s",
-                        entry.id,
-                        entry.job_id,
-                        status_to_set,
+            if pid:
+                if self._is_process_alive(pid):
+                    # Process still alive - mark as "adopted" (IPC broken but killable)
+                    metadata = job.metadata.copy() if job.metadata else {}
+                    metadata["orphaned"] = True  # IPC is broken
+                    await job_repo.update(job.job_id, {"metadata": metadata})
+                    stats["adopted"] += 1
+                    logger.warning(
+                        "Job %s adopted (PID %d alive, IPC broken)",
+                        job.job_id,
+                        pid,
                     )
-                    fixed += 1
-
-        except Exception as exc:
-            logger.warning("Failed to reconcile local queue entries: %s", exc)
+                else:
+                    # Process died - mark as failed
+                    await job_repo.mark_failed(
+                        job.job_id,
+                        "Process crashed or killed (orphaned after restart)",
+                    )
+                    await self.release(job.job_id)
+                    stats["orphaned"] += 1
+                    logger.info(
+                        "Job %s marked as failed (PID %d dead)",
+                        job.job_id,
+                        pid,
+                    )
+            else:
+                # No PID stored - legacy entry, mark as failed
+                await job_repo.mark_failed(
+                    job.job_id,
+                    "Job orphaned (no PID tracked)",
+                )
+                await self.release(job.job_id)
+                stats["no_pid"] += 1
+                logger.info(
+                    "Job %s marked as failed (no PID tracked)",
+                    job.job_id,
+                )
 
         self._reconciled = True
-        return fixed
+        return stats
 
-    def _get_queue_store(self):
-        """Lazy-load queue store to avoid circular imports."""
-        if self._queue_store is None:
-            from pathlib import Path
+    def _is_process_alive(self, pid: int) -> bool:
+        """Check if a process with given PID is still running.
 
-            from .cloud.queue import QueueStore
+        Args:
+            pid: The process ID to check.
 
-            # Pass db_path directly to avoid get_job_store() call in async context
-            db_path = Path.home() / ".simpletuner" / "config" / "cloud" / "queue.db"
-            self._queue_store = QueueStore(db_path=db_path)
-        return self._queue_store
+        Returns:
+            True if the process exists and is running, False otherwise.
+        """
+        try:
+            os.kill(pid, 0)  # Signal 0 = check if process exists
+            return True
+        except OSError:
+            return False
+
+    async def _reconcile_stale_entries(self, job_repo) -> int:
+        """No-op: With unified JobRepository, there are no stale entries to reconcile.
+
+        This method previously reconciled between separate QueueStore and JobStore.
+        Now that they're merged, it's kept for API compatibility but does nothing.
+
+        Returns:
+            Always returns 0.
+        """
+        return 0
+
+    def _get_job_repo(self):
+        """Lazy-load job repository to avoid circular imports."""
+        if self._job_repo is None:
+            from .cloud.storage.job_repository import get_job_repository
+
+            self._job_repo = get_job_repository()
+        return self._job_repo
 
     async def get_allocated_gpus(self) -> Set[int]:
         """Get set of currently allocated GPU indices.
 
         Returns device indices from all running local jobs.
         """
-        queue_store = self._get_queue_store()
-        return await queue_store.get_allocated_gpus()
+        job_repo = self._get_job_repo()
+        return await job_repo.get_allocated_gpus()
 
     async def get_available_gpus(self) -> List[int]:
         """Get list of available GPU indices.
@@ -150,9 +180,13 @@ class LocalGPUAllocator:
         all_devices = inventory.get("devices", [])
         all_gpu_indices = [d["index"] for d in all_devices]
 
-        queue_store = self._get_queue_store()
-        allocated = await queue_store.get_allocated_gpus()
-        running_jobs = await queue_store.get_running_local_jobs()
+        job_repo = self._get_job_repo()
+
+        # No-op: with unified store, no stale entries to reconcile
+        await self._reconcile_stale_entries(job_repo)
+
+        allocated = await job_repo.get_allocated_gpus()
+        running_jobs = await job_repo.get_running_local_jobs()
         available = [gpu for gpu in all_gpu_indices if gpu not in allocated]
 
         # Build per-GPU status
@@ -220,8 +254,8 @@ class LocalGPUAllocator:
             max_gpus = None
             max_jobs = 1
 
-        queue_store = self._get_queue_store()
-        running_count = await queue_store.count_running_local_jobs()
+        job_repo = self._get_job_repo()
+        running_count = await job_repo.count_running_local_jobs()
 
         if running_count >= max_jobs:
             return (
@@ -305,8 +339,8 @@ class LocalGPUAllocator:
                 return None
 
             # Get current org GPU usage
-            queue_store = self._get_queue_store()
-            org_gpu_usage = await queue_store.get_org_gpu_usage(org_id)
+            job_repo = self._get_job_repo()
+            org_gpu_usage = await job_repo.get_org_gpu_usage(org_id)
 
             if org_gpu_usage + required_count > local_gpu_quota.limit_value:
                 # Would exceed org quota
@@ -338,10 +372,10 @@ class LocalGPUAllocator:
     async def allocate(self, job_id: str, gpu_indices: List[int]) -> bool:
         """Record GPU allocation for a job.
 
-        Updates the queue entry's allocated_gpus field.
+        Updates the job's allocated_gpus field.
         """
-        queue_store = self._get_queue_store()
-        success = await queue_store.update_allocated_gpus(job_id, gpu_indices)
+        job_repo = self._get_job_repo()
+        success = await job_repo.update_allocated_gpus(job_id, gpu_indices)
         if success:
             logger.info("Allocated GPUs %s to job %s", gpu_indices, job_id)
         return success
@@ -349,10 +383,10 @@ class LocalGPUAllocator:
     async def release(self, job_id: str) -> bool:
         """Release GPUs when job completes/fails/cancels.
 
-        Clears the allocated_gpus field in queue entry.
+        Clears the allocated_gpus field in job.
         """
-        queue_store = self._get_queue_store()
-        success = await queue_store.update_allocated_gpus(job_id, None)
+        job_repo = self._get_job_repo()
+        success = await job_repo.update_allocated_gpus(job_id, None)
         if success:
             logger.info("Released GPUs for job %s", job_id)
         return success
@@ -362,8 +396,8 @@ class LocalGPUAllocator:
 
         Returns list of job IDs that were started.
         """
-        queue_store = self._get_queue_store()
-        pending_jobs = await queue_store.get_pending_local_jobs()
+        job_repo = self._get_job_repo()
+        pending_jobs = await job_repo.get_pending_local_jobs()
         started_jobs = []
 
         for job in pending_jobs:
@@ -385,11 +419,11 @@ class LocalGPUAllocator:
                         gpus,
                         job.job_id,
                     )
-                    await queue_store.mark_failed(job.id, f"Failed to allocate GPUs {gpus}")
+                    await job_repo.mark_failed(job.job_id, f"Failed to allocate GPUs {gpus}")
                     continue
 
                 # Mark as running only after successful allocation
-                await queue_store.mark_running(job.id)
+                await job_repo.mark_running(job.job_id)
 
                 # Actually start the training job
                 try:
@@ -412,7 +446,7 @@ class LocalGPUAllocator:
                             release_exc,
                         )
                     try:
-                        await queue_store.mark_failed(job.id, f"Failed to start: {exc}")
+                        await job_repo.mark_failed(job.job_id, f"Failed to start: {exc}")
                     except Exception as mark_exc:
                         logger.error(
                             "Failed to mark job %s as failed: %s",
@@ -430,20 +464,17 @@ class LocalGPUAllocator:
 
         return started_jobs
 
-    async def _start_queued_job(self, job: "QueueEntry", gpus: List[int]) -> None:
+    async def _start_queued_job(self, job: "UnifiedJob", gpus: List[int]) -> None:
         """Actually start a queued training job.
 
         Args:
-            job: The queue entry with job metadata.
+            job: The UnifiedJob with job metadata.
             gpus: The GPUs allocated to this job.
         """
         from . import training_service
-        from .cloud.async_job_store import AsyncJobStore
-        from .cloud.base import CloudJobStatus
 
         metadata = job.metadata or {}
         runtime_config = metadata.get("runtime_config", {})
-        env_name = metadata.get("env_name")
 
         if not runtime_config:
             raise ValueError("No runtime_config in job metadata")
@@ -461,12 +492,14 @@ class LocalGPUAllocator:
             runtime_config,
         )
 
-        # Update JobStore status to running
-        job_store = await AsyncJobStore.get_instance()
-        await job_store.update_job(
-            job.job_id,
-            {"status": CloudJobStatus.RUNNING.value},
-        )
+        # Store PID in job metadata for orphan detection on restart
+        pid = process_keeper.get_process_pid(job.job_id)
+        if pid:
+            job_repo = self._get_job_repo()
+            updated_metadata = metadata.copy()
+            updated_metadata["pid"] = pid
+            await job_repo.update(job.job_id, {"metadata": updated_metadata})
+            logger.debug("Stored PID %d for job %s", pid, job.job_id)
 
         # Update APIState
         training_service.APIState.set_state("current_job_id", job.job_id)

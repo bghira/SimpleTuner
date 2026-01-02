@@ -19,7 +19,8 @@ from .base import BaseSQLiteStore, get_default_db_path
 logger = logging.getLogger(__name__)
 
 # Schema version for this repository
-SCHEMA_VERSION = 4
+# v5: Merged queue fields from QueueStore
+SCHEMA_VERSION = 5
 
 
 class JobRepository(BaseSQLiteStore):
@@ -38,7 +39,7 @@ class JobRepository(BaseSQLiteStore):
         try:
             cursor = conn.cursor()
 
-            # Create jobs table
+            # Create jobs table (unified with queue fields as of v5)
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -56,7 +57,21 @@ class JobRepository(BaseSQLiteStore):
                     output_url TEXT,
                     upload_token TEXT,
                     user_id INTEGER,
-                    metadata TEXT DEFAULT '{}'
+                    metadata TEXT DEFAULT '{}',
+                    -- Queue/scheduling fields (merged from QueueStore in v5)
+                    priority INTEGER NOT NULL DEFAULT 10,
+                    priority_override INTEGER,
+                    queue_position INTEGER NOT NULL DEFAULT 0,
+                    queued_at TEXT,
+                    requires_approval INTEGER DEFAULT 0,
+                    approval_id INTEGER,
+                    attempt INTEGER DEFAULT 1,
+                    max_attempts INTEGER DEFAULT 3,
+                    team_id TEXT,
+                    org_id INTEGER,
+                    estimated_cost REAL DEFAULT 0.0,
+                    allocated_gpus TEXT,
+                    num_processes INTEGER DEFAULT 1
                 )
             """
             )
@@ -92,7 +107,7 @@ class JobRepository(BaseSQLiteStore):
             """
             )
 
-            # Check and set schema version
+            # Check and run schema migrations
             cursor.execute("SELECT version FROM schema_version LIMIT 1")
             row = cursor.fetchone()
             if row is None:
@@ -102,6 +117,39 @@ class JobRepository(BaseSQLiteStore):
                 if current_version < SCHEMA_VERSION:
                     self._run_migrations(cursor, current_version, SCHEMA_VERSION)
                     cursor.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+            # Queue-related indexes (v5) - created after migrations ensure columns exist
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority DESC)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_queue_position ON jobs(queue_position)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_scheduling ON jobs(status, priority DESC, queued_at ASC)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_team_id ON jobs(team_id)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_org_id ON jobs(org_id)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_local_running ON jobs(job_type, status)
+                WHERE job_type = 'local' AND status = 'running'
+            """
+            )
 
             conn.commit()
         except Exception as exc:
@@ -124,6 +172,46 @@ class JobRepository(BaseSQLiteStore):
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id)")
                 logger.info("Added user_id column to jobs table")
 
+        if from_version < 5 <= to_version:
+            # v5: Merge queue fields from QueueStore
+            cursor.execute("PRAGMA table_info(jobs)")
+            existing_columns = {row["name"] for row in cursor.fetchall()}
+
+            queue_columns = [
+                ("priority", "INTEGER NOT NULL DEFAULT 10"),
+                ("priority_override", "INTEGER"),
+                ("queue_position", "INTEGER NOT NULL DEFAULT 0"),
+                ("queued_at", "TEXT"),
+                ("requires_approval", "INTEGER DEFAULT 0"),
+                ("approval_id", "INTEGER"),
+                ("attempt", "INTEGER DEFAULT 1"),
+                ("max_attempts", "INTEGER DEFAULT 3"),
+                ("team_id", "TEXT"),
+                ("org_id", "INTEGER"),
+                ("estimated_cost", "REAL DEFAULT 0.0"),
+                ("allocated_gpus", "TEXT"),
+                ("num_processes", "INTEGER DEFAULT 1"),
+            ]
+
+            for col_name, col_def in queue_columns:
+                if col_name not in existing_columns:
+                    cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def}")
+                    logger.info("Added %s column to jobs table", col_name)
+
+            # Create new indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_queue_position ON jobs(queue_position)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_scheduling ON jobs(status, priority DESC, queued_at ASC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_team_id ON jobs(team_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_org_id ON jobs(org_id)")
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_local_running ON jobs(job_type, status)
+                WHERE job_type = 'local' AND status = 'running'
+            """
+            )
+            logger.info("Queue fields merged into jobs table (v5 migration complete)")
+
     async def add(self, job: UnifiedJob) -> bool:
         """Add a new job to the repository.
 
@@ -144,8 +232,11 @@ class JobRepository(BaseSQLiteStore):
                     INSERT OR IGNORE INTO jobs (
                         job_id, job_type, provider, status, config_name,
                         created_at, started_at, completed_at, cost_usd,
-                        hardware_type, error_message, output_url, upload_token, user_id, metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        hardware_type, error_message, output_url, upload_token, user_id, metadata,
+                        priority, priority_override, queue_position, queued_at,
+                        requires_approval, approval_id, attempt, max_attempts,
+                        team_id, org_id, estimated_cost, allocated_gpus, num_processes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         job.job_id,
@@ -163,6 +254,19 @@ class JobRepository(BaseSQLiteStore):
                         job.upload_token,
                         job.user_id,
                         json.dumps(job.metadata),
+                        job.priority,
+                        job.priority_override,
+                        job.queue_position,
+                        job.queued_at,
+                        1 if job.requires_approval else 0,
+                        job.approval_id,
+                        job.attempt,
+                        job.max_attempts,
+                        job.team_id,
+                        job.org_id,
+                        job.estimated_cost,
+                        json.dumps(job.allocated_gpus) if job.allocated_gpus else None,
+                        job.num_processes,
                     ),
                 )
                 conn.commit()
@@ -520,11 +624,22 @@ class JobRepository(BaseSQLiteStore):
             except json.JSONDecodeError:
                 pass
 
-        user_id = None
-        try:
-            user_id = row["user_id"]
-        except (IndexError, KeyError):
-            pass
+        # Handle columns that may not exist in older databases
+        def safe_get(key, default=None):
+            try:
+                val = row[key]
+                return val if val is not None else default
+            except (IndexError, KeyError):
+                return default
+
+        # Parse allocated_gpus from JSON
+        allocated_gpus = None
+        allocated_gpus_str = safe_get("allocated_gpus")
+        if allocated_gpus_str:
+            try:
+                allocated_gpus = json.loads(allocated_gpus_str)
+            except json.JSONDecodeError:
+                pass
 
         return UnifiedJob(
             job_id=row["job_id"],
@@ -540,9 +655,398 @@ class JobRepository(BaseSQLiteStore):
             error_message=row["error_message"],
             output_url=row["output_url"],
             upload_token=row["upload_token"],
-            user_id=user_id,
+            user_id=safe_get("user_id"),
             metadata=metadata,
+            # Queue/scheduling fields (v5)
+            priority=safe_get("priority", 10),
+            priority_override=safe_get("priority_override"),
+            queue_position=safe_get("queue_position", 0),
+            queued_at=safe_get("queued_at"),
+            requires_approval=bool(safe_get("requires_approval", 0)),
+            approval_id=safe_get("approval_id"),
+            attempt=safe_get("attempt", 1),
+            max_attempts=safe_get("max_attempts", 3),
+            team_id=safe_get("team_id"),
+            org_id=safe_get("org_id"),
+            estimated_cost=safe_get("estimated_cost", 0.0),
+            allocated_gpus=allocated_gpus,
+            num_processes=safe_get("num_processes", 1),
         )
+
+    # --- Queue/Scheduling Methods (merged from QueueStore) ---
+
+    async def mark_running(self, job_id: str) -> bool:
+        """Mark a job as running and set started_at timestamp."""
+        now = datetime.now(timezone.utc).isoformat()
+        return await self.update(job_id, {"status": CloudJobStatus.RUNNING.value, "started_at": now})
+
+    async def mark_completed(self, job_id: str) -> bool:
+        """Mark a job as completed and set completed_at timestamp."""
+        now = datetime.now(timezone.utc).isoformat()
+        return await self.update(job_id, {"status": CloudJobStatus.COMPLETED.value, "completed_at": now})
+
+    async def mark_failed(self, job_id: str, error: str) -> bool:
+        """Mark a job as failed with error message."""
+        now = datetime.now(timezone.utc).isoformat()
+        return await self.update(
+            job_id,
+            {"status": CloudJobStatus.FAILED.value, "completed_at": now, "error_message": error},
+        )
+
+    async def mark_cancelled(self, job_id: str) -> bool:
+        """Mark a job as cancelled."""
+        now = datetime.now(timezone.utc).isoformat()
+        return await self.update(job_id, {"status": CloudJobStatus.CANCELLED.value, "completed_at": now})
+
+    async def get_pending_local_jobs(self) -> List[UnifiedJob]:
+        """Get all pending local jobs awaiting GPU allocation."""
+        loop = asyncio.get_running_loop()
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE job_type = 'local' AND status IN ('pending', 'queued')
+                    ORDER BY priority DESC, queued_at ASC
+                    """
+                )
+                return [self._row_to_job(row) for row in cursor.fetchall()]
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get)
+
+    async def get_running_local_jobs(self) -> List[UnifiedJob]:
+        """Get all running local jobs."""
+        loop = asyncio.get_running_loop()
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE job_type = 'local' AND status = 'running'
+                    ORDER BY started_at ASC
+                    """
+                )
+                return [self._row_to_job(row) for row in cursor.fetchall()]
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get)
+
+    async def get_allocated_gpus(self) -> set:
+        """Get all GPU indices currently allocated to running local jobs."""
+        loop = asyncio.get_running_loop()
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT allocated_gpus FROM jobs
+                    WHERE job_type = 'local' AND status = 'running' AND allocated_gpus IS NOT NULL
+                    """
+                )
+                allocated: set = set()
+                for row in cursor.fetchall():
+                    gpus = json.loads(row["allocated_gpus"])
+                    if isinstance(gpus, list):
+                        allocated.update(gpus)
+                return allocated
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get)
+
+    async def update_allocated_gpus(self, job_id: str, gpus: Optional[List[int]]) -> bool:
+        """Update the allocated GPUs for a job."""
+        gpus_json = json.dumps(gpus) if gpus else None
+        return await self.update(job_id, {"allocated_gpus": gpus_json})
+
+    async def count_running_local_jobs(self) -> int:
+        """Count the number of running local jobs."""
+        loop = asyncio.get_running_loop()
+
+        def _count():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) as cnt FROM jobs WHERE job_type = 'local' AND status = 'running'")
+                return cursor.fetchone()["cnt"]
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _count)
+
+    async def count_running(self) -> int:
+        """Count total running jobs (all types)."""
+        loop = asyncio.get_running_loop()
+
+        def _count():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status = 'running'")
+                return cursor.fetchone()["cnt"]
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _count)
+
+    async def get_queue_stats(self) -> Dict[str, Any]:
+        """Get queue statistics for monitoring."""
+        loop = asyncio.get_running_loop()
+
+        def _get_stats():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                stats = {}
+
+                # Count by status
+                cursor.execute("SELECT status, COUNT(*) as cnt FROM jobs GROUP BY status")
+                stats["by_status"] = {row["status"]: row["cnt"] for row in cursor.fetchall()}
+
+                # Queue depth (pending/queued jobs)
+                cursor.execute("SELECT COUNT(*) as depth FROM jobs WHERE status IN ('pending', 'queued')")
+                stats["queue_depth"] = cursor.fetchone()["depth"]
+
+                # Running count
+                stats["running"] = stats["by_status"].get("running", 0)
+
+                # Average wait time (for completed jobs)
+                cursor.execute(
+                    """
+                    SELECT AVG(JULIANDAY(started_at) - JULIANDAY(queued_at)) * 86400 as avg_wait
+                    FROM jobs
+                    WHERE status = 'completed' AND started_at IS NOT NULL AND queued_at IS NOT NULL
+                    """
+                )
+                row = cursor.fetchone()
+                stats["avg_wait_seconds"] = row["avg_wait"] if row else None
+
+                return stats
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get_stats)
+
+    async def count_gpus_by_org(self) -> Dict[int, int]:
+        """Get count of allocated GPUs per organization for running local jobs."""
+        loop = asyncio.get_running_loop()
+
+        def _count():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT org_id, allocated_gpus FROM jobs
+                    WHERE job_type = 'local' AND status = 'running'
+                    AND org_id IS NOT NULL AND allocated_gpus IS NOT NULL
+                    """
+                )
+                org_gpu_counts: Dict[int, int] = {}
+                for row in cursor.fetchall():
+                    org_id = row["org_id"]
+                    gpus = json.loads(row["allocated_gpus"])
+                    if isinstance(gpus, list):
+                        org_gpu_counts[org_id] = org_gpu_counts.get(org_id, 0) + len(gpus)
+                return org_gpu_counts
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _count)
+
+    async def get_org_gpu_usage(self, org_id: int) -> int:
+        """Get the number of GPUs currently used by a specific organization."""
+        loop = asyncio.get_running_loop()
+
+        def _count():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT allocated_gpus FROM jobs
+                    WHERE job_type = 'local' AND status = 'running'
+                    AND org_id = ? AND allocated_gpus IS NOT NULL
+                    """,
+                    (org_id,),
+                )
+                total_gpus = 0
+                for row in cursor.fetchall():
+                    gpus = json.loads(row["allocated_gpus"])
+                    if isinstance(gpus, list):
+                        total_gpus += len(gpus)
+                return total_gpus
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _count)
+
+    async def list_pending_by_priority(self, limit: int = 50) -> List[UnifiedJob]:
+        """List pending cloud jobs by priority for scheduling."""
+        loop = asyncio.get_running_loop()
+
+        def _list():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status IN ('pending', 'queued')
+                      AND job_type != 'local'
+                    ORDER BY priority DESC, queued_at ASC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+                return [self._row_to_job(row) for row in cursor.fetchall()]
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _list)
+
+    async def count_running_by_user(self) -> Dict[int, int]:
+        """Get running job count per user."""
+        loop = asyncio.get_running_loop()
+
+        def _count():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT user_id, COUNT(*) as running_count
+                    FROM jobs
+                    WHERE status = 'running' AND user_id IS NOT NULL
+                    GROUP BY user_id
+                    """
+                )
+                return {row["user_id"]: row["running_count"] for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _count)
+
+    async def count_running_by_team(self) -> Dict[str, int]:
+        """Get running job count per team."""
+        loop = asyncio.get_running_loop()
+
+        def _count():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT team_id, COUNT(*) as running_count
+                    FROM jobs
+                    WHERE status = 'running' AND team_id IS NOT NULL
+                    GROUP BY team_id
+                    """
+                )
+                return {row["team_id"]: row["running_count"] for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _count)
+
+    async def get_positions_batch(self, job_ids: List[str]) -> Dict[str, int]:
+        """Get queue positions for multiple jobs."""
+        if not job_ids:
+            return {}
+
+        loop = asyncio.get_running_loop()
+
+        def _get_batch():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                placeholders = ",".join("?" * len(job_ids))
+                cursor.execute(
+                    f"SELECT job_id, queue_position FROM jobs WHERE job_id IN ({placeholders})",
+                    job_ids,
+                )
+                return {row["job_id"]: row["queue_position"] for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get_batch)
+
+    async def recalculate_queue_positions(self) -> int:
+        """Recalculate queue positions for pending jobs."""
+        loop = asyncio.get_running_loop()
+
+        def _recalculate():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                # Get pending jobs ordered by priority and queue time
+                cursor.execute(
+                    """
+                    SELECT job_id FROM jobs
+                    WHERE status IN ('pending', 'queued')
+                    ORDER BY priority DESC, queued_at ASC
+                    """
+                )
+                job_ids = [row["job_id"] for row in cursor.fetchall()]
+
+                # Update positions
+                for i, job_id in enumerate(job_ids, start=1):
+                    cursor.execute(
+                        "UPDATE jobs SET queue_position = ? WHERE job_id = ?",
+                        (i, job_id),
+                    )
+                conn.commit()
+                return len(job_ids)
+            finally:
+                conn.close()
+
+        async with self._lock:
+            return await loop.run_in_executor(None, _recalculate)
+
+    async def cleanup_old_entries(self, days: int = 30) -> int:
+        """Clean up old completed/failed/cancelled jobs.
+
+        Args:
+            days: Delete terminal jobs older than this many days
+
+        Returns:
+            Number of jobs deleted
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_iso = cutoff.isoformat()
+
+        loop = asyncio.get_running_loop()
+
+        def _cleanup():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    DELETE FROM jobs
+                    WHERE completed_at < ?
+                    AND status IN ('completed', 'failed', 'cancelled')
+                    """,
+                    (cutoff_iso,),
+                )
+                conn.commit()
+                return cursor.rowcount
+            finally:
+                conn.close()
+
+        async with self._lock:
+            return await loop.run_in_executor(None, _cleanup)
 
 
 # Singleton accessor

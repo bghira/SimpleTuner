@@ -350,11 +350,27 @@ async def lifespan(app: FastAPI):
     await initialize_sse_manager()
     logger.info("SSE manager started")
 
-    # Process any pending local jobs in the queue
+    # Reconcile orphaned local jobs from previous run and process pending jobs
     try:
         from simpletuner.simpletuner_sdk.server.services.local_gpu_allocator import get_gpu_allocator
 
         allocator = get_gpu_allocator()
+
+        # Check for orphaned jobs from a previous server run
+        reconcile_stats = await allocator.reconcile_on_startup()
+        if reconcile_stats["orphaned"] > 0 or reconcile_stats["no_pid"] > 0:
+            logger.warning(
+                "Reconciled orphaned local jobs: %d dead, %d adopted, %d no-pid",
+                reconcile_stats["orphaned"],
+                reconcile_stats["adopted"],
+                reconcile_stats["no_pid"],
+            )
+        elif reconcile_stats["adopted"] > 0:
+            logger.info(
+                "Adopted %d running local jobs from previous server run",
+                reconcile_stats["adopted"],
+            )
+
         started = await allocator.process_pending_jobs()
         if started:
             logger.info("Started %d pending local jobs on startup: %s", len(started), started)

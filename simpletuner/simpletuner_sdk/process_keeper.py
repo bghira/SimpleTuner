@@ -1369,6 +1369,24 @@ def get_process_status(job_id: str) -> str:
         return process.status
 
 
+def get_process_pid(job_id: str) -> Optional[int]:
+    """Get the PID of a running job's subprocess.
+
+    Args:
+        job_id: The job ID to look up
+
+    Returns:
+        The process ID if found, None otherwise
+    """
+    with lock:
+        entry = process_registry.get(job_id)
+        if entry and entry.get("process"):
+            proc = entry["process"].process
+            if proc:
+                return proc.pid
+    return None
+
+
 def terminate_process(job_id: str) -> bool:
     """Terminate a running process."""
     with lock:
