@@ -8,7 +8,7 @@ window.adminAuthProviderMethods = {
     async loadAuthProviders() {
         this.authProvidersLoading = true;
         try {
-            const response = await fetch('/api/cloud/external-auth/providers');
+            const response = await fetch('/api/auth/external/providers');
             if (response.ok) {
                 const data = await response.json();
                 this.authProviders = data.providers || [];
@@ -62,13 +62,13 @@ window.adminAuthProviderMethods = {
         try {
             let response;
             if (this.editingAuthProvider) {
-                response = await fetch(`/api/cloud/external-auth/providers/${this.editingAuthProvider.id}`, {
+                response = await fetch(`/api/auth/external/providers/${this.editingAuthProvider.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(this.authProviderForm),
                 });
             } else {
-                response = await fetch('/api/cloud/external-auth/providers', {
+                response = await fetch('/api/auth/external/providers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(this.authProviderForm),
@@ -97,7 +97,7 @@ window.adminAuthProviderMethods = {
         if (!confirm(`Delete auth provider "${provider.name}"? Users who logged in via this provider will not be able to log in again.`)) return;
 
         try {
-            const response = await fetch(`/api/cloud/external-auth/providers/${provider.id}`, {
+            const response = await fetch(`/api/auth/external/providers/${provider.id}`, {
                 method: 'DELETE',
             });
             if (response.ok) {
@@ -114,7 +114,7 @@ window.adminAuthProviderMethods = {
 
     async testAuthProvider(provider) {
         try {
-            const response = await fetch(`/api/cloud/external-auth/providers/${provider.name}/test`, {
+            const response = await fetch(`/api/auth/external/providers/${provider.name}/test`, {
                 method: 'POST',
             });
             if (response.ok) {

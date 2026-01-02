@@ -169,7 +169,7 @@
                                 <div class="col-12">
                                     <label class="form-label">Redirect URI</label>
                                     <input type="text" class="form-control bg-secondary text-light" readonly
-                                           :value="window.location.origin + '/api/cloud/external-auth/oidc/' + (providerForm.name || '{provider}') + '/callback'">
+                                           :value="window.location.origin + '/api/auth/external/oidc/' + (providerForm.name || '{provider}') + '/callback'">
                                     <small class="form-text text-muted">Configure this in your IdP's allowed redirect URIs</small>
                                 </div>
                             </div>

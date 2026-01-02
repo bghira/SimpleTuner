@@ -267,7 +267,7 @@ window.adminEnterpriseOnboardingMethods = {
                 default_level: this.quickAuthForm.ldap.default_level,
             };
 
-            const response = await fetch('/api/cloud/external-auth/providers', {
+            const response = await fetch('/api/auth/external/providers', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

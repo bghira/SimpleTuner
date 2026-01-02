@@ -180,7 +180,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             "/api/caption-filters",
             "/api/training/status",
             # Setup status (needed during onboarding)
-            "/api/cloud/auth/setup/status",
+            "/api/auth/setup/status",
         ]
         self.enable_audit = enable_audit
         self._lock = threading.Lock()
