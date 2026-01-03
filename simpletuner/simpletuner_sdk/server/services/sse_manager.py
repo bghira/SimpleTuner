@@ -34,6 +34,8 @@ class SSEConnection:
     last_activity: datetime
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     active: bool = True
+    user_id: Optional[int] = None
+    session_id: Optional[str] = None
 
 
 class SSEManager:
@@ -86,7 +88,12 @@ class SSEManager:
         for conn_id in list(self.connections.keys()):
             await self.remove_connection(conn_id)
 
-    async def add_connection(self, request: Request) -> Optional[SSEConnection]:
+    async def add_connection(
+        self,
+        request: Request,
+        user_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> Optional[SSEConnection]:
         """Add a new SSE connection with limits."""
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
@@ -110,12 +117,14 @@ class SSEManager:
             user_agent=user_agent,
             created_at=datetime.utcnow(),
             last_activity=datetime.utcnow(),
+            user_id=user_id,
+            session_id=session_id,
         )
 
         self.connections[conn_id] = connection
         self.connections_by_ip[client_ip].add(conn_id)
 
-        logger.info(f"Added SSE connection {conn_id} from {client_ip}")
+        logger.info(f"Added SSE connection {conn_id} from {client_ip} (user_id={user_id})")
         return connection
 
     async def remove_connection(self, connection_id: str):
@@ -171,6 +180,29 @@ class SSEManager:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def notify_session_invalidated(self, user_id: int, reason: str = "session_expired") -> int:
+        """Notify all connections for a user that their session has been invalidated.
+
+        Args:
+            user_id: The user whose sessions were invalidated
+            reason: Reason for invalidation (e.g., "session_expired", "user_deleted", "logged_out")
+
+        Returns:
+            Number of connections notified
+        """
+        notified = 0
+        for conn_id, connection in list(self.connections.items()):
+            if connection.user_id == user_id and connection.active:
+                await self.send_to_connection(
+                    conn_id,
+                    {"type": "session_invalidated", "reason": reason},
+                    event_type="auth",
+                )
+                notified += 1
+                logger.info(f"Notified connection {conn_id} of session invalidation for user {user_id}")
+
+        return notified
 
     async def _cleanup_loop(self):
         """Background task to clean up stale connections."""
