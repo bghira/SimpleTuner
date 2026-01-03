@@ -88,6 +88,24 @@ def _handle_dataset_only_repeats(value: object, cli_args: list[str], extras: dic
     return True
 
 
+@_legacy_handler("ez_model_type")
+def _handle_ui_only_ez_model_type(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Ignore UI-only EZ Mode wizard sentinel field."""
+    return True
+
+
+@_legacy_handler("__disabled_fields__")
+def _handle_ui_only_disabled_fields(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Ignore UI-only disabled fields tracker."""
+    return True
+
+
+@_legacy_handler("__active_tab__")
+def _handle_ui_only_active_tab(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Ignore UI-only active tab tracker."""
+    return True
+
+
 @_legacy_handler("validation_steps")
 def _handle_legacy_validation_steps(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
     """Support legacy validation_steps key by forwarding to validation_step_interval."""
