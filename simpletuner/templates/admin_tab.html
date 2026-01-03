@@ -2,12 +2,25 @@
 <!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-admin">
 <link rel="stylesheet" href="/static/css/admin.css" id="css-admin">
+<link rel="stylesheet" href="/static/css/cloud-onboarding.css" id="css-cloud-onboarding-admin">
 
 <div class="tab-fragment"
      id="admin-tab-content"
      data-tab-name="admin"
      x-data="adminPanelComponent()"
      x-init="init()">
+
+    <!-- Loading state while checking setup status -->
+    <div class="text-center py-5" x-show="setupState?.loading" x-cloak>
+        <i class="fas fa-spinner fa-spin fa-2x text-muted"></i>
+        <p class="text-muted mt-2">Loading...</p>
+    </div>
+
+    <!-- First-Run Setup Wizard (shown when no admin exists) -->
+    {% include 'partials/cloud_first_run_setup.html' %}
+
+    <!-- Normal UI (hidden during first-run setup) -->
+    <div x-show="setupState && !setupState.needsSetup && !setupState.loading" x-cloak>
 
     <!-- Page Header -->
     <div class="admin-header">
@@ -177,5 +190,7 @@
 
         </div><!-- /.admin-main-content -->
     </template><!-- End of main content wrapper (shown after enterprise onboarding) -->
+
+    </div><!-- End of normal UI wrapper (hidden during first-run setup) -->
 
 </div><!-- /.tab-fragment -->

@@ -96,20 +96,21 @@ if (!window.cloudDashboardComponent) {
             },
 
             async init() {
-                // Check first-run setup status before loading everything else
-                await this.checkSetupStatus();
-
-                // Only proceed with normal initialization if setup is complete AND user is logged in
-                if (!this.setupState.needsSetup && !this.setupState.needsLogin) {
-                    this._runCoreInitialization();
-                    this.initSSEConnectionMonitor();
-
-                    this.$watch('activeProvider', () => {
-                        this.jobsInitialized = false;
-                        this.loadJobs();
-                        this.loadProviderConfig();
-                    });
+                // Wait for auth before making any API calls
+                // First-run admin setup is handled in the Manage Users tab (admin_tab.html)
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    return;
                 }
+
+                this._runCoreInitialization();
+                this.initSSEConnectionMonitor();
+
+                this.$watch('activeProvider', () => {
+                    this.jobsInitialized = false;
+                    this.loadJobs();
+                    this.loadProviderConfig();
+                });
             },
 
             initSSEConnectionMonitor() {
