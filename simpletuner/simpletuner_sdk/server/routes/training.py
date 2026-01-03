@@ -21,7 +21,7 @@ from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services import training_service
-from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user, get_current_user_ws
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 
 logger = logging.getLogger(__name__)
@@ -414,7 +414,7 @@ async def get_training_events(since_index: int = 0, _user: User = Depends(get_cu
 
 
 @router.websocket("/events/stream")
-async def stream_training_events(websocket: WebSocket, _user: User = Depends(get_current_user)):
+async def stream_training_events(websocket: WebSocket, _user: User = Depends(get_current_user_ws)):
     """Stream training events via WebSocket."""
     await websocket.accept()
 
