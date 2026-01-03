@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.dataset_caption_service import (
     CaptionStatus,
@@ -185,7 +187,7 @@ def _apply_resolution_defaults(blueprints: List[Dict[str, Any]], resolution: int
 
 
 @router.get("/blueprints")
-async def list_blueprints() -> Dict[str, Any]:
+async def list_blueprints(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Return blueprint metadata for all supported dataset backends."""
     blueprints = [blueprint.model_dump() for blueprint in get_dataset_blueprints()]
     resolution = _get_active_resolution()
@@ -194,7 +196,7 @@ async def list_blueprints() -> Dict[str, Any]:
 
 
 @router.get("/plan", response_model=DatasetPlanResponse)
-async def get_dataset_plan() -> DatasetPlanResponse:
+async def get_dataset_plan(_user: User = Depends(get_current_user)) -> DatasetPlanResponse:
     """Retrieve the currently saved dataset plan."""
     store = _store()
     try:
@@ -235,7 +237,9 @@ async def get_dataset_plan() -> DatasetPlanResponse:
 
 
 @router.post("/test-connection")
-async def test_dataset_connection(request: DatasetConnectionRequest) -> Dict[str, Any]:
+async def test_dataset_connection(
+    request: DatasetConnectionRequest, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Run a lightweight connection test for a dataset payload."""
 
     try:
@@ -321,13 +325,13 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
 
 
 @router.post("/plan", response_model=DatasetPlanResponse)
-async def create_dataset_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
+async def create_dataset_plan(payload: DatasetPlanPayload, _user: User = Depends(get_current_user)) -> DatasetPlanResponse:
     """Create or replace the dataset plan configuration."""
     return _persist_plan(payload)
 
 
 @router.patch("/plan", response_model=DatasetPlanResponse)
-async def update_dataset_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
+async def update_dataset_plan(payload: DatasetPlanPayload, _user: User = Depends(get_current_user)) -> DatasetPlanResponse:
     """Update the dataset plan configuration."""
     return _persist_plan(payload)
 
@@ -402,7 +406,7 @@ def _resolve_datasets_dir_and_validate_path(
 
 
 @router.get("/browse")
-async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
+async def browse_directories(path: Optional[str] = None, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Browse directories at the given path and detect existing datasets.
 
@@ -482,7 +486,7 @@ async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
 
 
 @router.get("/detect")
-async def detect_dataset(path: str) -> Dict[str, Any]:
+async def detect_dataset(path: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Detect if a directory contains an existing SimpleTuner dataset by reading
     the aspect bucket metadata files and returning the configuration.
@@ -592,6 +596,7 @@ def _get_caption_service() -> DatasetCaptionService:
 async def create_folder(
     parent_path: str = Form(...),
     folder_name: str = Form(...),
+    _user: User = Depends(get_current_user),
 ) -> FolderCreateResult:
     """Create a new folder in the given parent directory.
 
@@ -630,6 +635,7 @@ async def create_folder(
 async def upload_files(
     target_path: str = Form(...),
     files: List[UploadFile] = File(...),
+    _user: User = Depends(get_current_user),
 ) -> UploadResult:
     """Upload files (images, txt, parquet, jsonl, csv) to target directory.
 
@@ -662,6 +668,7 @@ async def upload_files(
 async def upload_zip(
     target_path: str = Form(...),
     file: UploadFile = File(...),
+    _user: User = Depends(get_current_user),
 ) -> UploadResult:
     """Upload and extract a zip file to target directory.
 
@@ -698,7 +705,7 @@ async def upload_zip(
 
 
 @router.get("/captions/status", response_model=CaptionStatus)
-async def get_caption_status(path: str) -> CaptionStatus:
+async def get_caption_status(path: str, _user: User = Depends(get_current_user)) -> CaptionStatus:
     """Analyze caption coverage in a directory.
 
     Args:
@@ -728,6 +735,7 @@ async def get_thumbnails(
     path: str,
     limit: int = 50,
     offset: int = 0,
+    _user: User = Depends(get_current_user),
 ) -> List[ThumbnailInfo]:
     """Get thumbnails for images missing captions in a directory.
 
@@ -770,6 +778,7 @@ class CaptionWriteRequest(BaseModel):
 @router.post("/captions", response_model=CaptionWriteResult)
 async def save_captions(
     request: CaptionWriteRequest = Body(...),
+    _user: User = Depends(get_current_user),
 ) -> CaptionWriteResult:
     """Create .txt caption files for the given images.
 
@@ -804,7 +813,7 @@ async def save_captions(
 
 
 @router.get("/{dataset_id}")
-async def get_dataset(dataset_id: str) -> Dict[str, Any]:
+async def get_dataset(dataset_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get a single dataset by ID."""
     store = _store()
     try:
@@ -820,7 +829,7 @@ async def get_dataset(dataset_id: str) -> Dict[str, Any]:
 
 
 @router.post("/")
-async def create_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
+async def create_dataset(dataset: Dict[str, Any], _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Create a new dataset."""
     store = _store()
     try:
@@ -878,7 +887,9 @@ async def create_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.put("/{dataset_id}")
-async def update_dataset(dataset_id: str, dataset: Dict[str, Any]) -> Dict[str, Any]:
+async def update_dataset(
+    dataset_id: str, dataset: Dict[str, Any], _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Update an existing dataset."""
     store = _store()
     try:
@@ -938,7 +949,7 @@ async def update_dataset(dataset_id: str, dataset: Dict[str, Any]) -> Dict[str, 
 
 
 @router.delete("/{dataset_id}")
-async def delete_dataset(dataset_id: str) -> Dict[str, Any]:
+async def delete_dataset(dataset_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Delete a dataset."""
     store = _store()
     try:
@@ -967,7 +978,7 @@ async def delete_dataset(dataset_id: str) -> Dict[str, Any]:
 
 
 @router.post("/validate/{field_name}", response_class=HTMLResponse)
-async def validate_field(field_name: str, value: str = "") -> str:
+async def validate_field(field_name: str, value: str = "", _user: User = Depends(get_current_user)) -> str:
     """Validate a single field and return HTML error fragment."""
     error_html = ""
 

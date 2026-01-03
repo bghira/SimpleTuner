@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
 from simpletuner.simpletuner_sdk.server.services.git_config_service import (
     GIT_CONFIG_SERVICE,
@@ -171,38 +173,44 @@ def _maybe_snapshot_on_save(
 
 
 @router.get("/")
-async def list_configs(config_type: str = "model") -> Dict[str, Any]:
+async def list_configs(
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """List all available configurations."""
     return _call_service(CONFIGS_SERVICE.list_configs, config_type)
 
 
 @router.get("/data-backend-file")
-async def get_data_backend_file(path: str) -> Any:
+async def get_data_backend_file(
+    path: str,
+    _user: User = Depends(get_current_user),
+) -> Any:
     """Get the contents of a data backend configuration file."""
     data = _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
     return _normalize_conditioning_payload(data)
 
 
 @router.get("/templates")
-async def list_templates() -> Dict[str, Any]:
+async def list_templates(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """List all available configuration templates."""
     return _call_service(CONFIGS_SERVICE.list_templates)
 
 
 @router.get("/examples")
-async def list_examples() -> Dict[str, Any]:
+async def list_examples(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """List available example environments."""
     return _call_service(CONFIGS_SERVICE.list_examples)
 
 
 @router.get("/project-name")
-async def generate_project_name() -> Dict[str, str]:
+async def generate_project_name(_user: User = Depends(get_current_user)) -> Dict[str, str]:
     """Generate a random project name slug."""
     return _call_service(CONFIGS_SERVICE.generate_project_name)
 
 
 @router.get("/active")
-async def get_active_config() -> Dict[str, Any]:
+async def get_active_config(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get the currently active configuration."""
     return _call_service(CONFIGS_SERVICE.get_active_config)
 
@@ -217,13 +225,19 @@ class WebhookConfigRequest(BaseModel):
 
 
 @router.post("/webhooks/validate")
-async def validate_webhook_config(request: LycorisConfigRequest) -> Dict[str, Any]:
+async def validate_webhook_config(
+    request: LycorisConfigRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Validate webhook configuration without saving."""
     return _call_service(CONFIGS_SERVICE.validate_webhook_config, request.config)
 
 
 @router.post("/webhooks")
-async def create_webhook_config(request: WebhookConfigRequest) -> Dict[str, Any]:
+async def create_webhook_config(
+    request: WebhookConfigRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Create a new webhook configuration."""
     # Validate first
     validation = _call_service(CONFIGS_SERVICE.validate_webhook_config, request.config)
@@ -240,7 +254,10 @@ async def create_webhook_config(request: WebhookConfigRequest) -> Dict[str, Any]
 
 
 @router.get("/webhooks/{name}")
-async def get_webhook_config(name: str) -> Dict[str, Any]:
+async def get_webhook_config(
+    name: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Get a webhook configuration by name."""
     webhook_config = _call_service(CONFIGS_SERVICE.get_webhook_config, name)
     if webhook_config is None:
@@ -252,7 +269,11 @@ async def get_webhook_config(name: str) -> Dict[str, Any]:
 
 
 @router.put("/webhooks/{name}")
-async def update_webhook_config(name: str, request: LycorisConfigRequest) -> Dict[str, Any]:
+async def update_webhook_config(
+    name: str,
+    request: LycorisConfigRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Update an existing webhook configuration."""
     # Validate first
     validation = _call_service(CONFIGS_SERVICE.validate_webhook_config, request.config)
@@ -269,7 +290,10 @@ async def update_webhook_config(name: str, request: LycorisConfigRequest) -> Dic
 
 
 @router.delete("/webhooks/{name}")
-async def delete_webhook_config(name: str) -> Dict[str, Any]:
+async def delete_webhook_config(
+    name: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Delete a webhook configuration."""
     result = _call_service(CONFIGS_SERVICE.delete_webhook_config, name)
     return {
@@ -279,20 +303,31 @@ async def delete_webhook_config(name: str) -> Dict[str, Any]:
 
 
 @router.post("/webhooks/{name}/test")
-async def test_webhook_config(name: str) -> Dict[str, Any]:
+async def test_webhook_config(
+    name: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Test a webhook configuration by sending a test message."""
     result = _call_service(CONFIGS_SERVICE.test_webhook_config, name)
     return result
 
 
 @router.get("/{name}")
-async def get_config(name: str, config_type: str = "model") -> Dict[str, Any]:
+async def get_config(
+    name: str,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Get a specific configuration by name."""
     return _call_service(CONFIGS_SERVICE.get_config, name, config_type)
 
 
 @router.post("/")
-async def create_config(request: ConfigRequest, config_type: str = "model") -> Dict[str, Any]:
+async def create_config(
+    request: ConfigRequest,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Create a new configuration."""
     git_enabled, prefs = _git_preferences()
     _enforce_git_requirements(config_type, git_enabled, prefs)
@@ -308,7 +343,10 @@ async def create_config(request: ConfigRequest, config_type: str = "model") -> D
 
 
 @router.post("/environments")
-async def create_environment(request: EnvironmentCreateRequest) -> Dict[str, Any]:
+async def create_environment(
+    request: EnvironmentCreateRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Create a new training environment."""
     git_enabled, prefs = _git_preferences()
     _enforce_git_requirements("model", git_enabled, prefs)
@@ -318,7 +356,12 @@ async def create_environment(request: EnvironmentCreateRequest) -> Dict[str, Any
 
 
 @router.put("/{name}")
-async def update_config(name: str, request: ConfigRequest, config_type: str = "model") -> Dict[str, Any]:
+async def update_config(
+    name: str,
+    request: ConfigRequest,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Update an existing configuration."""
     git_enabled, prefs = _git_preferences()
     _enforce_git_requirements(config_type, git_enabled, prefs)
@@ -334,25 +377,43 @@ async def update_config(name: str, request: ConfigRequest, config_type: str = "m
 
 
 @router.delete("/{name}")
-async def delete_config(name: str, config_type: str = "model") -> Dict[str, Any]:
+async def delete_config(
+    name: str,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Delete a configuration."""
     return _call_service(CONFIGS_SERVICE.delete_config, name, config_type)
 
 
 @router.post("/{name}/rename")
-async def rename_config(name: str, request: ConfigRenameRequest, config_type: str = "model") -> Dict[str, Any]:
+async def rename_config(
+    name: str,
+    request: ConfigRenameRequest,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Rename a configuration."""
     return _call_service(CONFIGS_SERVICE.rename_config, name, request.new_name, config_type)
 
 
 @router.post("/{name}/copy")
-async def copy_config(name: str, request: ConfigCopyRequest, config_type: str = "model") -> Dict[str, Any]:
+async def copy_config(
+    name: str,
+    request: ConfigCopyRequest,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Copy a configuration."""
     return _call_service(CONFIGS_SERVICE.copy_config, name, request.target_name, config_type)
 
 
 @router.post("/{name}/dataloader")
-async def create_environment_dataloader(name: str, request: EnvironmentDataloaderRequest) -> Dict[str, Any]:
+async def create_environment_dataloader(
+    name: str,
+    request: EnvironmentDataloaderRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Create a dataloader configuration for an environment."""
     git_enabled, prefs = _git_preferences()
     _enforce_git_requirements("dataloader", git_enabled, prefs)
@@ -361,32 +422,50 @@ async def create_environment_dataloader(name: str, request: EnvironmentDataloade
 
 
 @router.get("/dataloader/content")
-async def get_dataloader_content(path: str) -> Any:
+async def get_dataloader_content(
+    path: str,
+    _user: User = Depends(get_current_user),
+) -> Any:
     """Get the JSON contents of a dataloader configuration file."""
     data = _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
     return _normalize_conditioning_payload(data)
 
 
 @router.delete("/dataloader")
-async def delete_dataloader_config(path: str) -> Dict[str, Any]:
+async def delete_dataloader_config(
+    path: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Delete a dataloader configuration file."""
     return _call_service(CONFIGS_SERVICE.delete_dataloader_config, path)
 
 
 @router.post("/{name}/activate")
-async def activate_config(name: str) -> Dict[str, Any]:
+async def activate_config(
+    name: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Set a configuration as active."""
     return _call_service(CONFIGS_SERVICE.activate_config, name)
 
 
 @router.get("/{name}/export")
-async def export_config(name: str, include_metadata: bool = True, config_type: str = "model") -> Dict[str, Any]:
+async def export_config(
+    name: str,
+    include_metadata: bool = True,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Export a configuration for sharing."""
     return _call_service(CONFIGS_SERVICE.export_config, name, include_metadata, config_type)
 
 
 @router.post("/import")
-async def import_config(request: ConfigImportRequest, config_type: str = "model") -> Dict[str, Any]:
+async def import_config(
+    request: ConfigImportRequest,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Import a configuration."""
     return _call_service(
         CONFIGS_SERVICE.import_config,
@@ -398,7 +477,11 @@ async def import_config(request: ConfigImportRequest, config_type: str = "model"
 
 
 @router.post("/from-template")
-async def create_from_template(request: ConfigFromTemplateRequest, config_type: str = "model") -> Dict[str, Any]:
+async def create_from_template(
+    request: ConfigFromTemplateRequest,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Create a configuration from a template."""
     return _call_service(
         CONFIGS_SERVICE.create_from_template,
@@ -409,19 +492,30 @@ async def create_from_template(request: ConfigFromTemplateRequest, config_type: 
 
 
 @router.post("/{name}/validate")
-async def validate_config(name: str, config_type: str = "model") -> Dict[str, Any]:
+async def validate_config(
+    name: str,
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Validate a configuration."""
     return _call_service(CONFIGS_SERVICE.validate_config, name, config_type)
 
 
 @router.post("/validate")
-async def validate_config_data(config: Dict[str, Any], config_type: str = "model") -> Dict[str, Any]:
+async def validate_config_data(
+    config: Dict[str, Any],
+    config_type: str = "model",
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Validate configuration data without saving."""
     return _call_service(CONFIGS_SERVICE.validate_config_data, config, config_type)
 
 
 @router.get("/environments/{environment_id}/lycoris")
-async def get_lycoris_config(environment_id: str) -> Dict[str, Any]:
+async def get_lycoris_config(
+    environment_id: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Get Lycoris configuration for an environment."""
     lycoris_config = _call_service(CONFIGS_SERVICE.get_lycoris_config, environment_id)
     if lycoris_config is None:
@@ -433,7 +527,11 @@ async def get_lycoris_config(environment_id: str) -> Dict[str, Any]:
 
 
 @router.put("/environments/{environment_id}/lycoris")
-async def save_lycoris_config(environment_id: str, request: LycorisConfigRequest) -> Dict[str, Any]:
+async def save_lycoris_config(
+    environment_id: str,
+    request: LycorisConfigRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Save Lycoris configuration for an environment."""
     result = _call_service(CONFIGS_SERVICE.save_lycoris_config, environment_id, request.config)
     return {
@@ -444,6 +542,9 @@ async def save_lycoris_config(environment_id: str, request: LycorisConfigRequest
 
 
 @router.post("/lycoris/validate")
-async def validate_lycoris_config(request: LycorisConfigRequest) -> Dict[str, Any]:
+async def validate_lycoris_config(
+    request: LycorisConfigRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Validate Lycoris configuration without saving."""
     return _call_service(CONFIGS_SERVICE.validate_lycoris_config, request.config)
