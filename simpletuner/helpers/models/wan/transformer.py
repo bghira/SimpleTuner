@@ -21,6 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import FeedForward, _chunked_feed_forward
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
@@ -567,6 +568,20 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         "norm3",
     ]
     _keys_to_ignore_on_load_unexpected = ["norm_added_q"]
+    _repeated_blocks = ["WanTransformerBlock"]
+    _cp_plan = {
+        "rope": {
+            0: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+            1: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+        },
+        "blocks.0": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "blocks.*": {
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     def __init__(
         self,

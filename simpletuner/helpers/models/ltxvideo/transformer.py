@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import AttentionMixin, AttentionModuleMixin, FeedForward
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.cache_utils import CacheMixin
@@ -420,6 +421,18 @@ class LTXVideoTransformer3DModel(
     _skip_layerwise_casting_patterns = ["norm"]
     _no_split_modules = ["LTXVideoTransformerBlock"]
     _repeated_blocks = ["LTXVideoTransformerBlock"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_attention_mask": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+        },
+        "rope": {
+            0: ContextParallelInput(split_dim=1, expected_dims=3, split_output=True),
+            1: ContextParallelInput(split_dim=1, expected_dims=3, split_output=True),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     def __init__(
         self,
