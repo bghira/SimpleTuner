@@ -49,13 +49,24 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
         async def _do_updates():
             logger.info("_do_updates starting for job %s (status: %s)", job_id, new_status)
             try:
-                # Get job to check if it's local
+                # Get job to check if it's local and current state
                 job = await job_repo.get(job_id)
                 if not job:
                     logger.warning("_do_updates: job %s not found in repo", job_id)
                     return
 
-                logger.info("_do_updates: job %s is type %s", job_id, job.job_type)
+                logger.info("_do_updates: job %s is type %s, current status %s", job_id, job.job_type, job.status)
+
+                # Check if job is already in a terminal state (idempotency check)
+                # This prevents race conditions with the cancellation API
+                terminal_states = {
+                    CloudJobStatus.COMPLETED.value,
+                    CloudJobStatus.FAILED.value,
+                    CloudJobStatus.CANCELLED.value,
+                }
+                if job.status in terminal_states:
+                    logger.info("_do_updates: job %s already in terminal state %s, skipping", job_id, job.status)
+                    return
 
                 # Update job status
                 if new_status == CloudJobStatus.COMPLETED.value:

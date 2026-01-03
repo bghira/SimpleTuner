@@ -1326,7 +1326,12 @@
                         // Clear completed status for new job
                         completedJobIds.delete(jobId);
                         activeJobId = jobId;
-                        currentTrainingStatus = 'starting';
+                        // Initialize status for the new job based on the actual derived status
+                        const initialStatusForNewJob =
+                            !derivedStatus || derivedStatus === '' || ['starting', 'initializing'].includes(derivedStatus)
+                                ? 'starting'
+                                : derivedStatus;
+                        currentTrainingStatus = initialStatusForNewJob;
                         // Clear any stale state from previous job
                         clearStartupProgress();
                     }
