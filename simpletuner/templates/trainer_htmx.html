@@ -240,6 +240,11 @@ document.addEventListener('alpine:init', () => {
                         if (window.showToast) {
                             window.showToast(`Welcome, ${data.user.display_name || data.user.username}!`, 'success');
                         }
+                        // Dispatch login success event for components to reinitialize
+                        window.dispatchEvent(new CustomEvent('auth-login-success', { detail: { user: data.user } }));
+                        // Reload the page to properly initialize all components
+                        // This is cleaner than trying to manually reinitialize everything
+                        window.location.reload();
                     }
                 } else {
                     const data = await response.json().catch(() => ({}));
@@ -5242,9 +5247,16 @@ function trainerComponent() {
      x-data="trainerComponent()"
      x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
-     x-init="(() => {
+     x-init="(async () => {
          // Store reference to Alpine component for external access
          Alpine.store('trainer', $data);
+
+         // Wait for auth before loading tab content
+         const canProceed = await window.waitForAuthReady();
+         if (!canProceed) {
+             // User needs to login - don't load tabs yet
+             return;
+         }
 
          // Load initial tab content
          $nextTick(() => {
@@ -6458,7 +6470,11 @@ function trainerComponent() {
             </script>
             <div class="config-selector"
                  x-data="configSelectorComponent()"
-                 x-init="(() => {
+                 x-init="(async () => {
+                    // Wait for auth before making any API calls
+                    const canProceed = await window.waitForAuthReady();
+                    if (!canProceed) return;
+
                     loadConfigs();
                     $watch('$store.trainer.activeEnvironment', (value) => { activeConfig = value; loadConfigs(); });
                     $watch('$store.trainer.formDirty', (value) => { hasChanges = Boolean(value); });

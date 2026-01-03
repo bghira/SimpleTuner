@@ -56,6 +56,14 @@
 
             async init() {
                 console.info("[EnvForm] init called", { autoLoad: this.options.autoLoad });
+
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    // User needs to login - skip API-dependent initialization
+                    return;
+                }
+
                 if (this.options.autoLoad !== false) {
                     await this.prepareForDisplay(this.options.preset || {});
                 } else {

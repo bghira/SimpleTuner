@@ -1845,11 +1845,18 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
         console.log('[SSE-DEBUG] DOMContentLoaded fired, initializing training events SSE');
 
         if (document && document.body && !document.body.dataset.trainingActive) {
             document.body.dataset.trainingActive = 'false';
+        }
+
+        // Wait for auth before making any API calls
+        const canProceed = await window.waitForAuthReady();
+        if (!canProceed) {
+            // User needs to login - skip initialization
+            return;
         }
 
         // Check if training is already running

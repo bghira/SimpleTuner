@@ -422,6 +422,13 @@ function trainingWizardComponent() {
         async init() {
             console.log('[TRAINING WIZARD] Initializing...');
 
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                // User needs to login - skip API-dependent initialization
+                return;
+            }
+
             try {
                 // Load current configuration to pre-populate answers
                 await this.loadCurrentConfig();
