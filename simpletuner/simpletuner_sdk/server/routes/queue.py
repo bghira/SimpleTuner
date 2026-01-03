@@ -217,9 +217,12 @@ async def get_queue_stats(
         local_gpu_max = defaults.local_gpu_max_concurrent
         local_job_max = defaults.local_job_max_concurrent
 
+        job_repo = allocator._get_job_repo()
+        pending_local = await job_repo.get_pending_local_jobs()
+
         local_stats = LocalGPUStats(
             running_jobs=gpu_status["running_local_jobs"],
-            pending_jobs=len(await allocator._queue_store.get_pending_local_jobs()),
+            pending_jobs=len(pending_local),
             allocated_gpus=gpu_status["allocated_gpus"],
             available_gpus=gpu_status["available_gpus"],
             total_gpus=gpu_status["total_gpus"],
