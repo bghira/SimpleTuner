@@ -65,8 +65,8 @@ DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
 ]
 
 # Default rate limit for unauthenticated/anonymous requests
-# This is intentionally low to prevent abuse
-DEFAULT_ANONYMOUS_RATE_LIMIT = 60  # calls per period
+# Set high enough to allow page loads (which trigger 10+ API calls each)
+DEFAULT_ANONYMOUS_RATE_LIMIT = 180  # calls per period
 
 # Multiplier for authenticated users (they get this many times more requests)
 # e.g., if anonymous limit is 60/min, authenticated users get 600/min
@@ -182,6 +182,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Auth status checks (needed during login/onboarding flow)
             "/api/auth/setup/status",
             "/api/auth/check",
+            "/api/auth/me",
+            "/api/users/meta/auth-status",
         ]
         self.enable_audit = enable_audit
         self._lock = threading.Lock()
