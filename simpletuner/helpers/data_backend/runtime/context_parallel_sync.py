@@ -7,6 +7,12 @@ batch data. This module provides utilities to synchronize batch sampling so that
 
 This ensures that when the batch is later split along the sequence dimension by
 the model's _cp_plan, all ranks in the group have consistent data.
+
+The synchronization addresses two key issues:
+1. Data sharding: The dataset is split by DP rank (not global rank), so all ranks
+   in a CP group see the same data pool.
+2. Batch sampling: Only the CP leader samples batches; other ranks receive via
+   broadcast. This keeps seen_images tracking consistent across the CP group.
 """
 
 import logging
@@ -23,6 +29,10 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel(logging.ERROR)
+
+
+# Sentinel value for non-leader ranks that skip sampling
+CP_SKIP_SAMPLING_SENTINEL = "__CP_SKIP_SAMPLING__"
 
 
 def get_cp_info(accelerator) -> Tuple[bool, Optional[Any], int, int]:
@@ -205,3 +215,40 @@ class ContextParallelBatchSynchronizer:
         """
         self._ensure_initialized()
         return sync_batch_for_context_parallel(batch, self.accelerator, self._cp_info)
+
+    def fetch_batch(self, iterator_fn, step: int, *iterator_args) -> Any:
+        """
+        Fetch a batch with CP-aware sampling.
+
+        When CP is enabled:
+        - CP leader (rank 0 of CP group) calls the iterator to sample a batch
+        - Non-leaders skip sampling and receive the batch via broadcast
+        - This ensures seen_images tracking is consistent across the CP group
+
+        When CP is disabled:
+        - All ranks call the iterator normally
+
+        Args:
+            iterator_fn: The iterator function to call (e.g., random_dataloader_iterator)
+            step: The current training step
+            *iterator_args: Additional arguments to pass to the iterator
+
+        Returns:
+            The batch (synchronized across CP group if CP is enabled)
+        """
+        self._ensure_initialized()
+        cp_enabled, cp_group, cp_rank, cp_size = self._cp_info
+
+        if not cp_enabled:
+            # No CP - just call the iterator normally
+            return iterator_fn(step, *iterator_args)
+
+        if cp_rank == 0:
+            # CP leader: sample the batch normally
+            batch = iterator_fn(step, *iterator_args)
+        else:
+            # Non-leader: use sentinel (will be replaced by broadcast)
+            batch = CP_SKIP_SAMPLING_SENTINEL
+
+        # Broadcast from leader to all ranks in CP group
+        return self.sync(batch)

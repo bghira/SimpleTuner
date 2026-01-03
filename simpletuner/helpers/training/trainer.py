@@ -4925,8 +4925,11 @@ class Trainer:
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
+            # When context parallelism is enabled, only CP leaders should prefetch.
+            # Non-leaders skip sampling entirely and receive batches via broadcast.
             iterator_args = [train_backends]
-            if self.config.dataloader_prefetch:
+            should_prefetch = self.config.dataloader_prefetch and cp_batch_synchronizer.is_cp_leader
+            if should_prefetch:
                 iterator_args = []
                 if self.bf is not None:
                     self.bf.stop_fetching()
@@ -4944,11 +4947,11 @@ class Trainer:
                 checkpoint_saved_this_step = False
                 self._exit_on_signal()
                 step += 1
-                # Fetch the batch and sync across context-parallel ranks if CP is enabled.
+                # Fetch the batch with CP-aware sampling. When context parallelism is
+                # enabled, only the CP leader samples; non-leaders receive via broadcast.
                 # This ensures all ranks in a CP group receive the same batch before the
                 # model's _cp_plan splits it along the sequence dimension.
-                raw_batch = iterator_fn(step, *iterator_args)
-                raw_batch = cp_batch_synchronizer.sync(raw_batch)
+                raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
                 prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":

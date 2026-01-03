@@ -745,6 +745,86 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
         self.assertEqual(synchronizer.cp_rank, 0)
         self.assertEqual(synchronizer.cp_size, 1)
 
+    def test_fetch_batch_without_cp(self):
+        """Test fetch_batch calls iterator normally when CP is disabled."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+        result = synchronizer.fetch_batch(mock_iterator, 10, "arg1", "arg2")
+
+        mock_iterator.assert_called_once_with(10, "arg1", "arg2")
+        self.assertEqual(result, {"data": [1, 2, 3]})
+
+    def test_fetch_batch_cp_leader_calls_iterator(self):
+        """Test fetch_batch on CP leader calls the iterator."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 0  # CP leader
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 2
+        mock_accelerator.process_index = 0
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+
+        # Note: sync would normally broadcast, but we can't test that without
+        # actual distributed setup. Just verify iterator is called for leader.
+        with patch("simpletuner.helpers.data_backend.runtime.context_parallel_sync.dist") as mock_dist:
+            mock_dist.broadcast_object_list = MagicMock(side_effect=lambda batch_list, **kwargs: None)
+            result = synchronizer.fetch_batch(mock_iterator, 10)
+            mock_iterator.assert_called_once_with(10)
+
+    def test_fetch_batch_cp_non_leader_skips_iterator(self):
+        """Test fetch_batch on non-CP-leader skips the iterator."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+            CP_SKIP_SAMPLING_SENTINEL,
+            ContextParallelBatchSynchronizer,
+        )
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 1  # Non-leader
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 2
+        mock_accelerator.process_index = 1
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+
+        # Verify iterator is NOT called for non-leader
+        with patch("simpletuner.helpers.data_backend.runtime.context_parallel_sync.dist") as mock_dist:
+            # Simulate broadcast replacing sentinel with real data
+            def mock_broadcast(batch_list, **kwargs):
+                batch_list[0] = {"broadcasted": True}
+
+            mock_dist.broadcast_object_list = mock_broadcast
+            result = synchronizer.fetch_batch(mock_iterator, 10)
+            mock_iterator.assert_not_called()
+            self.assertEqual(result, {"broadcasted": True})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
