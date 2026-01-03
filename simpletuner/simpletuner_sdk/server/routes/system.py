@@ -6,8 +6,10 @@ import os
 import signal
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.maintenance_service import MAINTENANCE_SERVICE, MaintenanceServiceError
 from simpletuner.simpletuner_sdk.server.services.system_status_service import SystemStatusService
 
@@ -129,7 +131,7 @@ async def _initiate_shutdown_sequence(delay_seconds: float = _SHUTDOWN_DELAY_SEC
 
 
 @router.get("/status")
-async def get_system_status(include_allocation: bool = False) -> dict:
+async def get_system_status(include_allocation: bool = False, _user: User = Depends(get_current_user)) -> dict:
     """Return current system load, memory usage, and GPU utilisation.
 
     Args:
@@ -157,7 +159,7 @@ async def get_system_status(include_allocation: bool = False) -> dict:
 
 
 @router.post("/maintenance/clear-fsdp-block-cache")
-async def clear_fsdp_block_cache() -> Dict[str, Any]:
+async def clear_fsdp_block_cache(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Clear cached FSDP detection metadata."""
     try:
         return MAINTENANCE_SERVICE.clear_fsdp_block_cache()
@@ -166,7 +168,9 @@ async def clear_fsdp_block_cache() -> Dict[str, Any]:
 
 
 @router.post("/maintenance/clear-deepspeed-offload")
-async def clear_deepspeed_offload(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def clear_deepspeed_offload(
+    payload: Optional[Dict[str, Any]] = None, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Delete DeepSpeed NVMe offload cache directories."""
     config_name = None
     if isinstance(payload, dict):
@@ -178,7 +182,7 @@ async def clear_deepspeed_offload(payload: Optional[Dict[str, Any]] = None) -> D
 
 
 @router.post("/shutdown")
-async def shutdown_simpletuner(background_tasks: BackgroundTasks) -> Dict[str, Any]:
+async def shutdown_simpletuner(background_tasks: BackgroundTasks, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Schedule a graceful shutdown of the SimpleTuner process."""
     global _SHUTDOWN_IN_PROGRESS
     if _SHUTDOWN_IN_PROGRESS:

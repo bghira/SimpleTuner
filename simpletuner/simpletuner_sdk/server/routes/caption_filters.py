@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.caption_filters_service import CAPTION_FILTERS_SERVICE, CaptionFilterError
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 
 router = APIRouter(prefix="/api/caption-filters", tags=["caption-filters"])
 
@@ -45,7 +47,7 @@ def _call_service(func, *args, **kwargs):
 
 
 @router.get("/")
-async def list_caption_filters() -> Dict[str, Any]:
+async def list_caption_filters(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Return available caption filters."""
 
     filters = [record.to_public_dict() for record in CAPTION_FILTERS_SERVICE.list_filters()]
@@ -53,7 +55,7 @@ async def list_caption_filters() -> Dict[str, Any]:
 
 
 @router.post("/test")
-async def test_caption_filter(request: CaptionFilterTestRequest) -> Dict[str, str]:
+async def test_caption_filter(request: CaptionFilterTestRequest, _user: User = Depends(get_current_user)) -> Dict[str, str]:
     """Apply filters to the provided sample without persisting."""
 
     output = CAPTION_FILTERS_SERVICE.test_entries(request.entries, request.sample)
@@ -61,7 +63,7 @@ async def test_caption_filter(request: CaptionFilterTestRequest) -> Dict[str, st
 
 
 @router.get("/{name}")
-async def get_caption_filter(name: str) -> Dict[str, Any]:
+async def get_caption_filter(name: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Retrieve a specific caption filter definition."""
 
     record = _call_service(CAPTION_FILTERS_SERVICE.get_filter, name)
@@ -69,7 +71,7 @@ async def get_caption_filter(name: str) -> Dict[str, Any]:
 
 
 @router.post("/")
-async def create_caption_filter(request: CaptionFilterRequest) -> Dict[str, Any]:
+async def create_caption_filter(request: CaptionFilterRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Create a new caption filter."""
 
     record = _call_service(CAPTION_FILTERS_SERVICE.create_filter, request.model_dump())
@@ -77,7 +79,9 @@ async def create_caption_filter(request: CaptionFilterRequest) -> Dict[str, Any]
 
 
 @router.put("/{name}")
-async def update_caption_filter(name: str, request: CaptionFilterUpdateRequest) -> Dict[str, Any]:
+async def update_caption_filter(
+    name: str, request: CaptionFilterUpdateRequest, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Update an existing caption filter."""
 
     payload = request.model_dump(exclude_unset=True)
@@ -86,7 +90,7 @@ async def update_caption_filter(name: str, request: CaptionFilterUpdateRequest) 
 
 
 @router.delete("/{name}")
-async def delete_caption_filter(name: str) -> Dict[str, Any]:
+async def delete_caption_filter(name: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Delete a caption filter."""
 
     _call_service(CAPTION_FILTERS_SERVICE.delete_filter, name)

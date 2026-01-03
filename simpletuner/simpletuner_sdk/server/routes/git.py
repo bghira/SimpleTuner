@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.git_config_service import GIT_CONFIG_SERVICE, GitConfigError
 from simpletuner.simpletuner_sdk.server.services.git_repo_service import GIT_REPO_SERVICE, GitRepoError
 
@@ -74,7 +76,7 @@ def _handle_config_call(func, *args, **kwargs):
 
 
 @router.get("/status")
-async def git_status(config_type: str = "model") -> Dict[str, Any]:
+async def git_status(config_type: str = "model", _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Return git status scoped to the configs directory."""
     status_obj = _handle_repo_call(GIT_REPO_SERVICE.discover_repo, _config_dir(config_type))
     return {
@@ -94,37 +96,45 @@ async def git_status(config_type: str = "model") -> Dict[str, Any]:
 
 
 @router.post("/init")
-async def git_init(payload: GitInitRequest, config_type: str = "model") -> Dict[str, Any]:
+async def git_init(
+    payload: GitInitRequest, config_type: str = "model", _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     _handle_repo_call(
         GIT_REPO_SERVICE.init_repo,
         _config_dir(config_type),
         remote=payload.remote,
         branch=payload.branch,
     )
-    return await git_status(config_type)
+    return await git_status(config_type, _user)
 
 
 @router.post("/remote")
-async def git_remote(payload: GitRemoteRequest, config_type: str = "model") -> Dict[str, Any]:
+async def git_remote(
+    payload: GitRemoteRequest, config_type: str = "model", _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     _handle_repo_call(GIT_REPO_SERVICE.set_remote, _config_dir(config_type), payload.remote)
-    return await git_status(config_type)
+    return await git_status(config_type, _user)
 
 
 @router.post("/branch")
-async def git_branch(payload: GitBranchRequest, config_type: str = "model") -> Dict[str, Any]:
+async def git_branch(
+    payload: GitBranchRequest, config_type: str = "model", _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     _handle_repo_call(
         GIT_REPO_SERVICE.create_or_switch_branch,
         _config_dir(config_type),
         payload.name,
         payload.create,
     )
-    return await git_status(config_type)
+    return await git_status(config_type, _user)
 
 
 @router.post("/identity")
-async def git_identity(payload: GitIdentityRequest, config_type: str = "model") -> Dict[str, Any]:
+async def git_identity(
+    payload: GitIdentityRequest, config_type: str = "model", _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     _handle_repo_call(GIT_REPO_SERVICE.set_identity, _config_dir(config_type), payload.name, payload.email)
-    return await git_status(config_type)
+    return await git_status(config_type, _user)
 
 
 @router.get("/history")
@@ -133,6 +143,7 @@ async def git_history(
     config_type: str = "model",
     skip: int = 0,
     limit: int = 20,
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     commits = _handle_config_call(GIT_CONFIG_SERVICE.history_for_config, path, config_type, skip, limit)
     return {"commits": commits}
@@ -145,13 +156,16 @@ async def git_diff(
     config_type: str = "model",
     max_bytes: int = 100_000,
     max_lines: int = 500,
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     diff_payload = _handle_config_call(GIT_CONFIG_SERVICE.diff_for_config, path, config_type, commit, max_bytes, max_lines)
     return diff_payload
 
 
 @router.post("/snapshot")
-async def git_snapshot(payload: GitSnapshotRequest, config_type: Optional[str] = None) -> Dict[str, Any]:
+async def git_snapshot(
+    payload: GitSnapshotRequest, config_type: Optional[str] = None, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     target_config_type = config_type or payload.config_type or "model"
     message = (payload.message or "").strip() or "Snapshot from SimpleTuner"
     result = _handle_config_call(
@@ -166,7 +180,9 @@ async def git_snapshot(payload: GitSnapshotRequest, config_type: Optional[str] =
 
 
 @router.post("/revert")
-async def git_revert(payload: GitRevertRequest, config_type: Optional[str] = None) -> Dict[str, Any]:
+async def git_revert(
+    payload: GitRevertRequest, config_type: Optional[str] = None, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     target_config_type = config_type or payload.config_type or "model"
     return _handle_config_call(
         GIT_CONFIG_SERVICE.restore_config,
@@ -177,22 +193,26 @@ async def git_revert(payload: GitRevertRequest, config_type: Optional[str] = Non
 
 
 @router.post("/push")
-async def git_push(payload: GitRemoteActionRequest, config_type: str = "model") -> Dict[str, Any]:
+async def git_push(
+    payload: GitRemoteActionRequest, config_type: str = "model", _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     if not payload.allow_remote:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Remote actions require explicit opt-in.",
         )
     _handle_repo_call(GIT_REPO_SERVICE.push, _config_dir(config_type), payload.remote, payload.branch)
-    return await git_status(config_type)
+    return await git_status(config_type, _user)
 
 
 @router.post("/pull")
-async def git_pull(payload: GitRemoteActionRequest, config_type: str = "model") -> Dict[str, Any]:
+async def git_pull(
+    payload: GitRemoteActionRequest, config_type: str = "model", _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     if not payload.allow_remote:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Remote actions require explicit opt-in.",
         )
     _handle_repo_call(GIT_REPO_SERVICE.pull, _config_dir(config_type), payload.remote, payload.branch)
-    return await git_status(config_type)
+    return await git_status(config_type, _user)

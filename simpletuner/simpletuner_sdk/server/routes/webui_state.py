@@ -8,9 +8,11 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
 from simpletuner.simpletuner_sdk.server.services.git_config_service import GIT_CONFIG_SERVICE
 from simpletuner.simpletuner_sdk.server.services.webui_state import (
@@ -206,7 +208,7 @@ def _build_state_response(state: WebUIState, steps: List[OnboardingStepDefinitio
 
 
 @router.get("/state")
-async def get_webui_state() -> Dict[str, object]:
+async def get_webui_state(_user: User = Depends(get_current_user)) -> Dict[str, object]:
     """Get the persisted Web UI state."""
     store = WebUIStateStore()
     try:
@@ -322,7 +324,9 @@ def _sync_defaults_from_onboarding(store: WebUIStateStore, defaults: WebUIDefaul
 
 
 @router.post("/onboarding/steps/{step_id}")
-async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) -> Dict[str, object]:
+async def update_onboarding_step(
+    step_id: str, payload: OnboardingStepUpdate, _user: User = Depends(get_current_user)
+) -> Dict[str, object]:
     """Update onboarding progress for a specific step."""
     definition = _ALL_STEPS.get(step_id)
     if definition is None:
@@ -364,7 +368,7 @@ async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) ->
 
 
 @router.post("/onboarding/reset")
-async def reset_onboarding() -> Dict[str, object]:
+async def reset_onboarding(_user: User = Depends(get_current_user)) -> Dict[str, object]:
     """Reset onboarding data to allow starting fresh."""
     store = WebUIStateStore()
     try:
@@ -421,7 +425,7 @@ class DefaultsUpdate(BaseModel):
 
 
 @router.post("/defaults/update")
-async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
+async def update_defaults(payload: DefaultsUpdate, _user: User = Depends(get_current_user)) -> Dict[str, object]:
     """Update WebUI default settings."""
     store = WebUIStateStore()
     try:
@@ -560,7 +564,7 @@ class CollapsedSectionsPayload(BaseModel):
 
 
 @router.get("/ui-state/collapsed-sections/{tab_name}")
-async def get_collapsed_sections(tab_name: str) -> Dict[str, bool]:
+async def get_collapsed_sections(tab_name: str, _user: User = Depends(get_current_user)) -> Dict[str, bool]:
     """Get collapsed state for sections in a specific tab."""
     store = WebUIStateStore()
     try:
@@ -570,7 +574,9 @@ async def get_collapsed_sections(tab_name: str) -> Dict[str, bool]:
 
 
 @router.post("/ui-state/collapsed-sections/{tab_name}")
-async def save_collapsed_sections(tab_name: str, payload: CollapsedSectionsPayload) -> Dict[str, str]:
+async def save_collapsed_sections(
+    tab_name: str, payload: CollapsedSectionsPayload, _user: User = Depends(get_current_user)
+) -> Dict[str, str]:
     """Save collapsed state for sections in a specific tab."""
     store = WebUIStateStore()
     try:

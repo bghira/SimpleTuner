@@ -16,11 +16,13 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..services.cloud import CloudJobStatus
+from ..services.cloud.auth.middleware import get_current_user
+from ..services.cloud.auth.models import User
 from ..services.cloud.cache import TTLCache
 from ..services.cloud.secrets import get_secrets_manager
 from .cloud._shared import ReplicateWebhookPayload, check_ip_allowlist, emit_cloud_event, get_client_ip, get_job_store
@@ -116,7 +118,7 @@ def _verify_webhook_signature(
 
 
 @router.post("/replicate")
-async def replicate_webhook(request: Request) -> Dict[str, Any]:
+async def replicate_webhook(request: Request, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Receive webhook events from Replicate Cog."""
     store = get_job_store()
     provider_config = await store.get_provider_config("replicate")
@@ -259,7 +261,7 @@ async def replicate_webhook(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/test")
-async def test_webhook(request: Request) -> Dict[str, Any]:
+async def test_webhook(request: Request, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Test webhook connectivity before submitting expensive jobs.
 
     Performs a pre-flight check to verify the webhook URL is reachable.
@@ -314,7 +316,7 @@ async def test_webhook(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/upload/progress/{upload_id}")
-async def upload_progress_sse(upload_id: str):
+async def upload_progress_sse(upload_id: str, _user: User = Depends(get_current_user)):
     """SSE endpoint for monitoring upload progress."""
     store = get_job_store()
 

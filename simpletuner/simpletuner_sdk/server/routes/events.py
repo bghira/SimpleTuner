@@ -10,10 +10,11 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_auth_middleware
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_auth_middleware, get_current_user
+from ..services.cloud.auth.models import User
 
 try:  # pragma: no cover - optional dependency
     from sse_starlette.sse import EventSourceResponse  # type: ignore
@@ -145,7 +146,7 @@ def _resolve_broadcast_timeout(timeout_param: float | None) -> float:
 
 
 @router.post("/callback")
-async def handle_callback(request: Request):
+async def handle_callback(request: Request, _user: User = Depends(get_current_user)):
     """
     Endpoint to receive incoming callbacks and store them as events.
     """
@@ -181,6 +182,7 @@ async def broadcast(
         float | None,
         Query(gt=0.0, description="Maximum time in seconds to wait for new events."),
     ] = None,
+    _user: User = Depends(get_current_user),
 ):
     """
     Endpoint for long polling, where the client requests events newer than the last received index.
@@ -216,7 +218,7 @@ async def broadcast(
 
 
 @router.get("/api/events")
-async def events_stream(request: Request):
+async def events_stream(request: Request, _user: User = Depends(get_current_user)):
     """
     Server-Sent Events endpoint for real-time updates with connection management.
     """
@@ -376,7 +378,7 @@ async def events_stream(request: Request):
 
 
 @router.get("/api/events/recent")
-async def get_recent_events(request: Request):
+async def get_recent_events(request: Request, _user: User = Depends(get_current_user)):
     """Get recent training events for HTMX display."""
     from fastapi.responses import HTMLResponse
 
