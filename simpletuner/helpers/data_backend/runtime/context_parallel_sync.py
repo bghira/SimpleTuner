@@ -51,7 +51,7 @@ def get_cp_info(accelerator) -> Tuple[bool, Optional[Any], int, int]:
         return False, None, 0, 1
 
     cp_size = getattr(parallelism_config, "cp_size", None)
-    if cp_size is None or cp_size <= 1:
+    if cp_size is None or not isinstance(cp_size, int) or cp_size <= 1:
         return False, None, 0, 1
 
     cp_enabled = getattr(parallelism_config, "cp_enabled", False)

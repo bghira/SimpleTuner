@@ -54,7 +54,7 @@ def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
         return world_size, global_rank, 1
 
     cp_size = getattr(parallelism_config, "cp_size", None)
-    if cp_size is None or cp_size <= 1:
+    if cp_size is None or not isinstance(cp_size, int) or cp_size <= 1:
         return world_size, global_rank, 1
 
     cp_enabled = getattr(parallelism_config, "cp_enabled", False)
