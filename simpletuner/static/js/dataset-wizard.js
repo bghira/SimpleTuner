@@ -258,6 +258,14 @@
 
             async init() {
                 console.log('[WIZARD] Component initializing...');
+
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    // User needs to login - skip API-dependent initialization
+                    return;
+                }
+
                 const exposeInstance = () => {
                     // Expose a raw object so tests can inspect fields without Alpine proxies interfering
                     const raw = (window.Alpine && typeof window.Alpine.raw === 'function') ? window.Alpine.raw(this) : this;

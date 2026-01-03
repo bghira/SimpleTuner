@@ -592,8 +592,14 @@
             });
         }
 
-        // Initialize when page loads
-        document.addEventListener('DOMContentLoaded', function() {
+        // Initialize when page loads, after auth is ready
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Wait for auth before establishing SSE connection
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                // User needs to login - skip SSE initialization
+                return;
+            }
             initializeEventStream();
         });
     </script>
