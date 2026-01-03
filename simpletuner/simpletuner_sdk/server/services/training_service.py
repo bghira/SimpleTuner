@@ -1160,6 +1160,15 @@ def start_training_job(
         or "local"
     )
 
+    # Extract output_url and run_name for job tracking
+    output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+    run_name = (
+        runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+    )
+
     def _create_running_entry():
         """Create a job entry with status=running and allocated GPUs."""
         from datetime import datetime, timezone
@@ -1172,6 +1181,13 @@ def start_training_job(
 
             # Create job directly as running with allocated GPUs
             now = datetime.now(timezone.utc).isoformat()
+            metadata = {
+                "runtime_config": runtime_config,
+                "env_name": env_name,
+                "any_gpu": any_gpu,
+            }
+            if run_name:
+                metadata["run_name"] = run_name
             job = UnifiedJob(
                 job_id=job_id,
                 job_type=JobType.LOCAL,
@@ -1185,11 +1201,9 @@ def start_training_job(
                 org_id=org_id,
                 num_processes=num_processes,
                 allocated_gpus=gpus_to_use,
-                metadata={
-                    "runtime_config": runtime_config,
-                    "env_name": env_name,
-                    "any_gpu": any_gpu,
-                },
+                output_url=output_url,
+                hardware_type=_detect_local_hardware(),
+                metadata=metadata,
             )
             await job_repo.add(job)
             return job
@@ -1292,60 +1306,6 @@ def start_training_job(
         job_config.pop(key, None)
 
     process_keeper.submit_job(job_id, run_trainer_job, job_config)
-
-    # Track local job in unified JobStore for Job Queue visibility
-    try:
-        UnifiedJob = _get_unified_job_class()
-        CloudJobStatus = _get_cloud_job_status()
-        job_store = _get_job_store()
-
-        config_name = (
-            env_name
-            or runtime_config.get("--model_alias")
-            or runtime_config.get("model_alias")
-            or runtime_config.get("--tracker_run_name")
-            or runtime_config.get("tracker_run_name")
-            or "local"
-        )
-        output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
-
-        local_job = UnifiedJob.create_local(
-            job_id=job_id,
-            config_name=config_name,
-            hardware_type=_detect_local_hardware(),
-        )
-        local_job.output_url = output_url
-        local_job.status = CloudJobStatus.RUNNING.value
-        local_job.started_at = datetime.now(timezone.utc).isoformat()
-
-        # Store run name in metadata for display in job list
-        run_name = (
-            runtime_config.get("--tracker_run_name")
-            or runtime_config.get("tracker_run_name")
-            or runtime_config.get("--model_alias")
-            or runtime_config.get("model_alias")
-        )
-        if run_name:
-            local_job.metadata["run_name"] = run_name
-
-        # Store job asynchronously (fire-and-forget)
-        import asyncio
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(job_store.add_job(local_job))
-        except RuntimeError:
-            # No running event loop, use sync approach via thread
-            import threading
-
-            def _add_job():
-                import asyncio as aio
-
-                aio.run(job_store.add_job(local_job))
-
-            threading.Thread(target=_add_job, daemon=True).start()
-    except Exception as exc:
-        logger.warning("Failed to track local job in JobStore: %s", exc)
 
     APIState.set_state("current_job_id", job_id)
     return TrainingJobResult(
