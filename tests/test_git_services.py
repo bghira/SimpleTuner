@@ -3,10 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.git_config_service import (
     GIT_CONFIG_SERVICE,
@@ -205,9 +207,30 @@ class GitRoutesTests(unittest.TestCase):
         ConfigStore._instances = {}
         GIT_CONFIG_SERVICE._store_cache = {}
 
+        # Create mock user for auth
+        self.mock_user = MagicMock(spec=User)
+        self.mock_user.id = 1
+        self.mock_user.username = "testuser"
+        self.mock_user.is_admin = True
+        self.mock_user.has_permission = MagicMock(return_value=True)
+
     def tearDown(self) -> None:
         ConfigStore._instances = self._config_store_instances
         GIT_CONFIG_SERVICE._store_cache = {}
+
+    def _create_app_with_auth(self):
+        """Create FastAPI app with git router and auth override."""
+        from simpletuner.simpletuner_sdk.server.routes.git import router
+
+        app = FastAPI()
+        app.include_router(router)
+
+        # Override auth to return mock user
+        async def mock_get_current_user():
+            return self.mock_user
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        return app
 
     def test_git_status_endpoint(self) -> None:
         from fastapi.testclient import TestClient
@@ -216,11 +239,7 @@ class GitRoutesTests(unittest.TestCase):
             store = ConfigStore(config_dir=tmpdir, config_type="model")
             GIT_CONFIG_SERVICE._store_cache["model"] = store
 
-            from simpletuner.simpletuner_sdk.server.routes.git import router
-            from fastapi import FastAPI
-
-            app = FastAPI()
-            app.include_router(router)
+            app = self._create_app_with_auth()
             client = TestClient(app)
 
             response = client.get("/api/git/status")
@@ -236,11 +255,7 @@ class GitRoutesTests(unittest.TestCase):
             store = ConfigStore(config_dir=tmpdir, config_type="model")
             GIT_CONFIG_SERVICE._store_cache["model"] = store
 
-            from simpletuner.simpletuner_sdk.server.routes.git import router
-            from fastapi import FastAPI
-
-            app = FastAPI()
-            app.include_router(router)
+            app = self._create_app_with_auth()
             client = TestClient(app)
 
             response = client.post("/api/git/init", json={})
@@ -256,11 +271,7 @@ class GitRoutesTests(unittest.TestCase):
             GIT_CONFIG_SERVICE._store_cache["model"] = store
             GIT_REPO_SERVICE.init_repo(store.config_dir)
 
-            from simpletuner.simpletuner_sdk.server.routes.git import router
-            from fastapi import FastAPI
-
-            app = FastAPI()
-            app.include_router(router)
+            app = self._create_app_with_auth()
             client = TestClient(app)
 
             response = client.post(
@@ -288,11 +299,7 @@ class GitRoutesTests(unittest.TestCase):
             # Dirty the tree
             config_file.write_text('{"dirty": true}')
 
-            from simpletuner.simpletuner_sdk.server.routes.git import router
-            from fastapi import FastAPI
-
-            app = FastAPI()
-            app.include_router(router)
+            app = self._create_app_with_auth()
             client = TestClient(app)
 
             response = client.post("/api/git/branch", json={"name": "new-branch", "create": True})
@@ -307,11 +314,7 @@ class GitRoutesTests(unittest.TestCase):
             GIT_CONFIG_SERVICE._store_cache["model"] = store
             GIT_REPO_SERVICE.init_repo(store.config_dir)
 
-            from simpletuner.simpletuner_sdk.server.routes.git import router
-            from fastapi import FastAPI
-
-            app = FastAPI()
-            app.include_router(router)
+            app = self._create_app_with_auth()
             client = TestClient(app)
 
             response = client.post("/api/git/push", json={"allow_remote": False})
