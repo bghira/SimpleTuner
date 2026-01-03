@@ -1038,5 +1038,222 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(middleware._local_admin)
 
 
+class TestSSESessionNotification(unittest.IsolatedAsyncioTestCase):
+    """Test cases for SSE session invalidation notifications."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        # Reset SSE manager
+        import simpletuner.simpletuner_sdk.server.services.sse_manager as sse_module
+
+        sse_module._sse_manager = None
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        import simpletuner.simpletuner_sdk.server.services.sse_manager as sse_module
+
+        sse_module._sse_manager = None
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_delete_user_calls_sse_notification(self) -> None:
+        """Test that deleting a user triggers SSE session invalidation notification."""
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import get_sse_manager
+
+        # Create a user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Get the SSE manager and mock notify_session_invalidated
+        sse_manager = get_sse_manager()
+        original_notify = sse_manager.notify_session_invalidated
+        notifications = []
+
+        async def mock_notify(user_id: int, reason: str = "session_expired"):
+            notifications.append({"user_id": user_id, "reason": reason})
+            return 0
+
+        sse_manager.notify_session_invalidated = mock_notify
+
+        try:
+            # Delete the user
+            await self.store.delete_user(user.id)
+
+            # Verify notification was called with correct arguments
+            self.assertEqual(len(notifications), 1)
+            self.assertEqual(notifications[0]["user_id"], user.id)
+            self.assertEqual(notifications[0]["reason"], "user_deleted")
+        finally:
+            sse_manager.notify_session_invalidated = original_notify
+
+    async def test_delete_user_sse_failure_does_not_break_deletion(self) -> None:
+        """Test that SSE notification failure doesn't prevent user deletion."""
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import get_sse_manager
+
+        # Create a user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Get the SSE manager and make notify_session_invalidated raise an exception
+        sse_manager = get_sse_manager()
+        original_notify = sse_manager.notify_session_invalidated
+
+        async def failing_notify(user_id: int, reason: str = "session_expired"):
+            raise RuntimeError("SSE notification failed")
+
+        sse_manager.notify_session_invalidated = failing_notify
+
+        try:
+            # Delete the user - should succeed despite SSE failure
+            result = await self.store.delete_user(user.id)
+            self.assertTrue(result)
+
+            # Verify user is actually deleted
+            deleted_user = await self.store.get_user(user.id)
+            self.assertIsNone(deleted_user)
+        finally:
+            sse_manager.notify_session_invalidated = original_notify
+
+    async def test_sse_manager_notify_session_invalidated(self) -> None:
+        """Test SSE manager's notify_session_invalidated method."""
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import SSEConnection, SSEManager
+
+        manager = SSEManager()
+
+        # Create mock connections for different users
+        conn1 = SSEConnection(
+            connection_id="conn1",
+            client_ip="127.0.0.1",
+            user_agent="test",
+            created_at=MagicMock(),
+            last_activity=MagicMock(),
+            user_id=1,
+            session_id="session1",
+        )
+        conn2 = SSEConnection(
+            connection_id="conn2",
+            client_ip="127.0.0.1",
+            user_agent="test",
+            created_at=MagicMock(),
+            last_activity=MagicMock(),
+            user_id=1,
+            session_id="session2",
+        )
+        conn3 = SSEConnection(
+            connection_id="conn3",
+            client_ip="127.0.0.1",
+            user_agent="test",
+            created_at=MagicMock(),
+            last_activity=MagicMock(),
+            user_id=2,
+            session_id="session3",
+        )
+
+        manager.connections = {
+            "conn1": conn1,
+            "conn2": conn2,
+            "conn3": conn3,
+        }
+
+        # Track messages sent
+        messages_sent = []
+        original_send = manager.send_to_connection
+
+        async def mock_send(connection_id, data, event_type=None):
+            messages_sent.append(
+                {
+                    "connection_id": connection_id,
+                    "data": data,
+                    "event_type": event_type,
+                }
+            )
+
+        manager.send_to_connection = mock_send
+
+        try:
+            # Notify user 1's sessions
+            notified = await manager.notify_session_invalidated(1, reason="user_deleted")
+
+            # Should notify 2 connections (conn1 and conn2 belong to user 1)
+            self.assertEqual(notified, 2)
+            self.assertEqual(len(messages_sent), 2)
+
+            # Verify correct connections were notified
+            notified_conn_ids = {m["connection_id"] for m in messages_sent}
+            self.assertEqual(notified_conn_ids, {"conn1", "conn2"})
+
+            # Verify message content
+            for msg in messages_sent:
+                self.assertEqual(msg["data"]["type"], "session_invalidated")
+                self.assertEqual(msg["data"]["reason"], "user_deleted")
+                self.assertEqual(msg["event_type"], "auth")
+        finally:
+            manager.send_to_connection = original_send
+
+    async def test_sse_connection_tracks_user_info(self) -> None:
+        """Test that SSE connections can store user_id and session_id."""
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import SSEConnection
+
+        conn = SSEConnection(
+            connection_id="test-conn",
+            client_ip="127.0.0.1",
+            user_agent="test-agent",
+            created_at=MagicMock(),
+            last_activity=MagicMock(),
+            user_id=42,
+            session_id="test-session-id",
+        )
+
+        self.assertEqual(conn.user_id, 42)
+        self.assertEqual(conn.session_id, "test-session-id")
+
+    async def test_sse_connection_user_info_defaults_to_none(self) -> None:
+        """Test that SSE connection user info defaults to None for anonymous connections."""
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import SSEConnection
+
+        conn = SSEConnection(
+            connection_id="test-conn",
+            client_ip="127.0.0.1",
+            user_agent="test-agent",
+            created_at=MagicMock(),
+            last_activity=MagicMock(),
+        )
+
+        self.assertIsNone(conn.user_id)
+        self.assertIsNone(conn.session_id)
+
+
 if __name__ == "__main__":
     unittest.main()

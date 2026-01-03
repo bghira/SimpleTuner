@@ -13,6 +13,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_auth_middleware
+
 try:  # pragma: no cover - optional dependency
     from sse_starlette.sse import EventSourceResponse  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
@@ -221,8 +223,20 @@ async def events_stream(request: Request):
     # Get SSE manager
     sse_manager = get_sse_manager()
 
+    # Extract user info from auth context for session tracking
+    user_id = None
+    session_id = None
+    try:
+        auth_middleware = get_auth_middleware()
+        auth_context = await auth_middleware(request)
+        if auth_context.is_authenticated and auth_context.user:
+            user_id = auth_context.user.id
+            session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    except Exception:
+        pass  # Auth extraction is optional for SSE
+
     # Try to add connection with limits
-    connection = await sse_manager.add_connection(request)
+    connection = await sse_manager.add_connection(request, user_id=user_id, session_id=session_id)
     if not connection:
         # Connection limit reached
         return JSONResponse(

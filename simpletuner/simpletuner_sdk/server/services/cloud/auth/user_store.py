@@ -355,9 +355,20 @@ class UserStore:
         return await self._users.update(user_id, {"last_login_at": now})
 
     async def delete_user(self, user_id: int) -> bool:
-        """Delete a user and invalidate all their sessions."""
+        """Delete a user, invalidate all their sessions, and notify SSE connections."""
         await self._sessions.delete_user_sessions(user_id)
-        return await self._users.delete(user_id)
+        result = await self._users.delete(user_id)
+        if result:
+            # Notify any active SSE connections for this user
+            try:
+                from ...sse_manager import get_sse_manager
+
+                sse_manager = get_sse_manager()
+                await sse_manager.notify_session_invalidated(user_id, reason="user_deleted")
+            except Exception as e:
+                # Don't fail user deletion if SSE notification fails
+                logging.getLogger(__name__).debug("Failed to notify SSE: %s", e)
+        return result
 
     async def get_user_count(self) -> int:
         """Get total user count."""
