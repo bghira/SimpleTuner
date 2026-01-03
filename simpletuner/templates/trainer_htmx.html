@@ -281,6 +281,12 @@ document.addEventListener('alpine:init', () => {
                 await new Promise(r => setTimeout(r, 50));
                 waitTime += 50;
             }
+            if (!this.authStatus.checked && waitTime >= timeout) {
+                console.warn(
+                    `waitForAuthReady: timed out after ${waitTime}ms before auth status was checked. ` +
+                    'Components may have skipped initialization due to unknown auth state.'
+                );
+            }
             return this.shouldShowApp;
         }
     });
@@ -293,6 +299,19 @@ document.addEventListener('alpine:init', () => {
  * @returns {Promise<boolean>}
  */
 window.waitForAuthReady = async function(timeout = 5000) {
+    // Wait for Alpine to be initialized if it hasn't been yet
+    if (typeof Alpine === 'undefined' || typeof Alpine.store !== 'function') {
+        await new Promise(resolve => {
+            document.addEventListener('alpine:init', resolve, { once: true });
+            // Also set a short timeout in case alpine:init already fired
+            setTimeout(resolve, 100);
+        });
+    }
+    // Check again after waiting
+    if (typeof Alpine === 'undefined' || typeof Alpine.store !== 'function') {
+        // Alpine not available, proceed without auth check
+        return true;
+    }
     const authStore = Alpine.store('cloudAuth');
     if (!authStore) {
         // No auth store = no auth configured, proceed with API calls
@@ -414,27 +433,29 @@ function trainerComponent() {
             }
             return parts.join(' • ');
         },
+        _cleanupEventHandlers() {
+            if (this._defaultsUpdateHandler) {
+                window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
+            }
+            if (this._systemStatusTimer) {
+                window.clearInterval(this._systemStatusTimer);
+                this._systemStatusTimer = null;
+            }
+            if (this._visibilityChangeHandler) {
+                document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
+                this._visibilityChangeHandler = null;
+            }
+        },
+        _setupBeforeUnloadHandler() {
+            this._beforeUnloadHandler = () => this._cleanupEventHandlers();
+            window.addEventListener('beforeunload', this._beforeUnloadHandler);
+        },
         async init() {
             // Wait for auth before making any API calls
             const canProceed = await window.waitForAuthReady();
             if (!canProceed) {
                 // User needs to login - skip API-dependent initialization
-                // Set up event handlers that don't require API calls
-                const beforeUnloadHandler = () => {
-                    if (this._defaultsUpdateHandler) {
-                        window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
-                    }
-                    if (this._systemStatusTimer) {
-                        window.clearInterval(this._systemStatusTimer);
-                        this._systemStatusTimer = null;
-                    }
-                    if (this._visibilityChangeHandler) {
-                        document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
-                        this._visibilityChangeHandler = null;
-                    }
-                };
-                this._beforeUnloadHandler = beforeUnloadHandler;
-                window.addEventListener('beforeunload', beforeUnloadHandler);
+                this._setupBeforeUnloadHandler();
                 return;
             }
 
@@ -456,21 +477,7 @@ function trainerComponent() {
             };
             this._defaultsUpdateHandler = handler;
             window.addEventListener('webui-defaults-updated', handler);
-            const beforeUnloadHandler = () => {
-                if (this._defaultsUpdateHandler) {
-                    window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
-                }
-                if (this._systemStatusTimer) {
-                    window.clearInterval(this._systemStatusTimer);
-                    this._systemStatusTimer = null;
-                }
-                if (this._visibilityChangeHandler) {
-                    document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
-                    this._visibilityChangeHandler = null;
-                }
-            };
-            this._beforeUnloadHandler = beforeUnloadHandler;
-            window.addEventListener('beforeunload', beforeUnloadHandler);
+            this._setupBeforeUnloadHandler();
 
             this.refreshSystemStatus();
             this._systemStatusTimer = window.setInterval(() => {
