@@ -2519,14 +2519,14 @@ if (!window.hardwareHeroCTA) {
                         <!-- Compact choice cards -->
                         <div class="ez-compact-choice-grid">
                             <label class="ez-compact-choice" :class="{ 'selected': model_type === 'lora' }">
-                                <input type="radio" name="ez_model_type" value="lora"
+                                <input type="radio" value="lora"
                                        x-model="model_type" @change="onModelTypeChange('lora')" class="d-none">
                                 <i class="fas fa-feather ez-compact-icon"></i>
                                 <span class="ez-compact-label">LoRA</span>
                                 <span class="ez-compact-badge">Recommended</span>
                             </label>
                             <label class="ez-compact-choice" :class="{ 'selected': model_type === 'full' }">
-                                <input type="radio" name="ez_model_type" value="full"
+                                <input type="radio" value="full"
                                        x-model="model_type" @change="onModelTypeChange('full')" class="d-none">
                                 <i class="fas fa-cube ez-compact-icon"></i>
                                 <span class="ez-compact-label">Full Model</span>
