@@ -472,19 +472,7 @@ window.adminPanelComponent = function() {
             }
         },
 
-        get setupFormValid() {
-            const form = this.setupState?.form;
-            if (!form) return false;
-            return (
-                form.email &&
-                form.email.includes('@') &&
-                form.username &&
-                form.username.length >= 3 &&
-                form.password &&
-                form.password.length >= 8 &&
-                form.password === form.confirmPassword
-            );
-        },
+        // Note: setupFormValid getter moved to return object to avoid spread evaluation issue
 
         async submitFirstRunSetup() {
             if (!this.setupFormValid) return;
@@ -570,6 +558,19 @@ window.adminPanelComponent = function() {
         // Getters must be defined here, not in spread modules, to avoid evaluation issues
         get anyHintsDismissed() {
             return this.hints && Object.values(this.hints).some(v => !v);
+        },
+        get setupFormValid() {
+            const form = this.setupState?.form;
+            if (!form) return false;
+            return (
+                form.email &&
+                form.email.includes('@') &&
+                form.username &&
+                form.username.length >= 3 &&
+                form.password &&
+                form.password.length >= 8 &&
+                form.password === form.confirmPassword
+            );
         },
     };
 };
