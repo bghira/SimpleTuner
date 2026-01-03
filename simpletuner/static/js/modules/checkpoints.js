@@ -71,6 +71,12 @@ if (!window.checkpointsManager) {
 
             // Lifecycle
             async init() {
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    return;
+                }
+
                 // Load hint state first (non-blocking)
                 this.loadHints();
 

@@ -60,7 +60,13 @@ window.orgsComponent = function() {
             role: 'member',
         },
 
-        init() {
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
             this.loadHeroCTAState();
             this.loadOrganizations();
             this.loadAvailableUsers();

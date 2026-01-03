@@ -34,7 +34,13 @@ window.externalAuthComponent = function() {
         newMappingGroup: '',
         newMappingLevel: 'researcher',
 
-        init() {
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
             this.loadProviders();
 
             this.$nextTick(() => {

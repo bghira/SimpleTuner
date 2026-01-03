@@ -32,6 +32,12 @@ function metricsComponent(initialSettings = {}) {
 
         // Initialization
         async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
             // Check if hero should be shown
             this.heroDismissed = this.dismissedHints.includes('hero');
 

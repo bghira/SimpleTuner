@@ -267,9 +267,39 @@ document.addEventListener('alpine:init', () => {
             // Load auth status and current user on store initialization
             this.loadAuthStatus();
             this.loadCurrentUser();
+        },
+        /**
+         * Wait for auth status to be checked.
+         * Returns true if the app should be shown (user is authenticated or auth is not required).
+         * Returns false if user needs to login (API calls should be skipped).
+         * @param {number} timeout - Maximum wait time in ms (default 5000)
+         * @returns {Promise<boolean>}
+         */
+        async waitForAuthReady(timeout = 5000) {
+            let waitTime = 0;
+            while (!this.authStatus.checked && waitTime < timeout) {
+                await new Promise(r => setTimeout(r, 50));
+                waitTime += 50;
+            }
+            return this.shouldShowApp;
         }
     });
 });
+
+/**
+ * Global helper to wait for auth and check if API calls should proceed.
+ * Returns true if authenticated (or auth not required), false if login is needed.
+ * @param {number} timeout - Maximum wait time in ms (default 5000)
+ * @returns {Promise<boolean>}
+ */
+window.waitForAuthReady = async function(timeout = 5000) {
+    const authStore = Alpine.store('cloudAuth');
+    if (!authStore) {
+        // No auth store = no auth configured, proceed with API calls
+        return true;
+    }
+    return authStore.waitForAuthReady(timeout);
+};
 
 const sanitizeConfigName = (name) => {
     if (typeof name !== 'string') {
@@ -384,7 +414,30 @@ function trainerComponent() {
             }
             return parts.join(' • ');
         },
-        init() {
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                // User needs to login - skip API-dependent initialization
+                // Set up event handlers that don't require API calls
+                const beforeUnloadHandler = () => {
+                    if (this._defaultsUpdateHandler) {
+                        window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
+                    }
+                    if (this._systemStatusTimer) {
+                        window.clearInterval(this._systemStatusTimer);
+                        this._systemStatusTimer = null;
+                    }
+                    if (this._visibilityChangeHandler) {
+                        document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
+                        this._visibilityChangeHandler = null;
+                    }
+                };
+                this._beforeUnloadHandler = beforeUnloadHandler;
+                window.addEventListener('beforeunload', beforeUnloadHandler);
+                return;
+            }
+
             this.loadVersionInfo().catch((error) => {
                 console.debug('Version info fetch failed:', error);
             });
@@ -5338,6 +5391,13 @@ function trainerComponent() {
 
          // Initialize other components
          $nextTick(async () => {
+             // Wait for auth before making any API calls
+             const canProceed = await window.waitForAuthReady();
+             if (!canProceed) {
+                 // User needs to login - skip API-dependent initialization
+                 return;
+             }
+
              await $data.initializeWebUIState();
              await $data.loadEnvironmentConfigs();
 
