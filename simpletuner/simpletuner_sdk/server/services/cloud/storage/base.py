@@ -31,7 +31,7 @@ def get_default_config_dir() -> Path:
         Path to the configuration directory:
         - Windows: %APPDATA%/SimpleTuner
         - macOS: ~/Library/Application Support/SimpleTuner
-        - Linux: ~/.config/simpletuner or ~/.simpletuner (legacy)
+        - Linux: /workspace/simpletuner, /notebooks/simpletuner, or ~/.simpletuner
     """
     # Check for explicit override (testing, custom deployment)
     override = os.environ.get("SIMPLETUNER_CONFIG_DIR")
@@ -44,16 +44,26 @@ def get_default_config_dir() -> Path:
     elif sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "SimpleTuner"
     else:
-        # Linux/Unix - check XDG first, fall back to legacy
-        xdg_config = os.environ.get("XDG_CONFIG_HOME")
-        if xdg_config:
-            return Path(xdg_config) / "simpletuner"
-        # Check for legacy path
-        legacy_path = Path.home() / ".simpletuner"
-        if legacy_path.exists():
-            return legacy_path
-        # Use XDG default
-        return Path.home() / ".config" / "simpletuner"
+        # Linux/Unix - check common ML environment paths first
+        candidate_roots = []
+        if Path("/workspace").exists():
+            candidate_roots.append(Path("/workspace/simpletuner"))
+        if Path("/notebooks").exists():
+            candidate_roots.append(Path("/notebooks/simpletuner"))
+        candidate_roots.append(Path.home() / ".simpletuner")
+
+        # Check for existing installations (with cloud subdirectory)
+        for root in candidate_roots:
+            cloud_dir = root / "cloud"
+            if cloud_dir.exists():
+                return root
+
+        # Nothing exists yet - use first preferred root (prefers ML environment paths)
+        if candidate_roots:
+            return candidate_roots[0]
+
+        # Ultimate fallback
+        return Path.home() / ".simpletuner"
 
 
 def get_default_db_path(db_name: str = "jobs.db") -> Path:

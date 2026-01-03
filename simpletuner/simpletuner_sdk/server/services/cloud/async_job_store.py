@@ -114,6 +114,22 @@ class AsyncJobStore:
                 return Path(defaults.configs_dir)
             return store.base_dir.parent / "config"
         except Exception:
+            # Fallback with same priority as WebUIStateStore
+            candidate_roots = []
+            if Path("/workspace").exists():
+                candidate_roots.append(Path("/workspace/simpletuner"))
+            if Path("/notebooks").exists():
+                candidate_roots.append(Path("/notebooks/simpletuner"))
+            candidate_roots.append(Path.home() / ".simpletuner")
+
+            for root in candidate_roots:
+                config_dir = root / "config"
+                if config_dir.exists():
+                    return config_dir
+
+            if candidate_roots:
+                return candidate_roots[0] / "config"
+
             return Path.home() / ".simpletuner" / "config"
 
     async def _ensure_initialized(self) -> None:
