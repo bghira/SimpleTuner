@@ -35,6 +35,13 @@ if (!window.gitMirrorTabComponent) {
                 push_on_snapshot: defaults.git_push_on_snapshot || false,
             },
             async init() {
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    // User needs to login - skip API-dependent initialization
+                    return;
+                }
+
                 // Load hero CTA dismissed state
                 await this.loadHeroCTAState();
                 await this.loadStatus();

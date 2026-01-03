@@ -1172,6 +1172,13 @@ if (!window.hardwareHeroCTA) {
                     this.hints.ez_mode = stored.ez_mode !== false;
                 } catch (e) { }
 
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    // User needs to login - skip API-dependent initialization
+                    return;
+                }
+
                 await this.loadPromptLibraries();
 
                 this.syncFromForm();

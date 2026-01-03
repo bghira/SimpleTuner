@@ -399,7 +399,13 @@ window.adminPanelComponent = function() {
 
     // Core methods that orchestrate initialization
     const coreMethods = {
-        init() {
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
             this.loadCurrentUser();
             this.loadHints();
             this.loadEnterpriseOnboardingState();

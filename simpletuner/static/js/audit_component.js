@@ -62,6 +62,12 @@ if (!window.auditLogComponent) {
             exportModalInstance: null,
 
             async init() {
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    return;
+                }
+
                 // Load hero CTA dismissed state
                 await this.loadHeroCTAState();
                 // Load event types
