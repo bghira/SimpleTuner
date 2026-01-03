@@ -643,5 +643,108 @@ class TestRuntimePerformance(unittest.TestCase):
         self.assertLess(elapsed_time, 0.2)
 
 
+class TestContextParallelBatchSynchronizer(unittest.TestCase):
+    """Test the ContextParallelBatchSynchronizer for context-parallel training."""
+
+    def test_sync_without_cp_returns_batch_unchanged(self):
+        """Test that sync returns the batch unchanged when CP is not enabled."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        # Mock accelerator without parallelism_config
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        batch = {"data": [1, 2, 3], "labels": [0, 1, 0]}
+        result = synchronizer.sync(batch)
+
+        self.assertEqual(result, batch)
+        self.assertFalse(synchronizer.is_cp_enabled)
+
+    def test_sync_with_cp_disabled(self):
+        """Test that sync returns batch unchanged when cp_size <= 1."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 1
+        mock_parallelism_config.cp_enabled = False
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        batch = {"data": [1, 2, 3]}
+        result = synchronizer.sync(batch)
+
+        self.assertEqual(result, batch)
+        self.assertFalse(synchronizer.is_cp_enabled)
+
+    def test_get_cp_info_no_parallelism_config(self):
+        """Test get_cp_info returns defaults when no parallelism config."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        cp_enabled, cp_group, cp_rank, cp_size = get_cp_info(mock_accelerator)
+
+        self.assertFalse(cp_enabled)
+        self.assertIsNone(cp_group)
+        self.assertEqual(cp_rank, 0)
+        self.assertEqual(cp_size, 1)
+
+    def test_get_cp_info_cp_size_none(self):
+        """Test get_cp_info returns defaults when cp_size is None."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = None
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+
+        cp_enabled, cp_group, cp_rank, cp_size = get_cp_info(mock_accelerator)
+
+        self.assertFalse(cp_enabled)
+        self.assertIsNone(cp_group)
+        self.assertEqual(cp_rank, 0)
+        self.assertEqual(cp_size, 1)
+
+    def test_synchronizer_caches_cp_info(self):
+        """Test that the synchronizer caches CP info after first call."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        # First call initializes
+        self.assertFalse(synchronizer._initialized)
+        _ = synchronizer.is_cp_enabled
+        self.assertTrue(synchronizer._initialized)
+
+        # Subsequent calls use cached info
+        _ = synchronizer.cp_rank
+        _ = synchronizer.cp_size
+        self.assertTrue(synchronizer._initialized)
+
+    def test_synchronizer_properties(self):
+        """Test synchronizer property accessors."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        self.assertFalse(synchronizer.is_cp_enabled)
+        self.assertTrue(synchronizer.is_cp_leader)  # rank 0 is always leader
+        self.assertEqual(synchronizer.cp_rank, 0)
+        self.assertEqual(synchronizer.cp_size, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
