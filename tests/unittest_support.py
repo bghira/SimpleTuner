@@ -191,6 +191,14 @@ class APITestEnvironmentMixin:
         except ImportError:
             pass
 
+        # Reset auth middleware singleton (clears single-user mode cache)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import reset_auth_middleware
+
+            reset_auth_middleware()
+        except ImportError:
+            pass
+
         # Reset module-level store singletons
         try:
             from simpletuner.simpletuner_sdk.server.services.cloud.storage import (
