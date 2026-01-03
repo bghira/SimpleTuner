@@ -241,20 +241,7 @@ async def cancel_job(
         },
     )
 
-    # Release GPUs and process pending jobs for local jobs
-    if job.job_type == JobType.LOCAL:
-        try:
-            from ...services.local_gpu_allocator import get_gpu_allocator
-
-            allocator = get_gpu_allocator()
-            await allocator.release(job_id)
-
-            # Process pending jobs to start the next one if GPUs are available
-            started = await allocator.process_pending_jobs()
-            if started:
-                logger.info("Started %d pending jobs after cancel", len(started))
-        except Exception as exc:
-            logger.warning("Could not release GPUs for %s: %s", job_id, exc)
+    job_type_label = "Local" if job.is_local else "Cloud"
 
     store.log_audit_event(
         action="job.cancelled",
@@ -265,7 +252,6 @@ async def cancel_job(
         user_id=str(user.id) if user else None,
     )
 
-    job_type_label = "Local" if job.is_local else "Cloud"
     emit_cloud_event(
         "cloud.job.cancelled",
         job_id,
@@ -275,7 +261,8 @@ async def cancel_job(
         provider=job.provider,
     )
 
-    # Broadcast SSE event so UI updates training status
+    # Broadcast SSE event for cancellation BEFORE releasing GPUs and starting next job
+    # This ensures the "cancelled" event arrives before any "starting" event for the next job
     try:
         from ...services.sse_manager import get_sse_manager
 
@@ -292,6 +279,21 @@ async def cancel_job(
         )
     except Exception as exc:
         logger.warning("Failed to broadcast SSE event: %s", exc)
+
+    # Release GPUs and process pending jobs for local jobs AFTER broadcasting cancellation
+    if job.job_type == JobType.LOCAL:
+        try:
+            from ...services.local_gpu_allocator import get_gpu_allocator
+
+            allocator = get_gpu_allocator()
+            await allocator.release(job_id)
+
+            # Process pending jobs to start the next one if GPUs are available
+            started = await allocator.process_pending_jobs()
+            if started:
+                logger.info("Started %d pending jobs after cancel", len(started))
+        except Exception as exc:
+            logger.warning("Could not release GPUs for %s: %s", job_id, exc)
 
     return {"success": True, "job_id": job_id, "status": CloudJobStatus.CANCELLED.value}
 

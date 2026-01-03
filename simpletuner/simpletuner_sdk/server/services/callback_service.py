@@ -25,7 +25,9 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
     This is called when training completes or fails via webhook callbacks,
     ensuring job status is properly reflected in the Job Queue.
     """
+    logger.info("_update_job_store_status called with job_id=%s, status=%s", job_id, status)
     if not job_id:
+        logger.warning("_update_job_store_status: no job_id provided, skipping")
         return
 
     try:
@@ -45,32 +47,44 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
             return  # Don't update for other statuses
 
         async def _do_updates():
-            # Get job to check if it's local
-            job = await job_repo.get(job_id)
-            if not job:
-                return
+            logger.info("_do_updates starting for job %s (status: %s)", job_id, new_status)
+            try:
+                # Get job to check if it's local
+                job = await job_repo.get(job_id)
+                if not job:
+                    logger.warning("_do_updates: job %s not found in repo", job_id)
+                    return
 
-            # Update job status
-            if new_status == CloudJobStatus.COMPLETED.value:
-                await job_repo.mark_completed(job_id)
-            elif new_status == CloudJobStatus.FAILED.value:
-                await job_repo.mark_failed(job_id, "Job failed")
-            elif new_status == CloudJobStatus.CANCELLED.value:
-                await job_repo.mark_cancelled(job_id)
+                logger.info("_do_updates: job %s is type %s", job_id, job.job_type)
 
-            # Release GPUs and process pending jobs for local jobs
-            if job.job_type == JobType.LOCAL:
-                from .local_gpu_allocator import get_gpu_allocator
+                # Update job status
+                if new_status == CloudJobStatus.COMPLETED.value:
+                    await job_repo.mark_completed(job_id)
+                elif new_status == CloudJobStatus.FAILED.value:
+                    await job_repo.mark_failed(job_id, "Job failed")
+                elif new_status == CloudJobStatus.CANCELLED.value:
+                    await job_repo.mark_cancelled(job_id)
 
-                allocator = get_gpu_allocator()
-                await allocator.release(job_id)
-                # Process pending jobs to start the next one if GPUs are available
-                started = await allocator.process_pending_jobs()
-                if started:
-                    logger.info("Started %d pending jobs after job %s", len(started), new_status)
+                # Release GPUs and process pending jobs for local jobs
+                if job.job_type == JobType.LOCAL:
+                    from .local_gpu_allocator import get_gpu_allocator
+
+                    allocator = get_gpu_allocator()
+                    logger.info("_do_updates: releasing GPUs for job %s", job_id)
+                    await allocator.release(job_id)
+                    # Process pending jobs to start the next one if GPUs are available
+                    logger.info("_do_updates: calling process_pending_jobs")
+                    started = await allocator.process_pending_jobs()
+                    if started:
+                        logger.info("Started %d pending jobs after job %s completed", len(started), job_id)
+                    else:
+                        logger.info("No pending jobs were started after job %s completed", job_id)
+            except Exception as exc:
+                logger.error("_do_updates failed for job %s: %s", job_id, exc, exc_info=True)
 
         try:
             loop = asyncio.get_running_loop()
+            logger.info("Scheduling _do_updates task for job %s", job_id)
             loop.create_task(_do_updates())
         except RuntimeError:
             # No running event loop, use thread

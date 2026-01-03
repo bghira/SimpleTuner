@@ -396,8 +396,10 @@ class LocalGPUAllocator:
 
         Returns list of job IDs that were started.
         """
+        logger.info("process_pending_jobs called - checking for pending jobs")
         job_repo = self._get_job_repo()
         pending_jobs = await job_repo.get_pending_local_jobs()
+        logger.info("Found %d pending local jobs", len(pending_jobs))
         started_jobs = []
 
         for job in pending_jobs:
@@ -479,9 +481,13 @@ class LocalGPUAllocator:
         if not runtime_config:
             raise ValueError("No runtime_config in job metadata")
 
-        # Update config with allocated GPUs
+        # Update config with allocated GPUs and job ID
         runtime_config["accelerate_visible_devices"] = gpus
         runtime_config["--num_processes"] = len(gpus)
+        runtime_config["__job_id__"] = job.job_id
+        # Ensure the trainer surfaces configuration parsing errors instead of silently
+        # falling back to config/config.json when launched from the WebUI.
+        runtime_config["__skip_config_fallback__"] = True
 
         # Submit to process_keeper
         from simpletuner.simpletuner_sdk import process_keeper
@@ -505,3 +511,29 @@ class LocalGPUAllocator:
         training_service.APIState.set_state("current_job_id", job.job_id)
         training_service.APIState.set_state("training_status", "starting")
         training_service.APIState.set_state("training_config", runtime_config)
+
+        # Broadcast SSE event so UI updates in real-time
+        try:
+            from .sse_manager import get_sse_manager
+
+            sse_manager = get_sse_manager()
+            num_connections = len(sse_manager.connections) if hasattr(sse_manager, "connections") else "unknown"
+            logger.info(
+                "Broadcasting SSE event for queued job %s (connections: %s)",
+                job.job_id,
+                num_connections,
+            )
+            await sse_manager.broadcast(
+                data={
+                    "type": "training.status",
+                    "status": "starting",
+                    "job_id": job.job_id,
+                    "config_name": job.config_name,
+                    "allocated_gpus": gpus,
+                    "message": f"Queued training job {job.job_id} starting",
+                },
+                event_type="training.status",
+            )
+            logger.info("SSE broadcast completed for job %s", job.job_id)
+        except Exception as exc:
+            logger.warning("Failed to broadcast SSE event for queued job: %s", exc, exc_info=True)
