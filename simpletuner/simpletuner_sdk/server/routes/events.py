@@ -293,9 +293,14 @@ async def events_stream(request: Request, _user: User = Depends(get_current_user
                             if event.type == EventType.TRAINING_PROGRESS:
                                 should_skip = True
 
-                            # Skip training status events with progress data (also broadcast via _broadcast_training_progress)
-                            if event.type == EventType.TRAINING_STATUS and event.progress is not None:
+                            # Skip training status events - they cause job ID conflicts when
+                            # old events from a completed job are polled after a new job starts.
+                            # Status updates are handled via direct SSE broadcasts.
+                            if event.type == EventType.TRAINING_STATUS:
                                 should_skip = True
+
+                            # Do NOT skip training summary events so that successful completion
+                            # can be delivered to clients via SSE polling.
 
                             # Skip lifecycle stage events (broadcast via _broadcast_startup_stage)
                             if event.stage is not None:
