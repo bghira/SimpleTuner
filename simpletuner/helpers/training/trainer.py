@@ -5641,6 +5641,15 @@ class Trainer:
                 self._finish_hub_uploads()
             else:
                 self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+            # Mark model_save as completed
+            event = lifecycle_stage_event(
+                key="model_save",
+                label="Saving Final Model",
+                status="completed",
+                message=f"Model saved to {self.config.output_dir}",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(
