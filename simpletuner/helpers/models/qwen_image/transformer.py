@@ -22,6 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import AttentionMixin, FeedForward
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
@@ -817,6 +818,18 @@ class QwenImageTransformer2DModel(
     _no_split_modules = ["QwenImageTransformerBlock"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
     _repeated_blocks = ["QwenImageTransformerBlock"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states_mask": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+        },
+        "pos_embed": {
+            0: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
+            1: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     @register_to_config
     def __init__(

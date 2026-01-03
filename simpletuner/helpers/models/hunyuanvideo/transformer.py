@@ -19,6 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import AttentionMixin, FeedForward
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
@@ -589,6 +590,17 @@ class HunyuanVideo15Transformer3DModel(
         "HunyuanVideo15PatchEmbed",
         "HunyuanVideo15TokenRefiner",
     ]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "rope": {
+            0: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+            1: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
     _repeated_blocks = [
         "HunyuanVideo15TransformerBlock",
         "HunyuanVideo15PatchEmbed",

@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
@@ -873,6 +874,13 @@ class HiDreamImageBlock(PatchableModule):
 class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["HiDreamImageBlock"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     def __init__(
         self,

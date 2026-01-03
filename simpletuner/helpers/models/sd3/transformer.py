@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import JointTransformerBlock
 from diffusers.models.attention_processor import Attention, AttentionProcessor, FusedJointAttnProcessor2_0
 from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings, PatchEmbed
@@ -70,6 +71,13 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
     ]
     _supports_gradient_checkpointing = True
     _fsdp_exclude_auto_wrap_modules = ["PatchEmbed"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 

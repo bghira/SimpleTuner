@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from accelerate.logging import get_logger
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
@@ -61,6 +62,15 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     """
 
     _supports_gradient_checkpointing = True
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "img_ids": ContextParallelInput(split_dim=0, expected_dims=2, split_output=False),
+            "txt_ids": ContextParallelInput(split_dim=0, expected_dims=2, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     @register_to_config
     def __init__(

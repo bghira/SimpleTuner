@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from diffusers import FluxTransformer2DModel as OriginalFluxTransformer2DModel
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import Attention, AttentionProcessor
 from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddings, CombinedTimestepTextProjEmbeddings
@@ -414,6 +415,15 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     _supports_gradient_checkpointing = True
     # Hint FSDP auto wrap policy to shard per transformer block.
     _no_split_modules = ["FluxTransformerBlock", "FluxSingleTransformerBlock"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "img_ids": ContextParallelInput(split_dim=0, expected_dims=2, split_output=False),
+            "txt_ids": ContextParallelInput(split_dim=0, expected_dims=2, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 

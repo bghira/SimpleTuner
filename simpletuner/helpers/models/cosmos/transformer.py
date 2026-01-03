@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin
 from diffusers.loaders.peft import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import Timesteps
@@ -38,6 +39,7 @@ from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModul
 
 logger = logging.get_logger(__name__)
 
+
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
     if buffer is None:
         return
@@ -45,6 +47,7 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states[:, image_tokens_start:, ...]
     else:
         buffer[key] = hidden_states
+
 
 if is_torchvision_available():
     from torchvision import transforms
@@ -513,6 +516,13 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
     _skip_layerwise_casting_patterns = ["patch_embed", "final_layer", "norm"]
     _no_split_modules = ["CosmosTransformerBlock"]
     _keep_in_fp32_modules = ["learnable_pos_embed"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     def __init__(
         self,
