@@ -40,6 +40,15 @@ class APITestEnvironmentMixin:
     """Mixin that provisions temp dirs, dataset plan path, and API state sandboxing."""
 
     def _setup_api_environment(self) -> None:
+        # Reset auth middleware FIRST to ensure clean state for this test
+        # This is critical because a previous test may have cached single-user mode state
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import reset_auth_middleware
+
+            reset_auth_middleware()
+        except ImportError:
+            pass
+
         self._tmpdir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self._tmpdir.name)
 
