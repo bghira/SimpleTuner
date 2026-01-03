@@ -4,7 +4,14 @@ Provides user management, API key authentication, session handling,
 RBAC, and quota management.
 """
 
-from .middleware import AuthMiddleware, get_current_user, get_optional_user, require_any_permission, require_permission
+from .middleware import (
+    AuthMiddleware,
+    get_current_user,
+    get_current_user_ws,
+    get_optional_user,
+    require_any_permission,
+    require_permission,
+)
 from .models import APIKey, Permission, ResourceRule, ResourceType, RuleAction, User, UserLevel
 from .password import PasswordHasher
 from .quotas import Quota, QuotaAction, QuotaChecker, QuotaStatus, QuotaType
@@ -30,6 +37,7 @@ __all__ = [
     # Middleware
     "AuthMiddleware",
     "get_current_user",
+    "get_current_user_ws",
     "get_optional_user",
     "require_permission",
     "require_any_permission",

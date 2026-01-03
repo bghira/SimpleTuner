@@ -12,7 +12,7 @@ import logging
 from functools import wraps
 from typing import Callable, List, Optional, Union
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, WebSocket, WebSocketException, status
 from fastapi.security import APIKeyHeader
 
 from .models import APIKey, User
@@ -391,6 +391,83 @@ async def get_optional_user(request: Request) -> Optional[User]:
             return {"user": "anonymous"}
     """
     auth = await get_auth_context(request)
+    return auth.user
+
+
+async def get_auth_context_ws(websocket: WebSocket) -> AuthContext:
+    """Get auth context from a WebSocket connection.
+
+    Checks session cookie and API key from WebSocket headers.
+    """
+    middleware = get_auth_middleware()
+
+    # Get client IP
+    client_ip = websocket.client.host if websocket.client else "unknown"
+
+    # Check for internal network bypass
+    enterprise = _get_enterprise_config()
+    if enterprise and enterprise.should_bypass_auth(client_ip, websocket.url.path):
+        logger.debug("Auth bypassed for internal network (WebSocket): %s", client_ip)
+        return AuthContext(
+            is_authenticated=True,
+            is_internal_bypass=True,
+            client_ip=client_ip,
+        )
+
+    # Try API key authentication from headers
+    api_key = websocket.headers.get("X-API-Key")
+    if api_key:
+        result = await middleware.store.authenticate_api_key(api_key)
+        if result:
+            user, key = result
+            logger.debug("WebSocket authenticated via API key: %s", key.key_prefix)
+            return AuthContext(
+                user=user,
+                api_key=key,
+                is_authenticated=True,
+                client_ip=client_ip,
+            )
+
+    # Try session cookie
+    session_id = websocket.cookies.get(SESSION_COOKIE_NAME)
+    if session_id:
+        user = await middleware.store.get_session_user(session_id)
+        if user:
+            logger.debug("WebSocket authenticated via session: %s", user.username)
+            return AuthContext(
+                user=user,
+                session_id=session_id,
+                is_authenticated=True,
+                client_ip=client_ip,
+            )
+
+    # Check for single-user mode
+    local_admin = await middleware._ensure_single_user_mode()
+    if local_admin:
+        logger.debug("WebSocket authenticated via single-user mode")
+        return AuthContext(
+            user=local_admin,
+            is_authenticated=True,
+            client_ip=client_ip,
+        )
+
+    return AuthContext(client_ip=client_ip)
+
+
+async def get_current_user_ws(websocket: WebSocket) -> User:
+    """FastAPI dependency that requires an authenticated user for WebSocket.
+
+    Raises WebSocketException with 1008 (Policy Violation) if not authenticated.
+
+    Usage:
+        @router.websocket("/ws")
+        async def websocket_route(websocket: WebSocket, user: User = Depends(get_current_user_ws)):
+            await websocket.accept()
+            ...
+    """
+    auth = await get_auth_context_ws(websocket)
+    if not auth.is_authenticated or not auth.user:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
     return auth.user
 
 
