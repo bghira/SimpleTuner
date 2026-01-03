@@ -10,6 +10,7 @@ Manages Server-Sent Events connections with:
 import asyncio
 import logging
 import os
+import threading
 import time
 import uuid
 from collections import defaultdict
@@ -59,9 +60,13 @@ class SSEManager:
         self.connections_by_ip: Dict[str, Set[str]] = defaultdict(set)
         self._cleanup_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._main_thread_id: Optional[int] = None
 
     async def start(self):
-        """Start background tasks."""
+        """Start background tasks and capture the main event loop for thread-safe broadcasting."""
+        self._main_loop = asyncio.get_running_loop()
+        self._main_thread_id = threading.current_thread().ident
         if not self._cleanup_task:
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         if not self._heartbeat_task:
@@ -180,6 +185,43 @@ class SSEManager:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def broadcast_threadsafe(
+        self, data: Dict[str, Any], event_type: Optional[str] = None, filter_func: Optional[callable] = None
+    ) -> bool:
+        """Thread-safe broadcast that works from any thread.
+
+        This method can be called from background threads (like process_keeper's
+        event listener) to broadcast messages to SSE clients. It schedules the
+        broadcast on the main event loop using call_soon_threadsafe().
+
+        Returns:
+            True if the broadcast was scheduled successfully, False otherwise.
+        """
+        if not self._main_loop:
+            logger.warning("SSE manager not started - cannot broadcast")
+            return False
+
+        current_thread = threading.current_thread().ident
+
+        if current_thread == self._main_thread_id:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.broadcast(data, event_type, filter_func))
+                return True
+            except RuntimeError:
+                pass
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.broadcast(data, event_type, filter_func),
+                self._main_loop,
+            )
+            future.result(timeout=5.0)
+            return True
+        except Exception as exc:
+            logger.debug("Thread-safe broadcast failed: %s", exc)
+            return False
 
     async def notify_session_invalidated(self, user_id: int, reason: str = "session_expired") -> int:
         """Notify all connections for a user that their session has been invalidated.
