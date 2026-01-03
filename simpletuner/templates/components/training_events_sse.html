@@ -328,7 +328,6 @@
         }
 
         alert.className = 'alert alert-info startup-progress-alert';
-        alert.innerHTML = '';
         alert.dataset.startupGenerated = 'true';
 
         if (!startupStatusActive && startupStages.size === 0) {
@@ -336,9 +335,14 @@
             return;
         }
 
+        // Only clear and re-render if we have stages to display
+        // This preserves the "Training Starting" message from SSE events until stages arrive
         if (startupStages.size === 0) {
             return;
         }
+
+        // Clear content only when we're about to render stages
+        alert.innerHTML = '';
 
         const listEl = document.createElement('div');
         listEl.className = 'startup-progress-list';
