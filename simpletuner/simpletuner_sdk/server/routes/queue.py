@@ -7,7 +7,7 @@ global route, as job queuing is a global concept in SimpleTuner.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -579,6 +579,10 @@ class LocalJobSubmitRequest(BaseModel):
     no_wait: bool = Field(False, description="Reject immediately if GPUs unavailable")
     any_gpu: bool = Field(False, description="Use any available GPUs instead of configured device IDs")
     for_approval: bool = Field(False, description="Request approval to exceed org GPU quota")
+    target: Literal["local", "worker", "auto"] = Field(
+        "auto",
+        description="Execution target: 'local' (this machine), 'worker' (remote worker), 'auto' (prefer worker if available)",
+    )
 
 
 class LocalJobSubmitResponse(BaseModel):
@@ -586,12 +590,87 @@ class LocalJobSubmitResponse(BaseModel):
 
     success: bool
     job_id: Optional[str] = None
-    status: Optional[str] = None  # "running", "queued", "rejected", "blocked"
+    status: Optional[str] = None  # "running", "queued", "rejected", "blocked", "dispatched"
     allocated_gpus: Optional[List[int]] = None
+    allocated_worker_id: Optional[str] = None
     queue_position: Optional[int] = None
     requires_approval: bool = False
     error: Optional[str] = None
     reason: Optional[str] = None
+
+
+async def _submit_to_worker(
+    request: "LocalJobSubmitRequest",
+    config: Dict[str, Any],
+    user: Optional[User],
+) -> LocalJobSubmitResponse:
+    """Submit a job to be executed by a remote worker."""
+    import uuid
+
+    from ..services.worker_repository import get_worker_repository
+    from .workers import is_worker_connected, push_to_worker
+
+    worker_repo = get_worker_repository()
+
+    # Find an idle worker
+    idle_worker = await worker_repo.get_idle_worker_for_job()
+
+    # Generate job ID
+    job_id = f"wjob-{uuid.uuid4().hex[:12]}"
+
+    if idle_worker and is_worker_connected(idle_worker.worker_id):
+        # Dispatch immediately to the idle worker
+        from ..models.worker import WorkerStatus
+
+        # Mark worker as busy
+        await worker_repo.update_worker(
+            idle_worker.worker_id,
+            {
+                "status": WorkerStatus.BUSY,
+                "current_job_id": job_id,
+            },
+        )
+
+        # Push job to worker via SSE
+        success = await push_to_worker(
+            idle_worker.worker_id,
+            {
+                "type": "job_submit",
+                "job_id": job_id,
+                "config": config,
+                "dataloader": config.get("dataloader_config"),
+                "upload_endpoint": "/api/cloud/storage",
+            },
+        )
+
+        if success:
+            logger.info(f"Dispatched job {job_id} to worker {idle_worker.worker_id}")
+            return LocalJobSubmitResponse(
+                success=True,
+                job_id=job_id,
+                status="dispatched",
+                allocated_worker_id=idle_worker.worker_id,
+            )
+        else:
+            # Failed to push, revert worker status
+            await worker_repo.update_worker(
+                idle_worker.worker_id,
+                {
+                    "status": WorkerStatus.IDLE,
+                    "current_job_id": None,
+                },
+            )
+            return LocalJobSubmitResponse(
+                success=False,
+                error=f"Failed to dispatch job to worker {idle_worker.worker_id}",
+            )
+    else:
+        # No idle worker connected - queue for later dispatch
+        # For now, return an error until we implement proper worker job queuing
+        return LocalJobSubmitResponse(
+            success=False,
+            error="No idle workers available. Jobs queued for workers not yet implemented.",
+        )
 
 
 @router.post("/submit", response_model=LocalJobSubmitResponse)
@@ -599,10 +678,12 @@ async def submit_local_job(
     request: LocalJobSubmitRequest,
     user: Optional[User] = Depends(get_optional_user),
 ) -> LocalJobSubmitResponse:
-    """Submit a local training job.
+    """Submit a training job.
 
-    Loads the config from disk and starts the training process locally.
-    Respects GPU allocation and queuing when resources are unavailable.
+    Loads the config from disk and either:
+    - Runs locally on this machine's GPUs (target='local')
+    - Dispatches to a remote worker (target='worker')
+    - Auto-selects based on availability (target='auto', default)
     """
     from pathlib import Path
 
@@ -632,10 +713,35 @@ async def submit_local_job(
                 error=f"Config '{request.config_name}' not found",
             )
 
+        # Check if we should dispatch to a worker
+        use_worker = False
+        if request.target in ("worker", "auto"):
+            try:
+                from ..services.worker_repository import get_worker_repository
+
+                worker_repo = get_worker_repository()
+                idle_worker = await worker_repo.get_idle_worker_for_job()
+                if idle_worker:
+                    use_worker = True
+                elif request.target == "worker":
+                    # Explicitly requested worker but none available - queue for worker
+                    use_worker = True
+            except Exception as exc:
+                logger.warning("Failed to check worker availability: %s", exc)
+                if request.target == "worker":
+                    return LocalJobSubmitResponse(
+                        success=False,
+                        error="No workers available and target=worker was specified",
+                    )
+
+        # Dispatch to worker if requested/available
+        if use_worker:
+            return await _submit_to_worker(request, config, user)
+
         # Get user's org_id for quota checks
         user_org_id = user.org_id if user else None
 
-        # Start the training job (path resolution happens inside start_training_job)
+        # Start the training job locally
         result = start_training_job(
             config,
             env_name=request.config_name,

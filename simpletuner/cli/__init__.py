@@ -280,7 +280,7 @@ def _cmd_shutdown(args) -> int:
 
     print("Sending shutdown request to server...")
     try:
-        result = cloud_api_request("POST", "/shutdown")
+        result = cloud_api_request("POST", "/api/system/shutdown")
         if result.get("status") == "shutting_down":
             print("Server is shutting down gracefully.")
             return 0
@@ -377,6 +377,13 @@ def _add_jobs_parser(subparsers):
         "--for-approval",
         action="store_true",
         help="Request approval to exceed org GPU quota (requires org admin opt-in)",
+    )
+    submit_parser.add_argument(
+        "--target",
+        "-t",
+        choices=["local", "worker", "auto"],
+        default="auto",
+        help="Execution target: local (this machine), worker (remote), auto (prefer worker if available)",
     )
 
     # cancel

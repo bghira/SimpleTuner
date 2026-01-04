@@ -383,12 +383,13 @@ def _print_custom_fields(jobs: list, fields: list) -> None:
 
 
 def _jobs_submit(args) -> int:
-    """Submit a local training job."""
+    """Submit a training job."""
     config_name = getattr(args, "config", None)
     dry_run = getattr(args, "dry_run", False)
     no_wait = getattr(args, "no_wait", False)
     any_gpu = getattr(args, "any_gpu", False)
     for_approval = getattr(args, "for_approval", False)
+    target = getattr(args, "target", "auto")
 
     if not config_name:
         print("Error: Config name is required.")
@@ -396,16 +397,18 @@ def _jobs_submit(args) -> int:
         return 1
 
     if dry_run:
-        return _jobs_submit_dry_run(config_name, any_gpu=any_gpu)
+        return _jobs_submit_dry_run(config_name, any_gpu=any_gpu, target=target)
 
     request_data = {
         "config_name": config_name,
         "no_wait": no_wait,
         "any_gpu": any_gpu,
         "for_approval": for_approval,
+        "target": target,
     }
 
-    print(f"Submitting local job with config '{config_name}'...")
+    target_desc = {"local": "locally", "worker": "to worker", "auto": ""}.get(target, "")
+    print(f"Submitting job '{config_name}'{' ' + target_desc if target_desc else ''}...")
 
     result = cloud_api_request("POST", "/api/queue/submit", data=request_data)
 
@@ -413,6 +416,7 @@ def _jobs_submit(args) -> int:
         job_id = result.get("job_id", "unknown")
         status = result.get("status", "unknown")
         allocated_gpus = result.get("allocated_gpus")
+        allocated_worker_id = result.get("allocated_worker_id")
         queue_position = result.get("queue_position")
         requires_approval = result.get("requires_approval", False)
 
@@ -421,6 +425,8 @@ def _jobs_submit(args) -> int:
         print(f"  Status: {status}")
         if allocated_gpus:
             print(f"  GPUs:   {allocated_gpus}")
+        if allocated_worker_id:
+            print(f"  Worker: {allocated_worker_id}")
         if queue_position is not None:
             print(f"  Queue Position: {queue_position}")
         if requires_approval:
@@ -432,7 +438,7 @@ def _jobs_submit(args) -> int:
         return 1
 
 
-def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False) -> int:
+def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False, target: str = "auto") -> int:
     """Preview what would be submitted without actually submitting."""
     print(f"[DRY RUN] Previewing job submission for config '{config_name}'...")
     print()
@@ -470,6 +476,16 @@ def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False) -> int:
     except (TypeError, ValueError):
         num_processes = 1
     configured_gpus = config.get("accelerate_visible_devices") or config.get("--accelerate_visible_devices")
+
+    print("Execution Target:")
+    print("=" * 50)
+    target_desc = {
+        "local": "Local GPUs on this machine",
+        "worker": "Remote worker only",
+        "auto": "Auto (prefer worker if available, fallback to local)",
+    }.get(target, target)
+    print(f"  Target:          {target_desc}")
+    print()
 
     print("GPU Requirements:")
     print("=" * 50)
@@ -622,7 +638,8 @@ def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False) -> int:
 
     print("-" * 50)
     print("To submit this job, run without --dry-run:")
-    print(f"  simpletuner jobs submit {config_name}")
+    target_flag = f" --target {target}" if target != "auto" else ""
+    print(f"  simpletuner jobs submit{target_flag} {config_name}")
 
     return 0
 
