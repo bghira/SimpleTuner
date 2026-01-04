@@ -608,13 +608,13 @@ async def _submit_to_worker(
     import uuid
     from datetime import datetime, timezone
 
-    from ..services.cloud.async_job_store import get_async_job_store
+    from ..services.cloud.async_job_store import AsyncJobStore
     from ..services.cloud.base import JobType, UnifiedJob
     from ..services.worker_repository import get_worker_repository
     from .workers import is_worker_connected, push_to_worker
 
     worker_repo = get_worker_repository()
-    job_store = get_async_job_store()
+    job_store = await AsyncJobStore.get_instance()
 
     # Generate job ID
     job_id = f"wjob-{uuid.uuid4().hex[:12]}"
