@@ -485,7 +485,7 @@ async def test_webhook_external(provider: str) -> ExternalWebhookTestResponse:
         return ExternalWebhookTestResponse(success=False, message="Test failed", error=str(exc))
 
 
-@router.get("/replicate/validate", response_model=ValidateResponse)
+@router.get("/providers/replicate/validate", response_model=ValidateResponse)
 async def validate_replicate_key() -> ValidateResponse:
     """Check if REPLICATE_API_TOKEN is set and valid."""
     api_token = get_secrets_manager().get_replicate_token()
@@ -508,7 +508,7 @@ async def validate_replicate_key() -> ValidateResponse:
 class SaveTokenRequest(BaseModel):
     """Request to save an API token."""
 
-    token: str
+    api_token: str
 
 
 class SaveTokenResponse(BaseModel):
@@ -519,14 +519,14 @@ class SaveTokenResponse(BaseModel):
     error: Optional[str] = None
 
 
-@router.post("/replicate/token", response_model=SaveTokenResponse)
+@router.put("/providers/replicate/token", response_model=SaveTokenResponse)
 async def save_replicate_token(request: SaveTokenRequest) -> SaveTokenResponse:
     """Save the Replicate API token to the secrets file.
 
     The token is saved to ~/.simpletuner/secrets.json with restrictive permissions.
     Environment variable REPLICATE_API_TOKEN still takes precedence if set.
     """
-    token = request.token.strip()
+    token = request.api_token.strip()
 
     if not token:
         return SaveTokenResponse(success=False, error="Token cannot be empty")
@@ -562,7 +562,7 @@ async def save_replicate_token(request: SaveTokenRequest) -> SaveTokenResponse:
         return SaveTokenResponse(success=True, file_path=file_path, error=f"Token saved but validation failed: {exc}")
 
 
-@router.delete("/replicate/token", response_model=SaveTokenResponse)
+@router.delete("/providers/replicate/token", response_model=SaveTokenResponse)
 async def delete_replicate_token() -> SaveTokenResponse:
     """Delete the Replicate API token from the secrets file."""
     secrets_mgr = get_secrets_manager()
@@ -573,7 +573,7 @@ async def delete_replicate_token() -> SaveTokenResponse:
     return SaveTokenResponse(success=False, error="Failed to delete token")
 
 
-@router.get("/replicate/versions", response_model=ModelVersionsResponse)
+@router.get("/providers/replicate/versions", response_model=ModelVersionsResponse)
 async def list_replicate_versions(
     model_id: Optional[str] = Query(None, description="Model ID (owner/model). Defaults to configured model.")
 ) -> ModelVersionsResponse:
@@ -603,7 +603,7 @@ async def list_replicate_versions(
         return ModelVersionsResponse(error=str(exc))
 
 
-@router.get("/replicate/billing")
+@router.get("/providers/replicate/billing")
 async def get_replicate_billing() -> Dict[str, Any]:
     """Get Replicate billing/credit information."""
     api_token = get_secrets_manager().get_replicate_token()

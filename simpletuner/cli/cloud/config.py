@@ -70,9 +70,9 @@ def cmd_cloud_config_set_token(args) -> int:
 
     if provider == "replicate":
         result = cloud_api_request(
-            "POST",
-            "/api/cloud/replicate/token",
-            data={"token": token},
+            "PUT",
+            "/api/cloud/providers/replicate/token",
+            data={"api_token": token},
         )
     else:
         print(f"Error: Token management not supported for provider '{provider}'.")
@@ -95,7 +95,7 @@ def cmd_cloud_config_delete_token(args) -> int:
     provider = getattr(args, "provider", "replicate")
 
     if provider == "replicate":
-        result = cloud_api_request("DELETE", "/api/cloud/replicate/token")
+        result = cloud_api_request("DELETE", "/api/cloud/providers/replicate/token")
     else:
         print(f"Error: Token management not supported for provider '{provider}'.")
         return 1
