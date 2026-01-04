@@ -38,15 +38,29 @@ async def _get_or_create_callback_token_async() -> Optional[str]:
 
             store = UserStore()
 
-            # Ensure local admin user exists (single-user mode)
-            local_admin = await store._ensure_single_user_mode()
-            if not local_admin:
-                # Try to get an existing user
-                users = await store.list_users(limit=1)
-                if not users:
-                    logger.warning("No users available for callback token generation")
-                    return None
-                local_admin = users[0]
+            # Get or create a user for callback authentication
+            has_users = await store.has_any_users()
+            if not has_users:
+                # Create local admin user for single-user mode
+                local_admin = await store.create_user(
+                    email="local@localhost",
+                    username="local",
+                    password="local",
+                    display_name="Local Admin",
+                    is_admin=True,
+                    level_names=["admin"],
+                )
+                # Reload with permissions
+                local_admin = await store.get_user(local_admin.id)
+            else:
+                # Get existing user (prefer local user if exists)
+                local_admin = await store.get_user_by_username("local")
+                if not local_admin:
+                    users = await store.list_users(limit=1)
+                    if not users:
+                        logger.warning("No users available for callback token generation")
+                        return None
+                    local_admin = users[0]
 
             # Check if callback key already exists
             existing_keys = await store.list_api_keys(local_admin.id)
