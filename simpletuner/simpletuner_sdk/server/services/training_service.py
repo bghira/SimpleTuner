@@ -29,7 +29,7 @@ from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
-from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
+from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG, get_authenticated_webhook_config
 
 logger = logging.getLogger(__name__)
 
@@ -1227,7 +1227,7 @@ def start_training_job(
 
     runtime_payload = dict(runtime_config)
 
-    # Merge user webhook_config with WebUI callback
+    # Merge user webhook_config with WebUI callback (with authentication token)
     user_webhooks = runtime_payload.get("--webhook_config") or runtime_payload.get("webhook_config") or []
     if isinstance(user_webhooks, str):
         try:
@@ -1237,7 +1237,9 @@ def start_training_job(
     if not isinstance(user_webhooks, list):
         user_webhooks = [user_webhooks] if user_webhooks else []
 
-    merged_webhooks = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG) + user_webhooks
+    # Use authenticated webhook config which includes the callback auth token
+    authenticated_config = get_authenticated_webhook_config()
+    merged_webhooks = authenticated_config + user_webhooks
     runtime_payload["--webhook_config"] = merged_webhooks
 
     # Resolve the prompt library into a job-scoped path if one was configured.
