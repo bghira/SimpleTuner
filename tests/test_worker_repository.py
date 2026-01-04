@@ -851,6 +851,42 @@ class TestWorkerRepository(unittest.TestCase):
         self.assertEqual(result[1].worker_id, "worker-2")
         self.assertEqual(result[2].worker_id, "worker-1")
 
+    def test_row_to_worker_handles_uppercase_enum_values(self) -> None:
+        """Test that _row_to_worker handles uppercase enum values from database."""
+        # Directly insert a row with uppercase enum values to simulate legacy data
+        conn = self.repo._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO workers (
+                worker_id, name, worker_type, status, token_hash, user_id,
+                gpu_info, provider, labels, current_job_id, last_heartbeat, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "worker-uppercase",
+                "Uppercase Worker",
+                "EPHEMERAL",  # Uppercase
+                "BUSY",  # Uppercase
+                WorkerRepository.hash_token("test-token"),
+                1,
+                "{}",
+                None,
+                "{}",
+                None,
+                None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+        # Now retrieve it - should work without ValueError
+        worker = asyncio.run(self.repo.get_worker("worker-uppercase"))
+
+        self.assertIsNotNone(worker)
+        self.assertEqual(worker.worker_type, WorkerType.EPHEMERAL)
+        self.assertEqual(worker.status, WorkerStatus.BUSY)
+
 
 if __name__ == "__main__":
     unittest.main()

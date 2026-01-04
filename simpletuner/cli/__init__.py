@@ -28,6 +28,16 @@ def create_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"SimpleTuner {get_version()}",
     )
+    parser.add_argument(
+        "--ssl",
+        action="store_true",
+        help="Use HTTPS when connecting to remote server",
+    )
+    parser.add_argument(
+        "--ssl-no-verify",
+        action="store_true",
+        help="Disable SSL certificate verification",
+    )
 
     subparsers = parser.add_subparsers(
         dest="command",
@@ -1008,6 +1018,12 @@ def main() -> int:
     """Main entry point for the SimpleTuner CLI."""
     parser = create_parser()
     args = parser.parse_args()
+
+    # Handle global SSL flags
+    if getattr(args, "ssl", False):
+        os.environ["SIMPLETUNER_SSL_ENABLED"] = "true"
+    if getattr(args, "ssl_no_verify", False):
+        os.environ["SIMPLETUNER_SSL_NO_VERIFY"] = "true"
 
     if not args.command:
         parser.print_help()

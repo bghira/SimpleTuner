@@ -83,6 +83,16 @@ class LocalGPUStats(BaseModel):
     max_concurrent_jobs: int = 1
 
 
+class WorkerPoolStats(BaseModel):
+    """Remote worker pool statistics."""
+
+    total_workers: int = 0
+    idle_workers: int = 0
+    busy_workers: int = 0
+    offline_workers: int = 0
+    draining_workers: int = 0
+
+
 class QueueStatsResponse(BaseModel):
     """Response for queue statistics."""
 
@@ -99,6 +109,8 @@ class QueueStatsResponse(BaseModel):
     local_gpu_max_concurrent: Optional[int] = None
     local_job_max_concurrent: int = 1
     local: Optional[LocalGPUStats] = None
+    # Remote worker pool
+    workers: Optional[WorkerPoolStats] = None
 
 
 class UserQueueResponse(BaseModel):
@@ -232,6 +244,31 @@ async def get_queue_stats(
     except Exception:
         pass
 
+    # Get worker pool stats
+    worker_stats = None
+    try:
+        from ..services.worker_repository import get_worker_repository
+
+        worker_repo = get_worker_repository()
+        all_workers = await worker_repo.list_workers()
+
+        if all_workers:
+            stats_by_status = {"idle": 0, "busy": 0, "offline": 0, "draining": 0}
+            for w in all_workers:
+                status_key = w.status.value if hasattr(w.status, "value") else str(w.status)
+                if status_key in stats_by_status:
+                    stats_by_status[status_key] += 1
+
+            worker_stats = WorkerPoolStats(
+                total_workers=len(all_workers),
+                idle_workers=stats_by_status["idle"],
+                busy_workers=stats_by_status["busy"],
+                offline_workers=stats_by_status["offline"],
+                draining_workers=stats_by_status["draining"],
+            )
+    except Exception:
+        pass
+
     return QueueStatsResponse(
         by_status=overview.get("by_status", {}),
         by_user={str(k): v for k, v in overview.get("by_user", {}).items()},
@@ -245,6 +282,7 @@ async def get_queue_stats(
         local_gpu_max_concurrent=local_gpu_max,
         local_job_max_concurrent=local_job_max,
         local=local_stats,
+        workers=worker_stats,
     )
 
 

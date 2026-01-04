@@ -523,6 +523,38 @@ def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False) -> int:
         print("  Unable to fetch status")
         print()
 
+    # Display worker pool status if available
+    workers_available = False
+    try:
+        if queue_result is None:
+            queue_result = cloud_api_request("GET", "/api/queue/stats")
+
+        worker_stats = queue_result.get("workers")
+        if worker_stats:
+            total = worker_stats.get("total_workers", 0)
+            idle = worker_stats.get("idle_workers", 0)
+            busy = worker_stats.get("busy_workers", 0)
+            offline = worker_stats.get("offline_workers", 0)
+            draining = worker_stats.get("draining_workers", 0)
+
+            print("Worker Pool:")
+            print("=" * 50)
+            print(f"  Total Workers:   {total}")
+            print(f"  Idle:            {idle}")
+            print(f"  Busy:            {busy}")
+            print(f"  Offline:         {offline}")
+            if draining > 0:
+                print(f"  Draining:        {draining}")
+
+            if idle > 0:
+                print(f"  [+] Workers available for job dispatch")
+                workers_available = True
+            elif total > 0:
+                print(f"  [.] No idle workers (job will queue until worker available)")
+            print()
+    except SystemExit:
+        pass
+
     # Display queue status
     try:
         if queue_result is None:
@@ -537,14 +569,21 @@ def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False) -> int:
         print(f"  Queue Depth:     {queue_depth}")
         print(f"  Running:         {running} / {max_concurrent}")
 
-        # Use GPU availability check to determine actual outcome
-        if gpu_check_ok:
+        # Determine actual outcome based on GPU and worker availability
+        if workers_available:
+            # Remote workers available
+            if queue_depth > 0:
+                print(f"  Note:            Job will be queued behind {queue_depth} other(s)")
+            else:
+                print(f"  Note:            Job will dispatch to idle worker")
+        elif gpu_check_ok:
+            # Local execution
             if not can_start_gpu:
                 print(f"  Note:            Job will be queued (waiting for GPUs)")
             elif queue_depth > 0:
                 print(f"  Note:            Job will be queued behind {queue_depth} other(s)")
             else:
-                print(f"  Note:            Job will start immediately")
+                print(f"  Note:            Job will start immediately (local)")
         else:
             # Fall back to queue-only logic if GPU check failed
             if running >= max_concurrent:
