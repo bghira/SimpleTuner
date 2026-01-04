@@ -944,6 +944,7 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
 
         # Create a mock admin user for the dependency
         mock_admin = MagicMock()
+        mock_admin.id = 1
         mock_admin.username = "local"
 
         # Create a real user via admin panel
@@ -979,6 +980,7 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_admin = MagicMock()
+        mock_admin.id = 1
         mock_admin.username = "local"
 
         # Create a real user
@@ -1019,6 +1021,7 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
         middleware._local_admin = MagicMock()
 
         mock_admin = MagicMock()
+        mock_admin.id = 1
         mock_admin.username = "local"
 
         # Create real user (should trigger cache invalidation)

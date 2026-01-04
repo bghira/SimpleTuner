@@ -207,6 +207,18 @@ async def create_first_admin(
             # Reload user with permissions
             user = await store.get_user(user.id)
 
+            # Audit log
+            await audit_log(
+                AuditEventType.USER_CREATED,
+                f"First admin user '{user.username}' created during initial setup",
+                actor_id=user.id,
+                actor_username=user.username,
+                actor_ip=client_ip,
+                target_type="user",
+                target_id=str(user.id),
+                details={"is_admin": True, "setup": "first_admin"},
+            )
+
             logger.info("First admin user created: %s", user.username)
 
             return LoginResponse(
@@ -534,6 +546,18 @@ async def register(
 
         # Reload user with permissions
         user = await store.get_user(user.id)
+
+        # Audit log
+        await audit_log(
+            AuditEventType.USER_CREATED,
+            f"User '{user.username}' registered via public registration",
+            actor_id=user.id,
+            actor_username=user.username,
+            actor_ip=client_ip,
+            target_type="user",
+            target_id=str(user.id),
+            details={"registration": "public"},
+        )
 
         logger.info("New user registered: %s", user.username)
 
