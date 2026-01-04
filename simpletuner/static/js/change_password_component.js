@@ -39,10 +39,6 @@ window.changePasswordComponent = function() {
                 this.error = 'New password is required';
                 return false;
             }
-            if (this.newPassword.length < 8) {
-                this.error = 'New password must be at least 8 characters';
-                return false;
-            }
             if (this.newPassword !== this.confirmPassword) {
                 this.error = 'Passwords do not match';
                 return false;
@@ -92,12 +88,6 @@ window.changePasswordComponent = function() {
                 if (window.showToast) {
                     window.showToast('Password changed successfully', 'success');
                 }
-
-                // Close modal after short delay
-                setTimeout(() => {
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('changePasswordModal'));
-                    if (modal) modal.hide();
-                }, 1500);
 
             } catch (err) {
                 this.error = err.message;

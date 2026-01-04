@@ -1255,5 +1255,237 @@ class TestSSESessionNotification(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(conn.session_id)
 
 
+class TestChangePassword(unittest.IsolatedAsyncioTestCase):
+    """Test cases for the password change endpoint."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        # Patch _get_store in users routes
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.users._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        self._store_patcher.stop()
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_successful_password_change(self) -> None:
+        """Test that a user can successfully change their password."""
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+
+        # Create a local user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="oldpassword123",
+            level_names=["researcher"],
+        )
+
+        # Reload user with permissions
+        user = await self.store.get_user(user.id)
+
+        # Mock request
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "127.0.0.1"
+
+        # Change password
+        data = ChangePasswordRequest(
+            current_password="oldpassword123",
+            new_password="newpassword456",
+        )
+
+        result = await change_my_password(data, mock_request, user)
+
+        self.assertTrue(result["success"])
+
+        # Verify old password no longer works
+        auth_result = await self.store.authenticate_local("testuser", "oldpassword123")
+        self.assertIsNone(auth_result)
+
+        # Verify new password works
+        auth_result = await self.store.authenticate_local("testuser", "newpassword456")
+        self.assertIsNotNone(auth_result)
+
+    async def test_incorrect_current_password(self) -> None:
+        """Test that password change fails with incorrect current password."""
+        from fastapi import HTTPException
+
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+
+        # Create a local user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="correctpassword",
+            level_names=["researcher"],
+        )
+
+        user = await self.store.get_user(user.id)
+
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "127.0.0.1"
+
+        data = ChangePasswordRequest(
+            current_password="wrongpassword",
+            new_password="newpassword456",
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await change_my_password(data, mock_request, user)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertIn("Current password is incorrect", ctx.exception.detail)
+
+        # Verify original password still works
+        auth_result = await self.store.authenticate_local("testuser", "correctpassword")
+        self.assertIsNotNone(auth_result)
+
+    async def test_non_local_auth_provider_rejected(self) -> None:
+        """Test that password change is rejected for non-local auth providers."""
+        from fastapi import HTTPException
+
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import AuthProvider
+
+        # Create a user and simulate OIDC provider
+        user = await self.store.create_user(
+            email="oidc@example.com",
+            username="oidcuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        user = await self.store.get_user(user.id)
+        # Manually set auth provider to OIDC (simulating external auth)
+        user.auth_provider = AuthProvider.OIDC
+
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "127.0.0.1"
+
+        data = ChangePasswordRequest(
+            current_password="password123",
+            new_password="newpassword456",
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await change_my_password(data, mock_request, user)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("only available for local authentication", ctx.exception.detail)
+
+    async def test_password_minimum_length_validation(self) -> None:
+        """Test that new password must meet minimum length requirements."""
+        from pydantic import ValidationError
+
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest
+
+        # Attempt to create request with short password
+        with self.assertRaises(ValidationError) as ctx:
+            ChangePasswordRequest(
+                current_password="oldpassword123",
+                new_password="short",  # Less than 8 characters
+            )
+
+        # Verify validation error mentions minimum length
+        errors = ctx.exception.errors()
+        self.assertTrue(any("min_length" in str(e) or "at least 8" in str(e).lower() for e in errors))
+
+    async def test_password_change_requires_authentication(self) -> None:
+        """Test that password change endpoint requires authentication.
+
+        This test verifies that the require_permission dependency is in place.
+        The actual auth check is handled by the middleware, but we verify
+        the endpoint has the dependency.
+        """
+        import inspect
+
+        from simpletuner.simpletuner_sdk.server.routes.users import change_my_password
+
+        # Get the function signature
+        sig = inspect.signature(change_my_password)
+        params = sig.parameters
+
+        # Verify 'user' parameter exists with Depends
+        self.assertIn("user", params)
+        default = params["user"].default
+        self.assertIsNotNone(default)
+
+        # The default should be a Depends() call
+        from fastapi import Depends
+
+        self.assertTrue(hasattr(default, "dependency"))
+
+    async def test_password_change_creates_audit_log(self) -> None:
+        """Test that password change creates an audit log entry."""
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, get_audit_store
+
+        # Create a local user
+        user = await self.store.create_user(
+            email="audit@example.com",
+            username="audituser",
+            password="oldpassword123",
+            level_names=["researcher"],
+        )
+
+        user = await self.store.get_user(user.id)
+
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "192.168.1.100"
+
+        data = ChangePasswordRequest(
+            current_password="oldpassword123",
+            new_password="newpassword456",
+        )
+
+        await change_my_password(data, mock_request, user)
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.USER_PASSWORD_CHANGED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].actor_username, "audituser")
+        self.assertEqual(entries[0].target_type, "user")
+        self.assertEqual(entries[0].target_id, str(user.id))
+
+
 if __name__ == "__main__":
     unittest.main()

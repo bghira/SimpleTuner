@@ -53,6 +53,8 @@ DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
     (r"^/api/auth/login$", 15, 60, ["POST"]),  # 15 login attempts/min
     (r"^/api/auth/register$", 5, 60, ["POST"]),  # 5 user registrations/min
     (r"^/api/auth/api-keys$", 10, 60, ["POST"]),  # 10 key creations/min
+    # Password change - strict limit to prevent brute force
+    (r"^/api/users/me/password$", 5, 300, ["PUT"]),  # 5 attempts per 5 minutes
     # Job submission - moderate limits
     (r"^/api/cloud/jobs$", 20, 60, ["POST"]),  # 20 job submissions/min
     (r"^/api/cloud/jobs/.+/cancel$", 30, 60, ["POST"]),  # 30 cancellations/min
