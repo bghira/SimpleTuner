@@ -264,25 +264,32 @@ class WorkerManager:
             },
         )
 
+        from datetime import datetime, timezone
+
+        # Update job with worker assignment in metadata for status check validation
+        updated_metadata = dict(job.metadata or {})
+        updated_metadata["worker_id"] = worker.worker_id
         await self.job_store.update_job(
             job.job_id,
             {
                 "status": "running",
-                "allocated_worker_id": worker.worker_id,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "metadata": updated_metadata,
             },
         )
 
-        metadata = job.metadata or {}
+        job_metadata = job.metadata or {}
+        config = job_metadata.get("config", {})
         success = await push_to_worker(
             worker.worker_id,
             {
                 "type": "job_submit",
                 "job_id": job.job_id,
-                "config": getattr(job, "config", {}),
-                "dataloader": getattr(job, "dataloader_config", None),
+                "config": config,
+                "dataloader": config.get("dataloader_config"),
                 "upload_endpoint": "/api/cloud/storage",
                 "upload_token": getattr(job, "upload_token", None),
-                "hf_token": metadata.get("hf_token"),
+                "hf_token": job_metadata.get("hf_token"),
             },
         )
 
@@ -297,11 +304,15 @@ class WorkerManager:
                     "current_job_id": None,
                 },
             )
+            # Reset job to pending, clear worker assignment from metadata
+            reset_metadata = dict(job.metadata or {})
+            reset_metadata.pop("worker_id", None)
             await self.job_store.update_job(
                 job.job_id,
                 {
                     "status": "pending",
-                    "allocated_worker_id": None,
+                    "started_at": None,
+                    "metadata": reset_metadata,
                 },
             )
 

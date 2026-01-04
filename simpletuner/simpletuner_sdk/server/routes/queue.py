@@ -606,17 +606,40 @@ async def _submit_to_worker(
 ) -> LocalJobSubmitResponse:
     """Submit a job to be executed by a remote worker."""
     import uuid
+    from datetime import datetime, timezone
 
+    from ..services.cloud.async_job_store import get_async_job_store
+    from ..services.cloud.base import JobType, UnifiedJob
     from ..services.worker_repository import get_worker_repository
     from .workers import is_worker_connected, push_to_worker
 
     worker_repo = get_worker_repository()
-
-    # Find an idle worker
-    idle_worker = await worker_repo.get_idle_worker_for_job()
+    job_store = get_async_job_store()
 
     # Generate job ID
     job_id = f"wjob-{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Create job entry in job store
+    job = UnifiedJob(
+        job_id=job_id,
+        job_type=JobType.LOCAL,
+        provider="worker",
+        status="pending",
+        config_name=request.config_name,
+        created_at=now,
+        queued_at=now,
+        user_id=user.id if user else None,
+        metadata={
+            "config": config,
+            "target": "worker",
+        },
+    )
+    await job_store.add_job(job)
+    logger.info(f"Created worker job {job_id} for config '{request.config_name}'")
+
+    # Find an idle worker
+    idle_worker = await worker_repo.get_idle_worker_for_job()
 
     if idle_worker and is_worker_connected(idle_worker.worker_id):
         # Dispatch immediately to the idle worker
@@ -644,15 +667,27 @@ async def _submit_to_worker(
         )
 
         if success:
+            # Update job status to running
+            await job_store.update_job(
+                job_id,
+                {
+                    "status": "running",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "metadata": {
+                        **job.metadata,
+                        "worker_id": idle_worker.worker_id,
+                    },
+                },
+            )
             logger.info(f"Dispatched job {job_id} to worker {idle_worker.worker_id}")
             return LocalJobSubmitResponse(
                 success=True,
                 job_id=job_id,
-                status="dispatched",
+                status="running",
                 allocated_worker_id=idle_worker.worker_id,
             )
         else:
-            # Failed to push, revert worker status
+            # Failed to push, revert worker status but keep job queued
             await worker_repo.update_worker(
                 idle_worker.worker_id,
                 {
@@ -660,16 +695,21 @@ async def _submit_to_worker(
                     "current_job_id": None,
                 },
             )
+            logger.warning(f"Failed to push job {job_id} to worker {idle_worker.worker_id}, job remains queued")
             return LocalJobSubmitResponse(
-                success=False,
-                error=f"Failed to dispatch job to worker {idle_worker.worker_id}",
+                success=True,
+                job_id=job_id,
+                status="queued",
+                reason="Failed to dispatch to worker, job queued for retry",
             )
     else:
-        # No idle worker connected - queue for later dispatch
-        # For now, return an error until we implement proper worker job queuing
+        # No idle worker connected - job is queued for later dispatch
+        logger.info(f"No idle workers available, job {job_id} queued for later dispatch")
         return LocalJobSubmitResponse(
-            success=False,
-            error="No idle workers available. Jobs queued for workers not yet implemented.",
+            success=True,
+            job_id=job_id,
+            status="queued",
+            reason="No idle workers available, job queued",
         )
 
 

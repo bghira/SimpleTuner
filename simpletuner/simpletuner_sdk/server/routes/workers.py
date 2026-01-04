@@ -473,15 +473,40 @@ async def update_job_status(
     )
 
     # Update job status
-    updates = {"status": request.status}
+    updates: Dict[str, Any] = {"status": request.status}
 
     if request.error:
-        updates["error"] = request.error
+        updates["error_message"] = request.error
 
     if request.status in ["completed", "failed", "cancelled"]:
-        updates["completed_at"] = datetime.now(timezone.utc)
+        updates["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     await job_repo.update_job(job_id, updates)
+
+    # Free worker when job completes
+    if request.status in ["completed", "failed", "cancelled"]:
+        from ..models.worker import WorkerStatus
+        from ..services.worker_repository import get_worker_repository
+
+        worker_repo = get_worker_repository()
+        await worker_repo.update_worker(
+            worker.worker_id,
+            {
+                "status": WorkerStatus.IDLE,
+                "current_job_id": None,
+            },
+        )
+        logger.info(f"Freed worker {worker.worker_id} after job {job_id} {request.status}")
+
+        # Try to dispatch any pending worker jobs
+        try:
+            from ..services.worker_manager import get_worker_manager
+
+            worker_manager = get_worker_manager()
+            if worker_manager:
+                await worker_manager.dispatch_pending_jobs()
+        except Exception as exc:
+            logger.warning("Failed to dispatch pending jobs: %s", exc)
 
     # Emit SSE event for UI updates
     try:
