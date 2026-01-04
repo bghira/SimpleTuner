@@ -433,6 +433,17 @@ async def create_api_key(
         scoped_permissions=scoped_permissions,
     )
 
+    # Audit log
+    await audit_log(
+        AuditEventType.API_KEY_CREATED,
+        f"API key '{data.name}' created by user '{user.username}'",
+        actor_id=user.id,
+        actor_username=user.username,
+        target_type="api_key",
+        target_id=str(api_key.id),
+        details={"key_prefix": api_key.key_prefix, "expires_days": data.expires_days},
+    )
+
     logger.info("API key created: %s for user %s", api_key.key_prefix, user.username)
 
     return APIKeyCreatedResponse(
@@ -474,6 +485,16 @@ async def revoke_api_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="API key not found or already revoked",
         )
+
+    # Audit log
+    await audit_log(
+        AuditEventType.API_KEY_REVOKED,
+        f"API key {key_id} revoked by user '{user.username}'",
+        actor_id=user.id,
+        actor_username=user.username,
+        target_type="api_key",
+        target_id=str(key_id),
+    )
 
     logger.info("API key revoked: %d by user %s", key_id, user.username)
 
