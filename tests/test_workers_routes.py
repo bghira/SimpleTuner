@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import unittest
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient

@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 from simpletuner.simpletuner_sdk.server.models.worker import Worker, WorkerStatus, WorkerType
 from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
@@ -440,7 +440,6 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
     async def test_dispatch_pending_jobs_provider_filter_with_provider_param(self) -> None:
         """Test job filtering with provider parameter."""
         job1 = self._create_job(job_id="job-1", status="pending", provider="worker")
-        job2 = self._create_job(job_id="job-2", status="pending", provider="other")
 
         self.mock_job_store.list_jobs.return_value = [job1]
 
@@ -489,6 +488,7 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
 
         result = await self.worker_manager._find_available_worker(job)
 
+        self.assertEqual(result, worker)
         self.mock_worker_repository.get_idle_worker_for_job.assert_called_once_with(
             gpu_requirements={},
             labels={},

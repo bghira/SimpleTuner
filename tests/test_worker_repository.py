@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
 
 from simpletuner.simpletuner_sdk.server.models.worker import Worker, WorkerStatus, WorkerType
 from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
