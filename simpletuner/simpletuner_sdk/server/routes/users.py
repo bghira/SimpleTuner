@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
 
 from ..services.cloud.auth import UserStore, require_permission
@@ -1743,6 +1743,7 @@ class ChangePasswordRequest(BaseModel):
 @router.put("/me/password")
 async def change_my_password(
     data: ChangePasswordRequest,
+    request: Request,
     user: User = Depends(require_permission("api.access")),
 ) -> Dict[str, bool]:
     """Change your own password.
@@ -1750,6 +1751,9 @@ async def change_my_password(
     Only available for users with local authentication.
     Requires current password verification.
     """
+    from ..services.cloud.audit import AuditEventType, audit_log
+    from ..services.cloud.auth.middleware import get_client_ip
+
     # Only allow password change for local auth users
     if user.auth_provider != AuthProvider.LOCAL:
         raise HTTPException(
@@ -1769,6 +1773,18 @@ async def change_my_password(
 
     # Update password
     await store.update_user(user.id, {"password": data.new_password})
+
+    # Audit log
+    client_ip = get_client_ip(request)
+    await audit_log(
+        AuditEventType.USER_PASSWORD_CHANGED,
+        f"User '{user.username}' changed their password",
+        actor_id=user.id,
+        actor_username=user.username,
+        actor_ip=client_ip,
+        target_type="user",
+        target_id=str(user.id),
+    )
 
     logger.info("User %s changed their password", user.username)
 
