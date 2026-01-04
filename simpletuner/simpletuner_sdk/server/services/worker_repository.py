@@ -460,8 +460,8 @@ class WorkerRepository(BaseSQLiteStore):
         return Worker(
             worker_id=row["worker_id"],
             name=row["name"],
-            worker_type=WorkerType(row["worker_type"]),
-            status=WorkerStatus(row["status"]),
+            worker_type=WorkerType(row["worker_type"].lower()),
+            status=WorkerStatus(row["status"].lower()),
             token_hash=row["token_hash"],
             user_id=row["user_id"],
             gpu_info=gpu_info,
