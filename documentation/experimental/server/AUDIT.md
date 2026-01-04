@@ -71,6 +71,7 @@ All endpoints require the `admin.audit` permission.
 | `user.created` | New user created |
 | `user.updated` | User details updated |
 | `user.deleted` | User deleted |
+| `user.password.changed` | User changed their password |
 | `user.level.changed` | User level/role changed |
 | `user.permission.changed` | User permission changed |
 

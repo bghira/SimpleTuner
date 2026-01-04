@@ -196,6 +196,19 @@ async def create_user(
                 invalidate_single_user_mode()
                 logger.info("Removed placeholder local@localhost user")
 
+        # Audit log
+        from ..services.cloud.audit import AuditEventType, audit_log
+
+        await audit_log(
+            AuditEventType.USER_CREATED,
+            f"User '{user.username}' created by admin '{admin.username}'",
+            actor_id=admin.id,
+            actor_username=admin.username,
+            target_type="user",
+            target_id=str(user.id),
+            details={"created_username": user.username, "is_admin": user.is_admin},
+        )
+
         logger.info("User created by admin %s: %s", admin.username, user.username)
 
         return UserResponse.from_user(user)
