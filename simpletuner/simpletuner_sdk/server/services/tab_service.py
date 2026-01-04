@@ -234,7 +234,7 @@ class TabService:
                 id="workers-panel",
                 title="GPU Workers",
                 icon="fas fa-server",
-                template="partials/admin/tab_workers.html",
+                template="workers_tab.html",
                 description="GPU worker management for distributed training",
                 extra_context_handler=None,
             ),

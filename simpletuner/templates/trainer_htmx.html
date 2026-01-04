@@ -6213,6 +6213,17 @@ function trainerComponent() {
                     <i class="fas fa-tachometer-alt"></i> Quotas
                 </button>
                 <button type="button"
+                        class="tab-btn workers-btn"
+                        data-tab="workers"
+                        :class="{ 'active': activeTab === 'workers' }"
+                        hx-get="/web/trainer/tabs/workers"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('workers'); closeSidebar()"
+                        title="Manage GPU workers for distributed training">
+                    <i class="fas fa-server"></i> GPU Workers
+                </button>
+                <button type="button"
                         class="tab-btn audit-btn"
                         data-tab="audit"
                         :class="{ 'active': activeTab === 'audit' }"
