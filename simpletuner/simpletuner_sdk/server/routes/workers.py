@@ -618,7 +618,7 @@ async def create_worker(
     worker = Worker(
         worker_id=worker_id,
         name=body.name,
-        worker_type=WorkerType(body.worker_type.upper()),
+        worker_type=WorkerType(body.worker_type),
         status=WorkerStatus.CONNECTING,
         token_hash=token_hash,
         user_id=user.id if user else 0,
