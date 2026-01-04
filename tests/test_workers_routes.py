@@ -680,6 +680,117 @@ class AdminListWorkersTestCase(APITestCase, unittest.TestCase):
             self.assertIn("Invalid status", response.json()["detail"])
 
 
+class AdminCreateWorkerTestCase(APITestCase, unittest.TestCase):
+    """Test POST /api/admin/workers endpoint."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+
+        self.admin_user = User(
+            id=1,
+            email="admin@test.com",
+            username="admin",
+            is_active=True,
+            is_admin=True,
+        )
+
+    def tearDown(self) -> None:
+        self.client.close()
+        super().tearDown()
+
+    def test_create_worker_with_lowercase_persistent_type(self) -> None:
+        """Test creating worker with lowercase 'persistent' worker_type.
+
+        This test verifies the API accepts lowercase enum values as sent by
+        the frontend (e.g., 'persistent' not 'PERSISTENT').
+        """
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository") as mock_repo,
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.get_optional_user") as mock_user,
+            patch("simpletuner.simpletuner_sdk.server.services.cloud.audit.audit_log") as mock_audit,
+        ):
+
+            mock_user.return_value = self.admin_user
+
+            mock_repo_instance = AsyncMock()
+            mock_repo_instance.create_worker = AsyncMock()
+            mock_repo.return_value = mock_repo_instance
+
+            mock_audit.return_value = AsyncMock()
+
+            response = self.client.post(
+                "/api/admin/workers",
+                json={
+                    "name": "test-worker",
+                    "worker_type": "persistent",  # lowercase as frontend sends
+                    "labels": {"gpu": "nvidia"},
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertIn("token", data)
+            self.assertIn("worker_id", data)
+
+    def test_create_worker_with_lowercase_ephemeral_type(self) -> None:
+        """Test creating worker with lowercase 'ephemeral' worker_type."""
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository") as mock_repo,
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.get_optional_user") as mock_user,
+            patch("simpletuner.simpletuner_sdk.server.services.cloud.audit.audit_log") as mock_audit,
+        ):
+
+            mock_user.return_value = self.admin_user
+
+            mock_repo_instance = AsyncMock()
+            mock_repo_instance.create_worker = AsyncMock()
+            mock_repo.return_value = mock_repo_instance
+
+            mock_audit.return_value = AsyncMock()
+
+            response = self.client.post(
+                "/api/admin/workers",
+                json={
+                    "name": "ephemeral-worker",
+                    "worker_type": "ephemeral",  # lowercase as frontend sends
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertIn("token", data)
+
+    def test_create_worker_invalid_type(self) -> None:
+        """Test creating worker with invalid worker_type returns 422."""
+        with patch("simpletuner.simpletuner_sdk.server.routes.workers.get_optional_user") as mock_user:
+            mock_user.return_value = self.admin_user
+
+            response = self.client.post(
+                "/api/admin/workers",
+                json={
+                    "name": "test-worker",
+                    "worker_type": "invalid_type",
+                },
+            )
+
+            self.assertEqual(response.status_code, 422)
+
+    def test_create_worker_missing_name(self) -> None:
+        """Test creating worker without name returns 422."""
+        with patch("simpletuner.simpletuner_sdk.server.routes.workers.get_optional_user") as mock_user:
+            mock_user.return_value = self.admin_user
+
+            response = self.client.post(
+                "/api/admin/workers",
+                json={
+                    "worker_type": "persistent",
+                },
+            )
+
+            self.assertEqual(response.status_code, 422)
+
+
 class AdminDeleteWorkerTestCase(APITestCase, unittest.TestCase):
     """Test DELETE /api/admin/workers/{worker_id} endpoint."""
 

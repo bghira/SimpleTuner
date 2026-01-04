@@ -13,7 +13,7 @@ import json
 import logging
 import secrets
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -77,7 +77,7 @@ class CreateWorkerRequest(BaseModel):
     """Create worker request."""
 
     name: str
-    worker_type: str = "persistent"
+    worker_type: Literal["persistent", "ephemeral"] = "persistent"
     labels: Dict[str, str] = Field(default_factory=dict)
 
 

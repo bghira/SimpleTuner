@@ -437,7 +437,6 @@ async def lifespan(app: FastAPI):
 
         # Start background health check loop
         await worker_manager.start()
-        logger.info("Worker manager started")
     except Exception as e:
         logger.warning("Failed to start worker manager: %s", e)
 
