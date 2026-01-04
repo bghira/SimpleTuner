@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
 
 from ..services.cloud.auth import UserStore, require_permission
@@ -1733,6 +1733,64 @@ async def update_my_profile(
     )
 
 
+class ChangePasswordRequest(BaseModel):
+    """Request to change own password."""
+
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8)
+
+
+@router.put("/me/password")
+async def change_my_password(
+    data: ChangePasswordRequest,
+    request: Request,
+    user: User = Depends(require_permission("api.access")),
+) -> Dict[str, bool]:
+    """Change your own password.
+
+    Only available for users with local authentication.
+    Requires current password verification.
+    """
+    from ..services.cloud.audit import AuditEventType, audit_log
+    from ..services.cloud.auth.middleware import get_client_ip
+
+    # Only allow password change for local auth users
+    if user.auth_provider != AuthProvider.LOCAL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password change is only available for local authentication users",
+        )
+
+    store = _get_store()
+
+    # Verify current password
+    authenticated = await store.authenticate_local(user.username, data.current_password)
+    if not authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+
+    # Update password
+    await store.update_user(user.id, {"password": data.new_password})
+
+    # Audit log
+    client_ip = get_client_ip(request)
+    await audit_log(
+        AuditEventType.USER_PASSWORD_CHANGED,
+        f"User '{user.username}' changed their password",
+        actor_id=user.id,
+        actor_username=user.username,
+        actor_ip=client_ip,
+        target_type="user",
+        target_id=str(user.id),
+    )
+
+    logger.info("User %s changed their password", user.username)
+
+    return {"success": True}
+
+
 @router.post("/me/avatar")
 async def upload_my_avatar(
     user: User = Depends(require_permission("api.access")),
@@ -1806,9 +1864,10 @@ async def upload_avatar_data(
     file_hash = hashlib.md5(image_bytes).hexdigest()[:8]
     filename = f"avatar_{user.id}_{file_hash}.{image_type}"
 
-    # Create avatars directory
-    avatars_dir = Path("data/avatars")
-    avatars_dir.mkdir(parents=True, exist_ok=True)
+    # Get avatars directory from centralized path utility
+    from ..utils.paths import get_avatars_directory
+
+    avatars_dir = get_avatars_directory()
 
     # Save file
     avatar_path = avatars_dir / filename
@@ -1834,7 +1893,7 @@ async def delete_my_avatar(
 
     Requires api.access permission.
     """
-    from pathlib import Path
+    from ..utils.paths import get_avatars_directory
 
     store = _get_store()
 
@@ -1845,7 +1904,7 @@ async def delete_my_avatar(
     # Optionally delete the file
     if old_url and old_url.startswith("/static/avatars/"):
         filename = old_url.split("/")[-1]
-        avatar_path = Path("data/avatars") / filename
+        avatar_path = get_avatars_directory() / filename
         if avatar_path.exists():
             try:
                 avatar_path.unlink()

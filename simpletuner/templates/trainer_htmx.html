@@ -6678,6 +6678,11 @@ function trainerComponent() {
                                 <i class="fas fa-key me-2"></i>API Keys
                             </button>
                         </li>
+                        <li x-show="$store.cloudAuth.currentUser?.auth_provider === 'local'">
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#changePasswordModal">
+                                <i class="fas fa-lock me-2"></i>Change Password
+                            </button>
+                        </li>
                         <li><hr class="dropdown-divider"></li>
                         <li>
                             <button type="button" class="dropdown-item text-danger" @click="$store.cloudAuth.logout()">
@@ -7394,5 +7399,6 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 {% include 'partials/memory_presets_modal.html' %}
 {% include 'partials/user_profile_modal.html' %}
 {% include 'partials/api_keys_modal.html' %}
+{% include 'partials/change_password_modal.html' %}
 
 {% endblock %}
