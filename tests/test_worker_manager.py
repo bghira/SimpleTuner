@@ -517,13 +517,15 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
                 "current_job_id": "job-1",
             },
         )
-        self.mock_job_store.update_job.assert_called_once_with(
-            "job-1",
-            {
-                "status": "running",
-                "allocated_worker_id": "worker-1",
-            },
-        )
+        # Verify job update was called with correct structure
+        self.mock_job_store.update_job.assert_called_once()
+        call_args = self.mock_job_store.update_job.call_args
+        self.assertEqual(call_args[0][0], "job-1")
+        updates = call_args[0][1]
+        self.assertEqual(updates["status"], "running")
+        self.assertIn("started_at", updates)
+        self.assertIn("metadata", updates)
+        self.assertEqual(updates["metadata"]["worker_id"], "worker-1")
         mock_push.assert_called_once()
 
     async def test_dispatch_job_to_worker_not_connected(self) -> None:
@@ -557,7 +559,8 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
         job_update_calls = self.mock_job_store.update_job.call_args_list
         self.assertEqual(len(job_update_calls), 2)
         self.assertEqual(job_update_calls[1][0][1]["status"], "pending")
-        self.assertIsNone(job_update_calls[1][0][1]["allocated_worker_id"])
+        # Verify worker_id is removed from metadata on failure
+        self.assertNotIn("worker_id", job_update_calls[1][0][1].get("metadata", {}))
 
     async def test_dispatch_job_to_worker_routes_not_available(self) -> None:
         """Test dispatching when worker routes not importable."""

@@ -470,7 +470,7 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
 
             mock_job_repo_instance = AsyncMock()
             mock_job_repo_instance.get = AsyncMock(return_value=mock_job)
-            mock_job_repo_instance.update_job = AsyncMock()
+            mock_job_repo_instance.update = AsyncMock()
             mock_job_repo.return_value = mock_job_repo_instance
 
             mock_sse_instance = AsyncMock()
@@ -491,7 +491,7 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
             self.assertTrue(data["success"])
 
             # Verify job was updated
-            mock_job_repo_instance.update_job.assert_called_once()
+            mock_job_repo_instance.update.assert_called_once()
 
     def test_update_job_status_job_not_found(self) -> None:
         """Test job status update for non-existent job returns 404."""
@@ -570,7 +570,7 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
 
             mock_job_repo_instance = AsyncMock()
             mock_job_repo_instance.get = AsyncMock(return_value=mock_job)
-            mock_job_repo_instance.update_job = AsyncMock()
+            mock_job_repo_instance.update = AsyncMock()
             mock_job_repo.return_value = mock_job_repo_instance
 
             mock_sse_instance = AsyncMock()
@@ -589,9 +589,9 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
             self.assertEqual(response.status_code, 200)
 
             # Verify error was included in update
-            call_args = mock_job_repo_instance.update_job.call_args
+            call_args = mock_job_repo_instance.update.call_args
             updates = call_args[0][1]
-            self.assertEqual(updates["error"], "CUDA out of memory")
+            self.assertEqual(updates["error_message"], "CUDA out of memory")
 
 
 class AdminListWorkersTestCase(APITestCase, unittest.TestCase):

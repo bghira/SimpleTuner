@@ -481,7 +481,7 @@ async def update_job_status(
     if request.status in ["completed", "failed", "cancelled"]:
         updates["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-    await job_repo.update_job(job_id, updates)
+    await job_repo.update(job_id, updates)
 
     # Free worker when job completes
     if request.status in ["completed", "failed", "cancelled"]:
