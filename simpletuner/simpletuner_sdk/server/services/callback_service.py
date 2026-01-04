@@ -562,19 +562,8 @@ class CallbackService:
             f"Broadcasting lifecycle stage: {stage_state.get('progress_type')} (status={stage_state.get('status')}) for job {job_id}"
         )
 
-        async def _broadcast():
-            manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="lifecycle.stage")
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(_broadcast())
-        else:
-            asyncio.run(_broadcast())
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="lifecycle.stage")
 
     def _broadcast_progress_reset(self, job_id: str | None, *, status: str) -> None:
         if job_id:
@@ -592,19 +581,8 @@ class CallbackService:
             "total_epochs": 0,
         }
 
-        async def _broadcast():
-            manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="training_progress")
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(_broadcast())
-        else:
-            asyncio.run(_broadcast())
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="training_progress")
 
     def _broadcast_training_progress(self, job_id: str | None, progress_state: Mapping[str, Any]) -> None:
         """Broadcast real-time training progress updates via SSE."""
@@ -629,19 +607,8 @@ class CallbackService:
             f"({payload['percent']:.1f}%) for job {job_id}"
         )
 
-        async def _broadcast():
-            manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="training.progress")
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(_broadcast())
-        else:
-            asyncio.run(_broadcast())
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="training.progress")
 
     def _should_suppress_event(self, event: CallbackEvent) -> bool:
         if not event:
