@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
 
+from ..services.cloud.audit import AuditEventType, audit_log
 from ..services.cloud.auth import UserStore, require_permission
 from ..services.cloud.auth.middleware import invalidate_single_user_mode
 from ..services.cloud.auth.models import AuthProvider, User
@@ -927,6 +928,18 @@ async def update_user(
 
     if updates:
         await store.update_user(user_id, updates)
+
+        # Audit log
+        await audit_log(
+            AuditEventType.USER_UPDATED,
+            f"User '{user.username}' updated by admin '{admin.username}'",
+            actor_id=admin.id,
+            actor_username=admin.username,
+            target_type="user",
+            target_id=str(user_id),
+            details={"fields_updated": list(updates.keys())},
+        )
+
         logger.info("User %d updated by admin %s: %s", user_id, admin.username, list(updates.keys()))
 
     # Reload and return
@@ -964,6 +977,9 @@ async def delete_user(
                 detail="Cannot delete the last active admin user",
             )
 
+    # Capture username before deletion for audit
+    deleted_username = target_user.username if target_user else f"user_{user_id}"
+
     success = await store.delete_user(user_id)
 
     if not success:
@@ -971,6 +987,17 @@ async def delete_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User {user_id} not found",
         )
+
+    # Audit log
+    await audit_log(
+        AuditEventType.USER_DELETED,
+        f"User '{deleted_username}' deleted by admin '{admin.username}'",
+        actor_id=admin.id,
+        actor_username=admin.username,
+        target_type="user",
+        target_id=str(user_id),
+        details={"deleted_username": deleted_username},
+    )
 
     logger.info("User %d deleted by admin %s", user_id, admin.username)
 
@@ -1074,6 +1101,17 @@ async def assign_level(
             detail=f"Level '{data.level_name}' not found",
         )
 
+    # Audit log
+    await audit_log(
+        AuditEventType.USER_LEVEL_CHANGED,
+        f"Level '{data.level_name}' assigned to user '{user.username}' by admin '{admin.username}'",
+        actor_id=admin.id,
+        actor_username=admin.username,
+        target_type="user",
+        target_id=str(user_id),
+        details={"action": "assigned", "level": data.level_name},
+    )
+
     logger.info("Level '%s' assigned to user %d by admin %s", data.level_name, user_id, admin.username)
 
     return {"success": True}
@@ -1091,6 +1129,9 @@ async def remove_level(
     """
     store = _get_store()
 
+    # Get user for audit log
+    user = await store.get_user(user_id)
+
     success = await store.remove_level(user_id, level_name)
 
     if not success:
@@ -1098,6 +1139,17 @@ async def remove_level(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User {user_id} does not have level '{level_name}'",
         )
+
+    # Audit log
+    await audit_log(
+        AuditEventType.USER_LEVEL_CHANGED,
+        f"Level '{level_name}' removed from user '{user.username if user else user_id}' by admin '{admin.username}'",
+        actor_id=admin.id,
+        actor_username=admin.username,
+        target_type="user",
+        target_id=str(user_id),
+        details={"action": "removed", "level": level_name},
+    )
 
     logger.info("Level '%s' removed from user %d by admin %s", level_name, user_id, admin.username)
 
@@ -1138,6 +1190,18 @@ async def set_permission_override(
     )
 
     action = "granted" if data.granted else "denied"
+
+    # Audit log
+    await audit_log(
+        AuditEventType.USER_PERMISSION_CHANGED,
+        f"Permission '{data.permission_name}' {action} for user '{user.username}' by admin '{admin.username}'",
+        actor_id=admin.id,
+        actor_username=admin.username,
+        target_type="user",
+        target_id=str(user_id),
+        details={"action": action, "permission": data.permission_name},
+    )
+
     logger.info("Permission '%s' %s for user %d by admin %s", data.permission_name, action, user_id, admin.username)
 
     return {"success": True}
@@ -1157,6 +1221,9 @@ async def remove_permission_override(
     """
     store = _get_store()
 
+    # Get user for audit log
+    user = await store.get_user(user_id)
+
     success = await store.remove_permission_override(user_id, permission_name)
 
     if not success:
@@ -1164,6 +1231,17 @@ async def remove_permission_override(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User {user_id} has no override for '{permission_name}'",
         )
+
+    # Audit log
+    await audit_log(
+        AuditEventType.USER_PERMISSION_CHANGED,
+        f"Permission override '{permission_name}' removed from user '{user.username if user else user_id}' by admin '{admin.username}'",
+        actor_id=admin.id,
+        actor_username=admin.username,
+        target_type="user",
+        target_id=str(user_id),
+        details={"action": "removed", "permission": permission_name},
+    )
 
     logger.info("Permission override '%s' removed from user %d by admin %s", permission_name, user_id, admin.username)
 
@@ -1369,6 +1447,17 @@ async def set_user_credential(
             description=data.description,
         )
 
+        # Audit log
+        await audit_log(
+            AuditEventType.CREDENTIAL_CREATED,
+            f"Credential '{data.provider}/{data.credential_name}' set for user '{user.username}' by admin '{admin.username}'",
+            actor_id=admin.id,
+            actor_username=admin.username,
+            target_type="credential",
+            target_id=str(cred_id),
+            details={"provider": data.provider, "credential_name": data.credential_name, "user_id": user_id},
+        )
+
         logger.info(
             "Credential %s/%s set for user %d by admin %s", data.provider, data.credential_name, user_id, admin.username
         )
@@ -1396,6 +1485,9 @@ async def delete_user_credential(
     """
     store = _get_store()
 
+    # Get user for audit log
+    user = await store.get_user(user_id)
+
     success = await store.delete_provider_credential(user_id, provider, credential_name)
 
     if not success:
@@ -1403,6 +1495,17 @@ async def delete_user_credential(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Credential {provider}/{credential_name} not found for user {user_id}",
         )
+
+    # Audit log
+    await audit_log(
+        AuditEventType.CREDENTIAL_DELETED,
+        f"Credential '{provider}/{credential_name}' deleted for user '{user.username if user else user_id}' by admin '{admin.username}'",
+        actor_id=admin.id,
+        actor_username=admin.username,
+        target_type="credential",
+        target_id=f"{user_id}:{provider}:{credential_name}",
+        details={"provider": provider, "credential_name": credential_name, "user_id": user_id},
+    )
 
     logger.info("Credential %s/%s deleted for user %d by admin %s", provider, credential_name, user_id, admin.username)
 
