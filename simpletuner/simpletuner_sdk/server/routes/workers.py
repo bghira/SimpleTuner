@@ -649,10 +649,9 @@ async def create_worker(
         details={"name": body.name, "worker_type": body.worker_type},
     )
 
-    # Build connection command
-    connection_command = (
-        f"simpletuner-worker --server-url <server_url> " f"--worker-token {token} " f"--worker-id {worker_id}"
-    )
+    # Build connection command with actual server URL
+    server_url = str(http_request.base_url).rstrip("/")
+    connection_command = f"simpletuner worker --orchestrator-url {server_url} --worker-token {token}"
 
     return CreateWorkerResponse(
         worker_id=worker_id,
@@ -880,10 +879,9 @@ async def rotate_worker_token(
         details={"name": worker.name},
     )
 
-    # Build connection command
-    connection_command = (
-        f"simpletuner-worker --server-url <server_url> " f"--worker-token {token} " f"--worker-id {worker_id}"
-    )
+    # Build connection command with actual server URL
+    server_url = str(http_request.base_url).rstrip("/")
+    connection_command = f"simpletuner worker --orchestrator-url {server_url} --worker-token {token}"
 
     return TokenRotationResponse(
         worker_id=worker_id,

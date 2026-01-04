@@ -3,14 +3,14 @@ Worker agent for connecting to SimpleTuner orchestration panel.
 
 Usage:
     # Via command line
-    python -m simpletuner.worker_agent \
-        --orchestrator-url https://panel.example.com \
+    simpletuner worker \\
+        --orchestrator-url https://panel.example.com \\
         --worker-token abc123...
 
     # Via environment variables
-    SIMPLETUNER_ORCHESTRATOR_URL=https://panel.example.com \
-    SIMPLETUNER_WORKER_TOKEN=abc123... \
-    python -m simpletuner.worker_agent
+    SIMPLETUNER_ORCHESTRATOR_URL=https://panel.example.com \\
+    SIMPLETUNER_WORKER_TOKEN=abc123... \\
+    simpletuner worker
 """
 
 import argparse

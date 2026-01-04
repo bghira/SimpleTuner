@@ -235,7 +235,7 @@ describe('adminWorkerMethods', () => {
 
             const mockResponse = {
                 token: 'test-token-123',
-                connection_command: 'worker connect --token test-token-123',
+                connection_command: 'simpletuner worker --orchestrator-url http://localhost:8001 --worker-token test-token-123',
             };
 
             fetch.mockResolvedValueOnce({
@@ -259,7 +259,7 @@ describe('adminWorkerMethods', () => {
             });
 
             expect(context.workerToken).toBe('test-token-123');
-            expect(context.workerConnectionCommand).toBe('worker connect --token test-token-123');
+            expect(context.workerConnectionCommand).toBe('simpletuner worker --orchestrator-url http://localhost:8001 --worker-token test-token-123');
             expect(context.workerFormOpen).toBe(false);
             expect(context.workerTokenModalOpen).toBe(true);
             expect(window.showToast).toHaveBeenCalledWith('Worker created successfully', 'success');
@@ -422,7 +422,7 @@ describe('adminWorkerMethods', () => {
         test('rotates token successfully', async () => {
             const mockResponse = {
                 token: 'new-token-789',
-                connection_command: 'worker connect --token new-token-789',
+                connection_command: 'simpletuner worker --orchestrator-url http://localhost:8001 --worker-token new-token-789',
             };
 
             fetch.mockResolvedValueOnce({
@@ -437,7 +437,7 @@ describe('adminWorkerMethods', () => {
                 method: 'POST',
             });
             expect(context.workerToken).toBe('new-token-789');
-            expect(context.workerConnectionCommand).toBe('worker connect --token new-token-789');
+            expect(context.workerConnectionCommand).toBe('simpletuner worker --orchestrator-url http://localhost:8001 --worker-token new-token-789');
             expect(context.workerTokenModalOpen).toBe(true);
             expect(window.showToast).toHaveBeenCalledWith('Token rotated successfully', 'success');
         });

@@ -1041,7 +1041,9 @@ class AdminRotateTokenTestCase(APITestCase, unittest.TestCase):
             data = response.json()
             self.assertEqual(data["worker_id"], "worker-123")
             self.assertIsInstance(data["token"], str)
-            self.assertIn("simpletuner-worker", data["connection_command"])
+            self.assertIn("simpletuner worker", data["connection_command"])
+            self.assertIn("--orchestrator-url", data["connection_command"])
+            self.assertIn("--worker-token", data["connection_command"])
 
             # Verify token_hash was updated
             call_args = mock_repo_instance.update_worker.call_args
