@@ -507,7 +507,12 @@ window.adminPanelComponent = function() {
                     }
                 } else {
                     const data = await response.json();
-                    this.setupState.error = data.detail || 'Failed to create admin account';
+                    // Handle Pydantic validation errors (array of objects with msg field)
+                    if (Array.isArray(data.detail)) {
+                        this.setupState.error = data.detail.map(e => e.msg || e.message || String(e)).join('; ');
+                    } else {
+                        this.setupState.error = data.detail || 'Failed to create admin account';
+                    }
                 }
             } catch (error) {
                 this.setupState.error = 'Network error: ' + error.message;
