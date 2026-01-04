@@ -74,6 +74,7 @@ class Worker:
             try:
                 last_heartbeat = datetime.fromisoformat(data["last_heartbeat"].replace("Z", "+00:00"))
             except (ValueError, TypeError):
+                # Invalid timestamp format; leave as None
                 pass
 
         created_at = datetime.now(timezone.utc)
@@ -81,6 +82,7 @@ class Worker:
             try:
                 created_at = datetime.fromisoformat(data["created_at"].replace("Z", "+00:00"))
             except (ValueError, TypeError):
+                # Invalid timestamp format; use current time
                 pass
 
         return cls(

@@ -259,11 +259,11 @@ async def register_worker(
     # Update worker with registration info
     updates = {
         "name": request.name,
-        "gpu_info": json.dumps(request.gpu_info),
-        "status": "IDLE",
-        "worker_type": worker_type,
-        "labels": json.dumps(request.labels),
-        "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+        "gpu_info": request.gpu_info,
+        "status": "idle",
+        "worker_type": worker_type.upper(),
+        "labels": request.labels,
+        "last_heartbeat": datetime.now(timezone.utc),
     }
 
     if request.provider:
@@ -345,9 +345,9 @@ async def worker_stream(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=30.0)
 
-                    # Format as SSE
+                    # Format as SSE - send full event payload as JSON
                     event_type = event.get("type", "message")
-                    data = json.dumps(event.get("data", event))
+                    data = json.dumps(event)
 
                     yield f"event: {event_type}\ndata: {data}\n\n"
 
@@ -407,8 +407,8 @@ async def worker_heartbeat(
 
     # Update worker with heartbeat info
     updates = {
-        "status": request.status.upper(),
-        "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+        "status": request.status,
+        "last_heartbeat": datetime.now(timezone.utc),
     }
 
     if request.current_job_id:
@@ -479,7 +479,7 @@ async def update_job_status(
         updates["error"] = request.error
 
     if request.status in ["completed", "failed", "cancelled"]:
-        updates["completed_at"] = datetime.now(timezone.utc).isoformat()
+        updates["completed_at"] = datetime.now(timezone.utc)
 
     await job_repo.update_job(job_id, updates)
 
@@ -528,7 +528,7 @@ async def list_workers(
     """
     from ..services.worker_repository import get_worker_repository
 
-    if user and not user.has_permission("admin.workers"):
+    if not user or not user.has_permission("admin.workers"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: admin.workers",
@@ -598,7 +598,7 @@ async def create_worker(
     from ..models.worker import WorkerType
     from ..services.worker_repository import get_worker_repository
 
-    if user and not user.has_permission("admin.workers"):
+    if not user or not user.has_permission("admin.workers"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: admin.workers",
@@ -684,7 +684,7 @@ async def delete_worker(
     """
     from ..services.worker_repository import get_worker_repository
 
-    if user and not user.has_permission("admin.workers"):
+    if not user or not user.has_permission("admin.workers"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: admin.workers",
@@ -766,7 +766,7 @@ async def drain_worker(
     from ..models.worker import WorkerStatus
     from ..services.worker_repository import get_worker_repository
 
-    if user and not user.has_permission("admin.workers"):
+    if not user or not user.has_permission("admin.workers"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: admin.workers",
@@ -835,7 +835,7 @@ async def rotate_worker_token(
     """
     from ..services.worker_repository import get_worker_repository
 
-    if user and not user.has_permission("admin.workers"):
+    if not user or not user.has_permission("admin.workers"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: admin.workers",

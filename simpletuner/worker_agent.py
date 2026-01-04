@@ -44,9 +44,7 @@ class WorkerConfig:
         token = os.environ.get("SIMPLETUNER_WORKER_TOKEN")
 
         if not url or not token:
-            raise ValueError(
-                "SIMPLETUNER_ORCHESTRATOR_URL and SIMPLETUNER_WORKER_TOKEN " "environment variables are required"
-            )
+            raise ValueError("SIMPLETUNER_ORCHESTRATOR_URL and SIMPLETUNER_WORKER_TOKEN environment variables are required")
 
         return cls(
             orchestrator_url=url.rstrip("/"),
@@ -86,6 +84,7 @@ def detect_gpu_info() -> Dict[str, Any]:
                 "accelerator": "mps",
             }
     except ImportError:
+        # torch is not installed; fall back to nvidia-smi detection
         pass
 
     # Fallback to nvidia-smi
@@ -106,6 +105,7 @@ def detect_gpu_info() -> Dict[str, Any]:
                 "accelerator": "cuda",
             }
     except (FileNotFoundError, subprocess.TimeoutExpired):
+        # nvidia-smi not available or timed out
         pass
 
     return {"name": "Unknown", "vram_gb": None, "count": 0, "accelerator": None}
@@ -215,6 +215,7 @@ class WorkerAgent:
                 try:
                     await self._heartbeat_task
                 except asyncio.CancelledError:
+                    # Heartbeat task cancellation is expected during shutdown
                     pass
 
     async def _handle_sse_line(self, line: str):
@@ -307,7 +308,6 @@ class WorkerAgent:
     async def _monitor_training(self, job_dir: Path):
         """Monitor training process and report status"""
         process = self.training_process
-        job_id = self.current_job["job_id"]
 
         await self._report_job_status("training")
 

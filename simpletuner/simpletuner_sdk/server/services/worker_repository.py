@@ -430,6 +430,7 @@ class WorkerRepository(BaseSQLiteStore):
             try:
                 gpu_info = json.loads(row["gpu_info"])
             except json.JSONDecodeError:
+                # Malformed GPU info JSON; use empty dict
                 pass
 
         labels = {}
@@ -437,6 +438,7 @@ class WorkerRepository(BaseSQLiteStore):
             try:
                 labels = json.loads(row["labels"])
             except json.JSONDecodeError:
+                # Malformed labels JSON; use empty dict
                 pass
 
         last_heartbeat = None
@@ -444,6 +446,7 @@ class WorkerRepository(BaseSQLiteStore):
             try:
                 last_heartbeat = datetime.fromisoformat(row["last_heartbeat"].replace("Z", "+00:00"))
             except (ValueError, TypeError):
+                # Invalid timestamp format; leave as None
                 pass
 
         created_at = datetime.now(timezone.utc)
@@ -451,6 +454,7 @@ class WorkerRepository(BaseSQLiteStore):
             try:
                 created_at = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
             except (ValueError, TypeError):
+                # Invalid timestamp format; use current time
                 pass
 
         return Worker(

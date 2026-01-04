@@ -11,7 +11,7 @@ Manages:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ class WorkerManager:
             try:
                 await self._task
             except asyncio.CancelledError:
+                # Task cancellation is expected during shutdown
                 pass
         logger.info("WorkerManager stopped")
 
@@ -89,7 +90,7 @@ class WorkerManager:
         """Check health of all workers."""
         from ..models.worker import WorkerStatus
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         workers = await self.worker_repository.list_workers()
 
         for worker in workers:
