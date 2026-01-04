@@ -4282,7 +4282,15 @@ function trainerComponent() {
                 }
             }
 
-            this.formDirty = isDirty;
+            // If _skipNextClean is set (from markFormDirty), preserve dirty state
+            // when FormData comparison says clean. This handles fields that are
+            // managed outside the form (e.g., Easy Mode selects without name attrs).
+            if (this._skipNextClean && !isDirty) {
+                // Keep formDirty as-is and clear the flag
+                this._skipNextClean = false;
+            } else {
+                this.formDirty = isDirty;
+            }
         },
 
         cssEscape(name) {
