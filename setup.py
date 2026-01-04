@@ -267,6 +267,7 @@ base_deps = [
     "torchcodec>=0.8.1",
     "sdnq>=0.1.2",
     "aiosqlite>=0.19.0",
+    "httpx>=0.28.0",
 ]
 
 platform_deps_for_install = get_platform_dependencies()

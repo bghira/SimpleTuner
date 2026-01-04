@@ -156,6 +156,12 @@
                     <i class="fas fa-user-plus me-1"></i>Registration
                 </button>
             </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'workers' }"
+                        @click="setActiveTab('workers')">
+                    <i class="fas fa-server me-1"></i>Workers
+                </button>
+            </li>
         </ul>
     </div>
 
@@ -182,6 +188,9 @@
 
         <!-- Registration Settings Tab -->
         {% include 'partials/admin/tab_registration.html' %}
+
+        <!-- Workers Tab -->
+        {% include 'partials/admin/tab_workers.html' %}
 
     </div>
 

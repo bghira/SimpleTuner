@@ -412,6 +412,28 @@ window.adminPanelComponent = function() {
         teamMembersLoading: false,
         availableTeamUsers: [],
         addMemberUserId: null,
+
+        // Workers management
+        workers: [],
+        workersLoading: false,
+        workerStats: {
+            total: 0,
+            idle: 0,
+            busy: 0,
+            offline: 0,
+        },
+        workerFormOpen: false,
+        workerForm: {
+            name: '',
+            worker_type: 'persistent',
+            labels_str: '',
+        },
+        workerTokenModalOpen: false,
+        workerToken: '',
+        workerConnectionCommand: '',
+        deleteWorkerOpen: false,
+        deletingWorker: null,
+        workerRefreshInterval: null,
     };
 
     // Core methods that orchestrate initialization
@@ -535,6 +557,14 @@ window.adminPanelComponent = function() {
             if (tabName === 'registration') {
                 this.loadRegistrationSettings();
             }
+            // Load and auto-refresh workers when tab is selected
+            if (tabName === 'workers') {
+                this.loadWorkers();
+                this.startWorkerAutoRefresh();
+            } else {
+                // Stop auto-refresh when leaving workers tab
+                this.stopWorkerAutoRefresh();
+            }
         },
 
         formatDate(isoString) {
@@ -559,6 +589,7 @@ window.adminPanelComponent = function() {
         ...(window.adminEnterpriseOnboardingMethods || {}),
         ...(window.adminNotificationMethods || {}),
         ...(window.adminRegistrationMethods || {}),
+        ...(window.adminWorkerMethods || {}),
 
         // Getters must be defined here, not in spread modules, to avoid evaluation issues
         get anyHintsDismissed() {
