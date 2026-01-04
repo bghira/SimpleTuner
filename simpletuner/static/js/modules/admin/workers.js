@@ -237,3 +237,42 @@ window.adminWorkerMethods = {
         }
     },
 };
+
+/**
+ * Standalone component for the GPU Workers page.
+ * Used when workers page is accessed directly (not as admin sub-tab).
+ */
+window.workersPageComponent = function() {
+    return {
+        // State
+        workers: [],
+        workersLoading: false,
+        workerStats: { total: 0, idle: 0, busy: 0, offline: 0 },
+        saving: false,
+        error: null,
+
+        // Modal state
+        workerFormOpen: false,
+        workerForm: { name: '', worker_type: 'persistent', labels_str: '' },
+        workerTokenModalOpen: false,
+        workerToken: '',
+        workerConnectionCommand: '',
+        deleteWorkerOpen: false,
+        deletingWorker: null,
+
+        // Auto-refresh
+        workerRefreshInterval: null,
+
+        async init() {
+            await this.loadWorkers();
+            this.startWorkerAutoRefresh();
+        },
+
+        destroy() {
+            this.stopWorkerAutoRefresh();
+        },
+
+        // Include all worker methods
+        ...window.adminWorkerMethods,
+    };
+};

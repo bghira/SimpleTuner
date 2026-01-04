@@ -916,3 +916,104 @@ describe('adminWorkerMethods', () => {
         });
     });
 });
+
+describe('workersPageComponent', () => {
+    test('is defined as a function', () => {
+        expect(typeof window.workersPageComponent).toBe('function');
+    });
+
+    test('returns an object with required state properties', () => {
+        const component = window.workersPageComponent();
+
+        expect(component.workers).toEqual([]);
+        expect(component.workersLoading).toBe(false);
+        expect(component.workerStats).toEqual({ total: 0, idle: 0, busy: 0, offline: 0 });
+        expect(component.saving).toBe(false);
+        expect(component.error).toBeNull();
+    });
+
+    test('returns an object with modal state properties', () => {
+        const component = window.workersPageComponent();
+
+        expect(component.workerFormOpen).toBe(false);
+        expect(component.workerForm).toEqual({ name: '', worker_type: 'persistent', labels_str: '' });
+        expect(component.workerTokenModalOpen).toBe(false);
+        expect(component.workerToken).toBe('');
+        expect(component.workerConnectionCommand).toBe('');
+        expect(component.deleteWorkerOpen).toBe(false);
+        expect(component.deletingWorker).toBeNull();
+    });
+
+    test('returns an object with auto-refresh state', () => {
+        const component = window.workersPageComponent();
+
+        expect(component.workerRefreshInterval).toBeNull();
+    });
+
+    test('includes init method', () => {
+        const component = window.workersPageComponent();
+
+        expect(typeof component.init).toBe('function');
+    });
+
+    test('includes destroy method', () => {
+        const component = window.workersPageComponent();
+
+        expect(typeof component.destroy).toBe('function');
+    });
+
+    test('includes all adminWorkerMethods', () => {
+        const component = window.workersPageComponent();
+
+        // Check that key methods from adminWorkerMethods are present
+        expect(typeof component.loadWorkers).toBe('function');
+        expect(typeof component.updateWorkerStats).toBe('function');
+        expect(typeof component.createWorker).toBe('function');
+        expect(typeof component.drainWorker).toBe('function');
+        expect(typeof component.rotateWorkerToken).toBe('function');
+        expect(typeof component.deleteWorker).toBe('function');
+        expect(typeof component.getWorkerStatusBadgeClass).toBe('function');
+        expect(typeof component.formatWorkerTimeAgo).toBe('function');
+        expect(typeof component.parseWorkerLabels).toBe('function');
+        expect(typeof component.showAddWorkerModal).toBe('function');
+        expect(typeof component.confirmDeleteWorker).toBe('function');
+        expect(typeof component.copyWorkerToken).toBe('function');
+        expect(typeof component.copyWorkerCommand).toBe('function');
+        expect(typeof component.startWorkerAutoRefresh).toBe('function');
+        expect(typeof component.stopWorkerAutoRefresh).toBe('function');
+    });
+
+    test('init calls loadWorkers and startWorkerAutoRefresh', async () => {
+        const component = window.workersPageComponent();
+
+        // Mock the methods
+        component.loadWorkers = jest.fn().mockResolvedValue();
+        component.startWorkerAutoRefresh = jest.fn();
+
+        await component.init();
+
+        expect(component.loadWorkers).toHaveBeenCalled();
+        expect(component.startWorkerAutoRefresh).toHaveBeenCalled();
+    });
+
+    test('destroy calls stopWorkerAutoRefresh', () => {
+        const component = window.workersPageComponent();
+
+        component.stopWorkerAutoRefresh = jest.fn();
+
+        component.destroy();
+
+        expect(component.stopWorkerAutoRefresh).toHaveBeenCalled();
+    });
+
+    test('each instance is independent', () => {
+        const component1 = window.workersPageComponent();
+        const component2 = window.workersPageComponent();
+
+        component1.workers = [{ id: 1 }];
+        component2.workers = [{ id: 2 }, { id: 3 }];
+
+        expect(component1.workers).toHaveLength(1);
+        expect(component2.workers).toHaveLength(2);
+    });
+});
