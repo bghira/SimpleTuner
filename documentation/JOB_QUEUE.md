@@ -551,6 +551,56 @@ When a job completes or fails, its GPUs are released and the queue is processed 
 
 **Cancellation behavior**: When a job is cancelled, GPUs are released but pending jobs are NOT automatically started. This prevents race conditions during bulk cancellation (`simpletuner jobs cancel --all`) where pending jobs would start before they could be cancelled. Use `POST /api/queue/process` or restart the server to manually trigger queue processing after cancellation.
 
+## Worker Dispatch
+
+Jobs can be dispatched to remote workers instead of running on the orchestrator's local GPUs. See [Worker Orchestration](experimental/server/WORKERS.md) for full worker setup.
+
+### Job Targets
+
+When submitting a job, specify where it should run:
+
+| Target | Behavior |
+|--------|----------|
+| `auto` (default) | Try remote workers first, fall back to local GPUs |
+| `worker` | Dispatch only to remote workers; queue if none available |
+| `local` | Run only on orchestrator's local GPUs |
+
+<details>
+<summary>Examples</summary>
+
+```bash
+# CLI
+simpletuner jobs submit my-config --target=worker
+
+# API
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"config_name": "my-config", "target": "worker"}'
+```
+
+</details>
+
+### Worker Selection
+
+Jobs can specify label requirements for worker matching:
+
+```bash
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-config",
+    "target": "worker",
+    "worker_labels": {"gpu_type": "a100*", "location": "us-*"}
+  }'
+```
+
+Labels support glob patterns. The scheduler matches jobs to workers based on:
+
+1. Label requirements (all must match)
+2. GPU count requirements
+3. Worker availability (IDLE status)
+4. FIFO order within matching workers
+
 ### Startup Behavior
 
 On server startup, the queue system automatically processes any pending local jobs. If GPUs are available, queued jobs will start immediately without manual intervention. This ensures jobs submitted before a server restart continue processing once the server is back online.
@@ -758,6 +808,7 @@ Use `simpletuner jobs status --format json` to see the breakdown:
 
 ## See Also
 
+- [Worker Orchestration](experimental/server/WORKERS.md) - Distributed worker registration and job dispatch
 - [Cloud Training Tutorial](experimental/cloud/TUTORIAL.md) - Getting started with cloud training
 - [Enterprise Guide](experimental/server/ENTERPRISE.md) - Multi-user setup, approvals, governance
 - [Operations Guide](experimental/cloud/OPERATIONS_TUTORIAL.md) - Production deployment

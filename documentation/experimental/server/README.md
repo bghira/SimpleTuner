@@ -4,6 +4,7 @@ This directory contains documentation for SimpleTuner's server-side features tha
 
 ## Contents
 
+- [Worker Orchestration](WORKERS.md) - Distributed worker registration, job dispatch, and GPU fleet management
 - [Enterprise Guide](ENTERPRISE.md) - Multi-user deployment, SSO, approvals, quotas, and governance
 - [External Authentication](EXTERNAL_AUTH.md) - OIDC and LDAP identity provider setup
 - [Audit Logging](AUDIT.md) - Security event logging with chain verification
@@ -12,6 +13,7 @@ This directory contains documentation for SimpleTuner's server-side features tha
 
 These features are relevant when:
 
+- Distributing training across multiple GPU machines with worker orchestration
 - Running SimpleTuner as a shared service for multiple users
 - Integrating with corporate identity providers (Okta, Azure AD, Keycloak, LDAP)
 - Requiring approval workflows for job submission
