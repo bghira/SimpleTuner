@@ -1,0 +1,28 @@
+/* SimpleTuner documentation theme customizations */
+
+/* Card grid for home page */
+.md-typeset .grid.cards > ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+/* Code block styling */
+.md-typeset pre > code {
+  font-size: 0.85em;
+}
+
+/* Table improvements */
+.md-typeset table:not([class]) {
+  font-size: 0.85em;
+}
+
+/* Admonition tweaks */
+.md-typeset .admonition {
+  font-size: 0.9em;
+}
+
+/* Navigation improvements for many items */
+.md-nav__item .md-nav__link {
+  font-size: 0.8rem;
+}

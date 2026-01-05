@@ -1,6 +1,6 @@
 # LongCat‑Image Edit Quickstart
 
-This is the edit/img2img variant of LongCat‑Image. Read [LONGCAT_IMAGE.md](/documentation/quickstart/LONGCAT_IMAGE.md) first; this file only lists what changes for the edit flavour.
+This is the edit/img2img variant of LongCat‑Image. Read [LONGCAT_IMAGE.md](../quickstart/LONGCAT_IMAGE.md) first; this file only lists what changes for the edit flavour.
 
 ---
 

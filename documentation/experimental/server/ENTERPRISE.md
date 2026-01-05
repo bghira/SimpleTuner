@@ -392,8 +392,10 @@ SimpleTuner includes credential lifecycle management for tracking, rotating, and
 
 </details>
 
+#### External Orchestration {#external-orchestration-airflow}
+
 <details>
-<summary>External Orchestration (Airflow example)</summary>
+<summary>Airflow example</summary>
 
 ```python
 def submit_and_wait(job_config, provider="replicate", **context):

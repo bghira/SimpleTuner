@@ -2,7 +2,7 @@
 
 This document contains notes* on configuring a 4-way 8xH100 cluster for use with SimpleTuner.
 
-> *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](/documentation/INSTALL.md) document or one of the [quickstart guides](/documentation/QUICKSTART.md).
+> *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](INSTALL.md) document or one of the [quickstart guides](QUICKSTART.md).
 
 ## Storage backend
 
@@ -166,16 +166,16 @@ If your dataset is smaller than the effective batch size:
 
 1. **Reduce batch size** - Lower `train_batch_size` to reduce memory requirements
 2. **Reduce GPU count** - Train on fewer GPUs (though this slows training)
-3. **Increase repeats** - Set `repeats` in your [dataloader configuration](/documentation/DATALOADER.md#repeats)
+3. **Increase repeats** - Set `repeats` in your [dataloader configuration](DATALOADER.md#repeats)
 4. **Enable automatic oversubscription** - Use `--allow_dataset_oversubscription` to automatically adjust repeats
 
-The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](/documentation/OPTIONS.md#allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
+The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
 
 ### Slow image scan / discovery
 
 The **discovery** backend currently restricts aspect bucket data collection to a single node. This can take an **extremely** long time with very-large datasets as each image has to be read from storage to retrieve its geometry.
 
-To work-around this problem, the [parquet metadata_backend](/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets) should be used, allowing you to preprocess your data in any manner accessible to you. As outlined in the linked document section, the parquet table contains the `filename`, `width`, `height`, and `caption` columns to help quickly and efficiently sort the data into its respective buckets.
+To work-around this problem, the [parquet metadata_backend](DATALOADER.md#parquet-caption-strategy-json-lines-datasets) should be used, allowing you to preprocess your data in any manner accessible to you. As outlined in the linked document section, the parquet table contains the `filename`, `width`, `height`, and `caption` columns to help quickly and efficiently sort the data into its respective buckets.
 
 
 ### Storage space
@@ -186,7 +186,7 @@ Huge datasets, especially when using the T5-XXL text encoder, will consume enorm
 
 Using a provider such as Cloudflare R2, one can generate extremely large datasets with very little storage fees.
 
-See the [dataloader configuration guide](/documentation/DATALOADER.md#local-cache-with-cloud-dataset) for an example of how to configure the `aws` type in `multidatabackend.json`
+See the [dataloader configuration guide](DATALOADER.md#local-cache-with-cloud-dataset) for an example of how to configure the `aws` type in `multidatabackend.json`
 
 - Image data can be stored locally or via S3
   - If images are in S3, the preprocessing speed reduces according to network bandwidth
@@ -206,7 +206,7 @@ This increases GPU computation load but significantly reduces storage requiremen
 
 If your datasets so large that scanning for new images becomes a bottleneck, adding `preserve_data_backend_cache=true` to each dataloader config entry will prevent the backend from being scanned for new images.
 
-**Note** that you should then use the `image_embeds` data backend type ([more information here](/documentation/DATALOADER.md#local-cache-with-cloud-dataset)) to allow these cache lists to live separately in case your pre-processing job is interrupted. This will prevent the **image list** from being re-scanned at startup.
+**Note** that you should then use the `image_embeds` data backend type ([more information here](DATALOADER.md#local-cache-with-cloud-dataset)) to allow these cache lists to live separately in case your pre-processing job is interrupted. This will prevent the **image list** from being re-scanned at startup.
 
 #### Data compression
 
@@ -255,7 +255,7 @@ use_cpu: false
 
 ### DeepSpeed
 
-This document doesn't go into as much detail as the [dedicated page](/documentation/DEEPSPEED.md).
+This document doesn't go into as much detail as the [dedicated page](DEEPSPEED.md).
 
 When optimising training on DeepSpeed for multi-node, using the lowest-possible ZeRO level is **essential**.
 

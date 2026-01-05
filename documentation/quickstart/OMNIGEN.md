@@ -48,7 +48,7 @@ Install SimpleTuner via pip:
 pip install simpletuner[cuda]
 ```
 
-For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+For manual installation or development setup, see the [installation documentation](../INSTALL.md).
 
 ### Setting up the environment
 
@@ -95,7 +95,7 @@ There, you will possibly need to modify the following variables:
 - `mixed_precision` - It's recommended to set this to `bf16` for the most efficient training configuration, or `no` (but will consume more memory and be slower).
 - `gradient_checkpointing` - Disabling this will go the fastest, but limits your batch sizes. It is required to enable this to get the lowest VRAM usage.
 
-Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+Multi-GPU users can reference [this document](../OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 Your config.json will look something like mine by the end:
 
@@ -188,7 +188,7 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -238,13 +238,13 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 #### CLIP score tracking
 
-If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+If you wish to enable evaluations to score the model's performance, see [this document](../evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
 </details>
 
 # Stable evaluation loss
 
-If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+If you wish to use stable MSE loss to score the model's performance, see [this document](../evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 #### Validation previews
 
@@ -480,7 +480,7 @@ simpletuner train
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
+For more information, see the [dataloader](../DATALOADER.md) and [tutorial](../TUTORIAL.md) documents.
 
 ## Notes & troubleshooting tips
 
@@ -507,7 +507,7 @@ Speed was approximately 3.4 iterations per second on an AMD 7900XTX using Pytorc
 
 ### Masked loss
 
-If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
+If you are training a subject or style and would like to mask one or the other, see the [masked loss training](../DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
 
 ### Quantisation
 
