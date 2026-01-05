@@ -34,6 +34,7 @@ from diffusers.video_processor import VideoProcessor
 from PIL import Image
 from transformers import AutoTokenizer, UMT5EncoderModel, Wav2Vec2Model, Wav2Vec2Processor
 
+from simpletuner.helpers.models.wan_s2v import WAV2VEC2_NUM_LAYERS
 from simpletuner.helpers.models.wan_s2v.transformer import WanS2VTransformer3DModel
 
 logger = logging.get_logger(__name__)
@@ -232,7 +233,7 @@ class WanS2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             mode="linear",
             align_corners=False,
         )
-        audio_embeds = audio_embeds.unflatten(0, (-1, 25))  # Assume 25 layers
+        audio_embeds = audio_embeds.unflatten(0, (-1, WAV2VEC2_NUM_LAYERS))
         return audio_embeds
 
     def prepare_latents(

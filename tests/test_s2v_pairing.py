@@ -138,8 +138,13 @@ class TestS2VConnectSamples(unittest.TestCase):
 
         self.assertEqual(result[0]["s2v_audio_path"], str(self.audio_dir / "video_001.wav"))
         self.assertIsNone(result[1]["s2v_audio_path"])
-        # Verify warning was logged
+        # Verify warning was logged with expected message
         sampler.debug_log.assert_called()
+        warning_calls = [str(call) for call in sampler.debug_log.call_args_list]
+        self.assertTrue(
+            any("No matching audio found for video" in call and "video_002.mp4" in call for call in warning_calls),
+            f"Expected warning about missing audio for video_002.mp4, got: {warning_calls}",
+        )
 
     def test_connect_s2v_samples_no_s2v_datasets(self):
         """Test that samples are returned unchanged when no s2v_datasets configured."""

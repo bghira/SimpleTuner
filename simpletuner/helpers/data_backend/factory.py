@@ -2401,9 +2401,14 @@ class FactoryRegistry:
 
         requires_s2v_datasets = self._requires_s2v_datasets()
         if not has_s2v_dataset and requires_s2v_datasets:
+            doc_hint = ""
+            s2v_doc_path = Path("documentation/quickstart/WAN_S2V.md")
+            if s2v_doc_path.is_file():
+                doc_hint = f" See {s2v_doc_path} for setup instructions."
             raise ValueError(
                 "Model requires S2V audio datasets (s2v_datasets), but none was found in the data backend config file. "
-                "Add s2v_datasets = ['your_audio_dataset_id'] to your video dataset configuration."
+                "Add s2v_datasets = ['your_audio_dataset_id'] to your video dataset configuration, "
+                f"or use audio.auto_split: true to auto-extract audio from videos.{doc_hint}"
             )
 
         # Validate conditioning_type for edit models

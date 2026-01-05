@@ -10,6 +10,7 @@ from transformers import T5TokenizerFast, UMT5EncoderModel, Wav2Vec2Model, Wav2V
 
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.tae.types import VideoTAESpec
+from simpletuner.helpers.models.wan_s2v import WAV2VEC2_DIM, WAV2VEC2_NUM_LAYERS
 from simpletuner.helpers.models.wan_s2v.pipeline import WanS2VPipeline
 from simpletuner.helpers.models.wan_s2v.transformer import WanS2VTransformer3DModel
 from simpletuner.helpers.training.multi_process import should_log
@@ -264,9 +265,9 @@ class WanS2V(VideoModelFoundation):
                     # No audio for this sample, use zeros
                     zero_embed = torch.zeros(
                         1,
-                        25,
-                        1024,
-                        T,  # 25 Wav2Vec2 layers, 1024 dim
+                        WAV2VEC2_NUM_LAYERS,
+                        WAV2VEC2_DIM,
+                        T,
                         device=batch["latents"].device,
                         dtype=batch["latents"].dtype,
                     )
@@ -285,9 +286,9 @@ class WanS2V(VideoModelFoundation):
             T = batch["latents"].shape[2]  # Temporal dimension
             batch["audio_embeds"] = torch.zeros(
                 B,
-                25,
-                1024,
-                T,  # 25 Wav2Vec2 layers, 1024 dim
+                WAV2VEC2_NUM_LAYERS,
+                WAV2VEC2_DIM,
+                T,
                 device=batch["latents"].device,
                 dtype=batch["latents"].dtype,
             )
@@ -307,8 +308,8 @@ class WanS2V(VideoModelFoundation):
             num_latent_frames = T
             audio_embeds = torch.zeros(
                 B,
-                25,
-                1024,
+                WAV2VEC2_NUM_LAYERS,
+                WAV2VEC2_DIM,
                 num_latent_frames,
                 device=device,
                 dtype=dtype,

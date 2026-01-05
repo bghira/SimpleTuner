@@ -504,7 +504,7 @@ class FramePackMotioner(nn.Module):
         clean_latents_4x = self.proj_4x(clean_latents_4x).flatten(2).transpose(1, 2)
 
         if add_last_motion < 2 and self.drop_mode == "drop":
-            clean_latents_post = clean_latents_post[:, :0] if add_last_motion < 2 else clean_latents_post
+            clean_latents_post = clean_latents_post[:, :0]
             clean_latents_2x = clean_latents_2x[:, :0] if add_last_motion < 1 else clean_latents_2x
 
         motion_lat = torch.cat([clean_latents_post, clean_latents_2x, clean_latents_4x], dim=1)
