@@ -51,19 +51,61 @@ theme:
 plugins:
   - search
   - tags
-  # Uncomment for i18n support:
-  # - i18n:
-  #     default_language: en
-  #     languages:
-  #       - locale: en
-  #         name: English
-  #         build: true
-  #       - locale: zh
-  #         name: 中文
-  #         build: true
-  #       - locale: ja
-  #         name: 日本語
-  #         build: true
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: zh
+          name: 中文
+          build: true
+          nav_translations:
+            Home: 首页
+            Getting Started: 入门指南
+            Installation: 安装
+            Quick Start: 快速开始
+            Tutorials: 教程
+            Model Guides: 模型指南
+            Image Models: 图像模型
+            Video Models: 视频模型
+            Audio Models: 音频模型
+            Training: 训练
+            Reference: 参考
+        - locale: ja
+          name: 日本語
+          build: true
+          nav_translations:
+            Home: ホーム
+            Getting Started: はじめに
+            Installation: インストール
+            Quick Start: クイックスタート
+            Tutorials: チュートリアル
+            Model Guides: モデルガイド
+            Image Models: 画像モデル
+            Video Models: 動画モデル
+            Audio Models: 音声モデル
+            Training: トレーニング
+            Reference: リファレンス
+        - locale: ko
+          name: 한국어
+          build: true
+          nav_translations:
+            Home: 홈
+            Getting Started: 시작하기
+            Installation: 설치
+            Quick Start: 빠른 시작
+            Tutorials: 튜토리얼
+            Model Guides: 모델 가이드
+            Image Models: 이미지 모델
+            Video Models: 비디오 모델
+            Audio Models: 오디오 모델
+            Training: 훈련
+            Reference: 참조
 
 markdown_extensions:
   - abbr
@@ -80,7 +122,9 @@ markdown_extensions:
   - pymdownx.betterem
   - pymdownx.caret
   - pymdownx.details
-  - pymdownx.emoji
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span

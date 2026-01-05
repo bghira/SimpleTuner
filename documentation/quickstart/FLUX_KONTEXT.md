@@ -1,6 +1,6 @@
 # Kontext \[dev] Mini Quick‑start
 
-> 📝  Kontext shares 90 % of its training workflow with Flux, so this file only lists what *differs*.  When a step is **not** mentioned here, follow the original [instructions](/documentation/quickstart/FLUX.md)
+> 📝  Kontext shares 90 % of its training workflow with Flux, so this file only lists what *differs*.  When a step is **not** mentioned here, follow the original [instructions](../quickstart/FLUX.md)
 
 
 ---
@@ -76,7 +76,7 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -325,7 +325,7 @@ This configuration will:
 4. **Performance**: These CPU-based generators (blur, JPEG) are fast and use multiple processes
 5. **Disk space**: Ensure you have enough disk space for the generated images, as they can be large! Unfortunately, there is no ability to create them on-demand yet.
 
-For more conditioning types and advanced configurations, see the [ControlNet documentation](/documentation/CONTROLNET.md).
+For more conditioning types and advanced configurations, see the [ControlNet documentation](../CONTROLNET.md).
 
 ---
 
@@ -360,4 +360,4 @@ For more conditioning types and advanced configurations, see the [ControlNet doc
 
 ## 7. Further reading
 
-For advanced tuning options (LoKr, NF4 quant, DeepSpeed, etc.) consult [the original quickstart for Flux](/documentation/quickstart/FLUX.md) – every flag works the same unless stated otherwise above.
+For advanced tuning options (LoKr, NF4 quant, DeepSpeed, etc.) consult [the original quickstart for Flux](../quickstart/FLUX.md) – every flag works the same unless stated otherwise above.

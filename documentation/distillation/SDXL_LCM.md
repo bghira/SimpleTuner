@@ -11,7 +11,7 @@ LCM enables:
 
 ## 📦 Installation
 
-Follow the standard SimpleTuner installation [guide](/documentation/INSTALL.md):
+Follow the standard SimpleTuner installation [guide](../INSTALL.md):
 
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
@@ -234,7 +234,7 @@ Create `multidatabackend.json` in your output directory:
 
 - [LCM Paper](https://arxiv.org/abs/2310.04378)
 - [Diffusers LCM Docs](https://huggingface.co/docs/diffusers/using-diffusers/inference_with_lcm)
-- [More SimpleTuner Docs](/documentation/quickstart/SDXL.md)
+- [More SimpleTuner Docs](../quickstart/SDXL.md)
 
 ---
 

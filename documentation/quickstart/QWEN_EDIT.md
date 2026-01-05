@@ -73,7 +73,7 @@ Inside `config/config.json`:
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 

@@ -191,7 +191,7 @@ FLUX.2 supports TREAD for faster training:
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -425,6 +425,6 @@ Expected speedup: 20-40% depending on configuration.
 ## See Also
 
 - [FLUX.1 Quickstart](FLUX.md) - For FLUX.1 training
-- [TREAD Documentation](/documentation/TREAD.md) - Detailed TREAD configuration
-- [LoRA Training Guide](/documentation/LORA.md) - General LoRA training tips
-- [Dataloader Configuration](/documentation/DATALOADER.md) - Dataset setup
+- [TREAD Documentation](../TREAD.md) - Detailed TREAD configuration
+- [LoRA Training Guide](../LORA.md) - General LoRA training tips
+- [Dataloader Configuration](../DATALOADER.md) - Dataset setup

@@ -177,7 +177,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--refiner_training`
 
-- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](MIXTURE_OF_EXPERTS.md) for more information on these options.
 
 ## Precision
 
@@ -397,7 +397,7 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 
 - **What**: Path to your SimpleTuner dataset configuration.
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
-- **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
+- **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](DATALOADER.md) for more information on configuring the data loader.
 
 ### `--override_dataset_config`
 
@@ -441,7 +441,7 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 
 ## 🌈 Image and Text Processing
 
-A lot of settings are instead set through the [dataloader config](/documentation/DATALOADER.md), but these will apply globally.
+A lot of settings are instead set through the [dataloader config](DATALOADER.md), but these will apply globally.
 
 ### `--resolution_type`
 

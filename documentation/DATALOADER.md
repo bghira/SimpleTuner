@@ -159,7 +159,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 ### `conditioning_data`
 
 - **Values:** `id` value of conditioning dataset or an array of `id` values
-- **Description:** As described in [the ControlNet guide](/documentation/CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
+- **Description:** As described in [the ControlNet guide](CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
 - **Note:** If you have multiple conditioning datasets, you can specify them as an array of `id` values. When training Flux Kontext, this allows switching between conditions randomly or stitching inputs together to train in more advanced multi-image compositing tasks.
 
 ### `instance_data_dir` / `aws_data_prefix`
@@ -304,7 +304,7 @@ Generates Canny edge detection maps:
 }
 ```
 
-See [the ControlNet guide](/documentation/CONTROLNET.md) for more details on how to use these conditioning datasets.
+See [the ControlNet guide](CONTROLNET.md) for more details on how to use these conditioning datasets.
 
 #### Examples
 
@@ -577,7 +577,7 @@ This is particularly useful when:
   - **Negative values** (e.g., `-0.5`): "Less of the concept" — dimmer eyes, neutral expression, etc.
   - **Zero or omitted**: Neutral examples that don't push the concept in either direction.
 - **Note:** When datasets have `slider_strength` values, SimpleTuner rotates batches in a fixed cycle: positive → negative → neutral. Within each group, standard backend probabilities still apply.
-- **See also:** [SLIDER_LORA.md](/documentation/SLIDER_LORA.md) for a complete guide on setting up slider LoRA training.
+- **See also:** [SLIDER_LORA.md](SLIDER_LORA.md) for a complete guide on setting up slider LoRA training.
 
 ### `vae_cache_clear_each_epoch`
 
@@ -921,7 +921,7 @@ SimpleTuner now supports loading datasets directly from Hugging Face Hub without
 - Datasets with built-in metadata and quality assessments
 - Quick experimentation without local storage requirements
 
-For thorough documentation on this feature, refer to [this document](/documentation/HUGGINGFACE_DATASETS.md).
+For thorough documentation on this feature, refer to [this document](HUGGINGFACE_DATASETS.md).
 
 For a basic example of how to use a Hugging Face dataset, set `"type": "huggingface"` in your dataloader configuration:
 
