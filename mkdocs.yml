@@ -1,6 +1,6 @@
 site_name: SimpleTuner
 site_description: Multi-modal diffusion model fine-tuning toolkit
-site_url: https://simpletuner.dev
+site_url: https://bghira.github.io/SimpleTuner/
 repo_url: https://github.com/bghira/SimpleTuner
 repo_name: bghira/SimpleTuner
 edit_uri: edit/main/documentation/
