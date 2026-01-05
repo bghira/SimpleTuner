@@ -169,13 +169,13 @@ If your dataset is smaller than the effective batch size:
 3. **Increase repeats** - Set `repeats` in your [dataloader configuration](DATALOADER.md#repeats)
 4. **Enable automatic oversubscription** - Use `--allow_dataset_oversubscription` to automatically adjust repeats
 
-The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
+The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
 
 ### Slow image scan / discovery
 
 The **discovery** backend currently restricts aspect bucket data collection to a single node. This can take an **extremely** long time with very-large datasets as each image has to be read from storage to retrieve its geometry.
 
-To work-around this problem, the [parquet metadata_backend](DATALOADER.md#parquet-caption-strategy--json-lines-datasets) should be used, allowing you to preprocess your data in any manner accessible to you. As outlined in the linked document section, the parquet table contains the `filename`, `width`, `height`, and `caption` columns to help quickly and efficiently sort the data into its respective buckets.
+To work-around this problem, the [parquet metadata_backend](DATALOADER.md#parquet-caption-strategy-json-lines-datasets) should be used, allowing you to preprocess your data in any manner accessible to you. As outlined in the linked document section, the parquet table contains the `filename`, `width`, `height`, and `caption` columns to help quickly and efficiently sort the data into its respective buckets.
 
 
 ### Storage space

@@ -37,7 +37,7 @@ See [Replicate Security Docs](https://replicate.com/docs/reference/security) for
 
 </details>
 
-## Hardware & Costs
+## Hardware & Costs {#costs}
 
 | Hardware | VRAM | Cost | Best For |
 |----------|------|------|----------|

@@ -95,7 +95,7 @@ popd
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 
-#### MultiGPU training
+#### Multiple GPU training
 
 SimpleTuner now includes **automatic GPU detection and configuration** through the WebUI. Upon first load, you'll be guided through an onboarding step that detects your GPUs and configures Accelerate automatically.
 

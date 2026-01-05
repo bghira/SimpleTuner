@@ -269,7 +269,7 @@ FLUX.2 can train either **plain text-to-image** (no conditioning) or with **pair
 
 - Use `conditioning_type=reference_strict` when you need crops aligned 1:1 with the edit image. `reference_loose` allows mismatched aspect ratios.
 - File names must match between edit and reference datasets; each edit image should have a corresponding reference file.
-- When supplying multiple conditioning datasets, set `conditioning_multidataset_sampling` (`combined` vs `random`) as needed; see [OPTIONS](../OPTIONS.md#--conditioning_multidataset_sampling-combinedrandom).
+- When supplying multiple conditioning datasets, set `conditioning_multidataset_sampling` (`combined` vs `random`) as needed; see [OPTIONS](../OPTIONS.md#--conditioning_multidataset_sampling).
 - Without `conditioning_data`, FLUX.2 falls back to standard text-to-image training.
 
 ### LoRA Targets

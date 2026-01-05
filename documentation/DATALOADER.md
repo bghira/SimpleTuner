@@ -172,7 +172,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 - **textfile** requires your image.png be next to an image.txt that contains one or more captions, separated by newlines. These image+text pairs **must be in the same directory**.
 - **instanceprompt** requires a value for `instance_prompt` also be provided, and will use **only** this value for the caption of every image in the set.
 - **filename** will use a converted and cleaned-up version of the filename as its caption, eg. after swapping underscores for spaces.
-- **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+- **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy-json-lines-datasets).
 
 Both `textfile` and `parquet` support multi-captions:
 - textfiles are split by newlines. Each new line will be its own separate caption.
@@ -183,7 +183,7 @@ Both `textfile` and `parquet` support multi-captions:
 - **Values:** `discovery` | `parquet` | `huggingface`
 - **Description:** Controls how SimpleTuner discovers image dimensions and other metadata during dataset preparation.
   - **discovery** (default): Scans actual image files to read dimensions. Works with any storage backend but can be slow for large datasets.
-  - **parquet**: Reads dimensions from `width_column` and `height_column` in a parquet/JSONL file, skipping file access. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+  - **parquet**: Reads dimensions from `width_column` and `height_column` in a parquet/JSONL file, skipping file access. See [Parquet caption strategy](#parquet-caption-strategy-json-lines-datasets).
   - **huggingface**: Uses metadata from Hugging Face datasets. See [Hugging Face Datasets Support](#hugging-face-datasets-support).
 - **Note:** When using `parquet`, you must also configure the `parquet` block with `width_column` and `height_column`. This dramatically speeds up startup for large datasets.
 
@@ -521,7 +521,7 @@ For example, with 4 GPUs, `train_batch_size=4`, and `gradient_accumulation_steps
 
 ##### Automatic Dataset Oversubscription
 
-To automatically adjust `repeats` when your dataset is smaller than the effective batch size, use the `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#allow_dataset_oversubscription)).
+To automatically adjust `repeats` when your dataset is smaller than the effective batch size, use the `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)).
 
 When enabled, SimpleTuner will:
 - Calculate the minimum repeats needed for training

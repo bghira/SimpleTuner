@@ -613,6 +613,15 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
   - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
 
+### `--conditioning_multidataset_sampling` {#--conditioning_multidataset_sampling}
+
+- **What**: How to sample from multiple conditioning datasets. **Choices**: `combined`, `random`
+- **Why**: When training with multiple conditioning datasets (e.g., multiple reference images or control signals), this determines how they are used:
+  - `combined` stitches conditioning inputs together, showing them simultaneously during training. Useful for multi-image compositing tasks.
+  - `random` randomly selects one conditioning dataset per sample, switching between conditions during training.
+- **Note**: When using `combined`, you cannot define separate `captions` on conditioning datasets; the source dataset's captions are used instead.
+- **See also**: [DATALOADER.md](DATALOADER.md#conditioning_data) for configuring multiple conditioning datasets.
+
 ---
 
 ## 🎛 Training Parameters
@@ -670,7 +679,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 
 > Note: Do not enable fused backward pass for any optimizers when using gradient accumulation steps.
 
-### `--allow_dataset_oversubscription`
+### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
 - **What**: Automatically adjusts dataset `repeats` when the dataset is smaller than the effective batch size.
 - **Why**: Prevents training failures when your dataset size doesn't meet the minimum requirements for your multi-GPU configuration.
