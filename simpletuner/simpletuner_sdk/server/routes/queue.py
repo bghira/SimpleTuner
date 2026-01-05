@@ -753,26 +753,40 @@ async def submit_local_job(
                 error=f"Config '{request.config_name}' not found",
             )
 
+        # Always initialize worker repository to ensure consistent state
+        # This fixes an issue where target=local would fail but target=auto would work
+        worker_repo = None
+        try:
+            from ..services.worker_repository import get_worker_repository
+
+            worker_repo = get_worker_repository()
+        except Exception as exc:
+            logger.debug("Worker repository initialization: %s", exc)
+
         # Check if we should dispatch to a worker
         use_worker = False
         if request.target in ("worker", "auto"):
-            try:
-                from ..services.worker_repository import get_worker_repository
-
-                worker_repo = get_worker_repository()
-                idle_worker = await worker_repo.get_idle_worker_for_job()
-                if idle_worker:
-                    use_worker = True
-                elif request.target == "worker":
-                    # Explicitly requested worker but none available - queue for worker
-                    use_worker = True
-            except Exception as exc:
-                logger.warning("Failed to check worker availability: %s", exc)
+            if worker_repo is None:
                 if request.target == "worker":
                     return LocalJobSubmitResponse(
                         success=False,
-                        error="No workers available and target=worker was specified",
+                        error="Worker repository unavailable and target=worker was specified",
                     )
+            else:
+                try:
+                    idle_worker = await worker_repo.get_idle_worker_for_job()
+                    if idle_worker:
+                        use_worker = True
+                    elif request.target == "worker":
+                        # Explicitly requested worker but none available - queue for worker
+                        use_worker = True
+                except Exception as exc:
+                    logger.warning("Failed to check worker availability: %s", exc)
+                    if request.target == "worker":
+                        return LocalJobSubmitResponse(
+                            success=False,
+                            error="No workers available and target=worker was specified",
+                        )
 
         # Dispatch to worker if requested/available
         if use_worker:
