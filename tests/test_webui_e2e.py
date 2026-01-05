@@ -988,5 +988,132 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_dataset_wizard_initializes_modal_state", scenario)
 
 
+class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test that Easy Mode field changes correctly enable the save button.
+
+    Regression test for: Easy Mode events must use .stop modifier to prevent
+    bubbling to form handlers that reset formDirty state.
+    """
+
+    MAX_BROWSERS = 1
+
+    def test_easy_mode_enables_save_on_direct_load(self) -> None:
+        """Editing Easy Mode fields on direct page load should enable save button."""
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_model_tab()
+            trainer_page.wait_for_tab("model")
+            trainer_page.wait_for_htmx()
+
+            # Wait for Easy Mode component to initialize
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.querySelector('.ez-mode-form select') !== null;")
+            )
+
+            # Verify formDirty starts false
+            initial_dirty = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertFalse(initial_dirty, "formDirty should start as false")
+
+            # Change model type in Easy Mode (click the Full Model radio)
+            driver.execute_script(
+                """
+                const fullModelRadio = document.querySelector('input[type="radio"][value="full"]');
+                if (fullModelRadio) {
+                    fullModelRadio.click();
+                }
+                """
+            )
+
+            # Wait a moment for Alpine reactivity
+            time.sleep(0.2)
+
+            # Verify formDirty is now true
+            dirty_after_change = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertTrue(dirty_after_change, "formDirty should be true after Easy Mode change")
+
+            # Verify save button is enabled
+            save_button_disabled = driver.execute_script(
+                "const btn = document.querySelector('.header-actions .trainer-action-btn');"
+                "return btn ? btn.disabled : null;"
+            )
+            self.assertFalse(save_button_disabled, "Save button should be enabled after Easy Mode change")
+
+        self.for_each_browser("test_easy_mode_enables_save_on_direct_load", scenario)
+
+    def test_easy_mode_select_enables_save(self) -> None:
+        """Changing Easy Mode select dropdowns should enable save button."""
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_model_tab()
+            trainer_page.wait_for_tab("model")
+            trainer_page.wait_for_htmx()
+
+            # Wait for Easy Mode model family select
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.querySelector('.ez-mode-form select') !== null;")
+            )
+
+            # Change a select in Easy Mode (base model precision)
+            driver.execute_script(
+                """
+                const precisionSelect = document.querySelector('.ez-mode-form select[x-model="base_model_precision"]');
+                if (precisionSelect) {
+                    precisionSelect.value = 'int8-quanto';
+                    precisionSelect.dispatchEvent(new Event('change', { bubbles: false }));
+                }
+                """
+            )
+
+            time.sleep(0.2)
+
+            # Verify formDirty is true
+            dirty_state = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertTrue(dirty_state, "formDirty should be true after Easy Mode select change")
+
+        self.for_each_browser("test_easy_mode_select_enables_save", scenario)
+
+    def test_main_form_still_enables_save(self) -> None:
+        """Regular form fields should still enable save button (sanity check)."""
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            basic_tab = BasicConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+            trainer_page.wait_for_htmx()
+
+            # Change a regular form field
+            basic_tab.set_output_dir("/new/output/path")
+
+            time.sleep(0.2)
+
+            # Verify formDirty is true
+            dirty_state = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertTrue(dirty_state, "formDirty should be true after main form change")
+
+        self.for_each_browser("test_main_form_still_enables_save", scenario)
+
+
 if __name__ == "__main__":
     unittest.main()
