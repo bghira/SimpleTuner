@@ -5,7 +5,7 @@ import traceback
 from io import BytesIO
 from typing import Optional
 
-from simpletuner.helpers.audio import load_audio
+from simpletuner.helpers.audio import generate_zero_audio, load_audio, load_audio_from_video
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
@@ -99,7 +99,14 @@ class DiscoveryMetadataBackend(MetadataBackend):
             return list(all_image_files.keys())
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
-            extension_pool = audio_file_extensions if self.dataset_type is DatasetType.AUDIO else image_file_extensions
+            if self.dataset_type is DatasetType.AUDIO:
+                # Check if audio is sourced from video files
+                if self.audio_config.get("source_from_video", False):
+                    extension_pool = video_file_extensions
+                else:
+                    extension_pool = audio_file_extensions
+            else:
+                extension_pool = image_file_extensions
             all_image_files = self.data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=extension_pool,
@@ -305,9 +312,39 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
 
-            buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
-            buffer.seek(0)
-            waveform, sample_rate = load_audio(buffer)
+            # Check if audio is sourced from video files
+            source_from_video = self.audio_config.get("source_from_video", False)
+            allow_zero_audio = self.audio_config.get("allow_zero_audio", False)
+            file_ext = os.path.splitext(image_path_str)[1].lower().lstrip(".")
+            is_video_file = file_ext in video_file_extensions
+
+            if source_from_video and is_video_file:
+                # Extract audio from video file
+                target_sr = self.audio_config.get("sample_rate", 16000)
+                target_channels = self.audio_config.get("channels", 1)
+                try:
+                    waveform, sample_rate = load_audio_from_video(audio_payload, target_sr, target_channels)
+                except ValueError:
+                    # Video has no audio stream
+                    if allow_zero_audio:
+                        video_duration = self._get_video_duration(image_path_str, audio_payload)
+                        if video_duration and video_duration > 0:
+                            waveform, sample_rate = generate_zero_audio(video_duration, target_sr, target_channels)
+                            logger.debug(f"Generated zero audio ({video_duration:.2f}s) for {image_path_str}")
+                        else:
+                            logger.debug(f"Skipping video without audio (no duration): {image_path_str}")
+                            statistics.setdefault("skipped", {}).setdefault("no_duration", 0)
+                            statistics["skipped"]["no_duration"] += 1
+                            return aspect_ratio_bucket_indices
+                    else:
+                        logger.debug(f"Skipping video without audio: {image_path_str}")
+                        statistics.setdefault("skipped", {}).setdefault("no_audio", 0)
+                        statistics["skipped"]["no_audio"] += 1
+                        return aspect_ratio_bucket_indices
+            else:
+                buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
+                buffer.seek(0)
+                waveform, sample_rate = load_audio(buffer)
             if waveform is None or waveform.numel() == 0:
                 logger.debug(f"Audio sample {image_path_str} is empty. Skipping.")
                 statistics.setdefault("skipped", {}).setdefault("other", 0)
@@ -358,6 +395,66 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices
+
+    def _get_video_duration(self, video_path: str, video_bytes: bytes = None) -> Optional[float]:
+        """
+        Get video duration for zero-audio generation.
+
+        Args:
+            video_path: Path to the video file
+            video_bytes: Raw video bytes (optional, used if file not directly accessible)
+
+        Returns:
+            Duration in seconds, or None if unavailable.
+        """
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        # Try to get from existing video metadata if this is a linked dataset
+        source_dataset_id = self.dataset_config.get("source_dataset_id")
+        if source_dataset_id:
+            video_meta = StateTracker.get_metadata_by_filepath(video_path, source_dataset_id)
+            if video_meta:
+                # Check for video_duration or compute from num_frames/fps if available
+                if "video_duration" in video_meta:
+                    return video_meta["video_duration"]
+                if "num_frames" in video_meta:
+                    # Assume 24fps if not specified for duration estimate
+                    fps = video_meta.get("fps", 24)
+                    return video_meta["num_frames"] / fps
+
+        # Fallback: probe video file with ffprobe
+        cleanup_temp = False
+        probe_path = video_path
+        try:
+            if video_bytes:
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                    tmp.write(video_bytes)
+                    probe_path = tmp.name
+                cleanup_temp = True
+
+            cmd = [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                probe_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+            return float(result.stdout.strip())
+        except Exception as e:
+            logger.debug(f"Failed to get video duration for {video_path}: {e}")
+            return None
+        finally:
+            if cleanup_temp:
+                try:
+                    Path(probe_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def __len__(self):
         """

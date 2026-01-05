@@ -805,6 +805,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         For S2V (Speech-to-Video) models, this method looks up audio files
         from s2v_datasets that match video file paths by base filename
         (without extension), and adds the audio paths to each sample's metadata.
+
+        When an S2V dataset has `source_from_video: True`, the audio is extracted
+        from the video file itself, so the video path is used directly as the audio path.
         """
         s2v_datasets = StateTracker.get_s2v_datasets(self.id)
         if not s2v_datasets:
@@ -826,6 +829,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             audio_path = None
             for s2v_dataset in s2v_datasets:
                 s2v_config = s2v_dataset.get("config", {})
+                audio_config = s2v_config.get("audio", {})
+
+                # Check if audio is extracted from video files
+                if audio_config.get("source_from_video", False):
+                    # Audio comes from the video file itself
+                    audio_path = video_path
+                    break
+
+                # Original matching logic - look for separate audio files
                 audio_root = s2v_config.get("instance_data_dir")
                 if not audio_root:
                     continue

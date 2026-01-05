@@ -422,12 +422,76 @@ Note that the bare minimum dataset size is `train_batch_size * gradient_accumula
 
 #### Audio dataset setup
 
-S2V models require audio files that match your video files by filename. For example:
+##### Automatic audio extraction from videos (Recommended)
+
+If your videos already contain audio tracks, SimpleTuner can automatically extract and process audio without requiring a separate audio dataset. This is the simplest approach:
+
+```json
+[
+  {
+    "id": "s2v-videos",
+    "type": "local",
+    "dataset_type": "video",
+    "crop": false,
+    "resolution": 480,
+    "minimum_image_size": 480,
+    "maximum_image_size": 480,
+    "target_downsample_size": 480,
+    "resolution_type": "pixel_area",
+    "cache_dir_vae": "cache/vae/wan_s2v/videos",
+    "instance_data_dir": "datasets/s2v-videos",
+    "disabled": false,
+    "caption_strategy": "textfile",
+    "metadata_backend": "discovery",
+    "repeats": 0,
+    "video": {
+        "num_frames": 75,
+        "min_frames": 75,
+        "bucket_strategy": "aspect_ratio"
+    },
+    "audio": {
+        "auto_split": true,
+        "sample_rate": 16000,
+        "channels": 1
+    }
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/wan_s2v",
+    "disabled": false,
+    "write_batch_size": 128
+  }
+]
+```
+
+With `audio.auto_split: true`, SimpleTuner will:
+1. Auto-generate an audio dataset configuration (`s2v-videos_audio`)
+2. Extract audio from each video during metadata discovery
+3. Cache audio VAE latents in a dedicated directory
+4. Automatically link the audio dataset via `s2v_datasets`
+
+**Audio configuration options:**
+- `audio.auto_split` (bool): Enable automatic audio extraction from videos
+- `audio.sample_rate` (int): Target sample rate in Hz (default: 16000 for Wav2Vec2)
+- `audio.channels` (int): Number of audio channels (default: 1 for mono)
+- `audio.allow_zero_audio` (bool): Generate zero-filled audio for videos without audio streams (default: false)
+- `audio.max_duration_seconds` (float): Maximum audio duration; longer files are skipped
+- `audio.duration_interval` (float): Duration interval for bucket grouping in seconds (default: 3.0)
+- `audio.truncation_mode` (string): How to truncate long audio: "beginning", "end", "random" (default: "beginning")
+
+**Note**: Videos without audio tracks are automatically skipped for S2V training unless `audio.allow_zero_audio: true` is set.
+
+##### Manual audio dataset (Alternative)
+
+If you prefer separate audio files or need custom audio processing, S2V models can also use pre-extracted audio files that match your video files by filename. For example:
 - `video_001.mp4` should have a corresponding `video_001.wav` (or `.mp3`, `.flac`, `.ogg`, `.m4a`)
 
 The audio files should be in a separate directory that you'll configure as an `s2v_datasets` backend.
 
-##### Extracting audio from videos
+##### Extracting audio from videos (Manual)
 
 If your videos already contain audio, use the provided script to extract it:
 
@@ -450,7 +514,7 @@ The script:
 - Skips videos without audio streams
 - Requires `ffmpeg` to be installed
 
-##### Dataset configuration
+##### Dataset configuration (Manual)
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
 
