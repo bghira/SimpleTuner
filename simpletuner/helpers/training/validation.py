@@ -465,11 +465,20 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             sample_prompts: list[str] = []
             sample_shortnames: list[str] = []
             # Collect the prompts for the validation images.
-            for _validation_sample in tqdm(
-                validation_sample_images,
-                ncols=125,
-                desc="Precomputing validation image embeds",
+            for idx, _validation_sample in enumerate(
+                tqdm(
+                    validation_sample_images,
+                    ncols=125,
+                    desc="Precomputing validation image embeds",
+                )
             ):
+                embed_cache.send_progress_update(
+                    type="validation_prompt_encoding",
+                    readable_type="Validation Prompt Encoding",
+                    progress=int(idx / len(validation_sample_images) * 100),
+                    total=len(validation_sample_images),
+                    current=idx,
+                )
                 validation_prompt = None
                 shortname = None
                 reference_images = None

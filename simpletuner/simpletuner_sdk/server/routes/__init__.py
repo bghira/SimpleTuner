@@ -43,6 +43,8 @@ from .quotas import router as quotas_router
 # Import global route modules
 from .users import router as users_router
 from .webhooks import router as webhooks_router
+from .workers import admin_router as workers_admin_router
+from .workers import router as workers_router
 
 # Create the main global router that combines all top-level routes
 # These routes are global concepts not specific to cloud providers
@@ -61,6 +63,8 @@ global_router.include_router(metrics_router)
 global_router.include_router(webhooks_router)
 global_router.include_router(backup_router)
 global_router.include_router(database_router)
+global_router.include_router(workers_router)
+global_router.include_router(workers_admin_router)
 
 
 def get_all_routers():
@@ -92,4 +96,6 @@ __all__ = [
     "webhooks_router",
     "backup_router",
     "database_router",
+    "workers_router",
+    "workers_admin_router",
 ]

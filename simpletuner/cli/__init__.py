@@ -28,6 +28,16 @@ def create_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"SimpleTuner {get_version()}",
     )
+    parser.add_argument(
+        "--ssl",
+        action="store_true",
+        help="Use HTTPS when connecting to remote server",
+    )
+    parser.add_argument(
+        "--ssl-no-verify",
+        action="store_true",
+        help="Disable SSL certificate verification",
+    )
 
     subparsers = parser.add_subparsers(
         dest="command",
@@ -81,6 +91,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     # --- webhooks command ---
     _add_webhooks_parser(subparsers)
+
+    # --- worker command ---
+    _add_worker_parser(subparsers)
 
     return parser
 
@@ -267,7 +280,7 @@ def _cmd_shutdown(args) -> int:
 
     print("Sending shutdown request to server...")
     try:
-        result = cloud_api_request("POST", "/shutdown")
+        result = cloud_api_request("POST", "/api/system/shutdown")
         if result.get("status") == "shutting_down":
             print("Server is shutting down gracefully.")
             return 0
@@ -364,6 +377,13 @@ def _add_jobs_parser(subparsers):
         "--for-approval",
         action="store_true",
         help="Request approval to exceed org GPU quota (requires org admin opt-in)",
+    )
+    submit_parser.add_argument(
+        "--target",
+        "-t",
+        choices=["local", "worker", "auto"],
+        default="auto",
+        help="Execution target: local (this machine), worker (remote), auto (prefer worker if available)",
     )
 
     # cancel
@@ -955,10 +975,62 @@ def _add_webhooks_parser(subparsers):
     events_parser.add_argument("--format", "-f", choices=["table", "json"], default="table")
 
 
+def _add_worker_parser(subparsers):
+    """Add the worker command parser."""
+    from . import worker
+
+    worker_parser = subparsers.add_parser(
+        "worker",
+        help="Run as worker agent",
+        description="Connect to an orchestrator panel and execute training jobs.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  simpletuner worker --orchestrator-url https://panel.example.com --worker-token abc123
+
+Environment variables:
+  SIMPLETUNER_ORCHESTRATOR_URL  Orchestrator URL
+  SIMPLETUNER_WORKER_TOKEN      Worker authentication token
+  SIMPLETUNER_WORKER_NAME       Worker name (defaults to hostname)
+  SIMPLETUNER_WORKER_PERSISTENT Set to "true" for persistent worker
+""",
+    )
+    worker_parser.set_defaults(func=worker.cmd_worker)
+
+    worker_parser.add_argument(
+        "--orchestrator-url",
+        help="URL of the orchestrator panel",
+    )
+    worker_parser.add_argument(
+        "--worker-token",
+        help="Worker authentication token",
+    )
+    worker_parser.add_argument(
+        "--name",
+        help="Worker name (defaults to hostname)",
+    )
+    worker_parser.add_argument(
+        "--persistent",
+        action="store_true",
+        help="Run as persistent worker (don't shutdown after job)",
+    )
+    worker_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+
+
 def main() -> int:
     """Main entry point for the SimpleTuner CLI."""
     parser = create_parser()
     args = parser.parse_args()
+
+    # Handle global SSL flags
+    if getattr(args, "ssl", False):
+        os.environ["SIMPLETUNER_SSL_ENABLED"] = "true"
+    if getattr(args, "ssl_no_verify", False):
+        os.environ["SIMPLETUNER_SSL_NO_VERIFY"] = "true"
 
     if not args.command:
         parser.print_help()

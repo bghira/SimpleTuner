@@ -319,7 +319,7 @@ class TestCloudConfigCommands(unittest.TestCase):
         self.assertEqual(result, 0)
         # Verify token was sent in request
         call_kwargs = mock_api.call_args[1]
-        self.assertEqual(call_kwargs["data"]["token"], "r8_direct_token")
+        self.assertEqual(call_kwargs["data"]["api_token"], "r8_direct_token")
 
     @patch("simpletuner.cli.cloud.config.cloud_api_request")
     def test_delete_token(self, mock_api):
