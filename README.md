@@ -60,7 +60,23 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
 - **EMA support** - Exponential moving average weights for improved stability and quality
 - **Custom experiment trackers** - Drop an `accelerate.GeneralTracker` into `simpletuner/custom-trackers` and use `--report_to=custom-tracker --custom_tracker=<name>`
-- **Custom experiment trackers** - Drop an `accelerate.GeneralTracker` into `simpletuner/custom-trackers` and use `--report_to=custom-tracker --custom_tracker=<name>`
+
+### Multi-User & Enterprise Features
+
+SimpleTuner includes a complete multi-user training platform with enterprise-grade features—**free and open source, forever**.
+
+- **Worker Orchestration** - Register distributed GPU workers that auto-connect to a central panel and receive job dispatch via SSE; supports ephemeral (cloud-launched) and persistent (always-on) workers; see [Worker Orchestration Guide](/documentation/experimental/server/WORKERS.md)
+- **SSO Integration** - Authenticate with LDAP/Active Directory or OIDC providers (Okta, Azure AD, Keycloak, Google); see [External Auth Guide](/documentation/experimental/server/EXTERNAL_AUTH.md)
+- **Role-Based Access Control** - Four default roles (Viewer, Researcher, Lead, Admin) with 17+ granular permissions; define resource rules with glob patterns to restrict configs, hardware, or providers per team
+- **Organizations & Teams** - Hierarchical multi-tenant structure with ceiling-based quotas; org limits enforce absolute maximums, team limits operate within org bounds
+- **Quotas & Spending Limits** - Enforce cost ceilings (daily/monthly), job concurrency limits, and submission rate limits at org, team, or user scope; actions include block, warn, or require approval
+- **Job Queue with Priorities** - Five priority levels (Low → Critical) with fair-share scheduling across teams, starvation prevention for long-waiting jobs, and admin priority overrides
+- **Approval Workflows** - Configurable rules trigger approval for jobs exceeding cost thresholds, first-time users, or specific hardware requests; approve via UI, API, or email reply
+- **Email Notifications** - SMTP/IMAP integration for job status, approval requests, quota warnings, and completion alerts
+- **API Keys & Scoped Permissions** - Generate API keys with expiration and limited scope for CI/CD pipelines
+- **Audit Logging** - Track all user actions with chain verification for compliance; see [Audit Guide](/documentation/experimental/server/AUDIT.md)
+
+For deployment details, see the [Enterprise Guide](/documentation/experimental/server/ENTERPRISE.md).
 
 ### Model Architecture Support
 
