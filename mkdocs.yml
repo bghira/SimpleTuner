@@ -1,0 +1,238 @@
+site_name: SimpleTuner
+site_description: Multi-modal diffusion model fine-tuning toolkit
+site_url: https://simpletuner.dev
+repo_url: https://github.com/bghira/SimpleTuner
+repo_name: bghira/SimpleTuner
+edit_uri: edit/main/documentation/
+
+docs_dir: documentation
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/brain
+  # Uncomment when you have custom assets:
+  # logo: assets/logo.png
+  # favicon: assets/favicon.ico
+
+plugins:
+  - search
+  - tags
+  # Uncomment for i18n support:
+  # - i18n:
+  #     default_language: en
+  #     languages:
+  #       - locale: en
+  #         name: English
+  #         build: true
+  #       - locale: zh
+  #         name: 中文
+  #         build: true
+  #       - locale: ja
+  #         name: 日本語
+  #         build: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bghira/SimpleTuner
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/JGkSwEbjRb
+  # version:
+  #   provider: mike
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+
+  - Getting Started:
+    - Installation: INSTALL.md
+    - Quick Start: QUICKSTART.md
+    - Tutorials:
+      - Web UI Tutorial: webui/TUTORIAL.md
+      - CLI Tutorial: TUTORIAL.md
+      - API Tutorial: api/TUTORIAL.md
+
+  - Model Guides:
+    - quickstart/index.md
+    - Image Models:
+      - Flux.1: quickstart/FLUX.md
+      - Flux.2: quickstart/FLUX2.md
+      - Flux Kontext: quickstart/FLUX_KONTEXT.md
+      - Stable Diffusion 3: quickstart/SD3.md
+      - Stable Diffusion XL: quickstart/SDXL.md
+      - Chroma: quickstart/CHROMA.md
+      - Auraflow: quickstart/AURAFLOW.md
+      - PixArt Sigma: quickstart/SIGMA.md
+      - Sana: quickstart/SANA.md
+      - Lumina2: quickstart/LUMINA2.md
+      - HiDream: quickstart/HIDREAM.md
+      - Kolors: quickstart/KOLORS.md
+      - Cosmos2: quickstart/COSMOS2IMAGE.md
+      - OmniGen: quickstart/OMNIGEN.md
+      - Z-Image: quickstart/ZIMAGE.md
+      - Qwen Image: quickstart/QWEN_IMAGE.md
+      - Qwen Edit: quickstart/QWEN_EDIT.md
+      - Kandinsky 5 Image: quickstart/KANDINSKY5_IMAGE.md
+      - LongCat Image: quickstart/LONGCAT_IMAGE.md
+      - LongCat Edit: quickstart/LONGCAT_EDIT.md
+      - Stable Cascade: quickstart/STABLE_CASCADE_C.md
+    - Video Models:
+      - Wan Video: quickstart/WAN.md
+      - LTX Video: quickstart/LTXVIDEO.md
+      - Hunyuan Video: quickstart/HUNYUANVIDEO.md
+      - Sana Video: quickstart/SANAVIDEO.md
+      - Kandinsky 5 Video: quickstart/KANDINSKY5_VIDEO.md
+      - LongCat Video: quickstart/LONGCAT_VIDEO.md
+      - LongCat Video Edit: quickstart/LONGCAT_VIDEO_EDIT.md
+    - Audio Models:
+      - ACE-Step: quickstart/ACE_STEP.md
+    - Legacy Models:
+      - DeepFloyd IF: DEEPFLOYD.md
+
+  - Training:
+    - Dataloader Configuration: DATALOADER.md
+    - Training Techniques:
+      - DreamBooth: DREAMBOOTH.md
+      - LyCORIS: LYCORIS.md
+      - Slider LoRA: SLIDER_LORA.md
+      - ControlNet: CONTROLNET.md
+      - TREAD: TREAD.md
+      - Mixture of Experts: MIXTURE_OF_EXPERTS.md
+    - Distillation:
+      - TwinFlow (RCGM): distillation/TWINFLOW.md
+      - SDXL LCM: distillation/SDXL_LCM.md
+      - Wan DCM: distillation/WAN_DCM.md
+      - FastWan DMD: distillation/FASTWAN_DMD.md
+      - GLANCE: distillation/GLANCE.md
+    - Evaluation:
+      - CLIP Scores: evaluation/CLIP_SCORES.md
+      - Evaluation Loss: evaluation/EVAL_LOSS.md
+    - Data Presets:
+      - data_presets/README.md
+      - Generic Preset: data_presets/preset.md
+      - Midjourney: data_presets/preset_midjourney.md
+      - Nijijourney: data_presets/preset_nijijourney.md
+      - DALL-E 3: data_presets/preset_dalle3.md
+      - Pexels: data_presets/preset_pexels.md
+      - Subjects200K: data_presets/preset_subjects200k.md
+      - Audio with Lyrics: data_presets/preset_audio_dataset_with_lyrics.md
+
+  - Scaling & Performance:
+    - DeepSpeed: DEEPSPEED.md
+    - FSDP2: FSDP2.md
+    - Distributed Training: DISTRIBUTED.md
+    - Docker: DOCKER.md
+    - HuggingFace Datasets: HUGGINGFACE_DATASETS.md
+
+  - Server & Multi-User:
+    - experimental/server/README.md
+    - Worker Orchestration: experimental/server/WORKERS.md
+    - Enterprise Guide: experimental/server/ENTERPRISE.md
+    - External Auth (SSO): experimental/server/EXTERNAL_AUTH.md
+    - Job Queue: JOB_QUEUE.md
+    - Audit Logging: experimental/server/AUDIT.md
+
+  - Cloud Training:
+    - experimental/cloud/README.md
+    - Tutorial: experimental/cloud/TUTORIAL.md
+    - Replicate: experimental/cloud/REPLICATE.md
+    - Operations Guide: experimental/cloud/OPERATIONS_TUTORIAL.md
+    - Queue System: experimental/cloud/QUEUE.md
+    - Advanced:
+      - Idempotency & Quotas: experimental/cloud/IDEMPOTENCY_AND_QUOTAS.md
+      - Job Progress & Sync: experimental/cloud/JOB_PROGRESS_AND_SYNC.md
+      - Logging & Tasks: experimental/cloud/LOGGING_AND_TASKS.md
+      - Secrets & Cache: experimental/cloud/SECRETS_AND_CACHE.md
+      - Resilience: experimental/cloud/RESILIENCE.md
+
+  - Advanced:
+    - Attention:
+      - FlexAttention: attention/FLEX.md
+      - Sliding Window (SLA): attention/SLA.md
+    - Experimental:
+      - Diff2Flow: experimental/DIFF2FLOW.md
+      - LayerSync: experimental/LAYERSYNC.md
+      - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
+      - Video CREPA: experimental/VIDEO_CREPA.md
+    - Development:
+      - Factory Architecture: development/FACTORY_ARCHITECTURE.md
+      - Web UI Implementation: webui/IMPLEMENTATION.md
+
+  - Reference:
+    - All Options: OPTIONS.md
+    - Webhooks: api/WEBHOOKS.md
+    - Publishing: publishing/README.md
+    - Migration:
+      - v2.1 to v2.2: migration/v2-1_to_v2-2.md
