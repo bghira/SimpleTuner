@@ -426,5 +426,5 @@ Expected speedup: 20-40% depending on configuration.
 
 - [FLUX.1 Quickstart](FLUX.md) - For FLUX.1 training
 - [TREAD Documentation](../TREAD.md) - Detailed TREAD configuration
-- [LoRA Training Guide](../LORA.md) - General LoRA training tips
+- [LyCORIS Training Guide](../LYCORIS.md) - LoRA and LyCORIS training methods
 - [Dataloader Configuration](../DATALOADER.md) - Dataset setup
