@@ -2557,3 +2557,38 @@ optgroup option {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 2px;
 }
+
+/* Config selector button - no hover effect */
+.config-selector .btn {
+    background: transparent !important;
+}
+
+.config-selector .btn:hover,
+.config-selector .btn:focus {
+    background: transparent !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.config-selector .btn::before,
+.config-selector .btn:hover::before {
+    display: none !important;
+}
+
+/* User profile dropdown - subtle hover */
+.user-profile-dropdown .btn-outline-secondary {
+    background: transparent !important;
+}
+
+.user-profile-dropdown .btn-outline-secondary:hover,
+.user-profile-dropdown .btn-outline-secondary:focus {
+    background: rgba(108, 117, 125, 0.15) !important;
+    color: #a7acb1 !important;
+    border-color: rgba(108, 117, 125, 0.5) !important;
+}
+
+/* User profile dropdown button - compact styling */
+.user-profile-dropdown .btn {
+    padding: 0.25rem 0.5rem !important;
+    gap: 0.35rem !important;
+}

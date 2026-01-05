@@ -220,7 +220,7 @@ document.addEventListener('alpine:init', () => {
             this.loginForm.error = null;
 
             try {
-                const response = await fetch('/api/cloud/login', {
+                const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -240,6 +240,11 @@ document.addEventListener('alpine:init', () => {
                         if (window.showToast) {
                             window.showToast(`Welcome, ${data.user.display_name || data.user.username}!`, 'success');
                         }
+                        // Dispatch login success event for components to reinitialize
+                        window.dispatchEvent(new CustomEvent('auth-login-success', { detail: { user: data.user } }));
+                        // Reload the page to properly initialize all components
+                        // This is cleaner than trying to manually reinitialize everything
+                        window.location.reload();
                     }
                 } else {
                     const data = await response.json().catch(() => ({}));
@@ -254,7 +259,7 @@ document.addEventListener('alpine:init', () => {
         },
         async logout() {
             try {
-                await fetch('/api/cloud/logout', { method: 'POST' });
+                await fetch('/api/auth/logout', { method: 'POST' });
                 this.currentUser = null;
                 if (window.showToast) {
                     window.showToast('Logged out successfully', 'info');
@@ -267,9 +272,58 @@ document.addEventListener('alpine:init', () => {
             // Load auth status and current user on store initialization
             this.loadAuthStatus();
             this.loadCurrentUser();
+        },
+        /**
+         * Wait for auth status to be checked.
+         * Returns true if the app should be shown (user is authenticated or auth is not required).
+         * Returns false if user needs to login (API calls should be skipped).
+         * @param {number} timeout - Maximum wait time in ms (default 5000)
+         * @returns {Promise<boolean>}
+         */
+        async waitForAuthReady(timeout = 5000) {
+            let waitTime = 0;
+            while (!this.authStatus.checked && waitTime < timeout) {
+                await new Promise(r => setTimeout(r, 50));
+                waitTime += 50;
+            }
+            if (!this.authStatus.checked && waitTime >= timeout) {
+                console.warn(
+                    `waitForAuthReady: timed out after ${waitTime}ms before auth status was checked. ` +
+                    'Components may have skipped initialization due to unknown auth state.'
+                );
+            }
+            return this.shouldShowApp;
         }
     });
 });
+
+/**
+ * Global helper to wait for auth and check if API calls should proceed.
+ * Returns true if authenticated (or auth not required), false if login is needed.
+ * @param {number} timeout - Maximum wait time in ms (default 5000)
+ * @returns {Promise<boolean>}
+ */
+window.waitForAuthReady = async function(timeout = 5000) {
+    // Wait for Alpine to be initialized if it hasn't been yet
+    if (typeof Alpine === 'undefined' || typeof Alpine.store !== 'function') {
+        await new Promise(resolve => {
+            document.addEventListener('alpine:init', resolve, { once: true });
+            // Also set a short timeout in case alpine:init already fired
+            setTimeout(resolve, 100);
+        });
+    }
+    // Check again after waiting
+    if (typeof Alpine === 'undefined' || typeof Alpine.store !== 'function') {
+        // Alpine not available, proceed without auth check
+        return true;
+    }
+    const authStore = Alpine.store('cloudAuth');
+    if (!authStore) {
+        // No auth store = no auth configured, proceed with API calls
+        return true;
+    }
+    return authStore.waitForAuthReady(timeout);
+};
 
 const sanitizeConfigName = (name) => {
     if (typeof name !== 'string') {
@@ -384,7 +438,32 @@ function trainerComponent() {
             }
             return parts.join(' • ');
         },
-        init() {
+        _cleanupEventHandlers() {
+            if (this._defaultsUpdateHandler) {
+                window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
+            }
+            if (this._systemStatusTimer) {
+                window.clearInterval(this._systemStatusTimer);
+                this._systemStatusTimer = null;
+            }
+            if (this._visibilityChangeHandler) {
+                document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
+                this._visibilityChangeHandler = null;
+            }
+        },
+        _setupBeforeUnloadHandler() {
+            this._beforeUnloadHandler = () => this._cleanupEventHandlers();
+            window.addEventListener('beforeunload', this._beforeUnloadHandler);
+        },
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                // User needs to login - skip API-dependent initialization
+                this._setupBeforeUnloadHandler();
+                return;
+            }
+
             this.loadVersionInfo().catch((error) => {
                 console.debug('Version info fetch failed:', error);
             });
@@ -403,21 +482,7 @@ function trainerComponent() {
             };
             this._defaultsUpdateHandler = handler;
             window.addEventListener('webui-defaults-updated', handler);
-            const beforeUnloadHandler = () => {
-                if (this._defaultsUpdateHandler) {
-                    window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
-                }
-                if (this._systemStatusTimer) {
-                    window.clearInterval(this._systemStatusTimer);
-                    this._systemStatusTimer = null;
-                }
-                if (this._visibilityChangeHandler) {
-                    document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
-                    this._visibilityChangeHandler = null;
-                }
-            };
-            this._beforeUnloadHandler = beforeUnloadHandler;
-            window.addEventListener('beforeunload', beforeUnloadHandler);
+            this._setupBeforeUnloadHandler();
 
             this.refreshSystemStatus();
             this._systemStatusTimer = window.setInterval(() => {
@@ -4217,7 +4282,15 @@ function trainerComponent() {
                 }
             }
 
-            this.formDirty = isDirty;
+            // If _skipNextClean is set (from markFormDirty), preserve dirty state
+            // when FormData comparison says clean. This handles fields that are
+            // managed outside the form (e.g., Easy Mode selects without name attrs).
+            if (this._skipNextClean && !isDirty) {
+                // Keep formDirty as-is and clear the flag
+                this._skipNextClean = false;
+            } else {
+                this.formDirty = isDirty;
+            }
         },
 
         cssEscape(name) {
@@ -5182,9 +5255,50 @@ function trainerComponent() {
      x-data="trainerComponent()"
      x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
-     x-init="(() => {
+     x-init="(async () => {
          // Store reference to Alpine component for external access
          Alpine.store('trainer', $data);
+
+         // Wait for auth before loading tab content
+         const canProceed = await window.waitForAuthReady();
+         if (!canProceed) {
+             // User needs to login - don't load tabs yet
+             return;
+         }
+
+         // Set up HTMX afterSwap listener BEFORE loading initial tab
+         // to ensure _suppressDirtyTracking gets cleared
+         document.body.addEventListener('htmx:afterSwap', (evt) => {
+             if (evt.detail.target.id !== 'tab-content') {
+                 return;
+             }
+             setTimeout(() => {
+                 requestAnimationFrame(() => {
+                     if ($data._preservingFormState) {
+                         console.log('Applying stored form values after tab switch');
+                         $data.applyStoredValues();
+                         $data.updateBaselineFormData();
+                     } else if (!$data._skipNextClean) {
+                         $data.markFormClean();
+                     }
+                     delete $data._preservingFormState;
+                     $data._skipNextClean = false;
+                     $data._suppressDirtyTracking = false;
+                 });
+             }, 150);
+         });
+
+         document.body.addEventListener('htmx:afterSettle', (evt) => {
+             if (evt.detail.target.id !== 'tab-content') {
+                 return;
+             }
+             if ($data._preservingFormState) {
+                 console.log('Applying stored values on afterSettle');
+                 $data.applyStoredValues();
+                 $data.updateBaselineFormData();
+                 delete $data._preservingFormState;
+             }
+         });
 
          // Load initial tab content
          $nextTick(() => {
@@ -5338,6 +5452,13 @@ function trainerComponent() {
 
          // Initialize other components
          $nextTick(async () => {
+             // Wait for auth before making any API calls
+             const canProceed = await window.waitForAuthReady();
+             if (!canProceed) {
+                 // User needs to login - skip API-dependent initialization
+                 return;
+             }
+
              await $data.initializeWebUIState();
              await $data.loadEnvironmentConfigs();
 
@@ -5364,49 +5485,8 @@ function trainerComponent() {
 
                 form.addEventListener('input', handleFormChange);
                 form.addEventListener('change', handleFormChange);
-
-                // Listen for HTMX after swap events to reapply listeners
-                document.body.addEventListener('htmx:afterSwap', (evt) => {
-                    if (evt.detail.target.id !== 'tab-content') {
-                        return;
-                    }
-
-                    // Use a longer delay and requestAnimationFrame to ensure DOM is fully updated
-                    setTimeout(() => {
-                        requestAnimationFrame(() => {
-                            if ($data._preservingFormState) {
-                                console.log('Applying stored form values after tab switch');
-                                $data.applyStoredValues();
-                                // Update baseline so checkFormDirty compares against new tab's fields
-                                // This prevents false dirty detection when comparing against old tab's fields
-                                $data.updateBaselineFormData();
-                            } else if (!$data._skipNextClean) {
-                                $data.markFormClean();
-                            }
-
-                            delete $data._preservingFormState;
-                            $data._skipNextClean = false;
-                            // Clear dirty tracking suppression after tab is fully initialized
-                            $data._suppressDirtyTracking = false;
-                        });
-                    }, 150);
-                });
-
-                // Also listen for afterSettle event which fires after all animations complete
-                document.body.addEventListener('htmx:afterSettle', (evt) => {
-                    if (evt.detail.target.id !== 'tab-content') {
-                        return;
-                    }
-
-                    // Double-check if we still need to preserve form state
-                    if ($data._preservingFormState) {
-                        console.log('Applying stored values on afterSettle');
-                        $data.applyStoredValues();
-                        // Update baseline so checkFormDirty compares against new tab's fields
-                        $data.updateBaselineFormData();
-                        delete $data._preservingFormState;
-                    }
-                });
+                // Note: htmx:afterSwap and htmx:afterSettle listeners are set up earlier
+                // in the x-init block to ensure they're ready before the initial tab load
              }
 
             await $data.loadDatasetsAfterEnvironmentChange();
@@ -6134,6 +6214,17 @@ function trainerComponent() {
                     <i class="fas fa-tachometer-alt"></i> Quotas
                 </button>
                 <button type="button"
+                        class="tab-btn workers-btn"
+                        data-tab="workers"
+                        :class="{ 'active': activeTab === 'workers' }"
+                        hx-get="/web/trainer/tabs/workers"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('workers'); closeSidebar()"
+                        title="Manage GPU workers for distributed training">
+                    <i class="fas fa-server"></i> GPU Workers
+                </button>
+                <button type="button"
                         class="tab-btn audit-btn"
                         data-tab="audit"
                         :class="{ 'active': activeTab === 'audit' }"
@@ -6391,7 +6482,11 @@ function trainerComponent() {
             </script>
             <div class="config-selector"
                  x-data="configSelectorComponent()"
-                 x-init="(() => {
+                 x-init="(async () => {
+                    // Wait for auth before making any API calls
+                    const canProceed = await window.waitForAuthReady();
+                    if (!canProceed) return;
+
                     loadConfigs();
                     $watch('$store.trainer.activeEnvironment', (value) => { activeConfig = value; loadConfigs(); });
                     $watch('$store.trainer.formDirty', (value) => { hasChanges = Boolean(value); });
@@ -6458,7 +6553,7 @@ function trainerComponent() {
                     <div x-show="open"
                          x-transition
                          class="dropdown-menu show config-selector__menu"
-                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px; transform: translateX(calc(50% - var(--spacing-xl)));">
+                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px;">
 
                         <div class="dropdown-header">Configurations</div>
 
@@ -6593,6 +6688,11 @@ function trainerComponent() {
                         <li>
                             <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#apiKeysModal">
                                 <i class="fas fa-key me-2"></i>API Keys
+                            </button>
+                        </li>
+                        <li x-show="$store.cloudAuth.currentUser?.auth_provider === 'local'">
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#changePasswordModal">
+                                <i class="fas fa-lock me-2"></i>Change Password
                             </button>
                         </li>
                         <li><hr class="dropdown-divider"></li>
@@ -7311,5 +7411,6 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 {% include 'partials/memory_presets_modal.html' %}
 {% include 'partials/user_profile_modal.html' %}
 {% include 'partials/api_keys_modal.html' %}
+{% include 'partials/change_password_modal.html' %}
 
 {% endblock %}

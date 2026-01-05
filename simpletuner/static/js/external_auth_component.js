@@ -34,7 +34,13 @@ window.externalAuthComponent = function() {
         newMappingGroup: '',
         newMappingLevel: 'researcher',
 
-        init() {
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
             this.loadProviders();
 
             this.$nextTick(() => {
@@ -54,7 +60,7 @@ window.externalAuthComponent = function() {
         async loadProviders() {
             this.loading = true;
             try {
-                const response = await fetch('/api/cloud/external-auth/providers');
+                const response = await fetch('/api/auth/external/providers');
                 if (response.ok) {
                     const data = await response.json();
                     this.providers = data.providers || [];
@@ -120,13 +126,13 @@ window.externalAuthComponent = function() {
 
                 let response;
                 if (this.editingProvider) {
-                    response = await fetch(`/api/cloud/external-auth/providers/${this.editingProvider.name}`, {
+                    response = await fetch(`/api/auth/external/providers/${this.editingProvider.name}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload),
                     });
                 } else {
-                    response = await fetch('/api/cloud/external-auth/providers', {
+                    response = await fetch('/api/auth/external/providers', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload),
@@ -170,7 +176,7 @@ window.externalAuthComponent = function() {
 
             this.deleting = true;
             try {
-                const response = await fetch(`/api/cloud/external-auth/providers/${this.deletingProvider.name}`, {
+                const response = await fetch(`/api/auth/external/providers/${this.deletingProvider.name}`, {
                     method: 'DELETE',
                 });
 
@@ -198,7 +204,7 @@ window.externalAuthComponent = function() {
 
         async toggleProvider(provider) {
             try {
-                const response = await fetch(`/api/cloud/external-auth/providers/${provider.name}`, {
+                const response = await fetch(`/api/auth/external/providers/${provider.name}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -229,7 +235,7 @@ window.externalAuthComponent = function() {
         async testProvider(providerName) {
             this.testingProvider = providerName;
             try {
-                const response = await fetch(`/api/cloud/external-auth/providers/${providerName}/test`, {
+                const response = await fetch(`/api/auth/external/providers/${providerName}/test`, {
                     method: 'POST',
                 });
 

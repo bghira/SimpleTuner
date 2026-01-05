@@ -447,21 +447,21 @@ class BackgroundTaskManager:
             if expired_count > 0:
                 # Also reject the jobs in the queue
                 try:
-                    queue_store = QueueStore()
+                    from .queue import get_queue_adapter
+
+                    queue_adapter = get_queue_adapter()
                     job_store = get_job_store()
 
                     for job_id in expired_job_ids:
-                        # Update queue entry if exists
+                        # Update job status (via unified repository)
                         try:
-                            entry = await queue_store.get_entry_by_job_id(job_id)
-                            if entry:
-                                await queue_store.mark_failed(
-                                    entry.id, "Approval request expired (auto-rejected after timeout)"
-                                )
+                            await queue_adapter.mark_failed_by_job_id(
+                                job_id, "Approval request expired (auto-rejected after timeout)"
+                            )
                         except Exception:
                             pass
 
-                        # Update job status
+                        # Also update via job_store for backwards compat
                         try:
                             await job_store.update_job(
                                 job_id, {"status": "cancelled", "error_message": "Approval request expired after 24 hours"}

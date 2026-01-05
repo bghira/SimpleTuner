@@ -727,6 +727,167 @@ Kontext tips:
 - Quantise to `int8-quanto` to stay within 24 GB VRAM at 1024 px; full precision requires Hopper/Blackwell-class GPUs
 - For multi-node runs, set `--accelerate_config` or `CUDA_VISIBLE_DEVICES` before launching the server
 
+## Submit local jobs with GPU-aware queuing
+
+When running on a multi-GPU machine, you can submit local training jobs through the queue API with GPU allocation awareness. Jobs are queued if required GPUs are unavailable.
+
+### Check GPU availability
+
+```bash
+curl -s "http://localhost:8001/api/system/status?include_allocation=true" | jq '.gpu_allocation'
+```
+
+Response shows which GPUs are available:
+
+```json
+{
+  "allocated_gpus": [0, 1],
+  "available_gpus": [2, 3],
+  "running_local_jobs": 1,
+  "devices": [
+    {"index": 0, "name": "A100", "memory_gb": 40, "allocated": true, "job_id": "abc123"},
+    {"index": 1, "name": "A100", "memory_gb": 40, "allocated": true, "job_id": "abc123"},
+    {"index": 2, "name": "A100", "memory_gb": 40, "allocated": false, "job_id": null},
+    {"index": 3, "name": "A100", "memory_gb": 40, "allocated": false, "job_id": null}
+  ]
+}
+```
+
+You can also get queue statistics including local GPU info:
+
+```bash
+curl -s http://localhost:8001/api/queue/stats | jq '.local'
+```
+
+### Submit a local job
+
+```bash
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "no_wait": false,
+    "any_gpu": false
+  }'
+```
+
+Options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `config_name` | required | Name of the training environment to run |
+| `no_wait` | false | If true, reject immediately when GPUs unavailable |
+| `any_gpu` | false | If true, use any available GPUs instead of configured device IDs |
+
+Response:
+
+```json
+{
+  "success": true,
+  "job_id": "abc123",
+  "status": "running",
+  "allocated_gpus": [0, 1],
+  "queue_position": null
+}
+```
+
+The `status` field indicates the outcome:
+
+- `running` - Job started immediately with allocated GPUs
+- `queued` - Job queued, will start when GPUs become available
+- `rejected` - GPUs unavailable and `no_wait` was true
+
+### Configure local concurrency limits
+
+Admins can limit how many local jobs and GPUs can be used via the queue concurrency endpoint:
+
+```bash
+# Get current limits
+curl -s http://localhost:8001/api/queue/stats | jq '{local_gpu_max_concurrent, local_job_max_concurrent}'
+
+# Update limits (alongside cloud limits)
+curl -s -X POST http://localhost:8001/api/queue/concurrency \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "local_gpu_max_concurrent": 6,
+    "local_job_max_concurrent": 2
+  }'
+```
+
+Set `local_gpu_max_concurrent` to `null` for unlimited GPU usage.
+
+### CLI alternative
+
+The same functionality is available via CLI:
+
+```bash
+# Submit with default queuing behavior
+simpletuner jobs submit my-config
+
+# Reject if GPUs unavailable
+simpletuner jobs submit my-config --no-wait
+
+# Use any available GPUs
+simpletuner jobs submit my-config --any-gpu
+
+# Preview what would happen (dry-run)
+simpletuner jobs submit my-config --dry-run
+```
+
+## Dispatch jobs to remote workers
+
+If you have remote GPU machines registered as workers (see [Worker Orchestration](../experimental/server/WORKERS.md)), you can dispatch jobs to them via the queue API.
+
+### Check available workers
+
+```bash
+curl -s http://localhost:8001/api/admin/workers | jq '.workers[] | {name, status, gpu_name, gpu_count}'
+```
+
+### Submit to a specific target
+
+```bash
+# Prefer remote workers, fall back to local GPUs (default)
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "auto"
+  }'
+
+# Force dispatch to remote workers only
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "worker"
+  }'
+
+# Run only on orchestrator's local GPUs
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "local"
+  }'
+```
+
+### Select workers by label
+
+Workers can have labels for filtering (e.g., GPU type, location, team):
+
+```bash
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "worker",
+    "worker_labels": {"gpu_type": "a100*", "team": "nlp"}
+  }'
+```
+
+Labels support glob patterns (`*` matches any characters).
+
 ## Useful endpoints at a glance
 
 - `GET /api/configs/` – list environments (pass `?config_type=model` for training configs)
@@ -734,7 +895,12 @@ Kontext tips:
 - `POST /api/configs/{name}/dataloader` – regenerate a dataloader file if you want defaults
 - `GET /api/training/status` – high-level state, active `job_id`, and startup stage info
 - `GET /api/training/events?since_index=N` – incremental trainer log stream
-- `POST /api/training/checkpoints` – list checkpoints for the active job’s output directory
+- `POST /api/training/checkpoints` – list checkpoints for the active job's output directory
+- `GET /api/system/status?include_allocation=true` – system metrics with GPU allocation info
+- `GET /api/queue/stats` – queue statistics including local GPU allocation
+- `POST /api/queue/submit` – submit a local or worker job with GPU-aware queuing
+- `POST /api/queue/concurrency` – update cloud and local concurrency limits
+- `GET /api/admin/workers` – list registered workers and their status
 
 ## Where to go next
 

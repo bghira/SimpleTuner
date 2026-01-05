@@ -586,15 +586,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         return normalized_args
 
+    parser_error_traceback = None
     try:
         normalized_args = _normalize_input_args(input_args)
         args = parser.parse_args(normalized_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
         parser_error = sys.exc_info()[1]
-        logger.error(f"Could not parse input: {input_args}")
         import traceback
 
-        logger.error(traceback.format_exc())
+        parser_error_traceback = traceback.format_exc()
+        logger.error(f"Could not parse input: {input_args}")
+        logger.error(parser_error_traceback)
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
             try:
@@ -611,7 +613,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
-        raise ValueError(f"Could not parse command line arguments: {parser_error or 'see above logs for details'}")
+        error_detail = parser_error_traceback or str(parser_error) if parser_error else "unknown parsing error"
+        raise ValueError(f"Could not parse command line arguments:\n{error_detail}")
 
     if args is None:
         return None

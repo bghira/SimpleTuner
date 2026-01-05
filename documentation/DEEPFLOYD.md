@@ -72,7 +72,7 @@ However, DeepFloyd really has its upsides that often go overlooked:
 
 > ⚠️ Due to the compute requirements of full u-net backpropagation in even DeepFloyd's smallest 400M model, it has not been tested. LoRA will be used for this document, though full u-net tuning should also work.
 
-These instructions assume basic familiarity with SimpleTuner. For newcomers, it's recommended to start with a more well-supported model like [Kwai Kolors](/documentation/quickstart/KOLORS.md).
+These instructions assume basic familiarity with SimpleTuner. For newcomers, it's recommended to start with a more well-supported model like [Kwai Kolors](quickstart/KOLORS.md).
 
 However, if you do wish to train DeepFloyd, it requires the use of the `model_flavour` configuration option to indicate which model you're training.
 

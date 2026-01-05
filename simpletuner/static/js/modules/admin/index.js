@@ -12,6 +12,23 @@ window.adminPanelComponent = function() {
         // Current user info
         currentUser: null,
 
+        // First-run setup state
+        setupState: {
+            loading: true,
+            needsSetup: false,
+            hasAdmin: false,
+            submitting: false,
+            error: null,
+            showPassword: false,
+            form: {
+                email: '',
+                username: '',
+                displayName: '',
+                password: '',
+                confirmPassword: '',
+            },
+        },
+
         // Active tab
         activeTab: 'users',
 
@@ -395,11 +412,51 @@ window.adminPanelComponent = function() {
         teamMembersLoading: false,
         availableTeamUsers: [],
         addMemberUserId: null,
+
+        // Workers management
+        workers: [],
+        workersLoading: false,
+        workerStats: {
+            total: 0,
+            idle: 0,
+            busy: 0,
+            offline: 0,
+        },
+        workerFormOpen: false,
+        workerForm: {
+            name: '',
+            worker_type: 'persistent',
+            labels_str: '',
+        },
+        workerTokenModalOpen: false,
+        workerToken: '',
+        workerConnectionCommand: '',
+        deleteWorkerOpen: false,
+        deletingWorker: null,
+        workerRefreshInterval: null,
     };
 
     // Core methods that orchestrate initialization
     const coreMethods = {
-        init() {
+        async init() {
+            // Check first-run setup status before anything else
+            await this.checkSetupStatus();
+
+            // If setup is needed, don't proceed with normal initialization
+            if (this.setupState.needsSetup) {
+                return;
+            }
+
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
+            this._runCoreInitialization();
+        },
+
+        _runCoreInitialization() {
             this.loadCurrentUser();
             this.loadHints();
             this.loadEnterpriseOnboardingState();
@@ -417,6 +474,75 @@ window.adminPanelComponent = function() {
             this.loadOrganizations();
         },
 
+        async checkSetupStatus() {
+            this.setupState.loading = true;
+            try {
+                const response = await fetch('/api/auth/setup/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.setupState.needsSetup = data.needs_setup;
+                    this.setupState.hasAdmin = data.has_admin;
+                } else if (response.status === 404) {
+                    // Endpoint doesn't exist - auth module not loaded, no setup needed
+                    this.setupState.needsSetup = false;
+                }
+            } catch (error) {
+                console.warn('Could not determine setup status:', error);
+                this.setupState.needsSetup = false;
+            } finally {
+                this.setupState.loading = false;
+            }
+        },
+
+        // Note: setupFormValid getter moved to return object to avoid spread evaluation issue
+
+        async submitFirstRunSetup() {
+            if (!this.setupFormValid) return;
+
+            this.setupState.submitting = true;
+            this.setupState.error = null;
+
+            try {
+                const response = await fetch('/api/auth/setup/first-admin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: this.setupState.form.email,
+                        username: this.setupState.form.username,
+                        password: this.setupState.form.password,
+                        display_name: this.setupState.form.displayName || null,
+                    }),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        // Setup complete, mark as no longer needing setup
+                        this.setupState.needsSetup = false;
+                        if (window.showToast) {
+                            window.showToast('Admin account created successfully!', 'success');
+                        }
+                        // Run full initialization now that we have an admin
+                        this._runCoreInitialization();
+                    } else {
+                        this.setupState.error = data.message || 'Failed to create admin account';
+                    }
+                } else {
+                    const data = await response.json();
+                    // Handle Pydantic validation errors (array of objects with msg field)
+                    if (Array.isArray(data.detail)) {
+                        this.setupState.error = data.detail.map(e => e.msg || e.message || String(e)).join('; ');
+                    } else {
+                        this.setupState.error = data.detail || 'Failed to create admin account';
+                    }
+                }
+            } catch (error) {
+                this.setupState.error = 'Network error: ' + error.message;
+            } finally {
+                this.setupState.submitting = false;
+            }
+        },
+
         setActiveTab(tabName) {
             this.activeTab = tabName;
             // Lazy-load audit entries when tab is selected
@@ -430,6 +556,14 @@ window.adminPanelComponent = function() {
             // Refresh registration settings when tab is selected
             if (tabName === 'registration') {
                 this.loadRegistrationSettings();
+            }
+            // Load and auto-refresh workers when tab is selected
+            if (tabName === 'workers') {
+                this.loadWorkers();
+                this.startWorkerAutoRefresh();
+            } else {
+                // Stop auto-refresh when leaving workers tab
+                this.stopWorkerAutoRefresh();
             }
         },
 
@@ -455,10 +589,24 @@ window.adminPanelComponent = function() {
         ...(window.adminEnterpriseOnboardingMethods || {}),
         ...(window.adminNotificationMethods || {}),
         ...(window.adminRegistrationMethods || {}),
+        ...(window.adminWorkerMethods || {}),
 
         // Getters must be defined here, not in spread modules, to avoid evaluation issues
         get anyHintsDismissed() {
             return this.hints && Object.values(this.hints).some(v => !v);
+        },
+        get setupFormValid() {
+            const form = this.setupState?.form;
+            if (!form) return false;
+            return (
+                form.email &&
+                form.email.includes('@') &&
+                form.username &&
+                form.username.length >= 3 &&
+                form.password &&
+                form.password.length >= 8 &&
+                form.password === form.confirmPassword
+            );
         },
     };
 };

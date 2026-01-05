@@ -7,7 +7,7 @@ global route, as job queuing is a global concept in SimpleTuner.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -71,6 +71,28 @@ class QueueListResponse(BaseModel):
     total_running: int = 0
 
 
+class LocalGPUStats(BaseModel):
+    """Local GPU allocation statistics."""
+
+    running_jobs: int = 0
+    pending_jobs: int = 0
+    allocated_gpus: List[int] = Field(default_factory=list)
+    available_gpus: List[int] = Field(default_factory=list)
+    total_gpus: int = 0
+    max_concurrent_gpus: Optional[int] = None
+    max_concurrent_jobs: int = 1
+
+
+class WorkerPoolStats(BaseModel):
+    """Remote worker pool statistics."""
+
+    total_workers: int = 0
+    idle_workers: int = 0
+    busy_workers: int = 0
+    offline_workers: int = 0
+    draining_workers: int = 0
+
+
 class QueueStatsResponse(BaseModel):
     """Response for queue statistics."""
 
@@ -83,6 +105,12 @@ class QueueStatsResponse(BaseModel):
     user_max_concurrent: int = 2
     team_max_concurrent: int = 10
     enable_fair_share: bool = False
+    # Local GPU concurrency
+    local_gpu_max_concurrent: Optional[int] = None
+    local_job_max_concurrent: int = 1
+    local: Optional[LocalGPUStats] = None
+    # Remote worker pool
+    workers: Optional[WorkerPoolStats] = None
 
 
 class UserQueueResponse(BaseModel):
@@ -103,6 +131,9 @@ class ConcurrencyUpdateRequest(BaseModel):
     user_max_concurrent: Optional[int] = Field(None, ge=1, le=20)
     team_max_concurrent: Optional[int] = Field(None, ge=1, le=50)
     enable_fair_share: Optional[bool] = None
+    # Local GPU concurrency limits
+    local_gpu_max_concurrent: Optional[int] = Field(None, ge=1, description="Max GPUs for local jobs (null = unlimited)")
+    local_job_max_concurrent: Optional[int] = Field(None, ge=1, le=10, description="Max local jobs simultaneously")
 
 
 class PriorityUpdateRequest(BaseModel):
@@ -180,15 +211,61 @@ async def get_queue_stats(
     scheduler = get_scheduler()
     overview = await scheduler.get_queue_overview()
 
-    # Also count running local jobs from the job store (they bypass the queue)
+    # Running count comes from the queue table (local jobs are now tracked there too)
     running_count = overview.get("running", 0)
-    try:
-        from ..services.cloud.async_job_store import AsyncJobStore
-        from ..services.cloud.base import JobType
 
-        job_store = await AsyncJobStore.get_instance()
-        local_running = await job_store.list_jobs(status="running", job_type=JobType.LOCAL, limit=100)
-        running_count += len(local_running)
+    # Get local GPU allocation info
+    local_stats = None
+    local_gpu_max = None
+    local_job_max = 1
+    try:
+        from ..services.local_gpu_allocator import get_gpu_allocator
+        from ..services.webui_state import WebUIStateStore
+
+        allocator = get_gpu_allocator()
+        gpu_status = await allocator.get_gpu_status()
+
+        defaults = WebUIStateStore().load_defaults()
+        local_gpu_max = defaults.local_gpu_max_concurrent
+        local_job_max = defaults.local_job_max_concurrent
+
+        job_repo = allocator._get_job_repo()
+        pending_local = await job_repo.get_pending_local_jobs()
+
+        local_stats = LocalGPUStats(
+            running_jobs=gpu_status["running_local_jobs"],
+            pending_jobs=len(pending_local),
+            allocated_gpus=gpu_status["allocated_gpus"],
+            available_gpus=gpu_status["available_gpus"],
+            total_gpus=gpu_status["total_gpus"],
+            max_concurrent_gpus=local_gpu_max,
+            max_concurrent_jobs=local_job_max,
+        )
+    except Exception:
+        pass
+
+    # Get worker pool stats
+    worker_stats = None
+    try:
+        from ..services.worker_repository import get_worker_repository
+
+        worker_repo = get_worker_repository()
+        all_workers = await worker_repo.list_workers()
+
+        if all_workers:
+            stats_by_status = {"idle": 0, "busy": 0, "offline": 0, "draining": 0}
+            for w in all_workers:
+                status_key = w.status.value if hasattr(w.status, "value") else str(w.status)
+                if status_key in stats_by_status:
+                    stats_by_status[status_key] += 1
+
+            worker_stats = WorkerPoolStats(
+                total_workers=len(all_workers),
+                idle_workers=stats_by_status["idle"],
+                busy_workers=stats_by_status["busy"],
+                offline_workers=stats_by_status["offline"],
+                draining_workers=stats_by_status["draining"],
+            )
     except Exception:
         pass
 
@@ -202,6 +279,10 @@ async def get_queue_stats(
         user_max_concurrent=overview.get("user_max_concurrent", 2),
         team_max_concurrent=overview.get("team_max_concurrent", 10),
         enable_fair_share=overview.get("enable_fair_share", False),
+        local_gpu_max_concurrent=local_gpu_max,
+        local_job_max_concurrent=local_job_max,
+        local=local_stats,
+        workers=worker_stats,
     )
 
 
@@ -408,7 +489,7 @@ async def update_concurrency_limits(
 ) -> Dict[str, Any]:
     """Update queue concurrency limits (admin only).
 
-    Supports global, per-user, and per-team limits with optional fair-share scheduling.
+    Supports global, per-user, per-team, and local GPU limits with optional fair-share scheduling.
     """
     scheduler = get_scheduler()
 
@@ -419,12 +500,39 @@ async def update_concurrency_limits(
         enable_fair_share=request.enable_fair_share,
     )
 
+    # Update local GPU limits if provided
+    local_gpu_max = None
+    local_job_max = 1
+    if request.local_gpu_max_concurrent is not None or request.local_job_max_concurrent is not None:
+        from ..services.webui_state import WebUIStateStore
+
+        store = WebUIStateStore()
+        defaults = store.load_defaults()
+
+        if request.local_gpu_max_concurrent is not None:
+            defaults.local_gpu_max_concurrent = request.local_gpu_max_concurrent
+        if request.local_job_max_concurrent is not None:
+            defaults.local_job_max_concurrent = request.local_job_max_concurrent
+
+        store.save_defaults(defaults)
+        local_gpu_max = defaults.local_gpu_max_concurrent
+        local_job_max = defaults.local_job_max_concurrent
+    else:
+        # Read current values
+        from ..services.webui_state import WebUIStateStore
+
+        defaults = WebUIStateStore().load_defaults()
+        local_gpu_max = defaults.local_gpu_max_concurrent
+        local_job_max = defaults.local_job_max_concurrent
+
     return {
         "success": True,
         "max_concurrent": scheduler._max_concurrent,
         "user_max_concurrent": scheduler._user_max_concurrent,
         "team_max_concurrent": scheduler._policy.config.team_max_concurrent,
         "enable_fair_share": scheduler._policy.config.enable_fair_share,
+        "local_gpu_max_concurrent": local_gpu_max,
+        "local_job_max_concurrent": local_job_max,
     }
 
 
@@ -468,6 +576,13 @@ class LocalJobSubmitRequest(BaseModel):
     """Request to submit a local training job."""
 
     config_name: str = Field(..., description="Name of config to load from disk")
+    no_wait: bool = Field(False, description="Reject immediately if GPUs unavailable")
+    any_gpu: bool = Field(False, description="Use any available GPUs instead of configured device IDs")
+    for_approval: bool = Field(False, description="Request approval to exceed org GPU quota")
+    target: Literal["local", "worker", "auto"] = Field(
+        "auto",
+        description="Execution target: 'local' (this machine), 'worker' (remote worker), 'auto' (prefer worker if available)",
+    )
 
 
 class LocalJobSubmitResponse(BaseModel):
@@ -475,8 +590,127 @@ class LocalJobSubmitResponse(BaseModel):
 
     success: bool
     job_id: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[str] = None  # "running", "queued", "rejected", "blocked", "dispatched"
+    allocated_gpus: Optional[List[int]] = None
+    allocated_worker_id: Optional[str] = None
+    queue_position: Optional[int] = None
+    requires_approval: bool = False
     error: Optional[str] = None
+    reason: Optional[str] = None
+
+
+async def _submit_to_worker(
+    request: "LocalJobSubmitRequest",
+    config: Dict[str, Any],
+    user: Optional[User],
+) -> LocalJobSubmitResponse:
+    """Submit a job to be executed by a remote worker."""
+    import uuid
+    from datetime import datetime, timezone
+
+    from ..services.cloud.async_job_store import AsyncJobStore
+    from ..services.cloud.base import JobType, UnifiedJob
+    from ..services.worker_repository import get_worker_repository
+    from .workers import is_worker_connected, push_to_worker
+
+    worker_repo = get_worker_repository()
+    job_store = await AsyncJobStore.get_instance()
+
+    # Generate job ID
+    job_id = f"wjob-{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Create job entry in job store
+    job = UnifiedJob(
+        job_id=job_id,
+        job_type=JobType.LOCAL,
+        provider="worker",
+        status="pending",
+        config_name=request.config_name,
+        created_at=now,
+        queued_at=now,
+        user_id=user.id if user else None,
+        metadata={
+            "config": config,
+            "target": "worker",
+        },
+    )
+    await job_store.add_job(job)
+    logger.info(f"Created worker job {job_id} for config '{request.config_name}'")
+
+    # Find an idle worker
+    idle_worker = await worker_repo.get_idle_worker_for_job()
+
+    if idle_worker and is_worker_connected(idle_worker.worker_id):
+        # Dispatch immediately to the idle worker
+        from ..models.worker import WorkerStatus
+
+        # Mark worker as busy
+        await worker_repo.update_worker(
+            idle_worker.worker_id,
+            {
+                "status": WorkerStatus.BUSY,
+                "current_job_id": job_id,
+            },
+        )
+
+        # Push job to worker via SSE
+        success = await push_to_worker(
+            idle_worker.worker_id,
+            {
+                "type": "job_submit",
+                "job_id": job_id,
+                "config": config,
+                "dataloader": config.get("dataloader_config"),
+                "upload_endpoint": "/api/cloud/storage",
+            },
+        )
+
+        if success:
+            # Update job status to running
+            await job_store.update_job(
+                job_id,
+                {
+                    "status": "running",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "metadata": {
+                        **job.metadata,
+                        "worker_id": idle_worker.worker_id,
+                    },
+                },
+            )
+            logger.info(f"Dispatched job {job_id} to worker {idle_worker.worker_id}")
+            return LocalJobSubmitResponse(
+                success=True,
+                job_id=job_id,
+                status="running",
+                allocated_worker_id=idle_worker.worker_id,
+            )
+        else:
+            # Failed to push, revert worker status but keep job queued
+            await worker_repo.update_worker(
+                idle_worker.worker_id,
+                {
+                    "status": WorkerStatus.IDLE,
+                    "current_job_id": None,
+                },
+            )
+            logger.warning(f"Failed to push job {job_id} to worker {idle_worker.worker_id}, job remains queued")
+            return LocalJobSubmitResponse(
+                success=True,
+                job_id=job_id,
+                status="queued",
+                reason="Failed to dispatch to worker, job queued for retry",
+            )
+    else:
+        # No idle worker connected - job is queued for later dispatch
+        logger.info(f"No idle workers available, job {job_id} queued for later dispatch")
+        return LocalJobSubmitResponse(
+            success=True,
+            job_id=job_id,
+            status="queued",
+            reason="No idle workers available, job queued",
+        )
 
 
 @router.post("/submit", response_model=LocalJobSubmitResponse)
@@ -484,9 +718,12 @@ async def submit_local_job(
     request: LocalJobSubmitRequest,
     user: Optional[User] = Depends(get_optional_user),
 ) -> LocalJobSubmitResponse:
-    """Submit a local training job.
+    """Submit a training job.
 
-    Loads the config from disk and starts the training process locally.
+    Loads the config from disk and either:
+    - Runs locally on this machine's GPUs (target='local')
+    - Dispatches to a remote worker (target='worker')
+    - Auto-selects based on availability (target='auto', default)
     """
     from pathlib import Path
 
@@ -516,31 +753,106 @@ async def submit_local_job(
                 error=f"Config '{request.config_name}' not found",
             )
 
-        # Start the training job (path resolution happens inside start_training_job)
-        job_id = start_training_job(config, env_name=request.config_name)
+        # Always initialize worker repository to ensure consistent state
+        # This fixes an issue where target=local would fail but target=auto would work
+        worker_repo = None
+        try:
+            from ..services.worker_repository import get_worker_repository
+
+            worker_repo = get_worker_repository()
+        except Exception as exc:
+            logger.debug("Worker repository initialization: %s", exc)
+
+        # Check if we should dispatch to a worker
+        use_worker = False
+        if request.target in ("worker", "auto"):
+            if worker_repo is None:
+                if request.target == "worker":
+                    return LocalJobSubmitResponse(
+                        success=False,
+                        error="Worker repository unavailable and target=worker was specified",
+                    )
+            else:
+                try:
+                    idle_worker = await worker_repo.get_idle_worker_for_job()
+                    if idle_worker:
+                        use_worker = True
+                    elif request.target == "worker":
+                        # Explicitly requested worker but none available - queue for worker
+                        use_worker = True
+                except Exception as exc:
+                    logger.warning("Failed to check worker availability: %s", exc)
+                    if request.target == "worker":
+                        return LocalJobSubmitResponse(
+                            success=False,
+                            error="No workers available and target=worker was specified",
+                        )
+
+        # Dispatch to worker if requested/available
+        if use_worker:
+            return await _submit_to_worker(request, config, user)
+
+        # Get user's org_id for quota checks
+        user_org_id = user.org_id if user else None
+
+        # Start the training job locally
+        result = start_training_job(
+            config,
+            env_name=request.config_name,
+            no_wait=request.no_wait,
+            any_gpu=request.any_gpu,
+            for_approval=request.for_approval,
+            org_id=user_org_id,
+            user_id=user.id if user else None,
+        )
+
+        # Handle rejected jobs
+        if result.status == "rejected":
+            return LocalJobSubmitResponse(
+                success=False,
+                status="rejected",
+                error=result.reason or "Required GPUs unavailable",
+                reason=result.reason,
+            )
+
+        # Handle jobs requiring approval
+        if result.status == "blocked":
+            return LocalJobSubmitResponse(
+                success=True,
+                job_id=result.job_id,
+                status="blocked",
+                queue_position=result.queue_position,
+                requires_approval=True,
+                reason=result.reason,
+            )
 
         # Broadcast SSE event so UI updates in real-time
-        try:
-            from ..services.sse_manager import get_sse_manager
+        if result.status == "running":
+            try:
+                from ..services.sse_manager import get_sse_manager
 
-            sse_manager = get_sse_manager()
-            await sse_manager.broadcast(
-                data={
-                    "type": "training.status",
-                    "status": "starting",
-                    "job_id": job_id,
-                    "config_name": request.config_name,
-                    "message": f"Training job {job_id} starting",
-                },
-                event_type="training.status",
-            )
-        except Exception as exc:
-            logger.warning("Failed to broadcast SSE event: %s", exc)
+                sse_manager = get_sse_manager()
+                await sse_manager.broadcast(
+                    data={
+                        "type": "training.status",
+                        "status": "starting",
+                        "job_id": result.job_id,
+                        "config_name": request.config_name,
+                        "allocated_gpus": result.allocated_gpus,
+                        "message": f"Training job {result.job_id} starting",
+                    },
+                    event_type="training.status",
+                )
+            except Exception as exc:
+                logger.warning("Failed to broadcast SSE event: %s", exc)
 
         return LocalJobSubmitResponse(
             success=True,
-            job_id=job_id,
-            status="starting",
+            job_id=result.job_id,
+            status=result.status,
+            allocated_gpus=result.allocated_gpus,
+            queue_position=result.queue_position,
+            reason=result.reason,
         )
 
     except Exception as exc:

@@ -9,12 +9,17 @@ global route, as organizations are a global concept in SimpleTuner.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+
+# Forward reference for type hints in helper functions
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..services.cloud.auth import User, get_current_user, require_permission
+
+if TYPE_CHECKING:
+    from ..services.cloud.auth.models import User as UserType
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +75,9 @@ class TeamMembershipRequest(BaseModel):
 class SetOrgQuotaRequest(BaseModel):
     """Request to set an organization quota ceiling."""
 
-    quota_type: str = Field(..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly)$")
+    quota_type: str = Field(
+        ..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly|local_gpus)$"
+    )
     limit_value: float = Field(..., gt=0)
     action: str = Field(default="block", pattern=r"^(block|warn|require_approval)$")
 
@@ -78,12 +85,48 @@ class SetOrgQuotaRequest(BaseModel):
 class SetTeamQuotaRequest(BaseModel):
     """Request to set a team quota ceiling."""
 
-    quota_type: str = Field(..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly)$")
+    quota_type: str = Field(
+        ..., pattern=r"^(concurrent_jobs|jobs_per_day|jobs_per_hour|cost_daily|cost_monthly|local_gpus)$"
+    )
     limit_value: float = Field(..., gt=0)
     action: str = Field(default="block", pattern=r"^(block|warn|require_approval)$")
 
 
-# ==================== Role Hierarchy Helpers ====================
+# ==================== Access Control Helpers ====================
+
+
+def can_access_org(user: "User", org_id: int) -> bool:
+    """Check if user can access the specified organization.
+
+    Access is granted if:
+    - User is a system admin (has admin.users permission)
+    - User belongs to the organization (user.org_id == org_id)
+
+    Args:
+        user: The requesting user
+        org_id: The organization ID being accessed
+
+    Returns:
+        True if access is allowed, False otherwise
+    """
+    # System admins can access any org
+    if "admin.users" in user.effective_permissions:
+        return True
+
+    # Users can access their own org
+    return user.org_id == org_id
+
+
+def require_org_access(user: "User", org_id: int) -> None:
+    """Require that user can access the specified organization.
+
+    Raises HTTPException 403 if access is denied.
+    """
+    if not can_access_org(user, org_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this organization",
+        )
 
 
 def can_manage_role(actor_role: str, target_role: str) -> bool:
@@ -178,8 +221,11 @@ async def get_organization(
 ):
     """Get an organization by ID.
 
-    Requires org.view permission.
+    Requires org.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -199,8 +245,11 @@ async def update_organization(
 ):
     """Update an organization.
 
-    Requires org.edit permission.
+    Requires org.edit permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -239,8 +288,11 @@ async def delete_organization(
 ):
     """Delete an organization and all its teams.
 
-    Requires org.delete permission.
+    Requires org.delete permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -268,8 +320,11 @@ async def list_org_members(
 ):
     """List all members of an organization.
 
-    Requires org.view permission.
+    Requires org.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -295,8 +350,11 @@ async def add_user_to_org(
 ):
     """Add a user to an organization.
 
-    Requires org.manage.members permission.
+    Requires org.manage.members permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -321,8 +379,11 @@ async def remove_user_from_org(
 ):
     """Remove a user from an organization.
 
-    Requires org.manage.members permission.
+    Requires org.manage.members permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -345,8 +406,11 @@ async def get_org_quotas(
 ):
     """Get quota ceilings for an organization.
 
-    Requires org.view permission.
+    Requires org.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -374,8 +438,11 @@ async def set_org_quota(
     This sets an absolute ceiling that applies to all users and teams
     within the organization, regardless of any higher limits they may have.
 
-    Requires org.manage.quotas permission.
+    Requires org.manage.quotas permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.auth.quotas import QuotaAction, QuotaType
     from ..services.cloud.container import get_user_store
 
@@ -411,8 +478,11 @@ async def list_teams(
 ):
     """List all teams in an organization.
 
-    Requires team.view permission.
+    Requires team.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -437,8 +507,11 @@ async def create_team(
 ):
     """Create a new team in an organization.
 
-    Requires team.create permission.
+    Requires team.create permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -467,8 +540,11 @@ async def get_team(
 ):
     """Get a team by ID.
 
-    Requires team.view permission.
+    Requires team.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -489,8 +565,11 @@ async def update_team(
 ):
     """Update a team.
 
-    Requires team.edit permission.
+    Requires team.edit permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -529,8 +608,11 @@ async def delete_team(
 ):
     """Delete a team.
 
-    Requires team.delete permission.
+    Requires team.delete permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -558,8 +640,11 @@ async def list_team_members(
 ):
     """List members of a team.
 
-    Requires team.view permission.
+    Requires team.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -584,8 +669,11 @@ async def add_team_member(
 ):
     """Add a user to a team.
 
-    Requires team.manage.members permission.
+    Requires team.manage.members permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -622,8 +710,11 @@ async def update_team_member_role(
     - lead: Can manage team members (but not leads or admins)
     - admin: Full team administration
 
-    Requires team.manage.members permission AND appropriate team role.
+    Requires team.manage.members permission, membership in the organization
+    (or system admin), AND appropriate team role.
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -668,9 +759,12 @@ async def remove_team_member(
 ):
     """Remove a user from a team.
 
-    Requires team.manage.members permission AND appropriate team role.
+    Requires team.manage.members permission, membership in the organization
+    (or system admin), AND appropriate team role.
     Leads can remove members; admins can remove anyone.
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -715,8 +809,11 @@ async def get_team_quotas(
 ):
     """Get quota ceilings for a team.
 
-    Requires team.view permission.
+    Requires team.view permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.container import get_user_store
 
     user_store = get_user_store()
@@ -755,8 +852,11 @@ async def set_team_quota(
         HTTPException(400): If team quota exceeds org ceiling
         HTTPException(404): If team not found or doesn't belong to org
 
-    Requires team.manage.quotas permission.
+    Requires team.manage.quotas permission and membership in the organization
+    (or system admin).
     """
+    require_org_access(user, org_id)
+
     from ..services.cloud.auth.quotas import QuotaAction, QuotaType
     from ..services.cloud.container import get_user_store
 

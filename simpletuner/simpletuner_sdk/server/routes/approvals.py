@@ -20,6 +20,7 @@ from ..services.cloud.approval import (
     ApprovalStore,
     RuleCondition,
 )
+from ..services.cloud.audit import AuditEventType, audit_log
 from ..services.cloud.auth import get_current_user, require_permission
 from ..services.cloud.auth.models import User
 
@@ -415,6 +416,19 @@ async def approve_request(
         except Exception as exc:
             logger.warning("Failed to unblock job in queue: %s", exc)
 
+    # Audit log
+    if request:
+        await audit_log(
+            event_type=AuditEventType.JOB_APPROVED,
+            actor_id=user.id,
+            target_type="approval_request",
+            target_id=str(request_id),
+            details={
+                "job_id": request.job_id,
+                "notes": body.notes,
+            },
+        )
+
     return {
         "success": True,
         "request_id": request_id,
@@ -466,6 +480,19 @@ async def reject_request(
                 await scheduler.reject_job(request.job_id, body.reason)
         except Exception as exc:
             logger.warning("Failed to reject job in queue: %s", exc)
+
+    # Audit log
+    if request:
+        await audit_log(
+            event_type=AuditEventType.JOB_REJECTED,
+            actor_id=user.id,
+            target_type="approval_request",
+            target_id=str(request_id),
+            details={
+                "job_id": request.job_id,
+                "reason": body.reason,
+            },
+        )
 
     return {
         "success": True,
@@ -540,8 +567,21 @@ async def bulk_approve_requests(
                     scheduler = get_queue_scheduler()
                     if scheduler:
                         await scheduler.approve_job(request.job_id, request_id)
+
+                    # Audit log
+                    await audit_log(
+                        event_type=AuditEventType.JOB_APPROVED,
+                        actor_id=user.id,
+                        target_type="approval_request",
+                        target_id=str(request_id),
+                        details={
+                            "job_id": request.job_id,
+                            "notes": body.notes,
+                            "bulk": True,
+                        },
+                    )
             except Exception as exc:
-                logger.warning("Failed to unblock job for request %d: %s", request_id, exc)
+                logger.warning("Failed to process bulk approval for request %d: %s", request_id, exc)
 
         results.append(
             BulkActionResult(
@@ -591,8 +631,21 @@ async def bulk_reject_requests(
                     scheduler = get_queue_scheduler()
                     if scheduler:
                         await scheduler.reject_job(request.job_id, body.reason)
+
+                    # Audit log
+                    await audit_log(
+                        event_type=AuditEventType.JOB_REJECTED,
+                        actor_id=user.id,
+                        target_type="approval_request",
+                        target_id=str(request_id),
+                        details={
+                            "job_id": request.job_id,
+                            "reason": body.reason,
+                            "bulk": True,
+                        },
+                    )
             except Exception as exc:
-                logger.warning("Failed to reject job for request %d: %s", request_id, exc)
+                logger.warning("Failed to process bulk rejection for request %d: %s", request_id, exc)
 
         results.append(
             BulkActionResult(

@@ -63,7 +63,7 @@ simpletuner configure
 simpletuner train
 ```
 
-For configuration and setup, refer to the [installation documentation](/documentation/INSTALL.md) and [quickstart guides](/documentation/QUICKSTART.md).
+For configuration and setup, refer to the [installation documentation](INSTALL.md) and [quickstart guides](QUICKSTART.md).
 
 ## Additional Configuration
 

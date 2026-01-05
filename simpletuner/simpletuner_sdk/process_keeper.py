@@ -980,6 +980,8 @@ logger.info("Subprocess exiting")
 
         if first_failure:
             self._update_training_state_from_subprocess(status="error")
+            # Release GPUs when job fails
+            self._release_gpus()
         self._dispatch_callback_event(payload)
         self._dispatch_training_status_event(status="failed", data=payload_data, message=message)
 
@@ -1000,6 +1002,8 @@ logger.info("Subprocess exiting")
         }
 
         self._update_training_state_from_subprocess(status="completed")
+        # Release GPUs when job completes
+        self._release_gpus()
         self._dispatch_callback_event(payload)
         self._dispatch_training_status_event(status="completed", data=data, message=payload["message"])
 
@@ -1019,7 +1023,54 @@ logger.info("Subprocess exiting")
         }
 
         self._update_training_state_from_subprocess(status="cancelled")
+        # Release GPUs when job is cancelled, but don't process pending jobs.
+        # This prevents starting new jobs during bulk cancellation operations.
+        self._release_gpus(process_pending=False)
         self._dispatch_callback_event(payload)
+
+    def _release_gpus(self, *, process_pending: bool = True) -> None:
+        """Release GPUs allocated to this job.
+
+        Args:
+            process_pending: If True, process pending jobs after release.
+                Set to False during cancellation to avoid starting jobs
+                that may also be about to be cancelled.
+        """
+        try:
+            import asyncio
+
+            from simpletuner.simpletuner_sdk.server.services.local_gpu_allocator import get_gpu_allocator
+
+            def _do_release():
+                async def _async_release():
+                    allocator = get_gpu_allocator()
+                    await allocator.release(self.job_id)
+                    if process_pending:
+                        # Process pending jobs to start the next one if GPUs are available
+                        started = await allocator.process_pending_jobs()
+                        if started:
+                            logger.info(
+                                "Started %d pending job(s) after GPU release from job %s",
+                                len(started),
+                                self.job_id,
+                            )
+
+                try:
+                    loop = asyncio.get_running_loop()
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        pool.submit(lambda: asyncio.run(_async_release()))
+                except RuntimeError:
+                    asyncio.run(_async_release())
+
+            _do_release()
+        except Exception:
+            logger.debug(
+                "Failed to release GPUs for job %s (may be normal for non-GPU jobs)",
+                self.job_id,
+                exc_info=True,
+            )
 
     def _update_training_state_from_subprocess(self, *, status: str) -> None:
         normalized = status.strip().lower()
@@ -1316,6 +1367,24 @@ def get_process_status(job_id: str) -> str:
                 entry["status"] = process.status
 
         return process.status
+
+
+def get_process_pid(job_id: str) -> Optional[int]:
+    """Get the PID of a running job's subprocess.
+
+    Args:
+        job_id: The job ID to look up
+
+    Returns:
+        The process ID if found, None otherwise
+    """
+    with lock:
+        entry = process_registry.get(job_id)
+        if entry and entry.get("process"):
+            proc = entry["process"].process
+            if proc:
+                return proc.pid
+    return None
 
 
 def terminate_process(job_id: str) -> bool:

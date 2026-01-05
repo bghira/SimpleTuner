@@ -5,9 +5,12 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 
 from ..services.validation_service import ValidationService
 
@@ -71,7 +74,7 @@ def _form_to_context(form: Any, ignore_keys: Optional[List[str]] = None) -> Dict
 
 
 @router.post("/{field_name}", response_class=HTMLResponse)
-async def validate_field(field_name: str, request: Request) -> str:
+async def validate_field(field_name: str, request: Request, _user: User = Depends(get_current_user)) -> str:
     """Validate a single field and return the rendered error fragment."""
     form = await request.form()
 
@@ -94,7 +97,9 @@ async def validate_field(field_name: str, request: Request) -> str:
 
 
 @router.post("/config", response_model=ValidationStatus)
-async def validate_configuration(request: ConfigValidationRequest) -> ValidationStatus:
+async def validate_configuration(
+    request: ConfigValidationRequest, _user: User = Depends(get_current_user)
+) -> ValidationStatus:
     """Validate an entire configuration payload."""
     result = _validation_service.validate_configuration(
         request.config,
@@ -112,6 +117,7 @@ async def validate_single_field(
     field_name: str,
     value: Any,
     config: Dict[str, Any] = {},
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Validate a single field with optional configuration context."""
     working_config = dict(config)

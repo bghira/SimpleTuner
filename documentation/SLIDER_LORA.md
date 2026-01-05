@@ -2,7 +2,7 @@
 
 In this guide, we'll be training a slider-style adapter in SimpleTuner. We'll be using Z-Image Turbo because it trains quickly, ships an Apache 2.0 license, and gives great results for its size—even with distilled weights.
 
-For the full compatibility matrix (LoRA, LyCORIS, full-rank), see the Sliders column in [documentation/QUICKSTART.md](/documentation/QUICKSTART.md); this guide applies to all architectures.
+For the full compatibility matrix (LoRA, LyCORIS, full-rank), see the Sliders column in [documentation/QUICKSTART.md](QUICKSTART.md); this guide applies to all architectures.
 
 Slider targeting works with standard LoRA, LyCORIS (including `full`), and ControlNet. The toggle is available in both CLI and WebUI; everything ships in SimpleTuner, no extra installs needed.
 

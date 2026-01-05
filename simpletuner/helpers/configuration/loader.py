@@ -117,7 +117,7 @@ def load_config(args: dict = None, exit_on_error: bool = False):
             config_backend_path = os.path.join("config", config_env)
         StateTracker.set_config_path(config_backend_path)
         logger.info("Using {} configuration backend.".format(config_backend))
-        mapped_config = helpers[config_backend]()
+        mapped_config = helpers[config_backend]() if config_backend != "cmd" else helpers["cmd"](exit_on_error=exit_on_error)
         if config_backend == "cmd":
             return mapped_config
     else:

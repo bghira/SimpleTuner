@@ -232,6 +232,21 @@ def _approval_rules(args) -> int:
     return 0
 
 
+def _get_nested_value(obj: dict, path: str):
+    """Get a value from a nested dict using dot notation.
+
+    Example: _get_nested_value({"metadata": {"run_name": "foo"}}, "metadata.run_name") -> "foo"
+    """
+    keys = path.split(".")
+    value = obj
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key)
+        else:
+            return None
+    return value
+
+
 def _format_duration(seconds) -> str:
     """Format seconds into a human-readable duration."""
     if seconds is None:
@@ -283,7 +298,7 @@ def _jobs_list(args) -> int:
     if output_format == "json":
         if output_fields:
             fields = [f.strip() for f in output_fields.split(",")]
-            filtered_jobs = [{k: j.get(k) for k in fields} for j in jobs]
+            filtered_jobs = [{k: _get_nested_value(j, k) for k in fields} for j in jobs]
             print(json.dumps(filtered_jobs, indent=2))
         else:
             print(json.dumps(jobs, indent=2))
@@ -355,6 +370,9 @@ def _print_custom_fields(jobs: list, fields: list) -> None:
                 value = _get_run_name(job)
             elif field == "duration" and job.get(field) is None:
                 value = job.get("duration_seconds")
+            elif "." in field:
+                # Support dot notation for nested fields
+                value = _get_nested_value(job, field)
             else:
                 value = job.get(field)
             formatted = formatter(value)
@@ -365,9 +383,13 @@ def _print_custom_fields(jobs: list, fields: list) -> None:
 
 
 def _jobs_submit(args) -> int:
-    """Submit a local training job."""
+    """Submit a training job."""
     config_name = getattr(args, "config", None)
     dry_run = getattr(args, "dry_run", False)
+    no_wait = getattr(args, "no_wait", False)
+    any_gpu = getattr(args, "any_gpu", False)
+    for_approval = getattr(args, "for_approval", False)
+    target = getattr(args, "target", "auto")
 
     if not config_name:
         print("Error: Config name is required.")
@@ -375,29 +397,48 @@ def _jobs_submit(args) -> int:
         return 1
 
     if dry_run:
-        return _jobs_submit_dry_run(config_name)
+        return _jobs_submit_dry_run(config_name, any_gpu=any_gpu, target=target)
 
     request_data = {
         "config_name": config_name,
+        "no_wait": no_wait,
+        "any_gpu": any_gpu,
+        "for_approval": for_approval,
+        "target": target,
     }
 
-    print(f"Submitting local job with config '{config_name}'...")
+    target_desc = {"local": "locally", "worker": "to worker", "auto": ""}.get(target, "")
+    print(f"Submitting job '{config_name}'{' ' + target_desc if target_desc else ''}...")
 
     result = cloud_api_request("POST", "/api/queue/submit", data=request_data)
 
     if result.get("success"):
         job_id = result.get("job_id", "unknown")
         status = result.get("status", "unknown")
+        allocated_gpus = result.get("allocated_gpus")
+        allocated_worker_id = result.get("allocated_worker_id")
+        queue_position = result.get("queue_position")
+        requires_approval = result.get("requires_approval", False)
+
         print("Job submitted successfully!")
         print(f"  Job ID: {job_id}")
         print(f"  Status: {status}")
+        if allocated_gpus:
+            print(f"  GPUs:   {allocated_gpus}")
+        if allocated_worker_id:
+            print(f"  Worker: {allocated_worker_id}")
+        if queue_position is not None:
+            print(f"  Queue Position: {queue_position}")
+        if requires_approval:
+            print("  Note:   Job requires admin approval before running")
         return 0
     else:
-        print(f"Error: {result.get('error', result.get('detail', 'Unknown error'))}")
+        error = result.get("error") or result.get("detail") or result.get("reason") or "Unknown error"
+        print(f"Error: {error}")
         return 1
 
 
-def _jobs_submit_dry_run(config_name: str) -> int:
+def _jobs_submit_dry_run(config_name: str, *, any_gpu: bool = False, target: str = "auto") -> int:
     """Preview what would be submitted without actually submitting."""
     print(f"[DRY RUN] Previewing job submission for config '{config_name}'...")
     print()
@@ -428,9 +469,113 @@ def _jobs_submit_dry_run(config_name: str) -> int:
     print(f"  Learning Rate:   {config.get('learning_rate', '-')}")
     print()
 
-    # Get queue status
+    # Get GPU requirements from config
+    num_processes = config.get("num_processes") or config.get("--num_processes") or 1
+    try:
+        num_processes = int(num_processes)
+    except (TypeError, ValueError):
+        num_processes = 1
+    configured_gpus = config.get("accelerate_visible_devices") or config.get("--accelerate_visible_devices")
+
+    print("Execution Target:")
+    print("=" * 50)
+    target_desc = {
+        "local": "Local GPUs on this machine",
+        "worker": "Remote worker only",
+        "auto": "Auto (prefer worker if available, fallback to local)",
+    }.get(target, target)
+    print(f"  Target:          {target_desc}")
+    print()
+
+    print("GPU Requirements:")
+    print("=" * 50)
+    print(f"  num_processes:   {num_processes}")
+    print(f"  configured_gpus: {configured_gpus or 'auto'}")
+    if any_gpu:
+        print(f"  --any-gpu:       enabled (will use any available GPUs)")
+    print()
+
+    # Track whether GPU check was successful and if job can start
+    gpu_check_ok = False
+    can_start_gpu = False
+
+    # Get queue stats (includes GPU info in local field)
+    queue_result = None
     try:
         queue_result = cloud_api_request("GET", "/api/queue/stats")
+        local_stats = queue_result.get("local")
+
+        if local_stats:
+            total_gpus = local_stats.get("total_gpus", 0)
+            allocated_gpus = local_stats.get("allocated_gpus", [])
+            available_gpus = local_stats.get("available_gpus", [])
+            running_local_jobs = local_stats.get("running_jobs", 0)
+            gpu_check_ok = True
+
+            print("GPU Status:")
+            print("=" * 50)
+            print(f"  Total GPUs:         {total_gpus}")
+            print(f"  Allocated GPUs:     {allocated_gpus}")
+            print(f"  Available GPUs:     {available_gpus}")
+            print(f"  Running local jobs: {running_local_jobs}")
+
+            # Determine if job can start based on GPU availability
+            can_start_gpu = len(available_gpus) >= num_processes
+            if can_start_gpu:
+                gpus_to_use = available_gpus[:num_processes]
+                print(f"  [+] Can allocate:   {gpus_to_use}")
+            else:
+                print(f"  [.] Insufficient GPUs (need {num_processes}, {len(available_gpus)} available)")
+            print()
+        else:
+            print("GPU Status:")
+            print("=" * 50)
+            print("  Local GPU info not available")
+            print()
+
+    except SystemExit:
+        print("GPU Status:")
+        print("=" * 50)
+        print("  Unable to fetch status")
+        print()
+
+    # Display worker pool status if available
+    workers_available = False
+    try:
+        if queue_result is None:
+            queue_result = cloud_api_request("GET", "/api/queue/stats")
+
+        worker_stats = queue_result.get("workers")
+        if worker_stats:
+            total = worker_stats.get("total_workers", 0)
+            idle = worker_stats.get("idle_workers", 0)
+            busy = worker_stats.get("busy_workers", 0)
+            offline = worker_stats.get("offline_workers", 0)
+            draining = worker_stats.get("draining_workers", 0)
+
+            print("Worker Pool:")
+            print("=" * 50)
+            print(f"  Total Workers:   {total}")
+            print(f"  Idle:            {idle}")
+            print(f"  Busy:            {busy}")
+            print(f"  Offline:         {offline}")
+            if draining > 0:
+                print(f"  Draining:        {draining}")
+
+            if idle > 0:
+                print(f"  [+] Workers available for job dispatch")
+                workers_available = True
+            elif total > 0:
+                print(f"  [.] No idle workers (job will queue until worker available)")
+            print()
+    except SystemExit:
+        pass
+
+    # Display queue status
+    try:
+        if queue_result is None:
+            queue_result = cloud_api_request("GET", "/api/queue/stats")
+
         queue_depth = queue_result.get("queue_depth", 0)
         running = queue_result.get("running", 0)
         max_concurrent = queue_result.get("max_concurrent", 5)
@@ -440,12 +585,29 @@ def _jobs_submit_dry_run(config_name: str) -> int:
         print(f"  Queue Depth:     {queue_depth}")
         print(f"  Running:         {running} / {max_concurrent}")
 
-        if running >= max_concurrent:
-            print(f"  Note:            Job will be queued (at capacity)")
-        elif queue_depth > 0:
-            print(f"  Note:            Job will be queued behind {queue_depth} other(s)")
+        # Determine actual outcome based on GPU and worker availability
+        if workers_available:
+            # Remote workers available
+            if queue_depth > 0:
+                print(f"  Note:            Job will be queued behind {queue_depth} other(s)")
+            else:
+                print(f"  Note:            Job will dispatch to idle worker")
+        elif gpu_check_ok:
+            # Local execution
+            if not can_start_gpu:
+                print(f"  Note:            Job will be queued (waiting for GPUs)")
+            elif queue_depth > 0:
+                print(f"  Note:            Job will be queued behind {queue_depth} other(s)")
+            else:
+                print(f"  Note:            Job will start immediately (local)")
         else:
-            print(f"  Note:            Job will start immediately")
+            # Fall back to queue-only logic if GPU check failed
+            if running >= max_concurrent:
+                print(f"  Note:            Job will be queued (at capacity)")
+            elif queue_depth > 0:
+                print(f"  Note:            Job will be queued behind {queue_depth} other(s)")
+            else:
+                print(f"  Note:            Job may start immediately (GPU status unknown)")
         print()
     except SystemExit:
         pass
@@ -476,7 +638,8 @@ def _jobs_submit_dry_run(config_name: str) -> int:
 
     print("-" * 50)
     print("To submit this job, run without --dry-run:")
-    print(f"  simpletuner jobs submit {config_name}")
+    target_flag = f" --target {target}" if target != "auto" else ""
+    print(f"  simpletuner jobs submit{target_flag} {config_name}")
 
     return 0
 

@@ -355,8 +355,20 @@ class UserStore:
         return await self._users.update(user_id, {"last_login_at": now})
 
     async def delete_user(self, user_id: int) -> bool:
-        """Delete a user."""
-        return await self._users.delete(user_id)
+        """Delete a user, invalidate all their sessions, and notify SSE connections."""
+        await self._sessions.delete_user_sessions(user_id)
+        result = await self._users.delete(user_id)
+        if result:
+            # Notify any active SSE connections for this user
+            try:
+                from ...sse_manager import get_sse_manager
+
+                sse_manager = get_sse_manager()
+                await sse_manager.notify_session_invalidated(user_id, reason="user_deleted")
+            except Exception as e:
+                # Don't fail user deletion if SSE notification fails
+                logging.getLogger(__name__).debug("Failed to notify SSE: %s", e)
+        return result
 
     async def get_user_count(self) -> int:
         """Get total user count."""
@@ -460,6 +472,17 @@ class UserStore:
         if user_id:
             return await self.get_user(user_id)
         return None
+
+    async def get_expired_session_user_id(self, session_id: str) -> Optional[int]:
+        """Get the user ID for an expired session.
+
+        Used to detect when someone tries to use an expired session
+        for audit logging purposes.
+
+        Returns:
+            User ID if session exists but is expired, None otherwise
+        """
+        return await self._sessions.get_expired_session_user_id(session_id)
 
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session."""

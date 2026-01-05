@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..dependencies.common import TabRenderData, get_config_store, get_tab_render_data
+from ..services.cloud.auth import get_current_user
+from ..services.cloud.auth.models import User
 from ..services.search_service import SearchService
 from ..services.tab_service import TabService
 from ..services.webui_state import WebUIStateStore
@@ -96,6 +98,7 @@ async def render_tab(
     request: Request,
     tab_name: str,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Unified tab handler using TabService.
 
@@ -128,6 +131,7 @@ async def render_tab(
 async def config_selector(
     request: Request,
     config_store=Depends(get_config_store),
+    _user: User = Depends(get_current_user),
 ):
     """Config selector fragment for HTMX."""
     configs = config_store.list_configs()
@@ -143,7 +147,7 @@ async def config_selector(
 
 
 @router.get("/trainer/tab-list", response_class=HTMLResponse)
-async def tab_list(request: Request):
+async def tab_list(request: Request, _user: User = Depends(get_current_user)):
     """Tab list fragment for HTMX."""
     tabs = tab_service.get_all_tabs()
 
@@ -161,6 +165,7 @@ async def tab_list(request: Request):
 async def basic_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for basic tab."""
     try:
@@ -184,6 +189,7 @@ async def basic_tab_compat(
 async def model_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for model tab."""
     try:
@@ -207,6 +213,7 @@ async def model_tab_compat(
 async def training_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for training tab."""
     try:
@@ -230,6 +237,7 @@ async def training_tab_compat(
 async def advanced_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for advanced tab."""
     try:
@@ -253,6 +261,7 @@ async def advanced_tab_compat(
 async def datasets_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for datasets tab."""
     try:
@@ -276,6 +285,7 @@ async def datasets_tab_compat(
 async def environments_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for environments tab."""
     try:
@@ -299,6 +309,7 @@ async def environments_tab_compat(
 async def validation_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for validation tab."""
     try:
@@ -322,6 +333,7 @@ async def validation_tab_compat(
 async def publishing_tab_compat(
     request: Request,
     tab_data: TabRenderData = Depends(get_tab_render_data),
+    _user: User = Depends(get_current_user),
 ):
     """Backward compatibility endpoint for publishing tab."""
     try:
@@ -342,7 +354,12 @@ async def publishing_tab_compat(
 
 
 @router.get("/trainer/search")
-async def search_tabs_and_fields(request: Request, q: str = "", limit: int = 20):
+async def search_tabs_and_fields(
+    request: Request,
+    q: str = "",
+    limit: int = 20,
+    _user: User = Depends(get_current_user),
+):
     """Search across tabs and fields with fuzzy matching."""
     try:
         results = search_service.search_tabs_and_fields(q, limit)

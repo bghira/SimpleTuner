@@ -328,7 +328,6 @@
         }
 
         alert.className = 'alert alert-info startup-progress-alert';
-        alert.innerHTML = '';
         alert.dataset.startupGenerated = 'true';
 
         if (!startupStatusActive && startupStages.size === 0) {
@@ -336,9 +335,14 @@
             return;
         }
 
+        // Only clear and re-render if we have stages to display
+        // This preserves the "Training Starting" message from SSE events until stages arrive
         if (startupStages.size === 0) {
             return;
         }
+
+        // Clear content only when we're about to render stages
+        alert.innerHTML = '';
 
         const listEl = document.createElement('div');
         listEl.className = 'startup-progress-list';
@@ -1316,12 +1320,20 @@
                     const normalizedProgress = normalizeProgressPayload(payload);
 
                     // Check if this is a new job starting
-                    if (jobId && activeJobId && jobId !== activeJobId) {
+                    // Handle both: switching between jobs AND starting a new job after previous completed
+                    if (jobId && (activeJobId === null || jobId !== activeJobId)) {
                         console.log('[SSE-DEBUG] New job detected in status handler. Old:', activeJobId, 'New:', jobId);
                         // Clear completed status for new job
                         completedJobIds.delete(jobId);
                         activeJobId = jobId;
-                        currentTrainingStatus = 'starting';
+                        // Initialize status for the new job based on the actual derived status
+                        const initialStatusForNewJob =
+                            !derivedStatus || derivedStatus === '' || ['starting', 'initializing'].includes(derivedStatus)
+                                ? 'starting'
+                                : derivedStatus;
+                        currentTrainingStatus = initialStatusForNewJob;
+                        // Clear any stale state from previous job
+                        clearStartupProgress();
                     }
 
                     // Only ignore status updates if it's the SAME job in a terminal state
@@ -1845,11 +1857,18 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
         console.log('[SSE-DEBUG] DOMContentLoaded fired, initializing training events SSE');
 
         if (document && document.body && !document.body.dataset.trainingActive) {
             document.body.dataset.trainingActive = 'false';
+        }
+
+        // Wait for auth before making any API calls
+        const canProceed = await window.waitForAuthReady();
+        if (!canProceed) {
+            // User needs to login - skip initialization
+            return;
         }
 
         // Check if training is already running

@@ -1,10 +1,10 @@
 # Quickstart Guide
 
-**Note**: For more advanced configurations, see the [tutorial](/documentation/TUTORIAL.md) and [options reference](/documentation/OPTIONS.md).
+**Note**: For more advanced configurations, see the [tutorial](TUTORIAL.md) and [options reference](OPTIONS.md).
 
 ## Feature Compatibility
 
-For the complete and most accurate feature matrix, refer to the [main README](../README.md#model-architecture-support).
+For the complete and most accurate feature matrix, refer to the [main README](https://github.com/bghira/SimpleTuner#model-architecture-support).
 
 ## Model Quickstart Guides
 

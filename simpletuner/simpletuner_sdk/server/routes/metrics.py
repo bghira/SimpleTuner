@@ -10,8 +10,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 
 from .cloud._shared import (
     BillingResponse,
@@ -79,6 +82,7 @@ async def check_cost_limit(store, provider: str) -> CostLimitStatusResponse:
 @router.get("", response_model=MetricsResponse)
 async def get_metrics(
     days: int = Query(30, ge=1, le=365, description="Number of days for metrics period"),
+    _user: User = Depends(get_current_user),
 ) -> MetricsResponse:
     """Get dashboard metrics (without billing - use /billing/refresh for that)."""
     store = get_job_store()
@@ -99,7 +103,9 @@ async def get_metrics(
 
 
 @router.post("/billing/refresh", response_model=BillingResponse)
-async def refresh_billing() -> BillingResponse:
+async def refresh_billing(
+    _user: User = Depends(get_current_user),
+) -> BillingResponse:
     """Refresh credit balance from cloud provider (user-triggered)."""
     try:
         from ..services.cloud.factory import ProviderFactory
@@ -128,14 +134,19 @@ async def refresh_billing() -> BillingResponse:
 
 
 @router.get("/cost-limit/status", response_model=CostLimitStatusResponse)
-async def get_cost_limit_status(provider: str = "replicate") -> CostLimitStatusResponse:
+async def get_cost_limit_status(
+    provider: str = "replicate",
+    _user: User = Depends(get_current_user),
+) -> CostLimitStatusResponse:
     """Get the current cost limit status for a provider."""
     store = get_job_store()
     return await check_cost_limit(store, provider)
 
 
 @router.get("/replicate/status", response_model=SystemStatusResponse)
-async def get_replicate_status() -> SystemStatusResponse:
+async def get_replicate_status(
+    _user: User = Depends(get_current_user),
+) -> SystemStatusResponse:
     """Get Replicate system status from their status page API."""
     from ..services.cloud.http_client import get_async_client
 
@@ -219,6 +230,7 @@ class HealthCheckBuilder:
 @router.get("/health", response_model=HealthCheckResponse)
 async def health_check(
     include_replicate: bool = Query(False, description="Include Replicate API connectivity check"),
+    _user: User = Depends(get_current_user),
 ) -> HealthCheckResponse:
     """Health check endpoint for monitoring.
 
@@ -317,7 +329,9 @@ async def health_check(
 
 
 @router.get("/health/live")
-async def liveness_check() -> dict:
+async def liveness_check(
+    _user: User = Depends(get_current_user),
+) -> dict:
     """Kubernetes-style liveness probe.
 
     Returns 200 if the server is running. Use for restart decisions.
@@ -326,7 +340,9 @@ async def liveness_check() -> dict:
 
 
 @router.get("/health/ready")
-async def readiness_check() -> dict:
+async def readiness_check(
+    _user: User = Depends(get_current_user),
+) -> dict:
     """Kubernetes-style readiness probe.
 
     Returns 200 if the server is ready to accept requests.
@@ -346,7 +362,9 @@ async def readiness_check() -> dict:
 
 
 @router.get("/prometheus")
-async def prometheus_metrics():
+async def prometheus_metrics(
+    _user: User = Depends(get_current_user),
+):
     """Export metrics in Prometheus text format.
 
     Use this endpoint for Prometheus scraping:
@@ -399,7 +417,9 @@ async def prometheus_metrics():
 
 
 @router.get("/circuit-breakers")
-async def get_circuit_breaker_status() -> Dict[str, Any]:
+async def get_circuit_breaker_status(
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Get current status of all circuit breakers.
 
     Returns circuit breaker state for each external service, useful for

@@ -1,4 +1,4 @@
-"""Authentication routes for cloud training.
+"""Authentication routes.
 
 Provides login, logout, session management, and API key operations.
 """
@@ -13,15 +13,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
-from ...services.cloud.audit import AuditEventType, audit_log
-from ...services.cloud.auth import UserStore, get_current_user, get_optional_user, require_permission
-from ...services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_client_ip
-from ...services.cloud.auth.models import AuthProvider, User
+from ..services.cloud.audit import AuditEventType, audit_log
+from ..services.cloud.auth import UserStore, get_current_user, get_optional_user, require_permission
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_client_ip, invalidate_single_user_mode
+from ..services.cloud.auth.models import AuthProvider, User
 from .users import UserResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # Lock to prevent TOCTOU race condition in first-admin creation
 _first_admin_lock = asyncio.Lock()
@@ -120,7 +120,7 @@ async def get_setup_status() -> SetupStatusResponse:
     Use this to determine if the setup wizard should be shown.
     Also returns whether public registration is enabled.
     """
-    from ...services.webui_state import WebUIStateStore
+    from ..services.webui_state import WebUIStateStore
 
     store = _get_store()
     user_count = await store.get_user_count()
@@ -172,6 +172,7 @@ async def create_first_admin(
             local_user = await store.get_user_by_username("local")
             if local_user and local_user.email == "local@localhost":
                 await store.delete_user(local_user.id)
+                invalidate_single_user_mode()
 
             # Create the admin user
             user = await store.create_user(
@@ -205,6 +206,18 @@ async def create_first_admin(
 
             # Reload user with permissions
             user = await store.get_user(user.id)
+
+            # Audit log
+            await audit_log(
+                AuditEventType.USER_CREATED,
+                f"First admin user '{user.username}' created during initial setup",
+                actor_id=user.id,
+                actor_username=user.username,
+                actor_ip=client_ip,
+                target_type="user",
+                target_id=str(user.id),
+                details={"is_admin": True, "setup": "first_admin"},
+            )
 
             logger.info("First admin user created: %s", user.username)
 
@@ -420,6 +433,17 @@ async def create_api_key(
         scoped_permissions=scoped_permissions,
     )
 
+    # Audit log
+    await audit_log(
+        AuditEventType.API_KEY_CREATED,
+        f"API key '{data.name}' created by user '{user.username}'",
+        actor_id=user.id,
+        actor_username=user.username,
+        target_type="api_key",
+        target_id=str(api_key.id),
+        details={"key_prefix": api_key.key_prefix, "expires_days": data.expires_days},
+    )
+
     logger.info("API key created: %s for user %s", api_key.key_prefix, user.username)
 
     return APIKeyCreatedResponse(
@@ -462,6 +486,16 @@ async def revoke_api_key(
             detail="API key not found or already revoked",
         )
 
+    # Audit log
+    await audit_log(
+        AuditEventType.API_KEY_REVOKED,
+        f"API key {key_id} revoked by user '{user.username}'",
+        actor_id=user.id,
+        actor_username=user.username,
+        target_type="api_key",
+        target_id=str(key_id),
+    )
+
     logger.info("API key revoked: %d by user %s", key_id, user.username)
 
     return {"success": True}
@@ -479,9 +513,9 @@ async def register(
     """Register a new user account.
 
     Note: This endpoint is disabled by default and must be enabled by an admin.
-    Check /api/cloud/settings/registration for registration availability.
+    Check /api/auth/setup/status for registration availability.
     """
-    from ...services.webui_state import WebUIStateStore
+    from ..services.webui_state import WebUIStateStore
 
     store = _get_store()
 
@@ -489,7 +523,7 @@ async def register(
     if not await store.has_any_users():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Use /setup/first-admin for initial setup",
+            detail="Use /api/auth/setup/first-admin for initial setup",
         )
 
     # Check if public registration is enabled
@@ -533,6 +567,18 @@ async def register(
 
         # Reload user with permissions
         user = await store.get_user(user.id)
+
+        # Audit log
+        await audit_log(
+            AuditEventType.USER_CREATED,
+            f"User '{user.username}' registered via public registration",
+            actor_id=user.id,
+            actor_username=user.username,
+            actor_ip=client_ip,
+            target_type="user",
+            target_id=str(user.id),
+            details={"registration": "public"},
+        )
 
         logger.info("New user registered: %s", user.username)
 

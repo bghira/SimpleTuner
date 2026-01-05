@@ -563,6 +563,7 @@ DEFAULT_PERMISSIONS = [
     Permission(54, "admin.config", "Change provider/system config", "admin"),
     Permission(55, "admin.audit", "View audit logs", "admin"),
     Permission(56, "admin.queue", "Manage job queue", "admin"),
+    Permission(57, "admin.workers", "Manage GPU workers", "admin"),
     # Organization permissions
     Permission(60, "org.view", "View organization details", "org"),
     Permission(61, "org.create", "Create organizations", "org"),

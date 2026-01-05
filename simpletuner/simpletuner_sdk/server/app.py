@@ -350,6 +350,33 @@ async def lifespan(app: FastAPI):
     await initialize_sse_manager()
     logger.info("SSE manager started")
 
+    # Reconcile orphaned local jobs from previous run and process pending jobs
+    try:
+        from simpletuner.simpletuner_sdk.server.services.local_gpu_allocator import get_gpu_allocator
+
+        allocator = get_gpu_allocator()
+
+        # Check for orphaned jobs from a previous server run
+        reconcile_stats = await allocator.reconcile_on_startup()
+        if reconcile_stats["orphaned"] > 0 or reconcile_stats["no_pid"] > 0:
+            logger.warning(
+                "Reconciled orphaned local jobs: %d dead, %d adopted, %d no-pid",
+                reconcile_stats["orphaned"],
+                reconcile_stats["adopted"],
+                reconcile_stats["no_pid"],
+            )
+        elif reconcile_stats["adopted"] > 0:
+            logger.info(
+                "Adopted %d running local jobs from previous server run",
+                reconcile_stats["adopted"],
+            )
+
+        started = await allocator.process_pending_jobs()
+        if started:
+            logger.info("Started %d pending local jobs on startup: %s", len(started), started)
+    except Exception as e:
+        logger.warning("Failed to process pending jobs on startup: %s", e)
+
     # Auto-start training if --env was specified
     autostart_env = os.environ.get("SIMPLETUNER_SERVER_AUTOSTART_ENV")
     if autostart_env:
@@ -384,6 +411,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("Failed to configure rate limiters: %s", e)
 
+    # Initialize worker manager for GPU worker orchestration
+    worker_manager = None
+    try:
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import get_sse_manager
+        from simpletuner.simpletuner_sdk.server.services.worker_manager import WorkerManager
+        from simpletuner.simpletuner_sdk.server.services.worker_repository import WorkerRepository
+
+        worker_repository = WorkerRepository()
+
+        # Get job store for worker manager (uses cloud job store)
+        from simpletuner.simpletuner_sdk.server.services.cloud.container import get_job_store
+
+        job_store = get_job_store()
+        sse_manager = get_sse_manager()
+
+        worker_manager = WorkerManager(
+            worker_repository=worker_repository,
+            job_store=job_store,
+            sse_manager=sse_manager,
+        )
+
+        # Reconcile worker state from previous server run
+        await worker_manager.reconcile_on_startup()
+
+        # Start background health check loop
+        await worker_manager.start()
+    except Exception as e:
+        logger.warning("Failed to start worker manager: %s", e)
+
     try:
         yield
     except asyncio.CancelledError:
@@ -398,6 +454,14 @@ async def lifespan(app: FastAPI):
                 await stop_background_tasks()
             except Exception as e:
                 logger.warning("Error stopping background tasks: %s", e)
+
+        # Stop worker manager
+        if worker_manager:
+            try:
+                await worker_manager.stop()
+                logger.debug("Worker manager stopped")
+            except Exception as e:
+                logger.warning("Error stopping worker manager: %s", e)
 
         # Cancel cleanup task
         cleanup_task.cancel()
@@ -546,6 +610,8 @@ def create_app(
         if filename not in SOUND_FILE_MAP:
             raise HTTPException(status_code=404, detail="Sound not found")
         mapped_name = SOUND_FILE_MAP[filename]
+
+        # Try system sound themes first
         for theme_path in SOUND_THEME_PATHS:
             sound_file = theme_path / mapped_name
             if sound_file.is_file():
@@ -554,6 +620,16 @@ def create_app(
                     media_type="audio/ogg",
                     headers={"Cache-Control": "public, max-age=86400"},
                 )
+
+        # Fall back to bundled sounds in static directory
+        bundled_path = get_static_directory() / "sounds" / mapped_name
+        if bundled_path.is_file():
+            return FileResponse(
+                bundled_path,
+                media_type="audio/ogg",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+
         raise HTTPException(status_code=404, detail="Sound file not available on this system")
 
     # Add routes based on mode

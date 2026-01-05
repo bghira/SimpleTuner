@@ -6,6 +6,9 @@ Thin route handlers that delegate to service modules.
 from __future__ import annotations
 
 import logging
+import os
+import signal
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -33,6 +36,53 @@ from ._shared import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _kill_process_by_stored_pid(job_id: str) -> bool:
+    """Try to kill an orphaned process using the PID stored in queue metadata.
+
+    Used when process_keeper doesn't have the process (e.g., after server restart).
+
+    Args:
+        job_id: The job ID to look up.
+
+    Returns:
+        True if the process was killed or already dead, False if no PID found.
+    """
+    try:
+        from ...services.cloud.storage.job_repository import get_job_repository
+
+        job_repo = get_job_repository()
+        job = await job_repo.get(job_id)
+
+        if not job or not job.metadata:
+            return False
+
+        pid = job.metadata.get("pid")
+        if not pid:
+            return False
+
+        # Try SIGTERM first, then SIGKILL if needed
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.5)
+            # Check if still alive
+            try:
+                os.kill(pid, 0)  # Signal 0 = check existence
+                # Still alive, force kill
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass  # Already dead from SIGTERM
+            return True
+        except OSError as e:
+            if e.errno == 3:  # ESRCH - No such process
+                return True  # Process already dead
+            logger.warning("Failed to kill PID %d for job %s: %s", pid, job_id, e)
+            return False
+
+    except Exception as exc:
+        logger.warning("Error looking up PID for job %s: %s", job_id, exc)
+        return False
 
 
 @router.post("/jobs/sync")
@@ -171,7 +221,13 @@ async def cancel_job(
 
             success = process_keeper.terminate_process(job_id)
             if not success:
-                logger.warning("Job %s not found in process_keeper registry", job_id)
+                # Process not in registry (server restarted?) - try stored PID
+                logger.warning("Job %s not found in process_keeper registry, trying stored PID", job_id)
+                success = await _kill_process_by_stored_pid(job_id)
+                if success:
+                    logger.info("Killed orphaned process for job %s via stored PID", job_id)
+                else:
+                    logger.warning("Could not kill job %s - no process found", job_id)
         except Exception as exc:
             logger.warning("Could not terminate local process %s: %s", job_id, exc)
 
@@ -185,6 +241,8 @@ async def cancel_job(
         },
     )
 
+    job_type_label = "Local" if job.is_local else "Cloud"
+
     store.log_audit_event(
         action="job.cancelled",
         job_id=job_id,
@@ -194,7 +252,20 @@ async def cancel_job(
         user_id=str(user.id) if user else None,
     )
 
-    job_type_label = "Local" if job.is_local else "Cloud"
+    # Cloud auth audit log
+    from ...services.cloud.audit import AuditEventType, audit_log
+
+    await audit_log(
+        AuditEventType.JOB_CANCELLED,
+        f"Job '{job_id}' cancelled",
+        actor_id=user.id if user else None,
+        actor_username=user.username if user else None,
+        actor_ip=client_ip,
+        target_type="job",
+        target_id=job_id,
+        details={"provider": job.provider, "config_name": job.config_name},
+    )
+
     emit_cloud_event(
         "cloud.job.cancelled",
         job_id,
@@ -204,7 +275,8 @@ async def cancel_job(
         provider=job.provider,
     )
 
-    # Broadcast SSE event so UI updates training status
+    # Broadcast SSE event for cancellation BEFORE releasing GPUs and starting next job
+    # This ensures the "cancelled" event arrives before any "starting" event for the next job
     try:
         from ...services.sse_manager import get_sse_manager
 
@@ -221,6 +293,21 @@ async def cancel_job(
         )
     except Exception as exc:
         logger.warning("Failed to broadcast SSE event: %s", exc)
+
+    # Release GPUs and process pending jobs for local jobs AFTER broadcasting cancellation
+    if job.job_type == JobType.LOCAL:
+        try:
+            from ...services.local_gpu_allocator import get_gpu_allocator
+
+            allocator = get_gpu_allocator()
+            await allocator.release(job_id)
+
+            # Process pending jobs to start the next one if GPUs are available
+            started = await allocator.process_pending_jobs()
+            if started:
+                logger.info("Started %d pending jobs after cancel", len(started))
+        except Exception as exc:
+            logger.warning("Could not release GPUs for %s: %s", job_id, exc)
 
     return {"success": True, "job_id": job_id, "status": CloudJobStatus.CANCELLED.value}
 
@@ -269,6 +356,8 @@ async def delete_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete job",
         )
+
+    # With unified JobRepository, no separate queue store to sync
 
     store.log_audit_event(
         action="job.deleted",
@@ -502,8 +591,22 @@ async def submit_job(
     dispatcher = get_dispatcher()
     result = await dispatcher.dispatch(command, ctx)
 
-    # Emit event on success
+    # Emit event and audit log on success
     if result.success and result.data:
         _emit_job_submitted_event(result.data.job_id, result.data.config_name, provider)
+
+        # Audit log
+        from ...services.cloud.audit import AuditEventType, audit_log
+
+        await audit_log(
+            AuditEventType.JOB_SUBMITTED,
+            f"Job '{result.data.job_id}' submitted to {provider}",
+            actor_id=user.id if user else None,
+            actor_username=user.username if user else None,
+            actor_ip=client_ip,
+            target_type="job",
+            target_id=result.data.job_id,
+            details={"provider": provider, "config_name": result.data.config_name},
+        )
 
     return _build_submit_response(result)

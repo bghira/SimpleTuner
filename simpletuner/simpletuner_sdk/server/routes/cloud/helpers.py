@@ -255,20 +255,18 @@ async def enrich_jobs_with_queue_info(
         if status in (CloudJobStatus.PENDING.value, CloudJobStatus.QUEUED.value):
             pending_job_ids.append(jd.get("job_id"))
 
-    # Batch fetch queue info for pending jobs
+    # Batch fetch queue positions for pending jobs
     if pending_job_ids:
         try:
-            from ...services.cloud.queue import QueueStore
+            from ...services.cloud.storage.job_repository import get_job_repository
 
-            queue_store = QueueStore()
-            queue_info = await queue_store.get_positions_with_eta_batch(pending_job_ids)
+            job_repo = get_job_repository()
+            positions = await job_repo.get_positions_batch(pending_job_ids)
 
             for jd in job_dicts:
                 job_id = jd.get("job_id")
-                if job_id in queue_info:
-                    info = queue_info[job_id]
-                    jd["queue_position"] = info["position"]
-                    jd["estimated_wait_seconds"] = info["estimated_wait_seconds"]
+                if job_id in positions:
+                    jd["queue_position"] = positions[job_id]
         except Exception:
             pass  # Queue info is optional enrichment
 

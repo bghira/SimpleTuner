@@ -57,7 +57,13 @@ window.notificationsComponent = function() {
             imap_use_ssl: true,
         },
 
-        init() {
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                return;
+            }
+
             this.loadChannels();
             this.loadPreferences();
             this.loadEventTypes();

@@ -160,7 +160,7 @@ def _get_backup_info(backup_path: Path) -> Optional[BackupInfo]:
 @router.get("", response_model=BackupListResponse)
 async def list_backups(
     limit: int = Query(50, ge=1, le=200),
-    user: User = Depends(require_permission("admin.backup")),
+    _user: User = Depends(require_permission("admin.backup")),
 ) -> BackupListResponse:
     """List available backups.
 
@@ -191,7 +191,7 @@ async def list_backups(
 @router.post("", response_model=CreateBackupResponse)
 async def create_backup(
     request: CreateBackupRequest,
-    user: User = Depends(require_permission("admin.backup")),
+    _user: User = Depends(require_permission("admin.backup")),
 ) -> CreateBackupResponse:
     """Create a new backup.
 
@@ -260,7 +260,7 @@ async def create_backup(
             "name": request.name or backup_id,
             "description": request.description,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "created_by": user.id,
+            "created_by": _user.id,
             "components": backed_up,
         }
         with open(backup_path / "metadata.json", "w") as f:
@@ -269,7 +269,7 @@ async def create_backup(
         # Calculate total size
         total_size = sum(f.stat().st_size for f in backup_path.rglob("*") if f.is_file())
 
-        logger.info("Backup %s created by user %s (%d bytes)", backup_id, user.username, total_size)
+        logger.info("Backup %s created by user %s (%d bytes)", backup_id, _user.username, total_size)
 
         return CreateBackupResponse(
             success=True,
@@ -293,7 +293,7 @@ async def create_backup(
 @router.get("/{backup_id}", response_model=BackupInfo)
 async def get_backup(
     backup_id: str,
-    user: User = Depends(require_permission("admin.backup")),
+    _user: User = Depends(require_permission("admin.backup")),
 ) -> BackupInfo:
     """Get information about a specific backup.
 
@@ -323,7 +323,7 @@ async def get_backup(
 async def restore_backup(
     backup_id: str,
     request: RestoreBackupRequest,
-    user: User = Depends(require_permission("admin.backup")),
+    _user: User = Depends(require_permission("admin.backup")),
 ) -> RestoreBackupResponse:
     """Restore from a backup.
 
@@ -421,7 +421,7 @@ async def restore_backup(
                     restored.append("config")
                     logger.info("Restored config from backup %s", backup_id)
 
-        logger.info("Backup %s restored by user %s: %s", backup_id, user.username, restored)
+        logger.info("Backup %s restored by user %s: %s", backup_id, _user.username, restored)
 
         return RestoreBackupResponse(
             success=True,
@@ -441,7 +441,7 @@ async def restore_backup(
 @router.delete("/{backup_id}")
 async def delete_backup(
     backup_id: str,
-    user: User = Depends(require_permission("admin.backup")),
+    _user: User = Depends(require_permission("admin.backup")),
 ) -> Dict[str, Any]:
     """Delete a backup.
 
@@ -465,7 +465,7 @@ async def delete_backup(
 
     try:
         shutil.rmtree(backup_path)
-        logger.info("Backup %s deleted by user %s", backup_id, user.username)
+        logger.info("Backup %s deleted by user %s", backup_id, _user.username)
         return {"success": True, "deleted": backup_id}
 
     except Exception as exc:

@@ -40,5 +40,7 @@ else
 	echo "WANDB_API_KEY or WANDB_TOKEN not set; skipping login"
 fi
 
-# 🫡
-sleep infinity
+# Start SimpleTuner Server
+echo "Starting SimpleTuner Server..."
+# We bind to 0.0.0.0 to be accessible outside the container
+simpletuner server --host 0.0.0.0 --port 8001

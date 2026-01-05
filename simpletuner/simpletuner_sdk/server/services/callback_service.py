@@ -20,21 +20,21 @@ logger = logging.getLogger(__name__)
 
 
 def _update_job_store_status(job_id: str | None, status: str) -> None:
-    """Update job status in unified JobStore for local jobs.
+    """Update job status in the unified JobRepository.
 
     This is called when training completes or fails via webhook callbacks,
-    ensuring local job status is properly reflected in the Job Queue.
+    ensuring job status is properly reflected in the Job Queue.
     """
+    logger.info("_update_job_store_status called with job_id=%s, status=%s", job_id, status)
     if not job_id:
+        logger.warning("_update_job_store_status: no job_id provided, skipping")
         return
 
     try:
-        from datetime import datetime, timezone
+        from .cloud.base import CloudJobStatus, JobType
+        from .cloud.storage.job_repository import get_job_repository
 
-        from .cloud.base import CloudJobStatus
-        from .cloud.container import get_job_store
-
-        job_store = get_job_store()
+        job_repo = get_job_repository()
 
         # Map callback status to CloudJobStatus
         if status in {"completed", "success"}:
@@ -46,21 +46,64 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
         else:
             return  # Don't update for other statuses
 
-        updates = {
-            "status": new_status,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }
+        async def _do_updates():
+            logger.info("_do_updates starting for job %s (status: %s)", job_id, new_status)
+            try:
+                # Get job to check if it's local and current state
+                job = await job_repo.get(job_id)
+                if not job:
+                    logger.warning("_do_updates: job %s not found in repo", job_id)
+                    return
+
+                logger.info("_do_updates: job %s is type %s, current status %s", job_id, job.job_type, job.status)
+
+                # Check if job is already in a terminal state (idempotency check)
+                # This prevents race conditions with the cancellation API
+                terminal_states = {
+                    CloudJobStatus.COMPLETED.value,
+                    CloudJobStatus.FAILED.value,
+                    CloudJobStatus.CANCELLED.value,
+                }
+                if job.status in terminal_states:
+                    logger.info("_do_updates: job %s already in terminal state %s, skipping", job_id, job.status)
+                    return
+
+                # Update job status
+                if new_status == CloudJobStatus.COMPLETED.value:
+                    await job_repo.mark_completed(job_id)
+                elif new_status == CloudJobStatus.FAILED.value:
+                    await job_repo.mark_failed(job_id, "Job failed")
+                elif new_status == CloudJobStatus.CANCELLED.value:
+                    await job_repo.mark_cancelled(job_id)
+
+                # Release GPUs and process pending jobs for local jobs
+                if job.job_type == JobType.LOCAL:
+                    from .local_gpu_allocator import get_gpu_allocator
+
+                    allocator = get_gpu_allocator()
+                    logger.info("_do_updates: releasing GPUs for job %s", job_id)
+                    await allocator.release(job_id)
+                    # Process pending jobs to start the next one if GPUs are available
+                    logger.info("_do_updates: calling process_pending_jobs")
+                    started = await allocator.process_pending_jobs()
+                    if started:
+                        logger.info("Started %d pending jobs after job %s completed", len(started), job_id)
+                    else:
+                        logger.info("No pending jobs were started after job %s completed", job_id)
+            except Exception as exc:
+                logger.error("_do_updates failed for job %s: %s", job_id, exc, exc_info=True)
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(job_store.update_job(job_id, updates))
+            logger.info("Scheduling _do_updates task for job %s", job_id)
+            loop.create_task(_do_updates())
         except RuntimeError:
             # No running event loop, use thread
             import threading
 
             def _update():
                 try:
-                    asyncio.run(job_store.update_job(job_id, updates))
+                    asyncio.run(_do_updates())
                 except Exception as thread_exc:
                     # Best-effort background update - log the failure but don't propagate.
                     # During testing, the database or logger may be unavailable during cleanup,
@@ -72,7 +115,7 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
 
             threading.Thread(target=_update, daemon=True).start()
     except Exception as exc:
-        logger.debug("Failed to update job status in JobStore: %s", exc)
+        logger.debug("Failed to update job status in JobRepository: %s", exc)
 
 
 _default_service: CallbackService | None = None
@@ -519,19 +562,8 @@ class CallbackService:
             f"Broadcasting lifecycle stage: {stage_state.get('progress_type')} (status={stage_state.get('status')}) for job {job_id}"
         )
 
-        async def _broadcast():
-            manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="lifecycle.stage")
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(_broadcast())
-        else:
-            asyncio.run(_broadcast())
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="lifecycle.stage")
 
     def _broadcast_progress_reset(self, job_id: str | None, *, status: str) -> None:
         if job_id:
@@ -549,19 +581,8 @@ class CallbackService:
             "total_epochs": 0,
         }
 
-        async def _broadcast():
-            manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="training_progress")
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(_broadcast())
-        else:
-            asyncio.run(_broadcast())
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="training_progress")
 
     def _broadcast_training_progress(self, job_id: str | None, progress_state: Mapping[str, Any]) -> None:
         """Broadcast real-time training progress updates via SSE."""
@@ -586,19 +607,8 @@ class CallbackService:
             f"({payload['percent']:.1f}%) for job {job_id}"
         )
 
-        async def _broadcast():
-            manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="training.progress")
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(_broadcast())
-        else:
-            asyncio.run(_broadcast())
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="training.progress")
 
     def _should_suppress_event(self, event: CallbackEvent) -> bool:
         if not event:

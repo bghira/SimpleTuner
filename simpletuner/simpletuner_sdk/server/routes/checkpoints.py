@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.checkpoints_service import CHECKPOINTS_SERVICE, CheckpointsServiceError
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.huggingface_service import HUGGINGFACE_SERVICE, HuggingfaceServiceError
 
 router = APIRouter(prefix="/api/checkpoints", tags=["checkpoints"])
@@ -67,6 +69,7 @@ def _call_service(func, *args, **kwargs):
 async def list_checkpoints(
     environment: str = Query(..., description="Environment ID (config name)"),
     sort_by: str = Query("step-desc", description="Sort order: step-desc, step-asc, size-desc"),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     List all checkpoints for an environment.
@@ -92,6 +95,7 @@ async def list_checkpoints(
 async def validate_checkpoint(
     checkpoint_name: str,
     request: ValidateCheckpointRequest,
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Validate a checkpoint for resuming training.
@@ -111,7 +115,10 @@ async def validate_checkpoint(
 
 
 @router.post("/cleanup/preview")
-async def preview_cleanup(request: CleanupRequest) -> Dict[str, Any]:
+async def preview_cleanup(
+    request: CleanupRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Preview what checkpoints would be deleted by cleanup operation.
 
@@ -129,7 +136,10 @@ async def preview_cleanup(request: CleanupRequest) -> Dict[str, Any]:
 
 
 @router.post("/cleanup/execute")
-async def execute_cleanup(request: CleanupRequest) -> Dict[str, Any]:
+async def execute_cleanup(
+    request: CleanupRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Execute cleanup operation to remove old checkpoints.
 
@@ -150,6 +160,7 @@ async def execute_cleanup(request: CleanupRequest) -> Dict[str, Any]:
 async def delete_checkpoint(
     checkpoint_name: str,
     environment: str = Query(..., description="Environment ID (config name)"),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Remove a checkpoint directory for an environment."""
     return _call_service(
@@ -162,6 +173,7 @@ async def delete_checkpoint(
 @router.get("/for-resume")
 async def get_checkpoints_for_resume(
     environment: str = Query(..., description="Environment ID (config name)"),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Get checkpoints formatted for resume dropdown.
@@ -180,6 +192,7 @@ async def get_checkpoints_for_resume(
 @router.get("/retention")
 async def get_retention_config(
     environment: str = Query(..., description="Environment ID (config name)"),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Get checkpoint retention configuration for an environment.
@@ -194,7 +207,10 @@ async def get_retention_config(
 
 
 @router.put("/retention")
-async def update_retention_config(request: RetentionConfigUpdate) -> Dict[str, Any]:
+async def update_retention_config(
+    request: RetentionConfigUpdate,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Update checkpoint retention configuration for an environment.
 
@@ -215,6 +231,7 @@ async def update_retention_config(request: RetentionConfigUpdate) -> Dict[str, A
 async def upload_checkpoint(
     checkpoint_name: str,
     request: UploadCheckpointRequest,
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Upload a single checkpoint to HuggingFace Hub.
@@ -238,7 +255,10 @@ async def upload_checkpoint(
 
 
 @router.post("/upload")
-async def upload_checkpoints(request: UploadCheckpointsRequest) -> Dict[str, Any]:
+async def upload_checkpoints(
+    request: UploadCheckpointsRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Upload multiple checkpoints to HuggingFace Hub.
 
@@ -259,7 +279,10 @@ async def upload_checkpoints(request: UploadCheckpointsRequest) -> Dict[str, Any
 
 
 @router.get("/upload/{task_id}/status")
-async def get_upload_status(task_id: str) -> Dict[str, Any]:
+async def get_upload_status(
+    task_id: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Get the status of an upload task.
 
@@ -273,7 +296,10 @@ async def get_upload_status(task_id: str) -> Dict[str, Any]:
 
 
 @router.post("/upload/{task_id}/cancel")
-async def cancel_upload(task_id: str) -> Dict[str, Any]:
+async def cancel_upload(
+    task_id: str,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Cancel an upload task.
 

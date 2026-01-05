@@ -49,24 +49,26 @@ class RateLimitRule:
 # Note: Unauthenticated requests use DEFAULT_ANONYMOUS_RATE_LIMIT (below)
 # Authenticated users get much higher limits via AUTHENTICATED_USER_MULTIPLIER
 DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
-    # Authentication - strict limits (these apply regardless of auth status)
-    (r"^/api/cloud/auth/login$", 5, 60, ["POST"]),  # 5 login attempts/min
-    (r"^/api/cloud/auth/register$", 3, 60, ["POST"]),  # 3 registrations/min
-    (r"^/api/cloud/auth/api-keys$", 10, 60, ["POST"]),  # 10 key creations/min
+    # Authentication - moderate limits (allow retries for typos)
+    (r"^/api/auth/login$", 15, 60, ["POST"]),  # 15 login attempts/min
+    (r"^/api/auth/register$", 5, 60, ["POST"]),  # 5 user registrations/min
+    (r"^/api/auth/api-keys$", 10, 60, ["POST"]),  # 10 key creations/min
+    # Password change - strict limit to prevent brute force
+    (r"^/api/users/me/password$", 5, 300, ["PUT"]),  # 5 attempts per 5 minutes
     # Job submission - moderate limits
     (r"^/api/cloud/jobs$", 20, 60, ["POST"]),  # 20 job submissions/min
     (r"^/api/cloud/jobs/.+/cancel$", 30, 60, ["POST"]),  # 30 cancellations/min
     # Webhooks - higher limits (already has its own limiter)
-    (r"^/api/cloud/webhooks/", 100, 60, None),
+    (r"^/api/webhooks/", 100, 60, None),
     # S3 uploads - moderate limits
     (r"^/api/cloud/storage/", 50, 60, None),
     # Quotas - moderate limits
-    (r"^/api/cloud/quotas/", 30, 60, None),
+    (r"^/api/quotas/", 30, 60, None),
 ]
 
 # Default rate limit for unauthenticated/anonymous requests
-# This is intentionally low to prevent abuse
-DEFAULT_ANONYMOUS_RATE_LIMIT = 60  # calls per period
+# Set high enough to allow page loads (which trigger 10+ API calls each)
+DEFAULT_ANONYMOUS_RATE_LIMIT = 180  # calls per period
 
 # Multiplier for authenticated users (they get this many times more requests)
 # e.g., if anonymous limit is 60/min, authenticated users get 600/min
@@ -179,8 +181,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             "/api/prompt-libraries/",
             "/api/caption-filters",
             "/api/training/status",
-            # Setup status (needed during onboarding)
-            "/api/cloud/auth/setup/status",
+            # Auth status checks (needed during login/onboarding flow)
+            "/api/auth/setup/status",
+            "/api/auth/check",
+            "/api/auth/me",
+            "/api/users/meta/auth-status",
         ]
         self.enable_audit = enable_audit
         self._lock = threading.Lock()

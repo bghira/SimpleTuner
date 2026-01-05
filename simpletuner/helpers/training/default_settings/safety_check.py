@@ -147,6 +147,8 @@ def safety_check(args, accelerator):
             sys.exit(1)
 
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3", "chroma"]
+    if args.gradient_checkpointing_interval == 1:
+        args.gradient_checkpointing_interval = None
     if args.gradient_checkpointing_interval is not None:
         if args.model_family.lower() not in gradient_checkpointing_interval_supported_models:
             logger.warning(

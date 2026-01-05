@@ -190,7 +190,7 @@ def _auth_setup(args) -> int:
         print(f"Checking server at {server_url}...")
 
     try:
-        status_result = cloud_api_request("GET", "/api/cloud/setup/status")
+        status_result = cloud_api_request("GET", "/api/auth/setup/status")
     except SystemExit:
         return 1
 
@@ -220,7 +220,7 @@ def _auth_setup(args) -> int:
         data["display_name"] = display_name
 
     try:
-        result = cloud_api_request("POST", "/api/cloud/setup/first-admin", data=data)
+        result = cloud_api_request("POST", "/api/auth/setup/first-admin", data=data)
     except SystemExit:
         return 1
 

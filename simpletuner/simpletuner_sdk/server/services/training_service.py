@@ -29,7 +29,12 @@ from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
-from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
+from .webhook_defaults import (
+    DEFAULT_CALLBACK_URL,
+    DEFAULT_WEBHOOK_CONFIG,
+    get_authenticated_webhook_config,
+    get_default_callback_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,51 @@ def _detect_local_hardware() -> str:
     except Exception:
         pass
     return "CPU"
+
+
+def get_gpu_requirements(runtime_config: Dict[str, Any]) -> Tuple[int, Optional[List[int]]]:
+    """Extract GPU requirements from a training config.
+
+    Args:
+        runtime_config: The training configuration dictionary.
+
+    Returns:
+        Tuple of (num_processes, preferred_device_ids)
+    """
+    # Get num_processes from various sources
+    num_processes = runtime_config.get("--num_processes") or runtime_config.get("num_processes") or 1
+    try:
+        num_processes = max(1, int(num_processes))
+    except (TypeError, ValueError):
+        num_processes = 1
+
+    # Get device_ids if specified
+    device_ids: Optional[List[int]] = None
+    raw_device_ids = runtime_config.get("--accelerate_visible_devices") or runtime_config.get("accelerate_visible_devices")
+
+    if raw_device_ids:
+        if isinstance(raw_device_ids, str):
+            parsed = []
+            for token in raw_device_ids.split(","):
+                token = token.strip()
+                if token:
+                    try:
+                        parsed.append(int(token))
+                    except ValueError:
+                        pass
+            if parsed:
+                device_ids = parsed
+        elif isinstance(raw_device_ids, (list, tuple)):
+            parsed = []
+            for item in raw_device_ids:
+                try:
+                    parsed.append(int(item))
+                except (TypeError, ValueError):
+                    pass
+            if parsed:
+                device_ids = parsed
+
+    return (num_processes, device_ids)
 
 
 _PROMPT_LIBRARY_RUNTIME_ROOT = Path(tempfile.gettempdir()) / "simpletuner_prompt_libraries"
@@ -998,18 +1048,191 @@ def validate_training_config(
     )
 
 
-def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] = None) -> str:
-    """Submit a training job via the process keeper and return the job identifier.
+@dataclass
+class TrainingJobResult:
+    """Result of a training job submission."""
+
+    job_id: Optional[str]
+    status: str  # "running", "queued", "rejected"
+    allocated_gpus: Optional[List[int]] = None
+    queue_position: Optional[int] = None
+    reason: Optional[str] = None
+
+
+def start_training_job(
+    runtime_config: Dict[str, Any],
+    env_name: Optional[str] = None,
+    *,
+    no_wait: bool = False,
+    any_gpu: bool = False,
+    for_approval: bool = False,
+    org_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+) -> TrainingJobResult:
+    """Submit a training job via the process keeper and return the job result.
 
     Args:
         runtime_config: The training configuration dictionary.
         env_name: Optional environment/config directory name for display purposes.
+        no_wait: If True, reject immediately if GPUs unavailable (default: queue).
+        any_gpu: If True, use any available GPUs instead of configured device IDs.
+        for_approval: If True, request approval when exceeding org GPU quota.
+        org_id: Organization ID for org-level quota checks.
+        user_id: User ID for the submitting user.
+
+    Returns:
+        TrainingJobResult with job_id, status, and optionally allocated GPUs.
     """
+    import asyncio
+
+    from .local_gpu_allocator import get_gpu_allocator
+
     job_id = str(uuid.uuid4())[:8]
+
+    # Extract GPU requirements
+    num_processes, preferred_gpus = get_gpu_requirements(runtime_config)
+
+    # Check GPU availability
+    allocator = get_gpu_allocator()
+
+    # Run async GPU check synchronously
+    def _check_and_allocate():
+        async def _async_check():
+            return await allocator.can_allocate(
+                required_count=num_processes,
+                preferred_gpus=preferred_gpus,
+                any_gpu=any_gpu,
+                org_id=org_id,
+                for_approval=for_approval,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context, create a task
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(lambda: asyncio.run(_async_check()))
+                return future.result(timeout=10)
+        except RuntimeError:
+            # No running event loop
+            return asyncio.run(_async_check())
+
+    can_start, gpus_to_use, reason = _check_and_allocate()
+
+    if not can_start:
+        # Check if this is an approval-required situation
+        if reason and reason.startswith("APPROVAL_REQUIRED:"):
+            approval_reason = reason[len("APPROVAL_REQUIRED:") :]
+            return _queue_training_job(
+                job_id=job_id,
+                runtime_config=runtime_config,
+                env_name=env_name,
+                num_processes=num_processes,
+                preferred_gpus=preferred_gpus,
+                any_gpu=any_gpu,
+                org_id=org_id,
+                user_id=user_id,
+                requires_approval=True,
+                approval_reason=approval_reason,
+            )
+
+        if no_wait:
+            return TrainingJobResult(
+                job_id=None,
+                status="rejected",
+                reason=reason or "Required GPUs unavailable",
+            )
+        # Queue the job
+        return _queue_training_job(
+            job_id=job_id,
+            runtime_config=runtime_config,
+            env_name=env_name,
+            num_processes=num_processes,
+            preferred_gpus=preferred_gpus,
+            any_gpu=any_gpu,
+            org_id=org_id,
+            user_id=user_id,
+        )
+
+    # GPUs are available - create queue entry and allocate
+    config_name = (
+        env_name
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+        or runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or "local"
+    )
+
+    # Extract output_url and run_name for job tracking
+    output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+    run_name = (
+        runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+    )
+
+    def _create_running_entry():
+        """Create a job entry with status=running and allocated GPUs."""
+        from datetime import datetime, timezone
+
+        from .cloud.base import CloudJobStatus, JobType, UnifiedJob
+        from .cloud.storage.job_repository import get_job_repository
+
+        async def _async_create():
+            job_repo = get_job_repository()
+
+            # Create job directly as running with allocated GPUs
+            now = datetime.now(timezone.utc).isoformat()
+            metadata = {
+                "runtime_config": runtime_config,
+                "env_name": env_name,
+                "any_gpu": any_gpu,
+            }
+            if run_name:
+                metadata["run_name"] = run_name
+            job = UnifiedJob(
+                job_id=job_id,
+                job_type=JobType.LOCAL,
+                provider="local",
+                status=CloudJobStatus.RUNNING.value,
+                config_name=config_name,
+                created_at=now,
+                started_at=now,
+                queued_at=now,
+                user_id=user_id,
+                org_id=org_id,
+                num_processes=num_processes,
+                allocated_gpus=gpus_to_use,
+                output_url=output_url,
+                hardware_type=_detect_local_hardware(),
+                metadata=metadata,
+            )
+            await job_repo.add(job)
+            return job
+
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(lambda: asyncio.run(_async_create()))
+                return future.result(timeout=10)
+        except RuntimeError:
+            return asyncio.run(_async_create())
+
+    _create_running_entry()
+
+    # Update runtime config with allocated GPUs
+    if gpus_to_use:
+        runtime_config["--accelerate_visible_devices"] = ",".join(str(g) for g in gpus_to_use)
+        runtime_config["--num_processes"] = len(gpus_to_use)
 
     runtime_payload = dict(runtime_config)
 
-    # Merge user webhook_config with WebUI callback
+    # Merge user webhook_config with WebUI callback (with authentication token)
     user_webhooks = runtime_payload.get("--webhook_config") or runtime_payload.get("webhook_config") or []
     if isinstance(user_webhooks, str):
         try:
@@ -1019,7 +1242,15 @@ def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] =
     if not isinstance(user_webhooks, list):
         user_webhooks = [user_webhooks] if user_webhooks else []
 
-    merged_webhooks = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG) + user_webhooks
+    # Use authenticated webhook config which includes the callback auth token
+    authenticated_config = get_authenticated_webhook_config()
+
+    # Filter out any existing default callback URLs from user_webhooks to avoid duplicates
+    # (build_config_bundle may have already added DEFAULT_WEBHOOK_CONFIG without auth)
+    default_callback_url = get_default_callback_url()
+    user_webhooks = [w for w in user_webhooks if w.get("callback_url") != default_callback_url]
+
+    merged_webhooks = authenticated_config + user_webhooks
     runtime_payload["--webhook_config"] = merged_webhooks
 
     # Resolve the prompt library into a job-scoped path if one was configured.
@@ -1089,62 +1320,130 @@ def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] =
 
     process_keeper.submit_job(job_id, run_trainer_job, job_config)
 
-    # Track local job in unified JobStore for Job Queue visibility
-    try:
-        UnifiedJob = _get_unified_job_class()
-        CloudJobStatus = _get_cloud_job_status()
-        job_store = _get_job_store()
+    APIState.set_state("current_job_id", job_id)
+    return TrainingJobResult(
+        job_id=job_id,
+        status="running",
+        allocated_gpus=gpus_to_use,
+    )
 
-        config_name = (
-            env_name
-            or runtime_config.get("--model_alias")
-            or runtime_config.get("model_alias")
-            or runtime_config.get("--tracker_run_name")
-            or runtime_config.get("tracker_run_name")
-            or "local"
-        )
-        output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
 
-        local_job = UnifiedJob.create_local(
-            job_id=job_id,
-            config_name=config_name,
-            hardware_type=_detect_local_hardware(),
-        )
-        local_job.output_url = output_url
-        local_job.status = CloudJobStatus.RUNNING.value
-        local_job.started_at = datetime.now(timezone.utc).isoformat()
+def _queue_training_job(
+    job_id: str,
+    runtime_config: Dict[str, Any],
+    env_name: Optional[str],
+    num_processes: int,
+    preferred_gpus: Optional[List[int]],
+    any_gpu: bool,
+    org_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    requires_approval: bool = False,
+    approval_reason: Optional[str] = None,
+) -> TrainingJobResult:
+    """Queue a training job when GPUs are not immediately available.
 
-        # Store run name in metadata for display in job list
-        run_name = (
-            runtime_config.get("--tracker_run_name")
-            or runtime_config.get("tracker_run_name")
-            or runtime_config.get("--model_alias")
-            or runtime_config.get("model_alias")
-        )
-        if run_name:
-            local_job.metadata["run_name"] = run_name
+    The job will be started automatically when GPUs become available.
 
-        # Store job asynchronously (fire-and-forget)
-        import asyncio
+    Args:
+        requires_approval: If True, job requires admin approval before running.
+        approval_reason: Reason why approval is required (e.g., exceeds org quota).
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    from .cloud.base import CloudJobStatus, JobType, UnifiedJob
+    from .cloud.storage.job_repository import get_job_repository
+
+    config_name = (
+        env_name
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+        or runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or "local"
+    )
+
+    output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+    run_name = runtime_config.get("--tracker_run_name") or runtime_config.get("tracker_run_name")
+
+    def _add_to_queue():
+        async def _async_add():
+            job_repo = get_job_repository()
+
+            # Create job in queued/pending state
+            now = datetime.now(timezone.utc).isoformat()
+            status = CloudJobStatus.PENDING.value if requires_approval else CloudJobStatus.QUEUED.value
+
+            # Calculate queue position
+            stats = await job_repo.get_queue_stats()
+            queue_depth = stats.get("queue_depth", 0)
+
+            job = UnifiedJob(
+                job_id=job_id,
+                job_type=JobType.LOCAL,
+                provider="local",
+                status=status,
+                config_name=config_name,
+                created_at=now,
+                queued_at=now,
+                user_id=user_id,
+                org_id=org_id,
+                num_processes=num_processes,
+                allocated_gpus=preferred_gpus if not any_gpu else None,
+                requires_approval=requires_approval,
+                queue_position=queue_depth + 1,
+                output_url=output_url,
+                hardware_type=_detect_local_hardware(),
+                metadata={
+                    "runtime_config": runtime_config,
+                    "env_name": env_name,
+                    "any_gpu": any_gpu,
+                    "approval_reason": approval_reason,
+                    "run_name": run_name,
+                },
+            )
+            await job_repo.add(job)
+            return job.queue_position, status
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(job_store.add_job(local_job))
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(lambda: asyncio.run(_async_add()))
+                return future.result(timeout=10)
         except RuntimeError:
-            # No running event loop, use sync approach via thread
-            import threading
+            return asyncio.run(_async_add())
 
-            def _add_job():
-                import asyncio as aio
+    position, status = _add_to_queue()
 
-                aio.run(job_store.add_job(local_job))
+    if requires_approval:
+        logger.info(
+            "Queued training job %s for approval at position %d (reason: %s)",
+            job_id,
+            position,
+            approval_reason,
+        )
+        return TrainingJobResult(
+            job_id=job_id,
+            status="blocked",
+            queue_position=position,
+            reason=approval_reason or "Requires admin approval",
+        )
 
-            threading.Thread(target=_add_job, daemon=True).start()
-    except Exception as exc:
-        logger.warning("Failed to track local job in JobStore: %s", exc)
+    logger.info(
+        "Queued training job %s at position %d (needs %d GPUs)",
+        job_id,
+        position,
+        num_processes,
+    )
 
-    APIState.set_state("current_job_id", job_id)
-    return job_id
+    return TrainingJobResult(
+        job_id=job_id,
+        status="queued",
+        queue_position=position,
+        reason=f"Waiting for {num_processes} GPU(s) to become available",
+    )
 
 
 def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: bool) -> bool:
@@ -1158,6 +1457,12 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
         APIState.set_state("training_status", status)
         if clear_job_id:
             APIState.set_state("current_job_id", None)
+
+        # Release GPUs allocated to this job.
+        # Don't process pending jobs on cancellation to avoid starting jobs
+        # that may also be about to be cancelled (e.g., during bulk cancel).
+        is_cancellation = status in {"stopped", "cancelled"}
+        _release_job_gpus(job_id, process_pending=not is_cancellation)
 
         # Update job status in JobStore
         try:
@@ -1195,6 +1500,44 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
             logger.warning("Failed to update job status in JobStore: %s", exc)
 
     return terminated
+
+
+def _release_job_gpus(job_id: str, *, process_pending: bool = True) -> None:
+    """Release GPUs allocated to a job.
+
+    Args:
+        job_id: The job ID to release GPUs for.
+        process_pending: If True, process pending jobs after release.
+            Set to False during cancellation to avoid starting jobs
+            that may also be about to be cancelled.
+    """
+    import asyncio
+
+    from .local_gpu_allocator import get_gpu_allocator
+
+    def _release():
+        async def _async_release():
+            allocator = get_gpu_allocator()
+            await allocator.release(job_id)
+            if process_pending:
+                # Process pending jobs to start the next one if GPUs are available
+                started = await allocator.process_pending_jobs()
+                if started:
+                    logger.info("Started %d pending jobs after GPU release", len(started))
+
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pool.submit(lambda: asyncio.run(_async_release()))
+        except RuntimeError:
+            asyncio.run(_async_release())
+
+    try:
+        _release()
+    except Exception as exc:
+        logger.warning("Failed to release GPUs for job %s: %s", job_id, exc)
 
 
 def request_manual_validation(job_id: Optional[str] = None) -> str:

@@ -104,7 +104,12 @@ class AsyncJobStore:
             return cls._instance
 
     def _resolve_config_dir(self) -> Path:
-        """Resolve config directory from WebUIStateStore or default."""
+        """Resolve config directory from WebUIStateStore or default.
+
+        Returns the SimpleTuner root directory (e.g. /notebooks/simpletuner
+        or ~/.simpletuner). The database path is then constructed as
+        config_dir / "cloud" / "jobs.db".
+        """
         try:
             from .webui_state import WebUIStateStore
 
@@ -112,9 +117,11 @@ class AsyncJobStore:
             defaults = store.load_defaults()
             if defaults.configs_dir:
                 return Path(defaults.configs_dir)
-            return store.base_dir.parent / "config"
+            return store.base_dir.parent
         except Exception:
-            return Path.home() / ".simpletuner" / "config"
+            from .storage.base import get_default_config_dir
+
+            return get_default_config_dir()
 
     async def _ensure_initialized(self) -> None:
         """Ensure all component stores are initialized."""

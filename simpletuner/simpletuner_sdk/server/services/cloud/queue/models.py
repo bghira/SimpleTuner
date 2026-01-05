@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class QueueStatus(str, Enum):
@@ -43,6 +43,7 @@ class QueueEntry:
     id: int
     job_id: str  # Links to UnifiedJob
     user_id: Optional[int]  # User who submitted
+    org_id: Optional[int] = None  # Organization for org-level quotas
     team_id: Optional[str] = None  # Team/department for fair-share scheduling
     provider: str = "replicate"  # Target provider (replicate, simpletuner_io, etc.)
     config_name: Optional[str] = None  # Config being trained
@@ -71,6 +72,11 @@ class QueueEntry:
     # Additional metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # GPU allocation tracking for local jobs
+    allocated_gpus: Optional[List[int]] = None  # Device indices allocated to this job
+    job_type: str = "cloud"  # "local" or "cloud"
+    num_processes: int = 1  # Number of GPU processes required
+
     @property
     def effective_priority(self) -> int:
         """Get the effective priority (override if set, else level-based)."""
@@ -84,6 +90,7 @@ class QueueEntry:
             "id": self.id,
             "job_id": self.job_id,
             "user_id": self.user_id,
+            "org_id": self.org_id,
             "team_id": self.team_id,
             "provider": self.provider,
             "config_name": self.config_name,
@@ -103,6 +110,9 @@ class QueueEntry:
             "max_attempts": self.max_attempts,
             "error_message": self.error_message,
             "metadata": self.metadata,
+            "allocated_gpus": self.allocated_gpus,
+            "job_type": self.job_type,
+            "num_processes": self.num_processes,
         }
 
     @classmethod
@@ -122,6 +132,7 @@ class QueueEntry:
             id=data.get("id", 0),
             job_id=data["job_id"],
             user_id=data.get("user_id"),
+            org_id=data.get("org_id"),
             team_id=data.get("team_id"),
             provider=data.get("provider", "replicate"),
             config_name=data.get("config_name"),
@@ -139,6 +150,9 @@ class QueueEntry:
             max_attempts=data.get("max_attempts", 3),
             error_message=data.get("error_message"),
             metadata=data.get("metadata", {}),
+            allocated_gpus=data.get("allocated_gpus"),
+            job_type=data.get("job_type", "cloud"),
+            num_processes=data.get("num_processes", 1),
         )
 
 

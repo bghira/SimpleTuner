@@ -13,17 +13,6 @@
      x-init="init()"
      @beforeunload.window="destroy()">
 
-    <!-- Loading state while checking setup status -->
-    <div class="text-center py-5" x-show="setupState?.loading" x-cloak>
-        <i class="fas fa-spinner fa-spin fa-2x text-muted"></i>
-        <p class="text-muted mt-2">Loading...</p>
-    </div>
-
-    <!-- First-Run Setup Wizard (shown when no admin exists) -->
-    {% include 'partials/cloud_first_run_setup.html' %}
-
-    <!-- Normal UI (hidden during first-run setup) -->
-    <div x-show="setupState && !setupState.needsSetup && !setupState.loading" x-cloak>
 
     <!-- Provider Tabs -->
     {% include 'partials/cloud_provider_tabs.html' %}
@@ -234,8 +223,6 @@
          x-show="selectedJob"
          x-cloak
          @click="selectedJob = null"></div>
-
-    </div><!-- End of normal UI wrapper (hidden during first-run setup) -->
 
     <!-- Upload Progress (floating, shown when active) -->
     {% include 'partials/cloud_upload_progress.html' %}

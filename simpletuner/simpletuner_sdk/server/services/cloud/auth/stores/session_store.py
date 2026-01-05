@@ -115,6 +115,39 @@ class SessionStore(BaseAuthStore):
 
         return await loop.run_in_executor(None, _get)
 
+    async def get_expired_session_user_id(self, session_id: str) -> Optional[int]:
+        """Get the user ID for an expired session.
+
+        Used to detect when someone tries to use an expired session.
+        Does NOT return user_id for valid sessions (use get_user_id for that).
+
+        Args:
+            session_id: The session token
+
+        Returns:
+            User ID if session exists but is expired, None otherwise
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        loop = asyncio.get_running_loop()
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT user_id FROM sessions
+                    WHERE id = ? AND expires_at <= ?
+                    """,
+                    (session_id, now),
+                )
+                row = cursor.fetchone()
+                return row["user_id"] if row else None
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get)
+
     async def delete(self, session_id: str) -> bool:
         """Delete a session (logout).
 

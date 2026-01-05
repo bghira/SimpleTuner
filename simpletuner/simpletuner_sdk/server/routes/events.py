@@ -10,8 +10,11 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from ..services.cloud.auth.middleware import SESSION_COOKIE_NAME, get_auth_middleware, get_current_user
+from ..services.cloud.auth.models import User
 
 try:  # pragma: no cover - optional dependency
     from sse_starlette.sse import EventSourceResponse  # type: ignore
@@ -143,11 +146,20 @@ def _resolve_broadcast_timeout(timeout_param: float | None) -> float:
 
 
 @router.post("/callback")
-async def handle_callback(request: Request):
+async def handle_callback(request: Request, _user: User = Depends(get_current_user)):
     """
     Endpoint to receive incoming callbacks and store them as events.
     """
-    data = await request.json()
+    from starlette.requests import ClientDisconnect
+
+    try:
+        data = await request.json()
+    except ClientDisconnect:
+        # Client disconnected before we could read the body.
+        # This typically happens during job cancellation when the process
+        # is killed mid-callback. Safe to ignore.
+        logger.debug("Client disconnected before callback body could be read")
+        return {"message": "Client disconnected"}
 
     callback_service = _get_callback_service(request)
 
@@ -170,6 +182,7 @@ async def broadcast(
         float | None,
         Query(gt=0.0, description="Maximum time in seconds to wait for new events."),
     ] = None,
+    _user: User = Depends(get_current_user),
 ):
     """
     Endpoint for long polling, where the client requests events newer than the last received index.
@@ -205,15 +218,27 @@ async def broadcast(
 
 
 @router.get("/api/events")
-async def events_stream(request: Request):
+async def events_stream(request: Request, _user: User = Depends(get_current_user)):
     """
     Server-Sent Events endpoint for real-time updates with connection management.
     """
     # Get SSE manager
     sse_manager = get_sse_manager()
 
+    # Extract user info from auth context for session tracking
+    user_id = None
+    session_id = None
+    try:
+        auth_middleware = get_auth_middleware()
+        auth_context = await auth_middleware(request)
+        if auth_context.is_authenticated and auth_context.user:
+            user_id = auth_context.user.id
+            session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    except Exception:
+        pass  # Auth extraction is optional for SSE
+
     # Try to add connection with limits
-    connection = await sse_manager.add_connection(request)
+    connection = await sse_manager.add_connection(request, user_id=user_id, session_id=session_id)
     if not connection:
         # Connection limit reached
         return JSONResponse(
@@ -268,9 +293,14 @@ async def events_stream(request: Request):
                             if event.type == EventType.TRAINING_PROGRESS:
                                 should_skip = True
 
-                            # Skip training status events with progress data (also broadcast via _broadcast_training_progress)
-                            if event.type == EventType.TRAINING_STATUS and event.progress is not None:
+                            # Skip training status events - they cause job ID conflicts when
+                            # old events from a completed job are polled after a new job starts.
+                            # Status updates are handled via direct SSE broadcasts.
+                            if event.type == EventType.TRAINING_STATUS:
                                 should_skip = True
+
+                            # Do NOT skip training summary events so that successful completion
+                            # can be delivered to clients via SSE polling.
 
                             # Skip lifecycle stage events (broadcast via _broadcast_startup_stage)
                             if event.stage is not None:
@@ -353,7 +383,7 @@ async def events_stream(request: Request):
 
 
 @router.get("/api/events/recent")
-async def get_recent_events(request: Request):
+async def get_recent_events(request: Request, _user: User = Depends(get_current_user)):
     """Get recent training events for HTMX display."""
     from fastapi.responses import HTMLResponse
 

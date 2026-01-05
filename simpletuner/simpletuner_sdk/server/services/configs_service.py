@@ -1378,7 +1378,10 @@ class ConfigsService:
         config_dict: Dict[str, Any] = {}
         excluded_fields = {
             "configs_dir",
+            # UI-only sentinel fields
             "__active_tab__",
+            "__disabled_fields__",
+            "ez_model_type",
         }
 
         for onboarding_field in lazy_field_registry.get_webui_onboarding_fields():

@@ -22,6 +22,7 @@ class QuotaType(str, Enum):
     CONCURRENT_JOBS = "concurrent_jobs"  # Max running jobs at once
     JOBS_PER_DAY = "jobs_per_day"  # Max job submissions per day
     JOBS_PER_HOUR = "jobs_per_hour"  # Max job submissions per hour
+    LOCAL_GPUS = "local_gpus"  # Max GPUs for local training (org ceiling)
 
 
 class QuotaAction(str, Enum):
