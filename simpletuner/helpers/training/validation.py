@@ -1997,11 +1997,20 @@ class Validation:
                 float(getattr(self.config, "validation_lycoris_strength", 1.0))
             )
 
-        pipeline_type = (
-            PipelineTypes.CONTROLNET
-            if self.config.controlnet
-            else (PipelineTypes.CONTROL if self.config.control else self.model.DEFAULT_PIPELINE_TYPE)
-        )
+        if self.config.controlnet:
+            pipeline_type = PipelineTypes.CONTROLNET
+        elif self.config.control:
+            pipeline_type = PipelineTypes.CONTROL
+        else:
+            pipeline_type = self.model.DEFAULT_PIPELINE_TYPE
+            if getattr(self.model, "requires_s2v_validation_inputs", lambda: False)():
+                if PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2VIDEO
+            elif self.config.validation_using_datasets:
+                if PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2IMG
+                elif PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2VIDEO
         self.model.pipeline = self.model.get_pipeline(
             pipeline_type=pipeline_type,
             load_base_model=False,

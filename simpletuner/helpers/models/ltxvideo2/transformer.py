@@ -15,7 +15,7 @@
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -30,7 +30,16 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.tread import TREADRouter
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
+    if buffer is None:
+        return
+    buffer[key] = hidden_states
 
 
 def apply_interleaved_rotary_emb(x: torch.Tensor, freqs: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
@@ -916,6 +925,8 @@ class LTX2VideoTransformer3DModel(
             The normalization layer to use.
     """
 
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
     _supports_gradient_checkpointing = True
     _skip_layerwise_casting_patterns = ["norm"]
     _repeated_blocks = ["LTX2VideoTransformerBlock"]
@@ -971,6 +982,9 @@ class LTX2VideoTransformer3DModel(
         timestep_scale_multiplier: int = 1000,
         cross_attn_timestep_scale_multiplier: int = 1000,
         rope_type: str = "interleaved",
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
 
@@ -1115,6 +1129,50 @@ class LTX2VideoTransformer3DModel(
         self.audio_proj_out = nn.Linear(audio_inner_dim, audio_out_channels)
 
         self.gradient_checkpointing = False
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        self.audio_time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, inner_dim)
+            self.audio_time_sign_embed = nn.Embedding(2, audio_inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
+            nn.init.zeros_(self.audio_time_sign_embed.weight)
+
+        # TREAD and Musubi support
+        self._tread_router: Optional[TREADRouter] = None
+        self._tread_routes: Optional[List[Dict[str, Any]]] = None
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
+
+    def set_router(self, router: TREADRouter, routes: Optional[List[Dict[str, Any]]] = None):
+        """Attach a TREAD router and route definitions."""
+        self._tread_router = router
+        self._tread_routes = routes
+
+    @staticmethod
+    def _route_rope(rope, info, keep_len: int):
+        if rope is None:
+            return None
+
+        def _route_one(r: torch.Tensor) -> torch.Tensor:
+            if r.dim() == 2:
+                r = r.unsqueeze(0).expand(info.ids_shuffle.shape[0], -1, -1)
+            if r.dim() == 3:
+                gather_idx = info.ids_shuffle.unsqueeze(-1).expand_as(r)
+                routed = torch.take_along_dim(r, gather_idx, dim=1)
+                return routed[:, :keep_len, :]
+            if r.dim() == 4:
+                gather_idx = info.ids_shuffle[:, None, :, None].expand(r.shape[0], r.shape[1], r.shape[2], r.shape[3])
+                routed = torch.take_along_dim(r, gather_idx, dim=2)
+                return routed[:, :, :keep_len, :]
+            raise ValueError(f"Unexpected rotary embedding shape for routing: {r.shape}")
+
+        if isinstance(rope, tuple):
+            return tuple(_route_one(r) for r in rope)
+        return _route_one(rope)
 
     def forward(
         self,
@@ -1134,7 +1192,12 @@ class LTX2VideoTransformer3DModel(
         video_coords: Optional[torch.Tensor] = None,
         audio_coords: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        output_hidden_states: bool = False,
+        hidden_state_layer: Optional[int] = None,
+        hidden_states_buffer: Optional[dict] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for LTX-2.0 audiovisual video transformer.
@@ -1180,6 +1243,17 @@ class LTX2VideoTransformer3DModel(
             audio_encoder_attention_mask = audio_encoder_attention_mask.unsqueeze(1)
 
         batch_size = hidden_states.size(0)
+        post_patch_num_frames = None
+        post_patch_height = None
+        post_patch_width = None
+        expected_tokens = None
+        if num_frames is not None and height is not None and width is not None:
+            post_patch_num_frames = num_frames // self.config.patch_size_t
+            post_patch_height = height // self.config.patch_size
+            post_patch_width = width // self.config.patch_size
+            expected_tokens = post_patch_num_frames * post_patch_height * post_patch_width
+        elif output_hidden_states:
+            raise ValueError("CREPA hidden-state capture requires num_frames, height, and width inputs.")
 
         # 1. Prepare RoPE positional embeddings
         if video_coords is None:
@@ -1224,6 +1298,22 @@ class LTX2VideoTransformer3DModel(
         )
         temb_audio = temb_audio.view(batch_size, -1, temb_audio.size(-1))
         audio_embedded_timestep = audio_embedded_timestep.view(batch_size, -1, audio_embedded_timestep.size(-1))
+        if timestep_sign is not None:
+            if self.time_sign_embed is None or self.audio_time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+            sign_emb = sign_emb.view(batch_size, 1, -1).expand_as(embedded_timestep)
+            embedded_timestep = embedded_timestep + sign_emb
+
+            audio_sign_emb = self.audio_time_sign_embed(sign_idx).to(
+                dtype=audio_embedded_timestep.dtype, device=audio_hidden_states.device
+            )
+            audio_sign_emb = audio_sign_emb.view(batch_size, 1, -1).expand_as(audio_embedded_timestep)
+            audio_embedded_timestep = audio_embedded_timestep + audio_sign_emb
 
         # 3.2. Prepare global modality cross attention modulation parameters
         video_cross_attn_scale_shift, _ = self.av_cross_attn_video_scale_shift(
@@ -1263,8 +1353,75 @@ class LTX2VideoTransformer3DModel(
         audio_encoder_hidden_states = self.audio_caption_projection(audio_encoder_hidden_states)
         audio_encoder_hidden_states = audio_encoder_hidden_states.view(batch_size, -1, audio_hidden_states.size(-1))
 
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        current_video_rotary_emb = video_rotary_emb
+        current_ca_video_rotary_emb = video_cross_attn_rotary_emb
+
+        if routes:
+            total_layers = len(self.transformer_blocks)
+
+            def _to_pos(idx: int) -> int:
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
+        if use_routing and router is None:
+            raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
+
+        if use_routing and force_keep_mask is not None:
+            if force_keep_mask.dim() > 2:
+                force_keep_mask = force_keep_mask.view(force_keep_mask.shape[0], -1)
+            expected = expected_tokens or hidden_states.shape[1]
+            if force_keep_mask.numel() == force_keep_mask.shape[0] * expected and force_keep_mask.shape[1] != expected:
+                force_keep_mask = force_keep_mask.view(force_keep_mask.shape[0], expected)
+            if force_keep_mask.shape[1] != expected:
+                raise ValueError(
+                    f"force_keep_mask has sequence length {force_keep_mask.shape[1]}, expected {expected} tokens."
+                )
+            force_keep_mask = force_keep_mask.to(device=hidden_states.device, dtype=torch.bool)
+
         # 5. Run transformer blocks
-        for block in self.transformer_blocks:
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
+        captured_frame_hidden: Optional[torch.Tensor] = None
+        for block_idx, block in enumerate(self.transformer_blocks):
+            if use_routing and route_ptr < len(routes) and block_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                current_video_rotary_emb = self._route_rope(
+                    video_rotary_emb, tread_mask_info, keep_len=hidden_states.size(1)
+                )
+                current_ca_video_rotary_emb = self._route_rope(
+                    video_cross_attn_rotary_emb, tread_mask_info, keep_len=hidden_states.size(1)
+                )
+                routing_now = True
+
+            if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
+
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states, audio_hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -1278,9 +1435,9 @@ class LTX2VideoTransformer3DModel(
                     audio_cross_attn_scale_shift,
                     video_cross_attn_a2v_gate,
                     audio_cross_attn_v2a_gate,
-                    video_rotary_emb,
+                    current_video_rotary_emb,
                     audio_rotary_emb,
-                    video_cross_attn_rotary_emb,
+                    current_ca_video_rotary_emb,
                     audio_cross_attn_rotary_emb,
                     encoder_attention_mask,
                     audio_encoder_attention_mask,
@@ -1297,13 +1454,56 @@ class LTX2VideoTransformer3DModel(
                     temb_ca_audio_scale_shift=audio_cross_attn_scale_shift,
                     temb_ca_gate=video_cross_attn_a2v_gate,
                     temb_ca_audio_gate=audio_cross_attn_v2a_gate,
-                    video_rotary_emb=video_rotary_emb,
+                    video_rotary_emb=current_video_rotary_emb,
                     audio_rotary_emb=audio_rotary_emb,
-                    ca_video_rotary_emb=video_cross_attn_rotary_emb,
+                    ca_video_rotary_emb=current_ca_video_rotary_emb,
                     ca_audio_rotary_emb=audio_cross_attn_rotary_emb,
                     encoder_attention_mask=encoder_attention_mask,
                     audio_encoder_attention_mask=audio_encoder_attention_mask,
                 )
+
+            if routing_now and block_idx == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(
+                    hidden_states,
+                    tread_mask_info,
+                    original_x=saved_tokens,
+                )
+                routing_now = False
+                route_ptr += 1
+                current_video_rotary_emb = video_rotary_emb
+                current_ca_video_rotary_emb = video_cross_attn_rotary_emb
+
+            if (
+                output_hidden_states
+                and not routing_now
+                and expected_tokens is not None
+                and hidden_states.shape[1] == expected_tokens
+                and (hidden_state_layer is None or block_idx == hidden_state_layer)
+            ):
+                captured_frame_hidden = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+                if hidden_state_layer is not None and block_idx == hidden_state_layer:
+                    output_hidden_states = False
+
+            if (
+                hidden_states_buffer is not None
+                and expected_tokens is not None
+                and hidden_states.shape[1] == expected_tokens
+            ):
+                tokens_view = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+                _store_hidden_state(hidden_states_buffer, f"layer_{block_idx}", tokens_view)
+
+            if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                musubi_manager.stream_out(block)
 
         # 6. Output layers (including unpatchification)
         scale_shift_values = self.scale_shift_table[None, None] + embedded_timestep[:, :, None]
@@ -1325,5 +1525,10 @@ class LTX2VideoTransformer3DModel(
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
-            return (output, audio_output)
-        return AudioVisualModelOutput(sample=output, audio_sample=audio_output)
+            if captured_frame_hidden is None:
+                return (output, audio_output)
+            return (output, audio_output, captured_frame_hidden)
+        result = AudioVisualModelOutput(sample=output, audio_sample=audio_output)
+        if captured_frame_hidden is not None:
+            result.crepa_hidden_states = captured_frame_hidden
+        return result

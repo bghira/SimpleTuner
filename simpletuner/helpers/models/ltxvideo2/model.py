@@ -19,6 +19,7 @@ from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -196,11 +197,6 @@ class LTXVideo2(VideoModelFoundation):
 
         if self.config.framerate is None:
             self.config.framerate = 25
-
-        if getattr(self.config, "crepa_enabled", False):
-            raise ValueError(f"{self.NAME} does not support CREPA hidden state regularization.")
-        if getattr(self.config, "layersync_enabled", False):
-            raise ValueError(f"{self.NAME} does not support LayerSync hidden state regularization.")
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)
@@ -410,6 +406,36 @@ class LTXVideo2(VideoModelFoundation):
 
         return batch
 
+    def _prepare_force_keep_mask(self, latents: torch.Tensor, mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """
+        Validate and reshape the optional force_keep_mask to match token count for TREAD routing.
+        """
+        if mask is None:
+            return None
+
+        patch_size = getattr(self.unwrap_model(self.model).config, "patch_size", 1)
+        patch_size_t = getattr(self.unwrap_model(self.model).config, "patch_size_t", 1)
+        if not isinstance(patch_size, int) or not isinstance(patch_size_t, int):
+            raise ValueError(f"Unexpected patch_size values: {patch_size}, {patch_size_t}")
+
+        tokens_expected = (
+            (latents.shape[2] // patch_size_t) * (latents.shape[3] // patch_size) * (latents.shape[4] // patch_size)
+        )
+
+        if mask.dim() > 2:
+            mask = mask.view(mask.shape[0], -1)
+
+        if mask.numel() == mask.shape[0] * tokens_expected and mask.shape[1] != tokens_expected:
+            mask = mask.view(mask.shape[0], tokens_expected)
+
+        if mask.shape[1] != tokens_expected:
+            raise ValueError(
+                f"force_keep_mask length {mask.shape[1]} does not match expected token count {tokens_expected} "
+                f"for patch_size {patch_size}/{patch_size_t}."
+            )
+
+        return mask.to(device=latents.device, dtype=torch.bool)
+
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"]
         if noisy_latents.shape[1] != self.LATENT_CHANNEL_COUNT:
@@ -452,12 +478,22 @@ class LTXVideo2(VideoModelFoundation):
             additive_mask=True,
         )
 
+        force_keep_mask = None
+        raw_force_keep = prepared_batch.get("force_keep_mask")
+        if raw_force_keep is not None and getattr(self.config, "tread_config", None):
+            force_keep_mask = self._prepare_force_keep_mask(noisy_latents, raw_force_keep)
+
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
         transformer_kwargs = {
             "hidden_states": packed_noisy,
             "audio_hidden_states": packed_audio_noisy,
             "encoder_hidden_states": connector_video_embeds,
             "audio_encoder_hidden_states": connector_audio_embeds,
             "timestep": prepared_batch["timesteps"],
+            "timestep_sign": (
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             "encoder_attention_mask": connector_attention_mask,
             "audio_encoder_attention_mask": connector_attention_mask,
             "num_frames": num_frames,
@@ -467,12 +503,34 @@ class LTXVideo2(VideoModelFoundation):
             "audio_num_frames": audio_num_frames,
             "return_dict": False,
         }
+        if force_keep_mask is not None:
+            transformer_kwargs["force_keep_mask"] = force_keep_mask
+        if capture_hidden:
+            transformer_kwargs["output_hidden_states"] = True
+            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+        if hidden_states_buffer is not None:
+            transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
         model_output = self.model(**transformer_kwargs)
-        if isinstance(model_output, tuple):
-            video_pred, audio_pred = model_output
+        if capture_hidden:
+            if isinstance(model_output, tuple):
+                video_pred = model_output[0]
+                audio_pred = model_output[1] if len(model_output) > 1 else None
+                crepa_hidden = model_output[2] if len(model_output) > 2 else None
+            else:
+                video_pred, audio_pred = model_output.sample, model_output.audio_sample
+                crepa_hidden = getattr(model_output, "crepa_hidden_states", None)
+            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    "but none were returned. Check that crepa_block_index is within the model's block count."
+                )
         else:
-            video_pred, audio_pred = model_output.sample, model_output.audio_sample
+            crepa_hidden = None
+            if isinstance(model_output, tuple):
+                video_pred, audio_pred = model_output
+            else:
+                video_pred, audio_pred = model_output.sample, model_output.audio_sample
 
         video_pred = unpack_ltx2_latents(
             video_pred,
@@ -494,7 +552,39 @@ class LTXVideo2(VideoModelFoundation):
         return {
             "model_prediction": video_pred,
             "audio_prediction": audio_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method for LTX-2 checkpoints.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled for LTX-2")
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
