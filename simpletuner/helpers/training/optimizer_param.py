@@ -747,7 +747,6 @@ if is_prodigy_available:
                     "factored_fp32": True,
                     "fused_back_pass": False,
                     "use_stableadamw": True,
-                    "use_muon_pp": False,
                     "use_cautious": False,
                     "use_grams": False,
                     "use_adopt": False,
