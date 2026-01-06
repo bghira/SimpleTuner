@@ -4,6 +4,8 @@ import threading
 from typing import Optional, Sequence
 
 import torch
+from diffusers import FlowMatchEulerDiscreteScheduler
+from huggingface_hub import hf_hub_download
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
@@ -15,10 +17,19 @@ from simpletuner.helpers.models.ltxvideo2 import (
 )
 from simpletuner.helpers.models.ltxvideo2.audio_autoencoder import AutoencoderKLLTX2Audio
 from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
+from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
+    convert_ltx2_audio_vae,
+    convert_ltx2_connectors,
+    convert_ltx2_transformer,
+    convert_ltx2_video_vae,
+    convert_ltx2_vocoder,
+    load_ltx2_state_dict_from_checkpoint,
+)
 from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -28,6 +39,12 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+LTX2_COMBINED_FILENAME = "ltx-2-19b-dev.safetensors"
+LTX2_TRANSFORMER_PREFIX = "model.diffusion_model."
+LTX2_VIDEO_VAE_PREFIX = "vae."
+LTX2_AUDIO_VAE_PREFIX = "audio_vae."
+LTX2_VOCODER_PREFIX = "vocoder."
 
 
 class LTXVideo2(VideoModelFoundation):
@@ -61,10 +78,11 @@ class LTXVideo2(VideoModelFoundation):
         "text_encoder": {
             "name": "Gemma3",
             "tokenizer": GemmaTokenizerFast,
-            "subfolder": "text_encoder",
-            "tokenizer_subfolder": "tokenizer",
+            "subfolder": None,
+            "tokenizer_subfolder": None,
             "use_fast": True,
             "model": Gemma3ForConditionalGeneration,
+            "path": "google/gemma-3-12b-it-qat-q4_0-unquantized",
         },
     }
 
@@ -72,9 +90,12 @@ class LTXVideo2(VideoModelFoundation):
         super().__init__(config, accelerator)
         self.audio_vae = None
         self.connectors = None
+        self.vocoder = None
         self._audio_vae_lock = threading.Lock()
         self._connector_lock = threading.Lock()
+        self._vocoder_lock = threading.Lock()
         self._warned_missing_audio = False
+        self._combined_checkpoint_path = None
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -103,26 +124,114 @@ class LTXVideo2(VideoModelFoundation):
                 return torch.float32
         return self.config.weight_dtype
 
+    def _resolve_video_vae_dtype(self):
+        if hasattr(self.config, "vae_dtype"):
+            if self.config.vae_dtype == "bf16":
+                return torch.bfloat16
+            if self.config.vae_dtype == "fp16":
+                return torch.float16
+            if self.config.vae_dtype == "fp32":
+                return torch.float32
+        return self.config.weight_dtype
+
+    def _resolve_ltx2_version(self) -> str:
+        flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+        if flavour is None:
+            return self.DEFAULT_MODEL_FLAVOUR
+        flavour_value = str(flavour).strip().lower()
+        if flavour_value in {"2", "2.0"}:
+            return "2.0"
+        if flavour_value == "test":
+            return "test"
+        raise ValueError(f"Unsupported LTX-2 model flavour '{flavour}'.")
+
+    def _resolve_ltx2_combined_filename(self) -> str:
+        filename = getattr(self.config, "ltx2_checkpoint_filename", None) or getattr(
+            self.config, "ltx2_combined_filename", None
+        )
+        return filename or LTX2_COMBINED_FILENAME
+
+    def _uses_combined_checkpoint(self) -> bool:
+        model_path = self.config.pretrained_model_name_or_path
+        if isinstance(model_path, str) and model_path.endswith((".safetensors", ".sft")):
+            return True
+        if model_path and os.path.isfile(model_path):
+            return True
+        if model_path and os.path.isdir(model_path):
+            if os.path.exists(os.path.join(model_path, "model_index.json")):
+                return False
+            combined_file = os.path.join(model_path, self._resolve_ltx2_combined_filename())
+            return os.path.isfile(combined_file)
+        return True
+
+    def _resolve_ltx2_checkpoint_path(self) -> str:
+        if self._combined_checkpoint_path and os.path.exists(self._combined_checkpoint_path):
+            return self._combined_checkpoint_path
+        model_path = self.config.pretrained_model_name_or_path
+        if not model_path:
+            raise ValueError("pretrained_model_name_or_path is required for LTX-2 combined checkpoints.")
+        if os.path.isfile(model_path):
+            self._combined_checkpoint_path = model_path
+            return model_path
+        if os.path.isdir(model_path):
+            candidate = os.path.join(model_path, self._resolve_ltx2_combined_filename())
+            if os.path.isfile(candidate):
+                self._combined_checkpoint_path = candidate
+                return candidate
+            raise ValueError(f"Combined LTX-2 checkpoint not found in directory {model_path}.")
+        filename = self._resolve_ltx2_combined_filename()
+        logger.info("Downloading LTX-2 checkpoint %s from %s", filename, model_path)
+        self._combined_checkpoint_path = hf_hub_download(repo_id=model_path, filename=filename)
+        return self._combined_checkpoint_path
+
+    def _build_transformer_config_overrides(self) -> dict:
+        overrides = apply_musubi_pretrained_defaults(self.config, {})
+        if getattr(self.config, "twinflow_enabled", False):
+            overrides["enable_time_sign_embed"] = True
+        return overrides
+
+    def _build_ltx2_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
+        shift = getattr(self.config, "flow_schedule_shift", None)
+        if shift is None:
+            shift = 1.0
+        return FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=float(shift),
+            use_dynamic_shifting=True,
+            base_shift=0.95,
+            max_shift=2.05,
+            base_image_seq_len=1024,
+            max_image_seq_len=4096,
+            shift_terminal=0.1,
+        )
+
     def _load_audio_vae(self, move_to_device: bool = True):
         if self.audio_vae is not None:
             return
         with self._audio_vae_lock:
             if self.audio_vae is not None:
                 return
-            audio_vae_path = getattr(self.config, "pretrained_audio_vae_model_name_or_path", None)
-            if audio_vae_path is None:
-                audio_vae_path = self.config.pretrained_model_name_or_path
-            if audio_vae_path is None:
-                raise ValueError("Unable to resolve audio VAE path for LTX-2.")
-            logger.info(f"Loading LTX-2 audio VAE from {audio_vae_path}")
-            audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
-                audio_vae_path,
-                subfolder="audio_vae",
-                torch_dtype=self._resolve_audio_vae_dtype(),
-                revision=self.config.revision,
-                variant=self.config.variant,
-                use_safetensors=True,
-            )
+            if self._uses_combined_checkpoint():
+                ckpt_path = self._resolve_ltx2_checkpoint_path()
+                logger.info("Loading LTX-2 audio VAE from combined checkpoint %s", ckpt_path)
+                state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_AUDIO_VAE_PREFIX)
+                audio_vae = convert_ltx2_audio_vae(state_dict, version=self._resolve_ltx2_version())
+                del state_dict
+            else:
+                audio_vae_path = getattr(self.config, "pretrained_audio_vae_model_name_or_path", None)
+                if audio_vae_path is None:
+                    audio_vae_path = self.config.pretrained_model_name_or_path
+                if audio_vae_path is None:
+                    raise ValueError("Unable to resolve audio VAE path for LTX-2.")
+                logger.info("Loading LTX-2 audio VAE from %s", audio_vae_path)
+                audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
+                    audio_vae_path,
+                    subfolder="audio_vae",
+                    torch_dtype=self._resolve_audio_vae_dtype(),
+                    revision=self.config.revision,
+                    variant=self.config.variant,
+                    use_safetensors=True,
+                )
             audio_vae.requires_grad_(False)
             if move_to_device:
                 audio_vae.to(self.accelerator.device, dtype=self._resolve_audio_vae_dtype())
@@ -134,28 +243,115 @@ class LTXVideo2(VideoModelFoundation):
         with self._connector_lock:
             if self.connectors is not None:
                 return
-            model_path = self._model_config_path()
-            logger.info(f"Loading LTX-2 text connectors from {model_path}")
-            connectors = LTX2TextConnectors.from_pretrained(
-                model_path,
-                subfolder="connectors",
-                torch_dtype=self.config.weight_dtype,
-                revision=self.config.revision,
-                variant=self.config.variant,
-                use_safetensors=True,
-            )
+            if self._uses_combined_checkpoint():
+                ckpt_path = self._resolve_ltx2_checkpoint_path()
+                logger.info("Loading LTX-2 text connectors from combined checkpoint %s", ckpt_path)
+                state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_TRANSFORMER_PREFIX)
+                connectors = convert_ltx2_connectors(state_dict, version=self._resolve_ltx2_version())
+                del state_dict
+            else:
+                model_path = self._model_config_path()
+                logger.info("Loading LTX-2 text connectors from %s", model_path)
+                connectors = LTX2TextConnectors.from_pretrained(
+                    model_path,
+                    subfolder="connectors",
+                    torch_dtype=self.config.weight_dtype,
+                    revision=self.config.revision,
+                    variant=self.config.variant,
+                    use_safetensors=True,
+                )
             if move_to_device:
                 connectors.to(self.accelerator.device, dtype=self.config.weight_dtype)
             self.connectors = connectors
             if self.model is not None and getattr(self.model, "connectors", None) is None:
                 self.model.connectors = connectors
 
+    def _load_vocoder(self, move_to_device: bool = True):
+        if self.vocoder is not None:
+            return
+        with self._vocoder_lock:
+            if self.vocoder is not None:
+                return
+            if self._uses_combined_checkpoint():
+                ckpt_path = self._resolve_ltx2_checkpoint_path()
+                logger.info("Loading LTX-2 vocoder from combined checkpoint %s", ckpt_path)
+                state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_VOCODER_PREFIX)
+                vocoder = convert_ltx2_vocoder(state_dict, version=self._resolve_ltx2_version())
+                del state_dict
+            else:
+                model_path = self._model_config_path()
+                logger.info("Loading LTX-2 vocoder from %s", model_path)
+                vocoder = LTX2Vocoder.from_pretrained(
+                    model_path,
+                    subfolder="vocoder",
+                    torch_dtype=self.config.weight_dtype,
+                    revision=self.config.revision,
+                    variant=self.config.variant,
+                    use_safetensors=True,
+                )
+            if move_to_device:
+                vocoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+            self.vocoder = vocoder
+
     def post_model_load_setup(self):
         super().post_model_load_setup()
         self._load_connectors(move_to_device=True)
 
+    def _load_video_vae_from_combined(self):
+        if self.vae is not None:
+            return
+        ckpt_path = self._resolve_ltx2_checkpoint_path()
+        logger.info("Loading LTX-2 video VAE from combined checkpoint %s", ckpt_path)
+        state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_VIDEO_VAE_PREFIX)
+        self.vae = convert_ltx2_video_vae(state_dict, version=self._resolve_ltx2_version())
+        del state_dict
+
+    def _configure_video_vae_settings(self, move_to_device: bool = True):
+        if self.vae is None:
+            raise ValueError("Video VAE must be loaded before applying configuration.")
+
+        if self.config.vae_enable_tiling:
+            if hasattr(self.vae, "enable_tiling"):
+                logger.info("Enabling VAE tiling.")
+                self.vae.enable_tiling()
+            else:
+                logger.warning("VAE tiling is enabled, but not yet supported by LTX-2.")
+        if self.config.vae_enable_slicing:
+            if hasattr(self.vae, "enable_slicing"):
+                logger.info("Enabling VAE slicing.")
+                self.vae.enable_slicing()
+            else:
+                logger.warning("VAE slicing is enabled, but not yet supported by LTX-2.")
+        if getattr(self.config, "crepa_drop_vae_encoder", False):
+            logger.info("CREPA decode-only mode enabled; dropping VAE encoder/quant_conv to save memory.")
+            if hasattr(self.vae, "encoder"):
+                self.vae.encoder = None
+            if hasattr(self.vae, "quant_conv"):
+                self.vae.quant_conv = None
+        if self._ramtorch_vae_requested():
+            mid_block = getattr(self.vae, "mid_block", None)
+            if mid_block is None:
+                logger.debug("RamTorch VAE requested but no VAE mid_block was found; skipping RamTorch conversion.")
+            else:
+                self._apply_ramtorch_layers(mid_block, "vae.mid_block")
+        if move_to_device and self.vae.device != self.accelerator.device:
+            vae_dtype = self._resolve_video_vae_dtype()
+            logger.info(
+                "Moving %s to accelerator, converting from %s to %s",
+                self.AUTOENCODER_CLASS.__name__,
+                self.vae.dtype,
+                vae_dtype,
+            )
+            self.vae.to(self.accelerator.device, dtype=vae_dtype)
+        self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+
     def load_vae(self, move_to_device: bool = True):
-        super().load_vae(move_to_device=move_to_device)
+        if self._uses_combined_checkpoint():
+            self._load_video_vae_from_combined()
+            self._configure_video_vae_settings(move_to_device=move_to_device)
+            self.post_vae_load_setup()
+        else:
+            super().load_vae(move_to_device=move_to_device)
         enable_patch_conv = getattr(self.config, "vae_enable_patch_conv", False)
         enable_temporal_roll = getattr(self.config, "vae_enable_temporal_roll", False)
         if enable_patch_conv or enable_temporal_roll:
@@ -171,6 +367,130 @@ class LTXVideo2(VideoModelFoundation):
             if hasattr(self.vae, "disable_temporal_chunking"):
                 self.vae.disable_temporal_chunking()
         self._load_audio_vae(move_to_device=move_to_device)
+
+    def setup_training_noise_schedule(self):
+        self.noise_schedule = self._build_ltx2_scheduler()
+        return self.config, self.noise_schedule
+
+    def load_model(self, move_to_device: bool = True):
+        if not self._uses_combined_checkpoint():
+            return super().load_model(move_to_device=move_to_device)
+
+        if (
+            getattr(self.config, "quantization_config", None) not in (None, "", "None")
+            or getattr(self.config, "quantize_via", None) == "pipeline"
+        ):
+            raise ValueError(
+                "Pipeline quantization is not supported for LTX-2 combined checkpoints. "
+                "Convert the checkpoint to diffusers format or disable pipeline quantization."
+            )
+
+        self._group_offload_configured = False
+        ckpt_path = self._resolve_ltx2_checkpoint_path()
+        logger.info("Loading LTX-2 transformer from combined checkpoint %s", ckpt_path)
+        state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_TRANSFORMER_PREFIX)
+        overrides = self._build_transformer_config_overrides()
+        self.model = convert_ltx2_transformer(state_dict, version=self._resolve_ltx2_version(), config_overrides=overrides)
+
+        unwrapped = self.unwrap_model(model=self.model)
+        if self._module_has_meta_tensors(unwrapped):
+            raise RuntimeError("LTX-2 transformer parameters remain on the meta device after loading.")
+
+        if self._ramtorch_enabled() and self.model is not None:
+            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
+        if move_to_device and self.model is not None:
+            self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+
+        if self.connectors is None:
+            connectors = convert_ltx2_connectors(state_dict, version=self._resolve_ltx2_version())
+            if move_to_device:
+                connectors.to(self.accelerator.device, dtype=self.config.weight_dtype)
+            self.connectors = connectors
+            if self.model is not None and getattr(self.model, "connectors", None) is None:
+                self.model.connectors = connectors
+
+        del state_dict
+
+        self.configure_chunked_feed_forward()
+
+        if (
+            self.config.gradient_checkpointing_interval is not None
+            and self.config.gradient_checkpointing_interval > 1
+            and self.MODEL_TYPE is ModelTypes.UNET
+        ):
+            logger.warning(
+                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of %s",
+                self.config.gradient_checkpointing_interval,
+            )
+            from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_interval
+
+            set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
+
+        if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
+            if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
+                logger.info("Setting gradient checkpointing interval..")
+                self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
+                    int(self.config.gradient_checkpointing_interval)
+                )
+        self.fuse_qkv_projections()
+        self.post_model_load_setup()
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        active_pipelines = getattr(self, "pipelines", {})
+        if pipeline_type in active_pipelines:
+            pipeline_instance = active_pipelines[pipeline_type]
+            if self.model is not None and getattr(pipeline_instance, self.MODEL_TYPE.value, None) is None:
+                model_for_pipeline = self.model
+                if model_for_pipeline is not None:
+                    try:
+                        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+                        if not isinstance(model_for_pipeline, FSDP):
+                            model_for_pipeline = self.unwrap_model(model=self.model)
+                    except Exception:
+                        model_for_pipeline = self.unwrap_model(model=self.model)
+                setattr(pipeline_instance, self.MODEL_TYPE.value, model_for_pipeline)
+            return pipeline_instance
+
+        if pipeline_type not in self.PIPELINE_CLASSES:
+            raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
+
+        if load_base_model:
+            if self.model is None:
+                self.load_model(move_to_device=True)
+            if self.vae is None:
+                self.load_vae(move_to_device=True)
+            if self.text_encoders is None:
+                self.load_text_encoder(move_to_device=True)
+            self._load_connectors(move_to_device=True)
+            self._load_audio_vae(move_to_device=True)
+            self._load_vocoder(move_to_device=True)
+
+        text_encoder = self.text_encoders[0] if self.text_encoders else None
+        tokenizer = self.tokenizers[0] if self.tokenizers else None
+        transformer = self.model
+        if transformer is not None:
+            try:
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+                if not isinstance(transformer, FSDP):
+                    transformer = self.unwrap_model(model=self.model)
+            except Exception:
+                transformer = self.unwrap_model(model=self.model)
+
+        pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
+        pipeline_instance = pipeline_class(
+            scheduler=self._build_ltx2_scheduler(),
+            vae=self.get_vae(),
+            audio_vae=self.audio_vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            connectors=self.connectors,
+            transformer=transformer,
+            vocoder=self.vocoder,
+        )
+        self.pipelines[pipeline_type] = pipeline_instance
+        return pipeline_instance
 
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
         if isinstance(vae, AutoencoderKLLTX2Audio):
