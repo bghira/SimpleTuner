@@ -91,6 +91,25 @@ plugins:
             Audio Models: 音声モデル
             Training: トレーニング
             Reference: リファレンス
+        - locale: hi
+          name: हिन्दी
+          build: true
+          nav_translations:
+            Home: मुखपृष्ठ
+            Getting Started: शुरुआत
+            Installation: स्थापना
+            Quick Start: त्वरित शुरुआत
+            Tutorials: ट्यूटोरियल
+            Model Guides: मॉडल गाइड
+            Image Models: इमेज मॉडल
+            Video Models: वीडियो मॉडल
+            Audio Models: ऑडियो मॉडल
+            Training: प्रशिक्षण
+            Scaling & Performance: स्केलिंग और प्रदर्शन
+            Server & Multi-User: सर्वर और बहु-उपयोगकर्ता
+            Cloud Training: क्लाउड प्रशिक्षण
+            Advanced: उन्नत
+            Reference: संदर्भ
         - locale: ko
           name: 한국어
           build: true
@@ -106,6 +125,44 @@ plugins:
             Audio Models: 오디오 모델
             Training: 훈련
             Reference: 참조
+        - locale: pt-br
+          name: Portugues (Brasil)
+          build: true
+          nav_translations:
+            Home: Inicio
+            Getting Started: Primeiros passos
+            Installation: Instalacao
+            Quick Start: Inicio rapido
+            Tutorials: Tutoriais
+            Model Guides: Guias de modelos
+            Image Models: Modelos de imagem
+            Video Models: Modelos de video
+            Audio Models: Modelos de audio
+            Training: Treinamento
+            Scaling & Performance: Escala e performance
+            Server & Multi-User: Servidor e multi-usuario
+            Cloud Training: Treinamento na nuvem
+            Advanced: Avancado
+            Reference: Referencia
+        - locale: es
+          name: Español
+          build: true
+          nav_translations:
+            Home: Inicio
+            Getting Started: Primeros pasos
+            Installation: Instalación
+            Quick Start: Inicio rápido
+            Tutorials: Tutoriales
+            Model Guides: Guías de modelos
+            Image Models: Modelos de imagen
+            Video Models: Modelos de video
+            Audio Models: Modelos de audio
+            Training: Entrenamiento
+            Scaling & Performance: Escala y rendimiento
+            Server & Multi-User: Servidor y multiusuario
+            Cloud Training: Entrenamiento en la nube
+            Advanced: Avanzado
+            Reference: Referencia
 
 markdown_extensions:
   - abbr
