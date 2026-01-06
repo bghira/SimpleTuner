@@ -19,12 +19,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.models.autoencoders.vae import (
-    AutoencoderKLOutput,
-    AutoencoderMixin,
-    DecoderOutput,
-    DiagonalGaussianDistribution,
-)
+from diffusers.models.autoencoders.vae import AutoencoderMixin, DecoderOutput, DiagonalGaussianDistribution
+from diffusers.models.modeling_outputs import AutoencoderKLOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils.accelerate_utils import apply_forward_hook
 
