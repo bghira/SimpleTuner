@@ -61,5 +61,43 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertEqual(result.dtype, torch.float32)
 
 
+class TestLTXVideo2TransformerLoading(unittest.TestCase):
+    """Test LTXVideo2 transformer can be imported and configured."""
+
+    def test_transformer_has_tread_support(self):
+        """Test that the transformer has TREAD router support."""
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        self.assertTrue(hasattr(LTX2VideoTransformer3DModel, "_tread_router"))
+        self.assertTrue(hasattr(LTX2VideoTransformer3DModel, "_tread_routes"))
+
+    def test_transformer_has_set_router_method(self):
+        """Test that the transformer has the set_router method for TREAD."""
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        self.assertTrue(hasattr(LTX2VideoTransformer3DModel, "set_router"))
+
+    def test_transformer_has_musubi_block_swap(self):
+        """Test that the transformer has Musubi block swap support."""
+        import inspect
+
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        sig = inspect.signature(LTX2VideoTransformer3DModel.__init__)
+        params = list(sig.parameters.keys())
+        self.assertIn("musubi_blocks_to_swap", params)
+        self.assertIn("musubi_block_swap_device", params)
+
+    def test_transformer_has_time_sign_embed_flag(self):
+        """Test that the transformer exposes TwinFlow sign embedding support."""
+        import inspect
+
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        sig = inspect.signature(LTX2VideoTransformer3DModel.__init__)
+        params = list(sig.parameters.keys())
+        self.assertIn("enable_time_sign_embed", params)
+
+
 if __name__ == "__main__":
     unittest.main()

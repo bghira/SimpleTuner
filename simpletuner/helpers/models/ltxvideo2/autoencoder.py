@@ -26,6 +26,28 @@ from diffusers.models.modeling_outputs import AutoencoderKLOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils.accelerate_utils import apply_forward_hook
 
+MEMORY_LIMIT = 512 * 1024**2
+
+
+def _find_temporal_split_indices(seq_len: int, part_num: int, stride: int) -> list:
+    ideal_interval = seq_len / part_num
+    possible_indices = list(range(0, seq_len, stride))
+    selected_indices = []
+
+    for i in range(1, part_num):
+        closest = min(possible_indices, key=lambda x: abs(x - round(i * ideal_interval)))
+        if closest not in selected_indices:
+            selected_indices.append(closest)
+
+    merged_indices = []
+    prev_idx = 0
+    for idx in selected_indices:
+        if idx - prev_idx >= stride:
+            merged_indices.append(idx)
+            prev_idx = idx
+
+    return merged_indices
+
 
 class PerChannelRMSNorm(nn.Module):
     """
@@ -62,6 +84,8 @@ class PerChannelRMSNorm(nn.Module):
 
 # Like LTXCausalConv3d, but whether causal inference is performed can be specified at runtime
 class LTX2VideoCausalConv3d(nn.Module):
+    _temporal_chunking_enabled: bool = False
+
     def __init__(
         self,
         in_channels: int,
@@ -106,8 +130,40 @@ class LTX2VideoCausalConv3d(nn.Module):
             pad_right = hidden_states[:, :, -1:, :, :].repeat((1, 1, (time_kernel_size - 1) // 2, 1, 1))
             hidden_states = torch.concatenate([pad_left, hidden_states, pad_right], dim=2)
 
-        hidden_states = self.conv(hidden_states)
-        return hidden_states
+        if not self._temporal_chunking_enabled:
+            return self.conv(hidden_states)
+
+        t_frames = hidden_states.shape[2]
+        kernel_size = self.conv.kernel_size[0]
+        stride = self.conv.stride[0]
+        memory_count = torch.prod(torch.tensor(hidden_states.shape)).item() * 2 / MEMORY_LIMIT
+        part_num = int(memory_count / 2) + 1
+
+        use_chunking = t_frames > kernel_size and memory_count > 0.6 and part_num >= 2
+        if not use_chunking or t_frames <= 1:
+            return self.conv(hidden_states)
+
+        max_parts = max(1, t_frames // kernel_size)
+        if part_num > max_parts:
+            part_num = max_parts
+
+        split_indices = _find_temporal_split_indices(t_frames, part_num, stride)
+        if len(split_indices) == 0 or kernel_size == 1:
+            input_chunks = torch.tensor_split(hidden_states, split_indices, dim=2) if split_indices else [hidden_states]
+        else:
+            boundaries = [0] + split_indices + [t_frames]
+            input_chunks = []
+            for i in range(len(boundaries) - 1):
+                start = boundaries[i]
+                end = boundaries[i + 1]
+                overlap_start = max(start - kernel_size + 1, 0)
+                if i == 0:
+                    input_chunks.append(hidden_states[:, :, start:end])
+                else:
+                    input_chunks.append(hidden_states[:, :, overlap_start:end])
+
+        output_chunks = [self.conv(chunk) for chunk in input_chunks]
+        return torch.cat(output_chunks, dim=2)
 
 
 # Like LTXVideoResnetBlock3d, but uses new causal Conv3d, normal Conv3d for the conv_shortcut, and the spatial padding
@@ -1189,6 +1245,18 @@ class AutoencoderKLLTX2Video(ModelMixin, AutoencoderMixin, ConfigMixin, FromOrig
         self.tile_sample_stride_height = tile_sample_stride_height or self.tile_sample_stride_height
         self.tile_sample_stride_width = tile_sample_stride_width or self.tile_sample_stride_width
         self.tile_sample_stride_num_frames = tile_sample_stride_num_frames or self.tile_sample_stride_num_frames
+
+    def enable_temporal_chunking(self) -> None:
+        """
+        Enable temporal chunking in Conv3d layers for lower peak VRAM.
+        """
+        LTX2VideoCausalConv3d._temporal_chunking_enabled = True
+
+    def disable_temporal_chunking(self) -> None:
+        """
+        Disable temporal chunking in Conv3d layers.
+        """
+        LTX2VideoCausalConv3d._temporal_chunking_enabled = False
 
     def _encode(self, x: torch.Tensor, causal: Optional[bool] = None) -> torch.Tensor:
         batch_size, num_channels, num_frames, height, width = x.shape

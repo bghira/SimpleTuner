@@ -156,6 +156,20 @@ class LTXVideo2(VideoModelFoundation):
 
     def load_vae(self, move_to_device: bool = True):
         super().load_vae(move_to_device=move_to_device)
+        enable_patch_conv = getattr(self.config, "vae_enable_patch_conv", False)
+        enable_temporal_roll = getattr(self.config, "vae_enable_temporal_roll", False)
+        if enable_patch_conv or enable_temporal_roll:
+            if hasattr(self.vae, "enable_temporal_chunking"):
+                logger.info(
+                    "Enabling LTX-2 VAE temporal chunking%s.",
+                    " (temporal roll)" if enable_temporal_roll else "",
+                )
+                self.vae.enable_temporal_chunking()
+            else:
+                logger.warning("VAE temporal chunking is enabled, but not yet supported by LTX-2.")
+        else:
+            if hasattr(self.vae, "disable_temporal_chunking"):
+                self.vae.disable_temporal_chunking()
         self._load_audio_vae(move_to_device=move_to_device)
 
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
