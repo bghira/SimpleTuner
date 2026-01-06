@@ -282,7 +282,7 @@ def _output_attribute(args, model):
 
 
 def _output_save_call(args):
-    if args.model_family in ["ltxvideo", "wan", "wan_s2v"]:
+    if args.model_family in ["ltxvideo", "ltxvideo2", "wan", "wan_s2v"]:
         return f"""
 from diffusers.utils.export_utils import export_to_gif
 export_to_gif(model_output, "output.gif", fps={args.framerate})
@@ -397,16 +397,16 @@ def save_metadata_sample(
 
 
 def _model_card_family_tag(model_family: str):
-    if model_family == "ltxvideo":
+    if model_family in ["ltxvideo", "ltxvideo2"]:
         # the hub has a hyphen.
-        return "ltx-video"
+        return "ltx-video" if model_family == "ltxvideo" else "ltx-2"
     if model_family in ("wan", "wan_s2v"):
         return "WanPipeline"
     return model_family
 
 
 def _pipeline_tag(args):
-    return "text-to-image" if args.model_family not in ["ltxvideo"] else "text-to-video"
+    return "text-to-image" if args.model_family not in ["ltxvideo", "ltxvideo2"] else "text-to-video"
 
 
 def _format_sample_rate(value: Any) -> Optional[str]:
@@ -626,7 +626,7 @@ tags:
   - {_model_card_family_tag(model_family)}
   - {f'{_model_card_family_tag(model_family)}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - {_pipeline_tag(args)}
-  - {'image-to-image' if args.model_family not in ["ltxvideo"] else 'image-to-video'}
+  - {'image-to-image' if args.model_family not in ["ltxvideo", "ltxvideo2"] else 'image-to-video'}
   - diffusers
   - simpletuner
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}

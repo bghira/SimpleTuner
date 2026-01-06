@@ -127,6 +127,10 @@ class WanS2V(VideoModelFoundation):
         """S2V always requires audio datasets."""
         return True
 
+    def supports_audio_inputs(self) -> bool:
+        """Wan S2V accepts audio conditioning alongside text/video inputs."""
+        return True
+
     def requires_s2v_validation_inputs(self) -> bool:
         """S2V validation requires audio inputs."""
         return True

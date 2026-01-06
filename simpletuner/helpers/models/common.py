@@ -77,6 +77,7 @@ flow_matching_model_families = [
     "flux2",
     "sana",
     "ltxvideo",
+    "ltxvideo2",
     "wan",
     "wan_s2v",
     "sd3",
@@ -100,6 +101,7 @@ upstream_config_sources = {
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
+    "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
 }
@@ -960,6 +962,15 @@ class ModelFoundation(ABC):
 
     def requires_conditioning_image_embeds(self) -> bool:
         return False
+
+    def supports_audio_inputs(self) -> bool:
+        return False
+
+    def uses_audio_latents(self) -> bool:
+        return False
+
+    def get_vae_for_dataset_type(self, dataset_type: str):
+        return self.get_vae()
 
     def conditioning_image_embeds_use_reference_dataset(self) -> bool:
         """
@@ -4421,6 +4432,25 @@ class VideoModelFoundation(ImageModelFoundation):
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
     def get_transforms(self, dataset_type: str = "image"):
+        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
+            if self.uses_audio_latents():
+
+                def _audio_transform(sample):
+                    waveform = sample
+                    if isinstance(sample, dict):
+                        waveform = sample.get("waveform")
+                    if waveform is None:
+                        raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
+                    if isinstance(waveform, np.ndarray):
+                        waveform = torch.from_numpy(waveform)
+                    if not torch.is_tensor(waveform):
+                        raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
+                    waveform = waveform.detach().clone()
+                    if waveform.ndim == 1:
+                        waveform = waveform.unsqueeze(0)
+                    return waveform
+
+                return _audio_transform
         return transforms.Compose(
             [
                 VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
@@ -4547,6 +4577,12 @@ class AudioModelFoundation(ModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+
+    def supports_audio_inputs(self) -> bool:
+        return True
+
+    def uses_audio_latents(self) -> bool:
+        return True
 
     def get_transforms(self, dataset_type: str = "image"):
         if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":

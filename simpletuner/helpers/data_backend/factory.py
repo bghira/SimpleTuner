@@ -660,7 +660,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 )
             video_config["is_i2v"] = True
         elif "is_i2v" not in video_config:
-            if model_family in ["ltxvideo"]:
+            if model_family in ["ltxvideo", "ltxvideo2"]:
                 warning_log(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."
                 )
@@ -1309,6 +1309,16 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _supports_audio_inputs(self) -> bool:
+        """Return whether the active model supports audio inputs alongside its primary modality."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.supports_audio_inputs()
+        except AttributeError:
+            return False
+        return result if isinstance(result, bool) else False
+
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
         Validate that Qwen edit models use appropriate conditioning_type values.
@@ -1688,7 +1698,7 @@ class FactoryRegistry:
         When a video dataset has `audio.auto_split: true`, this method creates an associated
         audio dataset configuration that extracts audio from the same video files.
         """
-        if not self._requires_s2v_datasets():
+        if not (self._requires_s2v_datasets() or self._supports_audio_inputs()):
             return data_backend_config
 
         auto_audio_configs: List[Dict[str, Any]] = []
@@ -3369,6 +3379,17 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Skipping VAE cache configuration for dataset_type={dataset_type_enum.value}."
             )
             return
+        if dataset_type_enum is DatasetType.AUDIO:
+            uses_audio_latents = False
+            try:
+                uses_audio_latents = bool(self.model.uses_audio_latents())
+            except AttributeError:
+                uses_audio_latents = False
+            if not uses_audio_latents:
+                info_log(
+                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents."
+                )
+                return
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if not vae_cache_dir:
             vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
@@ -3396,11 +3417,17 @@ class FactoryRegistry:
         move_text_encoders(self.args, self.text_encoders, "cpu")
 
         video_config = init_backend["config"].get("video", {})
+        vae = StateTracker.get_vae()
+        if hasattr(self.model, "get_vae_for_dataset_type"):
+            candidate = self.model.get_vae_for_dataset_type(dataset_type_enum.value)
+            if candidate is not None:
+                vae = candidate
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
             model=self.model,
-            vae=StateTracker.get_vae(),
+            vae=vae,
             accelerator=self.accelerator,
             metadata_backend=init_backend["metadata_backend"],
             image_data_backend=init_backend["data_backend"],
