@@ -33,13 +33,13 @@ Se tiver perguntas, fique a vontade para falar conosco la.
 
 ## Tutorial
 
-Explore este README por completo antes de iniciar o [novo tutorial da web UI](/documentation/webui/TUTORIAL.pt-br.md) ou [o tutorial classico via linha de comando](/documentation/TUTORIAL.pt-br.md), pois este documento contem informacoes vitais que voce precisa saber primeiro.
+Explore este README por completo antes de iniciar o [novo tutorial da web UI](/documentation/webui/TUTORIAL.pt-BR.md) ou [o tutorial classico via linha de comando](/documentation/TUTORIAL.pt-BR.md), pois este documento contem informacoes vitais que voce precisa saber primeiro.
 
-Para um quick start configurado manualmente sem ler toda a documentacao ou usar interfaces web, voce pode usar o guia [Quick Start](/documentation/QUICKSTART.pt-br.md).
+Para um quick start configurado manualmente sem ler toda a documentacao ou usar interfaces web, voce pode usar o guia [Quick Start](/documentation/QUICKSTART.pt-BR.md).
 
-Para sistemas com memoria limitada, veja o [documento DeepSpeed](/documentation/DEEPSPEED.pt-br.md), que explica como usar o 🤗Accelerate para configurar o DeepSpeed da Microsoft para offload do estado do otimizador. Para sharding com DTensor e paralelismo de contexto, leia o [guia FSDP2](/documentation/FSDP2.pt-br.md), que cobre o fluxo do FullyShardedDataParallel v2 dentro do SimpleTuner.
+Para sistemas com memoria limitada, veja o [documento DeepSpeed](/documentation/DEEPSPEED.pt-BR.md), que explica como usar o 🤗Accelerate para configurar o DeepSpeed da Microsoft para offload do estado do otimizador. Para sharding com DTensor e paralelismo de contexto, leia o [guia FSDP2](/documentation/FSDP2.pt-BR.md), que cobre o fluxo do FullyShardedDataParallel v2 dentro do SimpleTuner.
 
-Para treinamento distribuido multi-node, [este guia](/documentation/DISTRIBUTED.pt-br.md) ajuda a ajustar as configuracoes dos guias INSTALL e Quickstart para multi-node, otimizando para datasets de imagens com bilhoes de samples.
+Para treinamento distribuido multi-node, [este guia](/documentation/DISTRIBUTED.pt-BR.md) ajuda a ajustar as configuracoes dos guias INSTALL e Quickstart para multi-node, otimizando para datasets de imagens com bilhoes de samples.
 
 ---
 
@@ -54,7 +54,7 @@ SimpleTuner oferece suporte de treinamento abrangente em varias arquiteturas de 
 - **Treinamento multi-GPU** - Treino distribuido em varias GPUs com otimizacao automatica
 - **Cache avancado** - Embeddings de imagem, video, audio e legenda em disco para treino mais rapido
 - **Aspect bucketing** - Suporte a tamanhos e proporcoes variadas de imagem/video
-- **Sliders de conceito** - Targeting amigavel para sliders em LoRA/LyCORIS/full (via LyCORIS `full`) com amostragem positiva/negativa/neutra e forca por prompt; veja o [guia Slider LoRA](/documentation/SLIDER_LORA.pt-br.md)
+- **Sliders de conceito** - Targeting amigavel para sliders em LoRA/LyCORIS/full (via LyCORIS `full`) com amostragem positiva/negativa/neutra e forca por prompt; veja o [guia Slider LoRA](/documentation/SLIDER_LORA.pt-BR.md)
 - **Otimizacao de memoria** - A maioria dos modelos treinaveis em GPU 24G, muitos em 16G com otimizacoes
 - **Integracao DeepSpeed & FSDP2** - Treine modelos grandes em GPUs menores com sharding de otimizador/gradiente/parametros, atencao paralela por contexto, gradient checkpointing e offload do estado do otimizador
 - **Treinamento em S3** - Treine direto do armazenamento cloud (Cloudflare R2, Wasabi S3)
@@ -65,8 +65,8 @@ SimpleTuner oferece suporte de treinamento abrangente em varias arquiteturas de 
 
 SimpleTuner inclui uma plataforma completa de treinamento multi-usuario com recursos enterprise — **gratis e open source, para sempre**.
 
-- **Orquestracao de workers** - Registre workers GPU distribuidos que se conectam automaticamente a um painel central e recebem jobs via SSE; suporta workers efemeros (cloud) e persistentes (sempre ligados); veja o [guia de orquestracao de workers](/documentation/experimental/server/WORKERS.pt-br.md)
-- **Integracao SSO** - Autentique com LDAP/Active Directory ou provedores OIDC (Okta, Azure AD, Keycloak, Google); veja o [guia de autenticacao externa](/documentation/experimental/server/EXTERNAL_AUTH.pt-br.md)
+- **Orquestracao de workers** - Registre workers GPU distribuidos que se conectam automaticamente a um painel central e recebem jobs via SSE; suporta workers efemeros (cloud) e persistentes (sempre ligados); veja o [guia de orquestracao de workers](/documentation/experimental/server/WORKERS.pt-BR.md)
+- **Integracao SSO** - Autentique com LDAP/Active Directory ou provedores OIDC (Okta, Azure AD, Keycloak, Google); veja o [guia de autenticacao externa](/documentation/experimental/server/EXTERNAL_AUTH.pt-BR.md)
 - **Controle de acesso por funcoes** - Quatro funcoes padrao (Viewer, Researcher, Lead, Admin) com 17+ permissoes granulares; defina regras por glob para restringir configs, hardware ou provedores por time
 - **Organizacoes e times** - Estrutura hierarquica multi-tenant com quotas por teto; limites da org impõem maximos absolutos, limites de time operam dentro desses limites
 - **Quotas e limites de gasto** - Impoem tetos de custo (diario/mensal), limites de concorrencia e taxa de submissao por org/time/usuario; acoes incluem bloquear, alertar ou exigir aprovacao
@@ -74,9 +74,9 @@ SimpleTuner inclui uma plataforma completa de treinamento multi-usuario com recu
 - **Fluxos de aprovacao** - Regras configuraveis disparam aprovacao para jobs acima de custos, novos usuarios ou pedidos de hardware; aprove via UI, API ou resposta por email
 - **Notificacoes por email** - Integracao SMTP/IMAP para status de job, solicitacoes de aprovacao, alertas de quota e conclusao
 - **Chaves de API e permissoes com escopo** - Gere chaves com expiracao e escopo limitado para pipelines CI/CD
-- **Audit logging** - Registre todas as acoes de usuario com verificacao de cadeia para compliance; veja o [guia de auditoria](/documentation/experimental/server/AUDIT.pt-br.md)
+- **Audit logging** - Registre todas as acoes de usuario com verificacao de cadeia para compliance; veja o [guia de auditoria](/documentation/experimental/server/AUDIT.pt-BR.md)
 
-Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/server/ENTERPRISE.pt-br.md).
+Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/server/ENTERPRISE.pt-BR.md).
 
 ### Suporte a arquitetura de modelos
 
@@ -113,8 +113,8 @@ Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/se
 - **SNR weighting** - Min-SNR gamma weighting para dinamica de treino melhor
 - **Group offloading** - Diffusers v0.33+ com staging de modulos em CPU/disco e streams CUDA opcionais
 - **Varreduras de validation adapter** - Anexe LoRAs temporariamente (single ou presets JSON) durante validacao para comparar renders sem tocar o loop de treino
-- **External validation hooks** - Troque o pipeline de validacao embutido ou passos pos-upload pelos seus scripts, rodando checks em outra GPU ou enviando artefatos para qualquer provedor cloud ([detalhes](/documentation/OPTIONS.pt-br.md#validation_method))
-- **Regularizacao CREPA** - Alinhamento de representacao entre frames para video DiTs ([guia](/documentation/experimental/VIDEO_CREPA.pt-br.md))
+- **External validation hooks** - Troque o pipeline de validacao embutido ou passos pos-upload pelos seus scripts, rodando checks em outra GPU ou enviando artefatos para qualquer provedor cloud ([detalhes](/documentation/OPTIONS.pt-BR.md#validation_method))
+- **Regularizacao CREPA** - Alinhamento de representacao entre frames para video DiTs ([guia](/documentation/experimental/VIDEO_CREPA.pt-BR.md))
 - **Formatos de I/O LoRA** - Load/save de LoRAs PEFT no layout Diffusers ou no estilo ComfyUI `diffusion_model.*` (Flux/Flux2/Lumina2/Z-Image detectam ComfyUI automaticamente)
 
 ### Recursos especificos do modelo
@@ -133,33 +133,33 @@ Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/se
 
 Guias detalhados estao disponiveis para todos os modelos suportados:
 
-- **[Guia TwinFlow Few-Step (RCGM)](/documentation/distillation/TWINFLOW.pt-br.md)** - Habilite perda auxiliar RCGM para geracao few-step/one-step (modelos flow ou difusao via diff2flow)
-- **[Guia Flux.1](/documentation/quickstart/FLUX.pt-br.md)** - Inclui suporte a edicao Kontext e fusao QKV
-- **[Guia Flux.2](/documentation/quickstart/FLUX2.pt-br.md)** - **NOVO!** Modelo Flux enorme com text encoder Mistral-3
-- **[Guia Z-Image](/documentation/quickstart/ZIMAGE.pt-br.md)** - Base/Turbo LoRA com adaptador assistente + aceleracao TREAD
-- **[Guia ACE-Step](/documentation/quickstart/ACE_STEP.pt-br.md)** - **NOVO!** Treinamento de modelo de geracao de audio (texto-para-musica)
-- **[Guia Chroma](/documentation/quickstart/CHROMA.pt-br.md)** - Transformer flow-matching da Lodestone com schedules especificos
-- **[Guia Stable Diffusion 3](/documentation/quickstart/SD3.pt-br.md)** - Treino full e LoRA com ControlNet
-- **[Guia Stable Diffusion XL](/documentation/quickstart/SDXL.pt-br.md)** - Pipeline completo de treino SDXL
-- **[Guia Auraflow](/documentation/quickstart/AURAFLOW.pt-br.md)** - Treinamento de modelo flow-matching
-- **[Guia PixArt Sigma](/documentation/quickstart/SIGMA.pt-br.md)** - Modelo DiT com suporte two-stage
-- **[Guia Sana](/documentation/quickstart/SANA.pt-br.md)** - Modelo flow-matching leve
-- **[Guia Lumina2](/documentation/quickstart/LUMINA2.pt-br.md)** - Modelo flow-matching de 2B parametros
-- **[Guia Kwai Kolors](/documentation/quickstart/KOLORS.pt-br.md)** - Baseado em SDXL com encoder ChatGLM
-- **[Guia LongCat-Video](/documentation/quickstart/LONGCAT_VIDEO.pt-br.md)** - Flow-matching text-to-video e image-to-video com Qwen-2.5-VL
-- **[Guia LongCat-Video Edit](/documentation/quickstart/LONGCAT_VIDEO_EDIT.pt-br.md)** - Flavor conditioning-first (image-to-video)
-- **[Guia LongCat-Image](/documentation/quickstart/LONGCAT_IMAGE.pt-br.md)** - Modelo flow-matching bilingue 6B com encoder Qwen-2.5-VL
-- **[Guia LongCat-Image Edit](/documentation/quickstart/LONGCAT_EDIT.pt-br.md)** - Flavor de edicao de imagem que requer latentes de referencia
-- **[Guia LTX Video](/documentation/quickstart/LTXVIDEO.pt-br.md)** - Treino de difusao de video
-- **[Guia Hunyuan Video 1.5](/documentation/quickstart/HUNYUANVIDEO.pt-br.md)** - Flow-matching T2V/I2V 8.3B com estagios SR
-- **[Guia Wan Video](/documentation/quickstart/WAN.pt-br.md)** - Flow-matching de video com suporte TREAD
-- **[Guia HiDream](/documentation/quickstart/HIDREAM.pt-br.md)** - Modelo MoE com recursos avancados
-- **[Guia Cosmos2](/documentation/quickstart/COSMOS2IMAGE.pt-br.md)** - Geracao de imagem multi-modal
-- **[Guia OmniGen](/documentation/quickstart/OMNIGEN.pt-br.md)** - Modelo unificado de geracao de imagens
-- **[Guia Qwen Image](/documentation/quickstart/QWEN_IMAGE.pt-br.md)** - Treinamento de larga escala com 20B parametros
-- **[Guia Stable Cascade Stage C](/documentation/quickstart/STABLE_CASCADE_C.pt-br.md)** - LoRAs de prior com validacao prior+decoder combinada
-- **[Guia Kandinsky 5.0 Image](/documentation/quickstart/KANDINSKY5_IMAGE.pt-br.md)** - Geracao de imagem com Qwen2.5-VL + Flux VAE
-- **[Guia Kandinsky 5.0 Video](/documentation/quickstart/KANDINSKY5_VIDEO.pt-br.md)** - Geracao de video com HunyuanVideo VAE
+- **[Guia TwinFlow Few-Step (RCGM)](/documentation/distillation/TWINFLOW.pt-BR.md)** - Habilite perda auxiliar RCGM para geracao few-step/one-step (modelos flow ou difusao via diff2flow)
+- **[Guia Flux.1](/documentation/quickstart/FLUX.pt-BR.md)** - Inclui suporte a edicao Kontext e fusao QKV
+- **[Guia Flux.2](/documentation/quickstart/FLUX2.pt-BR.md)** - **NOVO!** Modelo Flux enorme com text encoder Mistral-3
+- **[Guia Z-Image](/documentation/quickstart/ZIMAGE.pt-BR.md)** - Base/Turbo LoRA com adaptador assistente + aceleracao TREAD
+- **[Guia ACE-Step](/documentation/quickstart/ACE_STEP.pt-BR.md)** - **NOVO!** Treinamento de modelo de geracao de audio (texto-para-musica)
+- **[Guia Chroma](/documentation/quickstart/CHROMA.pt-BR.md)** - Transformer flow-matching da Lodestone com schedules especificos
+- **[Guia Stable Diffusion 3](/documentation/quickstart/SD3.pt-BR.md)** - Treino full e LoRA com ControlNet
+- **[Guia Stable Diffusion XL](/documentation/quickstart/SDXL.pt-BR.md)** - Pipeline completo de treino SDXL
+- **[Guia Auraflow](/documentation/quickstart/AURAFLOW.pt-BR.md)** - Treinamento de modelo flow-matching
+- **[Guia PixArt Sigma](/documentation/quickstart/SIGMA.pt-BR.md)** - Modelo DiT com suporte two-stage
+- **[Guia Sana](/documentation/quickstart/SANA.pt-BR.md)** - Modelo flow-matching leve
+- **[Guia Lumina2](/documentation/quickstart/LUMINA2.pt-BR.md)** - Modelo flow-matching de 2B parametros
+- **[Guia Kwai Kolors](/documentation/quickstart/KOLORS.pt-BR.md)** - Baseado em SDXL com encoder ChatGLM
+- **[Guia LongCat-Video](/documentation/quickstart/LONGCAT_VIDEO.pt-BR.md)** - Flow-matching text-to-video e image-to-video com Qwen-2.5-VL
+- **[Guia LongCat-Video Edit](/documentation/quickstart/LONGCAT_VIDEO_EDIT.pt-BR.md)** - Flavor conditioning-first (image-to-video)
+- **[Guia LongCat-Image](/documentation/quickstart/LONGCAT_IMAGE.pt-BR.md)** - Modelo flow-matching bilingue 6B com encoder Qwen-2.5-VL
+- **[Guia LongCat-Image Edit](/documentation/quickstart/LONGCAT_EDIT.pt-BR.md)** - Flavor de edicao de imagem que requer latentes de referencia
+- **[Guia LTX Video](/documentation/quickstart/LTXVIDEO.pt-BR.md)** - Treino de difusao de video
+- **[Guia Hunyuan Video 1.5](/documentation/quickstart/HUNYUANVIDEO.pt-BR.md)** - Flow-matching T2V/I2V 8.3B com estagios SR
+- **[Guia Wan Video](/documentation/quickstart/WAN.pt-BR.md)** - Flow-matching de video com suporte TREAD
+- **[Guia HiDream](/documentation/quickstart/HIDREAM.pt-BR.md)** - Modelo MoE com recursos avancados
+- **[Guia Cosmos2](/documentation/quickstart/COSMOS2IMAGE.pt-BR.md)** - Geracao de imagem multi-modal
+- **[Guia OmniGen](/documentation/quickstart/OMNIGEN.pt-BR.md)** - Modelo unificado de geracao de imagens
+- **[Guia Qwen Image](/documentation/quickstart/QWEN_IMAGE.pt-BR.md)** - Treinamento de larga escala com 20B parametros
+- **[Guia Stable Cascade Stage C](/documentation/quickstart/STABLE_CASCADE_C.pt-BR.md)** - LoRAs de prior com validacao prior+decoder combinada
+- **[Guia Kandinsky 5.0 Image](/documentation/quickstart/KANDINSKY5_IMAGE.pt-BR.md)** - Geracao de imagem com Qwen2.5-VL + Flux VAE
+- **[Guia Kandinsky 5.0 Video](/documentation/quickstart/KANDINSKY5_VIDEO.pt-BR.md)** - Geracao de video com HunyuanVideo VAE
 
 ---
 
@@ -197,7 +197,7 @@ pip install simpletuner[rocm]
 pip install simpletuner[apple]
 ```
 
-Para instalacao manual ou setup de desenvolvimento, veja a [documentacao de instalacao](/documentation/INSTALL.pt-br.md).
+Para instalacao manual ou setup de desenvolvimento, veja a [documentacao de instalacao](/documentation/INSTALL.pt-BR.md).
 
 ## Solucao de problemas
 
@@ -205,4 +205,4 @@ Ative logs de debug adicionando `export SIMPLETUNER_LOG_LEVEL=DEBUG` no seu ambi
 
 Para analise de performance do loop de treino, definir `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` tera timestamps que destacam problemas na configuracao.
 
-Para uma lista completa de opcoes disponiveis, consulte [esta documentacao](/documentation/OPTIONS.pt-br.md).
+Para uma lista completa de opcoes disponiveis, consulte [esta documentacao](/documentation/OPTIONS.pt-BR.md).

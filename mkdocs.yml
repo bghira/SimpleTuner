@@ -125,7 +125,7 @@ plugins:
             Audio Models: 오디오 모델
             Training: 훈련
             Reference: 참조
-        - locale: pt-br
+        - locale: pt-BR
           name: Portugues (Brasil)
           build: true
           nav_translations:
