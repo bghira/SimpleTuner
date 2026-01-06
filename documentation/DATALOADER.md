@@ -123,6 +123,40 @@ Audio backends support a dedicated `audio` block so metadata and bucket math sta
 - **`truncation_mode`** – determines which portion of the clip is retained when we snap to the bucket interval. Options: `beginning`, `end`, or `random` (default: `beginning`).
 - Standard audio settings (channel count, cache directory) map directly to the runtime audio backend created by `simpletuner.helpers.data_backend.factory`. Padding is intentionally avoided—clips are truncated instead of extended to keep behaviour consistent with diffusion trainers like ACE-Step.
 
+#### Audio configuration for S2V training
+
+For S2V (Sound-to-Video) training, the `audio` block can be placed on **video** datasets to automatically extract audio from video files:
+
+```json
+{
+  "id": "my-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "instance_data_dir": "datasets/videos",
+  "cache_dir_vae": "cache/vae/videos",
+  "audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "allow_zero_audio": false
+  }
+}
+```
+
+This automatically creates a `my-videos_audio` dataset and links it via `s2v_datasets`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `audio.auto_split` | bool | false | Auto-generate audio dataset from video files |
+| `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
+| `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
+| `audio.sample_rate` | int | 16000 | Target sample rate for audio extraction |
+| `audio.channels` | int | 1 | Number of audio channels (1=mono, 2=stereo) |
+| `audio.bucket_strategy` | string | "duration" | Bucketing strategy for audio samples |
+| `audio.duration_interval` | float | 3.0 | Duration interval for bucket grouping (seconds) |
+| `audio.max_duration_seconds` | float | null | Maximum audio duration (longer files skipped) |
+| `audio.truncation_mode` | string | "beginning" | How to truncate long audio: "beginning", "end", "random" |
+
 ### Audio Captions (Hugging Face)
 For Hugging Face audio datasets, you can specify which columns form the caption (prompt) and which column contains the lyrics:
 ```json

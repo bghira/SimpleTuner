@@ -53,7 +53,20 @@ image_file_extensions = set(
     ext.lower().lstrip(".") for ext, img_format in supported_extensions.items() if img_format in Image.OPEN
 )
 
-video_file_extensions = set(["mp4", "avi", "gif", "mov", "webm"])
+video_file_extensions = {
+    "mp4",
+    "avi",
+    "mov",
+    "mkv",
+    "webm",
+    "flv",
+    "wmv",
+    "m4v",
+    "mpeg",
+    "mpg",
+    "3gp",
+    "ogv",
+}
 audio_file_extensions = {
     "wav",
     "wave",

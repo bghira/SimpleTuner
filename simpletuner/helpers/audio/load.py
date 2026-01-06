@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 import wave
 from io import BytesIO
-from typing import IO, Tuple, Union
+from pathlib import Path
+from typing import IO, Optional, Tuple, Union
 
 import torch
 
@@ -14,6 +16,8 @@ try:
     import torchaudio
 except ModuleNotFoundError as exc:  # pragma: no cover - import error surfaces early
     raise ModuleNotFoundError("torchaudio is required for audio dataset support.") from exc
+
+logger = logging.getLogger(__name__)
 
 
 AudioSource = Union[str, bytes, bytearray, IO[bytes]]
@@ -118,3 +122,125 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
         else:
             waveform, sample_rate = _load_with_wave(stream)
     return waveform, sample_rate
+
+
+def generate_zero_audio(
+    duration_seconds: float,
+    sample_rate: int = 16000,
+    channels: int = 1,
+) -> Tuple[torch.Tensor, int]:
+    """
+    Generate a zero-filled audio tensor for videos without audio streams.
+
+    Args:
+        duration_seconds: Duration of the zero audio in seconds.
+        sample_rate: Sample rate in Hz (default: 16000).
+        channels: Number of audio channels (default: 1 for mono).
+
+    Returns:
+        Tuple of (waveform tensor, sample_rate).
+    """
+    num_samples = int(duration_seconds * sample_rate)
+    waveform = torch.zeros(channels, num_samples)
+    return waveform, sample_rate
+
+
+def load_audio_from_video(
+    source: Union[str, Path, bytes, BytesIO],
+    target_sample_rate: int = 16000,
+    target_channels: int = 1,
+) -> Tuple[torch.Tensor, int]:
+    """
+    Extract audio stream from a video file.
+
+    Works with local file paths or byte streams (for S3/HuggingFace backends).
+
+    Args:
+        source: Path to video file, or raw bytes/BytesIO from a remote backend.
+        target_sample_rate: Target sample rate in Hz (default: 16000 for Wav2Vec2).
+        target_channels: Target number of channels (default: 1 for mono).
+
+    Returns:
+        Tuple of (waveform tensor, sample_rate).
+
+    Raises:
+        ValueError: If the video has no audio stream.
+        RuntimeError: If ffmpeg extraction fails for other reasons.
+    """
+    import subprocess
+
+    # Handle byte streams (from S3/HuggingFace backends)
+    cleanup_source = False
+    if isinstance(source, (bytes, BytesIO)):
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            if isinstance(source, bytes):
+                tmp.write(source)
+            else:
+                source.seek(0)
+                tmp.write(source.read())
+            source_path = Path(tmp.name)
+        cleanup_source = True
+    else:
+        source_path = Path(source) if isinstance(source, str) else source
+
+    try:
+        # Try torchaudio first (supports many video containers)
+        try:
+            waveform, sample_rate = torchaudio.load(str(source_path))
+            # Resample if needed
+            if sample_rate != target_sample_rate:
+                resampler = torchaudio.transforms.Resample(sample_rate, target_sample_rate)
+                waveform = resampler(waveform)
+                sample_rate = target_sample_rate
+            # Convert to target channels
+            if waveform.shape[0] > target_channels:
+                # Downmix: average all channels to mono (or target channel count)
+                waveform = waveform.mean(dim=0, keepdim=True)
+                if target_channels > 1:
+                    waveform = waveform.repeat(target_channels, 1)
+            elif waveform.shape[0] < target_channels:
+                # Upmix: duplicate channels (clone to avoid shared memory)
+                waveform = waveform.repeat(target_channels // waveform.shape[0], 1)
+            return waveform, sample_rate
+        except Exception as e:
+            logger.debug(f"torchaudio failed to load audio from {source_path}, falling back to ffmpeg: {e}")
+
+        # Fallback: ffmpeg extraction to temporary WAV
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_wav_path = tmp.name
+
+        try:
+            cmd = [
+                "ffmpeg",
+                "-i",
+                str(source_path),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                str(target_sample_rate),
+                "-ac",
+                str(target_channels),
+                "-y",
+                tmp_wav_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=120)
+
+            if result.returncode != 0:
+                stderr = result.stderr or ""
+                if "does not contain any stream" in stderr or "Output file is empty" in stderr:
+                    raise ValueError(f"Video has no audio stream: {source_path}")
+                raise RuntimeError(f"ffmpeg failed: {stderr[:500]}")
+
+            # Check if output file is empty or very small (no audio extracted)
+            if not os.path.exists(tmp_wav_path) or os.path.getsize(tmp_wav_path) < 100:
+                raise ValueError(f"Video has no audio stream: {source_path}")
+
+            waveform, sample_rate = torchaudio.load(tmp_wav_path)
+            return waveform, sample_rate
+        finally:
+            if os.path.exists(tmp_wav_path):
+                os.unlink(tmp_wav_path)
+    finally:
+        if cleanup_source and source_path.exists():
+            source_path.unlink()

@@ -288,6 +288,10 @@ def retrieve_validation_images():
     if model.requires_validation_edit_captions() or model.requires_validation_i2v_samples():
         return retrieve_validation_edit_images()
 
+    # Check for S2V models that need audio conditioning
+    if getattr(model, "requires_s2v_validation_inputs", lambda: False)():
+        return retrieve_validation_s2v_samples()
+
     args = StateTracker.get_args()
     requires_cond_input = any(
         [
@@ -428,6 +432,93 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
             validation_set.append((shortname, edited_prompt, reference_imgs))
 
     logger.info(f"Collected {len(validation_set)} edit-validation samples.")
+    return validation_set
+
+
+def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
+    """
+    Retrieve validation samples for S2V (Speech-to-Video) models.
+
+    Returns:
+        list of (shortname, prompt, conditioning_dict) where conditioning_dict contains:
+        - "image": PIL Image (first frame / reference image)
+        - "audio_path": str path to audio file
+    """
+    model = StateTracker.get_model()
+    if not getattr(model, "requires_s2v_validation_inputs", lambda: False)():
+        return []
+
+    args = StateTracker.get_args()
+    validation_set = []
+
+    # Get video backends that have s2v_datasets linked
+    video_backends = StateTracker.get_data_backends(_type="video")
+    selected_eval_backend_ids = _assert_eval_dataset_exists(args.eval_dataset_id, video_backends, "video validation")
+
+    for backend_id, backend in video_backends.items():
+        backend_config = backend.get("config", {})
+        should_skip = backend_config.get("disable_validation", False)
+
+        if (selected_eval_backend_ids and backend.get("id") not in selected_eval_backend_ids) or should_skip:
+            logger.debug(f"Skipping S2V validation samples from {backend.get('id', backend_id)}")
+            continue
+
+        sampler = backend.get("sampler")
+        if sampler is None:
+            continue
+
+        # Check if this backend has s2v_datasets linked
+        s2v_datasets = StateTracker.get_s2v_datasets(backend_id)
+        if not s2v_datasets:
+            logger.debug(f"No s2v_datasets linked to {backend_id}, skipping for S2V validation")
+            continue
+
+        # Get validation samples from the video dataset
+        for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
+            # sample is (shortname, prompt, path, image)
+            if len(sample) >= 4:
+                shortname, prompt, sample_path, reference_image = sample[:4]
+            elif len(sample) == 3:
+                shortname, prompt, reference_image = sample
+                sample_path = None
+            else:
+                continue
+
+            # Find matching audio from s2v_datasets
+            audio_path = None
+            if sample_path is not None:
+                from pathlib import Path
+
+                video_stem = Path(sample_path).stem
+
+                for s2v_dataset in s2v_datasets:
+                    s2v_config = s2v_dataset.get("config", {})
+                    audio_root = s2v_config.get("instance_data_dir")
+                    if not audio_root:
+                        continue
+
+                    # Search for matching audio files
+                    audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
+                    for ext in audio_extensions:
+                        candidate = Path(audio_root) / f"{video_stem}{ext}"
+                        if candidate.exists():
+                            audio_path = str(candidate)
+                            break
+                    if audio_path:
+                        break
+
+            if audio_path is None:
+                logger.warning(f"No audio found for S2V validation sample: {shortname}")
+                continue
+
+            # Create conditioning dict with image and audio path
+            conditioning = {
+                "image": reference_image,
+                "audio_path": audio_path,
+            }
+            validation_set.append((shortname, prompt, conditioning))
+
+    logger.info(f"Collected {len(validation_set)} S2V validation samples.")
     return validation_set
 
 
@@ -2926,7 +3017,21 @@ class Validation:
         for resolution in resolutions:
             extra_validation_kwargs = {}
             validation_input_image_for_resolution = None
-            if validation_input_image is not None:
+
+            # Handle S2V conditioning dict specially
+            is_s2v_conditioning = isinstance(validation_input_image, dict) and "audio_path" in validation_input_image
+            if is_s2v_conditioning:
+                # Extract image and audio path from S2V conditioning
+                s2v_image = validation_input_image.get("image")
+                s2v_audio_path = validation_input_image.get("audio_path")
+                validation_input_image_for_resolution = _coerce_validation_image_input(s2v_image)
+                extra_validation_kwargs["image"] = validation_input_image_for_resolution
+                # Store S2V conditioning for model's update_pipeline_call_kwargs
+                extra_validation_kwargs["_s2v_conditioning"] = {
+                    "image": validation_input_image_for_resolution,
+                    "audio_path": s2v_audio_path,
+                }
+            elif validation_input_image is not None:
                 validation_input_image_for_resolution = _coerce_validation_image_input(validation_input_image)
                 extra_validation_kwargs["image"] = validation_input_image_for_resolution
                 if self.deepfloyd_stage2:

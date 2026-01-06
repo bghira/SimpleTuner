@@ -798,6 +798,76 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         return tuple(outputs)
 
+    def connect_s2v_samples(self, samples: tuple):
+        """
+        Connect S2V audio samples to video samples.
+
+        For S2V (Speech-to-Video) models, this method looks up audio files
+        from s2v_datasets that match video file paths by base filename
+        (without extension), and adds the audio paths to each sample's metadata.
+
+        When an S2V dataset has `source_from_video: True`, the audio is extracted
+        from the video file itself, so the video path is used directly as the audio path.
+        """
+        s2v_datasets = StateTracker.get_s2v_datasets(self.id)
+        if not s2v_datasets:
+            return samples
+
+        from pathlib import Path
+
+        outputs = []
+        for sample in samples:
+            video_path = sample.get("image_path") if isinstance(sample, dict) else getattr(sample, "image_path", None)
+            if video_path is None:
+                outputs.append(sample)
+                continue
+
+            # Extract base filename without extension
+            video_stem = Path(video_path).stem
+
+            # Look through s2v_datasets for matching audio file
+            audio_path = None
+            for s2v_dataset in s2v_datasets:
+                s2v_config = s2v_dataset.get("config", {})
+                audio_config = s2v_config.get("audio", {})
+
+                # Check if audio is extracted from video files
+                if audio_config.get("source_from_video", False):
+                    # Audio comes from the video file itself
+                    audio_path = video_path
+                    break
+
+                # Original matching logic - look for separate audio files
+                audio_root = s2v_config.get("instance_data_dir")
+                if not audio_root:
+                    continue
+
+                # Try common audio extensions
+                audio_root_path = Path(audio_root)
+                for ext in [".wav", ".mp3", ".flac", ".ogg", ".m4a"]:
+                    candidate = audio_root_path / f"{video_stem}{ext}"
+                    if candidate.exists():
+                        audio_path = str(candidate)
+                        break
+                if audio_path:
+                    break
+
+            # Add audio path to sample metadata
+            if isinstance(sample, dict):
+                sample["s2v_audio_path"] = audio_path
+            elif hasattr(sample, "image_metadata") and sample.image_metadata is not None:
+                sample.image_metadata["s2v_audio_path"] = audio_path
+            else:
+                # For TrainingSample objects, store in a new attribute
+                sample._s2v_audio_path = audio_path
+
+            outputs.append(sample)
+
+            if audio_path is None:
+                self.debug_log(f"No matching audio found for video: {video_path}")
+
+        return tuple(outputs)
+
     def __iter__(self):
         """
         Iterate over the sampler to yield image paths in batches.
@@ -874,6 +944,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.metadata_backend.mark_batch_as_seen([instance["image_path"] for instance in final_yield])
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
                     final_yield = self.connect_conditioning_samples(final_yield)
+                    # if applicable, connect S2V audio paths for speech-to-video models.
+                    final_yield = self.connect_s2v_samples(final_yield)
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
                     self.change_bucket()
