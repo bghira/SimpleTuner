@@ -100,11 +100,11 @@ class LTX2Vocoder(ModelMixin, ConfigMixin):
                 )
             )
 
-            for kernel_size, dilations in zip(resnet_kernel_sizes, resnet_dilations):
+            for resnet_kernel_size, dilations in zip(resnet_kernel_sizes, resnet_dilations):
                 self.resnets.append(
                     ResBlock(
                         output_channels,
-                        kernel_size,
+                        resnet_kernel_size,
                         dilations=dilations,
                         leaky_relu_negative_slope=leaky_relu_negative_slope,
                     )

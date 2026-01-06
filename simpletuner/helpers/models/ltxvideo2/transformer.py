@@ -791,10 +791,10 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if coords is not None:
             device = device or coords.device
-            batch_size = batch_size or coords.size(0)
         else:
             device = device or "cpu"
-            batch_size = batch_size or 1
+            if batch_size is None:
+                batch_size = 1
 
         # 1. Calculate the coordinate grid with respect to data space for the given modality (video, audio).
         if coords is None and self.modality == "video":
