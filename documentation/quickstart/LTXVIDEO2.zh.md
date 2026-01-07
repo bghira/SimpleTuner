@@ -250,7 +250,8 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 
 ### 验证适配器（LoRAs）
 
-Lightricks 提供的 LoRA 可在验证中通过 `validation_adapter_path`（单个）或 `validation_adapter_config`（多次运行）加载。这些 repo 使用非标准权重文件名，请用 `repo_id:weight_name`：
+Lightricks 提供的 LoRA 可在验证中通过 `validation_adapter_path`（单个）或 `validation_adapter_config`（多次运行）加载。这些 repo 使用非标准权重文件名，请用 `repo_id:weight_name`。正确的文件名和相关资产请参考 LTX-2 collection：
+https://huggingface.co/collections/Lightricks/ltx-2
 - `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`

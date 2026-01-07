@@ -252,7 +252,8 @@ Isso pode acelerar o treino em ~25-40% dependendo da razão.
 
 Os LoRAs da Lightricks podem ser aplicados na validação via `validation_adapter_path` (único) ou
 `validation_adapter_config` (várias execuções). Esses repos usam filenames de peso não padrão, então use
-`repo_id:weight_name`:
+`repo_id:weight_name`. Veja a coleção LTX-2 para os filenames corretos e assets relacionados:
+https://huggingface.co/collections/Lightricks/ltx-2
 - `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`

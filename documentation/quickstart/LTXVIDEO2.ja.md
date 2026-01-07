@@ -251,7 +251,8 @@ TREAD は動画にも有効で、計算を節約するため強く推奨され�
 
 ### Validation adapters (LoRAs)
 
-Lightricks の LoRA は `validation_adapter_path`（単体）または `validation_adapter_config`（複数実行）で検証時に適用できます。これらの repo は非標準の weight filename を使うため、`repo_id:weight_name` で指定してください:
+Lightricks の LoRA は `validation_adapter_path`（単体）または `validation_adapter_config`（複数実行）で検証時に適用できます。これらの repo は非標準の weight filename を使うため、`repo_id:weight_name` で指定してください。正しい filenames と関連 assets は LTX-2 collection を参照:
+https://huggingface.co/collections/Lightricks/ltx-2
 - `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`

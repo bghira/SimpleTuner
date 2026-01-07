@@ -250,7 +250,8 @@ ratio पर निर्भर करते हुए यह प्रशिक
 
 ### Validation adapters (LoRAs)
 
-Lightricks के LoRAs को validation में `validation_adapter_path` (single) या `validation_adapter_config` (multiple runs) से लोड कर सकते हैं। इन repos में nonstandard weight filename हैं, इसलिए `repo_id:weight_name` के साथ दें:
+Lightricks के LoRAs को validation में `validation_adapter_path` (single) या `validation_adapter_config` (multiple runs) से लोड कर सकते हैं। इन repos में nonstandard weight filename हैं, इसलिए `repo_id:weight_name` के साथ दें। सही filenames और assets के लिए LTX-2 collection देखें:
+https://huggingface.co/collections/Lightricks/ltx-2
 - `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
 - `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`
