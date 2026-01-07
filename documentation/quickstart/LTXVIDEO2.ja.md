@@ -17,6 +17,20 @@ LTX Video 2 は重量級の **19B** モデルです。以下を組み合わせ�
 - **マルチ GPU 学習**: 余裕が必要なら **FSDP2** か強力な **Group Offload** を推奨します。
 - **システム RAM**: 大きめの実行では 64GB+ を推奨します。RAM が多いほどキャッシュが安定します。
 
+### 実測パフォーマンスとメモリ（現場報告）
+
+- **ベース設定**: 480p / 17 フレーム / バッチサイズ 2（最小構成）。
+- **RamTorch（テキストエンコーダ含む）**: AMD 7900XTX で VRAM 約 13GB。
+  - NVIDIA 3090/4090/5090+ は同等以上の余裕が見込めます。
+- **オフロードなし（int8 TorchAO）**: VRAM 約 29-30GB、32GB 機材推奨。
+  - Gemma3 bf16 を読み込み→int8 量子化（VRAM 約 32GB）でシステム RAM ピーク約 46GB。
+  - LTX-2 transformer bf16 を読み込み→int8 量子化（VRAM 約 30GB）でシステム RAM ピーク約 34GB。
+- **オフロードなし（bf16 フル）**: オフロード無しで学習する場合、VRAM 約 48GB 必要。
+- **スループット**:
+  - A100-80G SXM4 で ~8 秒/step（コンパイルなし）。
+  - 7900XTX で ~16 秒/step（ローカル実行）。
+  - A100-80G SXM4 で 200 steps あたり ~30 分。
+
 ### メモリオフロード（必須級）
 
 単一 GPU で LTX Video 2 を学習する場合、グループオフロードの有効化を推奨します。バッチや解像度の余裕を確保するためにも有効です。
@@ -242,6 +256,64 @@ TREAD は動画にも有効で、計算を節約するため強く推奨され�
 </details>
 
 比率によっては 25-40% 程度高速化できます。
+
+### 最低 VRAM 使用構成（7900XTX）
+
+LTX Video 2 で VRAM 使用量を最小化するための実測済み設定です。
+
+<details>
+<summary>7900XTX の設定を表示（最低 VRAM 使用）</summary>
+
+```json
+{
+  "base_model_precision": "int8-quanto",
+  "checkpoint_step_interval": 100,
+  "data_backend_config": "config/ltx2/multidatabackend.json",
+  "disable_benchmark": true,
+  "dynamo_mode": "",
+  "evaluation_type": "none",
+  "hub_model_id": "simpletuner-ltxvideo2-19b-t2v-lora-test",
+  "learning_rate": 0.00006,
+  "lr_warmup_steps": 50,
+  "lycoris_config": "config/lycoris_config.json",
+  "max_grad_norm": 0.1,
+  "max_train_steps": 200,
+  "minimum_image_size": 0,
+  "model_family": "ltxvideo2",
+  "model_flavour": "dev",
+  "model_type": "lora",
+  "num_train_epochs": 0,
+  "offload_during_startup": true,
+  "optimizer": "adamw_bf16",
+  "output_dir": "output/examples/ltxvideo2-19b-t2v.peft-lora",
+  "override_dataset_config": true,
+  "ramtorch": true,
+  "ramtorch_text_encoder": true,
+  "report_to": "none",
+  "resolution": 480,
+  "scheduled_sampling_reflexflow": false,
+  "seed": 42,
+  "skip_file_discovery": "",
+  "tracker_project_name": "lora-training",
+  "tracker_run_name": "example-training-run",
+  "train_batch_size": 2,
+  "vae_batch_size": 1,
+  "vae_enable_patch_conv": true,
+  "vae_enable_slicing": true,
+  "vae_enable_temporal_roll": true,
+  "vae_enable_tiling": true,
+  "validation_disable": true,
+  "validation_disable_unconditional": true,
+  "validation_guidance": 5,
+  "validation_num_inference_steps": 40,
+  "validation_num_video_frames": 81,
+  "validation_prompt": "🟫 is holding a sign that says hello world from ltxvideo2",
+  "validation_resolution": "768x512",
+  "validation_seed": 42,
+  "validation_using_datasets": false
+}
+```
+</details>
 
 ### 検証ワークフロー (T2V vs I2V)
 

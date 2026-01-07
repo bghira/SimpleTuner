@@ -17,6 +17,20 @@ Este setup é intensivo em VRAM, e o pré-cache do VAE pode aumentar o uso de me
 - **Treino multi-GPU**: **FSDP2** ou **Group Offload** agressivo é recomendado se você precisa de mais folga.
 - **RAM do sistema**: 64GB+ é recomendado para execuções maiores; mais RAM ajuda no cache.
 
+### Desempenho e memória observados (relatos de campo)
+
+- **Configuração base**: 480p, 17 frames, batch size 2 (mínima duração/resolução).
+- **RamTorch (incl. encoder de texto)**: ~13 GB de VRAM em AMD 7900XTX.
+  - NVIDIA 3090/4090/5090+ deve ter folga similar ou melhor.
+- **Sem offload (int8 TorchAO)**: ~29-30 GB de VRAM; hardware de 32 GB recomendado.
+  - Pico de RAM do sistema: ~46 GB ao carregar Gemma3 bf16 e depois quantizar para int8 (~32 GB VRAM).
+  - Pico de RAM do sistema: ~34 GB ao carregar o transformer LTX-2 bf16 e depois quantizar para int8 (~30 GB VRAM).
+- **Sem offload (bf16 completo)**: ~48 GB de VRAM necessários para treinar o modelo sem offload.
+- **Throughput**:
+  - ~8 s/step em A100-80G SXM4 (sem compilação).
+  - ~16 s/step em 7900XTX (execução local).
+  - ~30 min para 200 steps em A100-80G SXM4.
+
 ### Offload de memória (Crítico)
 
 Para a maioria dos setups de GPU única treinando o LTX Video 2, é recomendável habilitar offload em grupo. É opcional, mas ajuda a manter folga de VRAM em batches/resoluções maiores.
@@ -241,6 +255,64 @@ Adicione ao `config.json`:
 </details>
 
 Isso pode acelerar o treino em ~25-40% dependendo da razão.
+
+### Configuração de menor uso de VRAM (7900XTX)
+
+Configuração testada em campo que prioriza o menor uso de VRAM no LTX Video 2.
+
+<details>
+<summary>Ver configuração 7900XTX (menor uso de VRAM)</summary>
+
+```json
+{
+  "base_model_precision": "int8-quanto",
+  "checkpoint_step_interval": 100,
+  "data_backend_config": "config/ltx2/multidatabackend.json",
+  "disable_benchmark": true,
+  "dynamo_mode": "",
+  "evaluation_type": "none",
+  "hub_model_id": "simpletuner-ltxvideo2-19b-t2v-lora-test",
+  "learning_rate": 0.00006,
+  "lr_warmup_steps": 50,
+  "lycoris_config": "config/lycoris_config.json",
+  "max_grad_norm": 0.1,
+  "max_train_steps": 200,
+  "minimum_image_size": 0,
+  "model_family": "ltxvideo2",
+  "model_flavour": "dev",
+  "model_type": "lora",
+  "num_train_epochs": 0,
+  "offload_during_startup": true,
+  "optimizer": "adamw_bf16",
+  "output_dir": "output/examples/ltxvideo2-19b-t2v.peft-lora",
+  "override_dataset_config": true,
+  "ramtorch": true,
+  "ramtorch_text_encoder": true,
+  "report_to": "none",
+  "resolution": 480,
+  "scheduled_sampling_reflexflow": false,
+  "seed": 42,
+  "skip_file_discovery": "",
+  "tracker_project_name": "lora-training",
+  "tracker_run_name": "example-training-run",
+  "train_batch_size": 2,
+  "vae_batch_size": 1,
+  "vae_enable_patch_conv": true,
+  "vae_enable_slicing": true,
+  "vae_enable_temporal_roll": true,
+  "vae_enable_tiling": true,
+  "validation_disable": true,
+  "validation_disable_unconditional": true,
+  "validation_guidance": 5,
+  "validation_num_inference_steps": 40,
+  "validation_num_video_frames": 81,
+  "validation_prompt": "🟫 is holding a sign that says hello world from ltxvideo2",
+  "validation_resolution": "768x512",
+  "validation_seed": 42,
+  "validation_using_datasets": false
+}
+```
+</details>
 
 ### Fluxos de validação (T2V vs I2V)
 

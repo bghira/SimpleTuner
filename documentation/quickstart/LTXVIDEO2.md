@@ -256,6 +256,64 @@ Add to `config.json`:
 
 This can speed up training by ~25-40% depending on the ratio.
 
+### Lowest VRAM use config (7900XTX)
+
+Field-tested config that prioritizes minimal VRAM usage on LTX Video 2.
+
+<details>
+<summary>View 7900XTX config (lowest VRAM use)</summary>
+
+```json
+{
+  "base_model_precision": "int8-quanto",
+  "checkpoint_step_interval": 100,
+  "data_backend_config": "config/ltx2/multidatabackend.json",
+  "disable_benchmark": true,
+  "dynamo_mode": "",
+  "evaluation_type": "none",
+  "hub_model_id": "simpletuner-ltxvideo2-19b-t2v-lora-test",
+  "learning_rate": 0.00006,
+  "lr_warmup_steps": 50,
+  "lycoris_config": "config/lycoris_config.json",
+  "max_grad_norm": 0.1,
+  "max_train_steps": 200,
+  "minimum_image_size": 0,
+  "model_family": "ltxvideo2",
+  "model_flavour": "dev",
+  "model_type": "lora",
+  "num_train_epochs": 0,
+  "offload_during_startup": true,
+  "optimizer": "adamw_bf16",
+  "output_dir": "output/examples/ltxvideo2-19b-t2v.peft-lora",
+  "override_dataset_config": true,
+  "ramtorch": true,
+  "ramtorch_text_encoder": true,
+  "report_to": "none",
+  "resolution": 480,
+  "scheduled_sampling_reflexflow": false,
+  "seed": 42,
+  "skip_file_discovery": "",
+  "tracker_project_name": "lora-training",
+  "tracker_run_name": "example-training-run",
+  "train_batch_size": 2,
+  "vae_batch_size": 1,
+  "vae_enable_patch_conv": true,
+  "vae_enable_slicing": true,
+  "vae_enable_temporal_roll": true,
+  "vae_enable_tiling": true,
+  "validation_disable": true,
+  "validation_disable_unconditional": true,
+  "validation_guidance": 5,
+  "validation_num_inference_steps": 40,
+  "validation_num_video_frames": 81,
+  "validation_prompt": "🟫 is holding a sign that says hello world from ltxvideo2",
+  "validation_resolution": "768x512",
+  "validation_seed": 42,
+  "validation_using_datasets": false
+}
+```
+</details>
+
 ### Validation workflows (T2V vs I2V)
 
 - **T2V (text-to-video)**: Leave `validation_using_datasets: false` and use `validation_prompt` or `validation_prompt_library`.

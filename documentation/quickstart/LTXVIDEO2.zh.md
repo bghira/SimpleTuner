@@ -17,6 +17,20 @@ LTX Video 2 是重量级 **19B** 模型，由以下组件组成：
 - **多 GPU 训练**：若需要更大余量，推荐 **FSDP2** 或强力 **Group Offload**。
 - **系统内存**：大规模训练建议 64GB+，更多内存有助于缓存。
 
+### 实测性能与内存（实测报告）
+
+- **基准设置**：480p、17 帧、batch size 2（最小视频长度/分辨率）。
+- **RamTorch（含文本编码器）**：AMD 7900XTX 上 VRAM 约 13 GB。
+  - NVIDIA 3090/4090/5090+ 应有相近或更好的 VRAM 余量。
+- **不使用 offload（int8 TorchAO）**：VRAM 约 29-30 GB；建议 32 GB 显存。
+  - 系统内存峰值：先加载 bf16 Gemma3 再量化到 int8（VRAM ~32 GB）时约 46 GB。
+  - 系统内存峰值：先加载 bf16 LTX-2 transformer 再量化到 int8（VRAM ~30 GB）时约 34 GB。
+- **不使用 offload（完整 bf16）**：无任何 offload 训练约需 48 GB VRAM。
+- **吞吐**：
+  - A100-80G SXM4 约 8 秒/step（未启用编译）。
+  - 7900XTX 约 16 秒/step（本地运行）。
+  - A100-80G SXM4 跑 200 steps 约 30 分钟。
+
 ### 内存卸载（关键）
 
 多数单 GPU 训练 LTX Video 2 的场景都推荐启用分组卸载，以便为更大 batch/分辨率留出 VRAM 余量。
@@ -241,6 +255,64 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 </details>
 
 根据比例可加速约 25-40%。
+
+### 最低 VRAM 使用配置（7900XTX）
+
+适用于 LTX Video 2 的实测配置，优先最小化 VRAM 使用。
+
+<details>
+<summary>查看 7900XTX 配置（最低 VRAM 使用）</summary>
+
+```json
+{
+  "base_model_precision": "int8-quanto",
+  "checkpoint_step_interval": 100,
+  "data_backend_config": "config/ltx2/multidatabackend.json",
+  "disable_benchmark": true,
+  "dynamo_mode": "",
+  "evaluation_type": "none",
+  "hub_model_id": "simpletuner-ltxvideo2-19b-t2v-lora-test",
+  "learning_rate": 0.00006,
+  "lr_warmup_steps": 50,
+  "lycoris_config": "config/lycoris_config.json",
+  "max_grad_norm": 0.1,
+  "max_train_steps": 200,
+  "minimum_image_size": 0,
+  "model_family": "ltxvideo2",
+  "model_flavour": "dev",
+  "model_type": "lora",
+  "num_train_epochs": 0,
+  "offload_during_startup": true,
+  "optimizer": "adamw_bf16",
+  "output_dir": "output/examples/ltxvideo2-19b-t2v.peft-lora",
+  "override_dataset_config": true,
+  "ramtorch": true,
+  "ramtorch_text_encoder": true,
+  "report_to": "none",
+  "resolution": 480,
+  "scheduled_sampling_reflexflow": false,
+  "seed": 42,
+  "skip_file_discovery": "",
+  "tracker_project_name": "lora-training",
+  "tracker_run_name": "example-training-run",
+  "train_batch_size": 2,
+  "vae_batch_size": 1,
+  "vae_enable_patch_conv": true,
+  "vae_enable_slicing": true,
+  "vae_enable_temporal_roll": true,
+  "vae_enable_tiling": true,
+  "validation_disable": true,
+  "validation_disable_unconditional": true,
+  "validation_guidance": 5,
+  "validation_num_inference_steps": 40,
+  "validation_num_video_frames": 81,
+  "validation_prompt": "🟫 is holding a sign that says hello world from ltxvideo2",
+  "validation_resolution": "768x512",
+  "validation_seed": 42,
+  "validation_using_datasets": false
+}
+```
+</details>
 
 ### 验证流程（T2V vs I2V）
 
