@@ -2044,7 +2044,13 @@ class Validation:
         is_fsdp = FSDP_AVAILABLE and pipeline_model is not None and isinstance(pipeline_model, FSDP)
 
         if not is_fsdp:
-            self.model.pipeline.to(self.accelerator.device)
+            base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+            if "torchao" in base_precision:
+                logger.info(
+                    "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
+                )
+            else:
+                self.model.pipeline.to(self.accelerator.device)
 
         self.model.pipeline.set_progress_bar_config(disable=True)
         if hasattr(self.model, "configure_assistant_lora_for_inference"):
