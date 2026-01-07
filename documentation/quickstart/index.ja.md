@@ -51,6 +51,7 @@
 |-------|------------|-------|
 | **Wan Video** | 1.3-14B | [Wan ガイド](WAN.md) |
 | **LTX Video** | 5B | [LTX ガイド](LTXVIDEO.md) |
+| **LTX Video 2** | 19B | [LTX Video 2 ガイド](LTXVIDEO2.md) |
 | **Hunyuan Video** | 8.3B | [Hunyuan ガイド](HUNYUANVIDEO.md) |
 | **Sana Video** | - | [Sana Video ガイド](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [Kandinsky Video ガイド](KANDINSKY5_VIDEO.md) |
