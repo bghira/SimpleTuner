@@ -409,7 +409,9 @@ Apesar de tudo isso, a menos que seu batch size seja muito baixo e/ou sua learni
 
 #### Considerações sobre o dataset
 
-O treinamento S2V requer dados de vídeo e áudio pareados. Você precisa de um dataset de vídeo e um dataset de áudio correspondente ligado via `s2v_datasets`.
+O treinamento S2V requer dados de vídeo e áudio pareados. Por padrão, o SimpleTuner faz auto-split do áudio a partir
+dos datasets de vídeo, então você não precisa de um dataset de áudio separado a menos que queira processamento
+personalizado. Use `audio.auto_split: false` para desativar e defina `s2v_datasets` manualmente.
 
 Há poucas limitações no tamanho do dataset além de quanto compute e tempo levará para processar e treinar.
 
@@ -423,7 +425,7 @@ Observe que o tamanho mínimo do dataset é `train_batch_size * gradient_accumul
 
 ##### Extração automática de áudio de vídeos (Recomendado)
 
-Se seus vídeos já contêm faixas de áudio, o SimpleTuner pode extrair e processar áudio automaticamente sem exigir um dataset de áudio separado. Essa é a abordagem mais simples:
+Se seus vídeos já contêm faixas de áudio, o SimpleTuner pode extrair e processar áudio automaticamente sem exigir um dataset de áudio separado. Essa é a abordagem mais simples e a padrão:
 
 ```json
 [
@@ -466,14 +468,14 @@ Se seus vídeos já contêm faixas de áudio, o SimpleTuner pode extrair e proce
 ]
 ```
 
-Com `audio.auto_split: true`, o SimpleTuner irá:
+Com o auto-split de áudio habilitado (padrão), o SimpleTuner irá:
 1. Gerar automaticamente uma configuração de dataset de áudio (`s2v-videos_audio`)
 2. Extrair áudio de cada vídeo durante a descoberta de metadados
 3. Fazer cache dos latentes de áudio VAE em um diretório dedicado
 4. Vincular automaticamente o dataset de áudio via `s2v_datasets`
 
 **Opções de configuração de áudio:**
-- `audio.auto_split` (bool): Habilita a extração automática de áudio de vídeos
+- `audio.auto_split` (bool): Habilita a extração automática de áudio de vídeos (padrão: true)
 - `audio.sample_rate` (int): Taxa de amostragem alvo em Hz (padrão: 16000 para Wav2Vec2)
 - `audio.channels` (int): Número de canais de áudio (padrão: 1 para mono)
 - `audio.allow_zero_audio` (bool): Gera áudio preenchido com zeros para vídeos sem streams de áudio (padrão: false)
@@ -485,7 +487,8 @@ Com `audio.auto_split: true`, o SimpleTuner irá:
 
 ##### Dataset de áudio manual (Alternativa)
 
-Se você preferir arquivos de áudio separados ou precisar de processamento de áudio personalizado, os modelos S2V também podem usar arquivos de áudio pré-extraídos que correspondam aos seus arquivos de vídeo pelo nome do arquivo. Por exemplo:
+Se você preferir arquivos de áudio separados, precisar de processamento de áudio personalizado ou desativar o auto-split,
+os modelos S2V também podem usar arquivos de áudio pré-extraídos que correspondam aos seus arquivos de vídeo pelo nome do arquivo. Por exemplo:
 - `video_001.mp4` deve ter um correspondente `video_001.wav` (ou `.mp3`, `.flac`, `.ogg`, `.m4a`)
 
 Os arquivos de áudio devem estar em um diretório separado que você configurará como um backend `s2v_datasets`.

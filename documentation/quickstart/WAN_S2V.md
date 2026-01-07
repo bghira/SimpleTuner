@@ -410,7 +410,9 @@ Despite all of this, unless your batch size is too low and / or your learning ra
 
 #### Dataset considerations
 
-S2V training requires paired video and audio data. You need both a video dataset and a corresponding audio dataset linked via `s2v_datasets`.
+S2V training requires paired video and audio data. By default, SimpleTuner auto-splits audio from video datasets, so you
+do not need to define a separate audio dataset unless you want custom processing. Set `audio.auto_split: false` to opt
+out and provide `s2v_datasets` manually.
 
 There are few limitations on the dataset size other than how much compute and time it will take to process and train.
 
@@ -424,7 +426,7 @@ Note that the bare minimum dataset size is `train_batch_size * gradient_accumula
 
 ##### Automatic audio extraction from videos (Recommended)
 
-If your videos already contain audio tracks, SimpleTuner can automatically extract and process audio without requiring a separate audio dataset. This is the simplest approach:
+If your videos already contain audio tracks, SimpleTuner can automatically extract and process audio without requiring a separate audio dataset. This is the default and simplest approach:
 
 ```json
 [
@@ -467,14 +469,14 @@ If your videos already contain audio tracks, SimpleTuner can automatically extra
 ]
 ```
 
-With `audio.auto_split: true`, SimpleTuner will:
+With audio auto-split enabled (default), SimpleTuner will:
 1. Auto-generate an audio dataset configuration (`s2v-videos_audio`)
 2. Extract audio from each video during metadata discovery
 3. Cache audio VAE latents in a dedicated directory
 4. Automatically link the audio dataset via `s2v_datasets`
 
 **Audio configuration options:**
-- `audio.auto_split` (bool): Enable automatic audio extraction from videos
+- `audio.auto_split` (bool): Enable automatic audio extraction from videos (default: true)
 - `audio.sample_rate` (int): Target sample rate in Hz (default: 16000 for Wav2Vec2)
 - `audio.channels` (int): Number of audio channels (default: 1 for mono)
 - `audio.allow_zero_audio` (bool): Generate zero-filled audio for videos without audio streams (default: false)
@@ -486,7 +488,8 @@ With `audio.auto_split: true`, SimpleTuner will:
 
 ##### Manual audio dataset (Alternative)
 
-If you prefer separate audio files or need custom audio processing, S2V models can also use pre-extracted audio files that match your video files by filename. For example:
+If you prefer separate audio files, need custom audio processing, or disable auto-split, S2V models can also use
+pre-extracted audio files that match your video files by filename. For example:
 - `video_001.mp4` should have a corresponding `video_001.wav` (or `.mp3`, `.flac`, `.ogg`, `.m4a`)
 
 The audio files should be in a separate directory that you'll configure as an `s2v_datasets` backend.
