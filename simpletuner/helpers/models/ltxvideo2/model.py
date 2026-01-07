@@ -594,6 +594,27 @@ class LTXVideo2(VideoModelFoundation):
         self.pipelines[pipeline_type] = pipeline_instance
         return pipeline_instance
 
+    def load_validation_models(self, pipeline=None, pipeline_type=None) -> None:
+        self._load_audio_vae(move_to_device=True)
+        self._load_vocoder(move_to_device=True)
+        if pipeline is None:
+            return
+        if getattr(pipeline, "audio_vae", None) is None:
+            pipeline.audio_vae = self.audio_vae
+        if getattr(pipeline, "vocoder", None) is None:
+            pipeline.vocoder = self.vocoder
+        audio_vae = getattr(pipeline, "audio_vae", None)
+        if audio_vae is None:
+            return
+        if hasattr(pipeline, "audio_vae_mel_compression_ratio"):
+            pipeline.audio_vae_mel_compression_ratio = audio_vae.mel_compression_ratio
+        if hasattr(pipeline, "audio_vae_temporal_compression_ratio"):
+            pipeline.audio_vae_temporal_compression_ratio = audio_vae.temporal_compression_ratio
+        if hasattr(pipeline, "audio_vae_sample_rate"):
+            pipeline.audio_vae_sample_rate = audio_vae.config.sample_rate
+        if hasattr(pipeline, "audio_hop_length"):
+            pipeline.audio_hop_length = audio_vae.config.mel_hop_length
+
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
         if isinstance(vae, AutoencoderKLLTX2Audio):
             sample_rates = self._resolve_audio_sample_rates(metadata_entries, samples.shape[0])

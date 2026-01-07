@@ -510,6 +510,14 @@ class ModelFoundation(ABC):
         """
         return embeddings
 
+    def load_validation_models(self, pipeline=None, pipeline_type=None) -> None:
+        """
+        Optional hook for models to lazily load validation-only components.
+
+        This is a no-op by default.
+        """
+        return
+
     @classmethod
     def supports_assistant_lora(cls, config=None) -> bool:
         """

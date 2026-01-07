@@ -2011,11 +2011,13 @@ class Validation:
                     pipeline_type = PipelineTypes.IMG2IMG
                 elif PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
                     pipeline_type = PipelineTypes.IMG2VIDEO
+        self.model.load_validation_models(pipeline_type=pipeline_type)
         self.model.pipeline = self.model.get_pipeline(
             pipeline_type=pipeline_type,
             load_base_model=False,
         )
         self._active_pipeline_type = pipeline_type
+        self.model.load_validation_models(pipeline=self.model.pipeline, pipeline_type=pipeline_type)
 
         self.model.move_models(self.accelerator.device)
 
