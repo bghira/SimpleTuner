@@ -1037,14 +1037,19 @@ class LTXVideo2(VideoModelFoundation):
         audio_target = prepared_batch.get("audio_noise") - prepared_batch.get("audio_latents")
         if audio_target is None:
             return loss
+        weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
+        if weight == 0.0:
+            return loss
 
-        audio_loss = (audio_pred.float() - audio_target.float()) ** 2
         audio_mask = prepared_batch.get("audio_latent_mask")
         if audio_mask is not None:
-            mask = audio_mask.view(audio_mask.shape[0], *([1] * (audio_loss.ndim - 1)))
-            audio_loss = audio_loss * mask
+            if torch.all(audio_mask == 0):
+                return loss
+            mask = audio_mask.view(audio_mask.shape[0], *([1] * (audio_pred.ndim - 1)))
+            audio_pred = torch.where(mask > 0, audio_pred, torch.zeros_like(audio_pred))
+            audio_target = torch.where(mask > 0, audio_target, torch.zeros_like(audio_target))
+        audio_loss = (audio_pred.float() - audio_target.float()) ** 2
         audio_loss = audio_loss.mean()
-        weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
 
         return loss + audio_loss * weight
 
