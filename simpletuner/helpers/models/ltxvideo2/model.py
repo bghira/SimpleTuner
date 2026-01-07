@@ -6,6 +6,7 @@ from typing import Optional, Sequence
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
@@ -107,6 +108,7 @@ class LTXVideo2(VideoModelFoundation):
         self._vocoder_lock = threading.Lock()
         self._warned_missing_audio = False
         self._combined_checkpoint_path = None
+        self._diffusers_layout_detected = None
 
     def _configure_gemma_path(self) -> None:
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
@@ -117,6 +119,47 @@ class LTXVideo2(VideoModelFoundation):
             return
         text_encoder_config["path"] = gemma_path
         self.TEXT_ENCODER_CONFIGURATION = {"text_encoder": text_encoder_config}
+
+    def _detect_diffusers_layout(self, model_path: Optional[str]) -> bool:
+        if not model_path:
+            return False
+        if isinstance(model_path, str) and model_path.endswith((".safetensors", ".sft")):
+            return False
+        if os.path.isfile(model_path):
+            return False
+        if os.path.isdir(model_path):
+            markers = (
+                "model_index.json",
+                "transformer",
+                "vae",
+                "audio_vae",
+                "vocoder",
+                "connectors",
+            )
+            return any(os.path.exists(os.path.join(model_path, marker)) for marker in markers)
+        repo_markers = (
+            "model_index.json",
+            "transformer/config.json",
+            "vae/config.json",
+            "audio_vae/config.json",
+            "vocoder/config.json",
+            "connectors/config.json",
+        )
+        for marker in repo_markers:
+            try:
+                local_path = hf_hub_download(
+                    repo_id=model_path,
+                    filename=marker,
+                    revision=self.config.revision,
+                )
+            except EntryNotFoundError:
+                continue
+            except Exception as exc:
+                logger.warning("Unable to detect diffusers layout for %s: %s", model_path, exc)
+                return False
+            if local_path and os.path.isfile(local_path):
+                return True
+        return False
 
     def setup_model_flavour(self):
         flavour = getattr(self.config, "model_flavour", None)
@@ -186,13 +229,15 @@ class LTXVideo2(VideoModelFoundation):
 
     def _uses_combined_checkpoint(self) -> bool:
         model_path = self.config.pretrained_model_name_or_path
+        if self._diffusers_layout_detected is None:
+            self._diffusers_layout_detected = self._detect_diffusers_layout(model_path)
+        if self._diffusers_layout_detected:
+            return False
         if isinstance(model_path, str) and model_path.endswith((".safetensors", ".sft")):
             return True
         if model_path and os.path.isfile(model_path):
             return True
         if model_path and os.path.isdir(model_path):
-            if os.path.exists(os.path.join(model_path, "model_index.json")):
-                return False
             combined_file = os.path.join(model_path, self._resolve_ltx2_combined_filename())
             return os.path.isfile(combined_file)
         return True
