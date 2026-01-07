@@ -379,7 +379,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and (backend.get("conditioning_data", None) is None and backend.get("conditioning", None) is None)
     ):
         raise ValueError(
-            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
+            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://bghira.github.io/SimpleTuner/CONTROLNET/"
         )
 
     if dataset_type not in choices:
@@ -2128,7 +2128,7 @@ class FactoryRegistry:
         if not self.text_embed_backends:
             raise ValueError(
                 "Your dataloader config must contain at least one image dataset AND at least one text_embed dataset."
-                " See this link for more information about dataset_type: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
+                " See this link for more information about dataset_type: https://bghira.github.io/SimpleTuner/DATALOADER/#configuration-options"
             )
 
         if not self.default_text_embed_backend_id and len(self.text_embed_backends) > 1:
@@ -2138,7 +2138,7 @@ class FactoryRegistry:
             self.default_text_embed_backend_id = chosen_id
             warning_log(
                 f"No default text embed was defined, using {chosen_id} as the default."
-                " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
+                " See this page for information about the default text embed backend: https://bghira.github.io/SimpleTuner/DATALOADER/#configuration-options"
             )
 
         info_log("Completed loading text embed services.")

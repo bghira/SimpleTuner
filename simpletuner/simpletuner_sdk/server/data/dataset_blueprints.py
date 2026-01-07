@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
 
+from ..utils.docs import docs_url
+
 
 class DatasetFieldOption(BaseModel):
     value: str
@@ -408,7 +410,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             ],
             "metadata": {
                 "tags": ["image", "local"],
-                "docsUrl": "https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md",
+                "docsUrl": docs_url("DATALOADER.md"),
             },
         }
     ),
@@ -558,7 +560,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             ],
             "metadata": {
                 "tags": ["audio", "local"],
-                "docsUrl": "https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#audio-datasets",
+                "docsUrl": docs_url("DATALOADER.md#audio-datasets"),
             },
         }
     ),
@@ -656,7 +658,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             ],
             "metadata": {
                 "tags": ["text_embeds", "local"],
-                "docsUrl": "https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#text-embeds",
+                "docsUrl": docs_url("DATALOADER.md#text-embeds"),
             },
         }
     ),
@@ -844,7 +846,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             ],
             "metadata": {
                 "tags": ["image", "csv"],
-                "docsUrl": "https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#csv-datasets",
+                "docsUrl": docs_url("DATALOADER.md#csv-datasets"),
             },
         }
     ),
@@ -938,7 +940,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             ],
             "metadata": {
                 "tags": ["image", "aws"],
-                "docsUrl": "https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#aws-datasets",
+                "docsUrl": docs_url("DATALOADER.md#aws-datasets"),
             },
         }
     ),

@@ -39,7 +39,7 @@
                title="{{ field.cmd_args_help|default(field.description) }}"></i>
             {% endif %}
             {% if field.documentation %}
-            <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/{{ field.documentation }}"
+            <a href="{{ docs_url(field.documentation) }}"
                target="_blank"
                class="text-muted doc-link ms-1"
                title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
