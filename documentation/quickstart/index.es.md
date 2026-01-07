@@ -51,6 +51,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 |-------|------------|-------|
 | **Wan Video** | 1.3-14B | [Guía de Wan](WAN.md) |
 | **LTX Video** | 5B | [Guía de LTX](LTXVIDEO.md) |
+| **LTX Video 2** | 19B | [Guía de LTX Video 2](LTXVIDEO2.md) |
 | **Hunyuan Video** | 8.3B | [Guía de Hunyuan](HUNYUANVIDEO.md) |
 | **Sana Video** | - | [Guía de Sana Video](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [Guía de Kandinsky Video](KANDINSKY5_VIDEO.md) |
