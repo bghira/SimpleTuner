@@ -680,7 +680,7 @@ class VAECache(WebhookMixin):
 
     def process_audio_latents(self, latents_uncached):
         if StateTracker.get_model_family() in ["ltxvideo2"]:
-            latents_uncached = normalize_ltx2_audio_latents(latents_uncached, self.vae.latents_mean, self.vae.latents_std)
+            latents_uncached = normalize_ltx2_audio_latents(latents_uncached, self.vae)
         return latents_uncached
 
     def encode_images(self, images, filepaths, load_from_cache=True):

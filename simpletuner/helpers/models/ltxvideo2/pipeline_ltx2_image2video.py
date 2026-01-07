@@ -726,7 +726,13 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
 
     @staticmethod
     # Copied from diffusers.pipelines.ltx2.pipeline_ltx2.LTX2Pipeline._denormalize_audio_latents
-    def _denormalize_audio_latents(latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor):
+    def _denormalize_audio_latents(latents: torch.Tensor, audio_vae: AutoencoderKLLTX2Audio):
+        if hasattr(audio_vae, "per_channel_statistics"):
+            return latents
+        latents_mean = getattr(audio_vae, "latents_mean", None)
+        latents_std = getattr(audio_vae, "latents_std", None)
+        if latents_mean is None or latents_std is None:
+            return latents
         latents_mean = latents_mean.to(latents.device, latents.dtype)
         latents_std = latents_std.to(latents.device, latents.dtype)
         return (latents * latents_std) + latents_mean
@@ -1284,9 +1290,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
             video = self.video_processor.postprocess_video(video, output_type=output_type)
 
             audio_latents = audio_latents.to(self.audio_vae.dtype)
-            audio_latents = self._denormalize_audio_latents(
-                audio_latents, self.audio_vae.latents_mean, self.audio_vae.latents_std
-            )
+            audio_latents = self._denormalize_audio_latents(audio_latents, self.audio_vae)
             audio_latents = self._unpack_audio_latents(audio_latents, audio_num_frames, num_mel_bins=latent_mel_bins)
             generated_mel_spectrograms = self.audio_vae.decode(audio_latents, return_dict=False)[0]
             audio = self.vocoder(generated_mel_spectrograms)

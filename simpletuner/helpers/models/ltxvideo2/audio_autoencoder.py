@@ -79,6 +79,23 @@ class LTX2AudioProcessor(nn.Module):
         return mel.permute(0, 1, 3, 2).contiguous()
 
 
+class LTX2AudioPerChannelStatistics(nn.Module):
+    """
+    Per-channel statistics for normalizing and denormalizing the latent representation.
+    """
+
+    def __init__(self, latent_channels: int) -> None:
+        super().__init__()
+        self.register_buffer("std-of-means", torch.empty(latent_channels))
+        self.register_buffer("mean-of-means", torch.empty(latent_channels))
+
+    def un_normalize(self, x: torch.Tensor) -> torch.Tensor:
+        return (x * self.get_buffer("std-of-means").to(x)) + self.get_buffer("mean-of-means").to(x)
+
+    def normalize(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.get_buffer("mean-of-means").to(x)) / self.get_buffer("std-of-means").to(x)
+
+
 class LTX2AudioCausalConv2d(nn.Module):
     """
     A causal 2D convolution that pads asymmetrically along the causal axis.
@@ -763,12 +780,14 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
             mel_bins=mel_bins,
         )
 
-        # Per-channel statistics for normalizing and denormalizing the latent representation. This statics is computed over
-        # the entire dataset and stored in model's checkpoint under AudioVAE state_dict
-        latents_std = torch.ones((latent_channels,))
-        latents_mean = torch.zeros((latent_channels,))
-        self.register_buffer("latents_mean", latents_mean, persistent=True)
-        self.register_buffer("latents_std", latents_std, persistent=True)
+        self.per_channel_statistics = LTX2AudioPerChannelStatistics(latent_channels=base_channels)
+        self._latent_patchifier = LTX2AudioAudioPatchifier(
+            patch_size=1,
+            audio_latent_downsample_factor=LATENT_DOWNSAMPLE_FACTOR,
+            sample_rate=sample_rate,
+            hop_length=mel_hop_length,
+            is_causal=is_causal,
+        )
 
         # TODO: calculate programmatically instead of hardcoding
         self.temporal_compression_ratio = LATENT_DOWNSAMPLE_FACTOR  # 4
@@ -781,6 +800,21 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
         self.sample_rate = sample_rate
         self.mel_hop_length = mel_hop_length
         self.mel_bins = mel_bins
+
+    def _normalize_latents(self, latent_output: torch.Tensor) -> torch.Tensor:
+        means = latent_output
+        if self.encoder.double_z:
+            means = torch.chunk(latent_output, 2, dim=1)[0]
+        _, channels, _, mel_bins = means.shape
+        latent_patched = self._latent_patchifier.patchify(means)
+        latent_normalized = self.per_channel_statistics.normalize(latent_patched)
+        return self._latent_patchifier.unpatchify(latent_normalized, channels=channels, mel_bins=mel_bins)
+
+    def _denormalize_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        _, channels, _, mel_bins = latents.shape
+        latents_patched = self._latent_patchifier.patchify(latents)
+        latents_denormalized = self.per_channel_statistics.un_normalize(latents_patched)
+        return self._latent_patchifier.unpatchify(latents_denormalized, channels=channels, mel_bins=mel_bins)
 
     @apply_forward_hook
     def encode(self, x: torch.Tensor, return_dict: bool = True):
@@ -807,7 +841,8 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
         return AutoencoderKLOutput(latent_dist=posterior)
 
     def _encode(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encoder(x)
+        latent_output = self.encoder(x)
+        return self._normalize_latents(latent_output)
 
     def _get_audio_processor(self) -> LTX2AudioProcessor:
         if self._audio_processor is None:
@@ -868,6 +903,7 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
         return self.encode(mel, return_dict=return_dict)
 
     def _decode(self, z: torch.Tensor) -> torch.Tensor:
+        z = self._denormalize_latents(z)
         return self.decoder(z)
 
     @apply_forward_hook

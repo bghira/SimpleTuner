@@ -23,6 +23,7 @@ from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
     convert_ltx2_transformer,
     convert_ltx2_video_vae,
     convert_ltx2_vocoder,
+    load_ltx2_metadata_config,
     load_ltx2_state_dict_from_checkpoint,
 )
 from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
@@ -236,7 +237,12 @@ class LTXVideo2(VideoModelFoundation):
                 ckpt_path = self._resolve_ltx2_checkpoint_path()
                 logger.info("Loading LTX-2 audio VAE from combined checkpoint %s", ckpt_path)
                 state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_AUDIO_VAE_PREFIX)
-                audio_vae = convert_ltx2_audio_vae(state_dict, version=self._resolve_ltx2_version())
+                metadata_config = load_ltx2_metadata_config(ckpt_path)
+                audio_vae = convert_ltx2_audio_vae(
+                    state_dict,
+                    version=self._resolve_ltx2_version(),
+                    metadata_config=metadata_config,
+                )
                 del state_dict
             else:
                 audio_vae_path = getattr(self.config, "pretrained_audio_vae_model_name_or_path", None)

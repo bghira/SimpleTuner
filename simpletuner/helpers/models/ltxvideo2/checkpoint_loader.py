@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, Tuple
 
@@ -48,10 +49,7 @@ LTX_2_0_VIDEO_VAE_RENAME_DICT = {
     "per_channel_statistics.std-of-means": "latents_std",
 }
 
-LTX_2_0_AUDIO_VAE_RENAME_DICT = {
-    "per_channel_statistics.mean-of-means": "latents_mean",
-    "per_channel_statistics.std-of-means": "latents_std",
-}
+LTX_2_0_AUDIO_VAE_RENAME_DICT: Dict[str, str] = {}
 
 LTX_2_0_VOCODER_RENAME_DICT = {
     "ups": "upsamplers",
@@ -64,10 +62,7 @@ LTX_2_0_VAE_SPECIAL_KEYS_REMAP = {
     "per_channel_statistics.channel": None,
     "per_channel_statistics.mean-of-stds": None,
 }
-LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP = {
-    "encoder": None,
-    "per_channel_statistics": "audio_vae_stats",
-}
+LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP: Dict[str, Any] = {}
 LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP = {}
 
 LTX_2_0_CONNECTORS_KEYS_RENAME_DICT = {
@@ -171,6 +166,73 @@ def load_ltx2_state_dict_from_checkpoint(checkpoint_path: str, prefix: str) -> D
     return get_model_state_dict_from_combined_ckpt(combined_ckpt, prefix)
 
 
+def load_ltx2_metadata_config(checkpoint_path: str) -> Dict[str, Any]:
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"LTX-2 checkpoint not found at {checkpoint_path}")
+    _, ext = os.path.splitext(checkpoint_path)
+    if ext not in [".safetensors", ".sft"]:
+        return {}
+    with safe_open(checkpoint_path, framework="pt", device="cpu") as handle:
+        metadata = handle.metadata() or {}
+    raw_config = metadata.get("config")
+    if not raw_config:
+        return {}
+    try:
+        return json.loads(raw_config)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Unable to parse LTX-2 metadata config JSON.") from exc
+
+
+def _extract_audio_vae_config_from_metadata(metadata_config: Dict[str, Any]) -> Dict[str, Any] | None:
+    if not metadata_config:
+        return None
+    audio_cfg = metadata_config.get("audio_vae")
+    if not isinstance(audio_cfg, dict):
+        return None
+    model_cfg = audio_cfg.get("model", {}).get("params", {})
+    ddconfig = model_cfg.get("ddconfig", {})
+    preprocessing = audio_cfg.get("preprocessing", {})
+    stft_cfg = preprocessing.get("stft", {})
+    mel_cfg = preprocessing.get("mel", {})
+    audio_cfg_meta = preprocessing.get("audio", {})
+
+    if not ddconfig:
+        return None
+
+    attn_resolutions = ddconfig.get("attn_resolutions", [])
+    if attn_resolutions is None:
+        attn_resolutions = None
+    else:
+        attn_resolutions = tuple(attn_resolutions)
+
+    mel_bins = ddconfig.get("mel_bins", None) or mel_cfg.get("n_mel_channels", None)
+    sample_rate = model_cfg.get("sampling_rate", None) or audio_cfg_meta.get("sampling_rate", None)
+    mel_hop_length = stft_cfg.get("hop_length", None)
+    n_fft = stft_cfg.get("filter_length", None)
+    is_causal = stft_cfg.get("causal", None)
+
+    return {
+        "base_channels": ddconfig.get("ch", 128),
+        "output_channels": ddconfig.get("out_ch", 2),
+        "ch_mult": tuple(ddconfig.get("ch_mult", (1, 2, 4))),
+        "num_res_blocks": ddconfig.get("num_res_blocks", 2),
+        "attn_resolutions": attn_resolutions,
+        "in_channels": ddconfig.get("in_channels", 2),
+        "resolution": ddconfig.get("resolution", 256),
+        "latent_channels": ddconfig.get("z_channels", 8),
+        "double_z": ddconfig.get("double_z", True),
+        "norm_type": ddconfig.get("norm_type", "pixel"),
+        "causality_axis": ddconfig.get("causality_axis", "height"),
+        "dropout": ddconfig.get("dropout", 0.0),
+        "mid_block_add_attention": ddconfig.get("mid_block_add_attention", False),
+        "sample_rate": sample_rate or 16000,
+        "mel_hop_length": mel_hop_length or 160,
+        "n_fft": n_fft or 1024,
+        "is_causal": True if is_causal is None else bool(is_causal),
+        "mel_bins": mel_bins or 64,
+    }
+
+
 def _apply_remap_rules(state_dict: Dict[str, Any], rename_dict: Dict[str, str], special_keys_remap: Dict[str, Any]) -> None:
     for key in list(state_dict.keys()):
         new_key = key
@@ -183,7 +245,7 @@ def _apply_remap_rules(state_dict: Dict[str, Any], rename_dict: Dict[str, str], 
             if special_key not in key:
                 continue
             if handler is None:
-                _remove_key_inplace(state_dict, key)
+                _remove_key_inplace(key, state_dict)
             elif handler == "audio_vae_stats":
                 _convert_ltx2_audio_vae_per_channel_statistics(key, state_dict)
             else:
@@ -351,7 +413,9 @@ def _get_ltx2_video_vae_config(version: str) -> Dict[str, Any]:
     raise ValueError(f"Unsupported LTX-2 video VAE version: {version}")
 
 
-def _get_ltx2_audio_vae_config(version: str) -> Dict[str, Any]:
+def _get_ltx2_audio_vae_config(version: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    if overrides:
+        return overrides
     if version == "2.0":
         return {
             "base_channels": 128,
@@ -434,8 +498,13 @@ def convert_ltx2_video_vae(original_state_dict: Dict[str, Any], version: str) ->
     return vae
 
 
-def convert_ltx2_audio_vae(original_state_dict: Dict[str, Any], version: str) -> AutoencoderKLLTX2Audio:
-    diffusers_config = _get_ltx2_audio_vae_config(version)
+def convert_ltx2_audio_vae(
+    original_state_dict: Dict[str, Any],
+    version: str,
+    metadata_config: Dict[str, Any] | None = None,
+) -> AutoencoderKLLTX2Audio:
+    config_overrides = _extract_audio_vae_config_from_metadata(metadata_config or {})
+    diffusers_config = _get_ltx2_audio_vae_config(version, config_overrides)
     with init_empty_weights():
         vae = AutoencoderKLLTX2Audio.from_config(diffusers_config)
     _apply_remap_rules(original_state_dict, LTX_2_0_AUDIO_VAE_RENAME_DICT, LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP)

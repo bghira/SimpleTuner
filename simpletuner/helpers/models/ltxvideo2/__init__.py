@@ -19,10 +19,17 @@ def normalize_ltx2_latents(
 
 def normalize_ltx2_audio_latents(
     latents: torch.Tensor,
-    latents_mean: torch.Tensor,
-    latents_std: torch.Tensor,
+    audio_vae,
     reverse: bool = False,
 ) -> torch.Tensor:
+    if hasattr(audio_vae, "per_channel_statistics"):
+        if reverse:
+            return audio_vae.per_channel_statistics.un_normalize(latents)
+        return latents
+    latents_mean = getattr(audio_vae, "latents_mean", None)
+    latents_std = getattr(audio_vae, "latents_std", None)
+    if latents_mean is None or latents_std is None:
+        return latents
     latents_mean = latents_mean.to(latents.device, latents.dtype)
     latents_std = latents_std.to(latents.device, latents.dtype)
     if reverse:
