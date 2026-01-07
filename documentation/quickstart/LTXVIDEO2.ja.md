@@ -173,8 +173,9 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
   - `resolution_frames`: `WxH@F` 形式 (例: `1920x1080@61`) で解像度/長さを併せてグループ化。
 - `frame_interval`: `resolution_frames` 使用時にフレーム数を丸める間隔。
 
-音声条件付けを使う場合は `audio.auto_split: true` を設定するか、別の audio dataset を用意して `s2v_datasets`
-で紐付けます。SimpleTuner は audio latents を video latents と一緒にキャッシュします。
+音声 auto-split は video dataset でデフォルト有効です。sample rate/channels を調整する場合は `audio` block を
+追加し、無効化したい場合は `audio.auto_split: false` を設定します。別の audio dataset を用意して
+`s2v_datasets` で紐付けることもできます。SimpleTuner は audio latents を video latents と一緒にキャッシュします。
 
 > caption_strategy のオプションと要件は [DATALOADER.md](../DATALOADER.md#caption_strategy) を参照してください。
 
@@ -247,4 +248,4 @@ TREAD は動画にも有効で、計算を節約するため強く推奨され�
 
 - **T2V (text-to-video)**: `validation_using_datasets: false` のまま、`validation_prompt` または `validation_prompt_library` を使います。
 - **I2V (image-to-video)**: `validation_using_datasets: true` を設定し、`eval_dataset_id` を参照画像を含む検証スプリットに指定します。検証は image-to-video パイプラインに切り替わり、画像を条件として使用します。
-- **S2V (audio-conditioned)**: `validation_using_datasets: true` のとき、`eval_dataset_id` が `s2v_datasets`（または `audio.auto_split`）を持つデータセットを指すようにします。検証はキャッシュ済み audio latents を自動で読み込みます。
+- **S2V (audio-conditioned)**: `validation_using_datasets: true` のとき、`eval_dataset_id` が `s2v_datasets`（またはデフォルトの `audio.auto_split`）を持つデータセットを指すようにします。検証はキャッシュ済み audio latents を自動で読み込みます。

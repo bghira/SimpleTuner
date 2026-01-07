@@ -172,8 +172,9 @@ In the `video` subsection:
   - `resolution_frames`: Group by `WxH@F` format (e.g., `1920x1080@61`) for mixed-resolution/duration datasets.
 - `frame_interval`: When using `resolution_frames`, round frame counts to this interval.
 
-If you want audio conditioning, set `audio.auto_split: true` (as above) or provide a separate audio dataset and link it
-via `s2v_datasets`. SimpleTuner will cache audio latents alongside video latents.
+Audio auto-split is enabled by default for video datasets. Add an `audio` block to tune sample rate/channels, set
+`audio.auto_split: false` to opt out, or provide a separate audio dataset and link it via `s2v_datasets`. SimpleTuner
+will cache audio latents alongside video latents.
 
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
@@ -246,4 +247,4 @@ This can speed up training by ~25-40% depending on the ratio.
 
 - **T2V (text-to-video)**: Leave `validation_using_datasets: false` and use `validation_prompt` or `validation_prompt_library`.
 - **I2V (image-to-video)**: Set `validation_using_datasets: true` and point `eval_dataset_id` at a validation split that provides a reference image. Validation will switch to the image-to-video pipeline and use that image as the conditioner.
-- **S2V (audio-conditioned)**: With `validation_using_datasets: true`, ensure `eval_dataset_id` points at a dataset with `s2v_datasets` (or `audio.auto_split`). Validation will load cached audio latents automatically.
+- **S2V (audio-conditioned)**: With `validation_using_datasets: true`, point `eval_dataset_id` at a dataset with `s2v_datasets` (or the default `audio.auto_split` behavior). Validation will load cached audio latents automatically.

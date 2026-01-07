@@ -173,8 +173,8 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
   - `resolution_frames`：按 `WxH@F` 格式（如 `1920x1080@61`）分桶，适合混合分辨率/时长数据。
 - `frame_interval`: 使用 `resolution_frames` 时，将帧数舍入到该间隔。
 
-如需音频条件，设置 `audio.auto_split: true`（如上）或提供单独音频数据集并通过 `s2v_datasets` 关联。
-SimpleTuner 会缓存音频 latents，并与视频 latents 一并管理。
+音频 auto-split 在视频数据集中默认启用。需要调整采样率/通道时添加 `audio` 块，设置 `audio.auto_split: false`
+可关闭，或提供单独音频数据集并通过 `s2v_datasets` 关联。SimpleTuner 会缓存音频 latents，并与视频 latents 一并管理。
 
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
@@ -247,4 +247,4 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 
 - **T2V（文生视频）**：保持 `validation_using_datasets: false`，使用 `validation_prompt` 或 `validation_prompt_library`。
 - **I2V（图生视频）**：设置 `validation_using_datasets: true`，并将 `eval_dataset_id` 指向提供参考图像的验证集。验证会切换到图生视频管线，并使用该图像作为条件输入。
-- **S2V（音频条件）**：在 `validation_using_datasets: true` 下，确保 `eval_dataset_id` 指向带有 `s2v_datasets`（或 `audio.auto_split`）的数据集。验证会自动加载缓存的音频 latents。
+- **S2V（音频条件）**：在 `validation_using_datasets: true` 下，确保 `eval_dataset_id` 指向带有 `s2v_datasets`（或默认的 `audio.auto_split`）的数据集。验证会自动加载缓存的音频 latents。

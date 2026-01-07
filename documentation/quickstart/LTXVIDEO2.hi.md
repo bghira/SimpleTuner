@@ -172,8 +172,9 @@ SimpleTuner में प्रयोगात्मक फीचर्स श�
   - `resolution_frames`: mixed resolution/duration datasets के लिए `WxH@F` फॉर्मैट (जैसे `1920x1080@61`) के अनुसार समूहित।
 - `frame_interval`: `resolution_frames` उपयोग करते समय फ्रेम काउंट को इस इंटरवल तक राउंड करें।
 
-अगर आपको audio conditioning चाहिए, तो `audio.auto_split: true` सेट करें (ऊपर जैसा) या अलग audio dataset दें और उसे
-`s2v_datasets` से लिंक करें। SimpleTuner audio latents को video latents के साथ cache करेगा।
+Audio auto-split video datasets के लिए default रूप से enabled है। Sample rate/channels बदलने के लिए `audio` block जोड़ें,
+`audio.auto_split: false` करके opt-out करें, या अलग audio dataset देकर उसे `s2v_datasets` से लिंक करें। SimpleTuner
+audio latents को video latents के साथ cache करेगा।
 
 > `caption_strategy` विकल्प और आवश्यकताओं के लिए [DATALOADER.md](../DATALOADER.md#caption_strategy) देखें।
 
@@ -246,4 +247,4 @@ ratio पर निर्भर करते हुए यह प्रशिक
 
 - **T2V (text‑to‑video)**: `validation_using_datasets: false` रखें और `validation_prompt` या `validation_prompt_library` का उपयोग करें।
 - **I2V (image‑to‑video)**: `validation_using_datasets: true` सेट करें और `eval_dataset_id` को ऐसे validation split पर पॉइंट करें जो reference image देता हो। Validation image‑to‑video pipeline पर स्विच करेगा और उसी image को conditioning के लिए उपयोग करेगा।
-- **S2V (audio‑conditioned)**: `validation_using_datasets: true` के साथ, `eval_dataset_id` को `s2v_datasets` (या `audio.auto_split`) वाले dataset पर सेट करें। Validation cached audio latents अपने‑आप लोड करेगा।
+- **S2V (audio‑conditioned)**: `validation_using_datasets: true` के साथ, `eval_dataset_id` को `s2v_datasets` (या default `audio.auto_split`) वाले dataset पर सेट करें। Validation cached audio latents अपने‑आप लोड करेगा।
