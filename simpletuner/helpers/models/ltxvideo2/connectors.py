@@ -208,6 +208,17 @@ class LTX2ConnectorTransformer1d(nn.Module):
         # attention_mask shape: [batch_size, seq_len] or [batch_size, 1, 1, seq_len]
         batch_size, seq_len, _ = hidden_states.shape
 
+        if attention_mask is not None and attention_mask.ndim == 3:
+            if attention_mask.shape[1] == 1:
+                attention_mask = attention_mask.squeeze(1)
+            elif attention_mask.shape[2] == 1:
+                attention_mask = attention_mask.squeeze(2)
+            else:
+                raise ValueError(
+                    "Expected attention_mask shape [B, L], [B, 1, L], [B, L, 1], or [B, 1, 1, L], "
+                    f"got {tuple(attention_mask.shape)}."
+                )
+
         # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
             if seq_len % self.num_learnable_registers != 0:
