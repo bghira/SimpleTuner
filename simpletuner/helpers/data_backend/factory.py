@@ -1720,7 +1720,10 @@ class FactoryRegistry:
             audio_config = backend.get("audio", {})
             if not isinstance(audio_config, dict):
                 continue
-            if not audio_config.get("auto_split", False):
+            if "auto_split" not in audio_config:
+                audio_config["auto_split"] = True
+                backend["audio"] = audio_config
+            if not audio_config.get("auto_split"):
                 continue
 
             # Skip if already has s2v_datasets configured
