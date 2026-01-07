@@ -898,7 +898,7 @@ class LTXVideo2(VideoModelFoundation):
 
         if (
             getattr(self.config, "tread_config", None) is None
-            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", None) == {}
             or getattr(self.config, "tread_config", {}).get("routes", None) is None
         ):
             logger.error("TREAD training requires you to configure the routes in the TREAD config")
