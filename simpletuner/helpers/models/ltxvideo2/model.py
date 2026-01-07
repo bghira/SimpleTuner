@@ -558,6 +558,12 @@ class LTXVideo2(VideoModelFoundation):
 
         if self.config.framerate is None:
             self.config.framerate = 25
+        validation_frames = getattr(self.config, "validation_num_video_frames", None)
+        if validation_frames is not None and validation_frames % 8 != 1:
+            raise ValueError(
+                f"{self.NAME} requires validation_num_video_frames to satisfy frames % 8 == 1 (e.g., 49, 57, 65, 73, 81). "
+                f"Received {validation_frames}."
+            )
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)

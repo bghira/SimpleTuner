@@ -684,6 +684,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
+        if model_family == "ltxvideo2":
+            for frame_value, frame_label in ((min_frames, "min_frames"), (num_frames, "num_frames")):
+                if frame_value % 8 != 1:
+                    raise ValueError(
+                        f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
+                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}."
+                    )
 
         # Warn about resolution_frames bucket strategy with fixed num_frames
         bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
