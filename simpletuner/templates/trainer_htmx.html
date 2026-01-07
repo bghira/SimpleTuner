@@ -1336,7 +1336,7 @@ function trainerComponent() {
             ].map((value) => (typeof value === 'string' ? value.toLowerCase() : ''));
             const isVideoType = typeHints.some((value) => ['video', 'video_model', 'video-diffusion', 'video_diffusion'].includes(value));
             const family = typeof info?.modelFamily === 'string' ? info.modelFamily.toLowerCase() : '';
-            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'ltxvideo2', 'cosmos2image']);
             const isVideoFamily = knownVideoFamilies.has(family);
             const isVideoModel = Boolean((hasVideoFlag || isVideoType || isVideoFamily) && isVideoFamily);
             const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) && isVideoFamily);
@@ -1352,7 +1352,7 @@ function trainerComponent() {
                 return result;
             }
             const familyKey = typeof modelFamily === 'string' ? modelFamily.trim().toLowerCase() : '';
-            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'ltxvideo2', 'cosmos2image']);
             const isKnownVideoFamily = knownVideoFamilies.has(familyKey);
             const strictFlavoursRaw = Array.isArray(capabilities.strict_i2v_flavours)
                 ? capabilities.strict_i2v_flavours
@@ -6022,7 +6022,7 @@ function trainerComponent() {
                     <i class="fab fa-github me-1"></i>GitHub
                 </a>
                 <span class="onboarding-link-separator">|</span>
-                <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation"
+                <a href="{{ docs_url('') }}"
                    target="_blank"
                    class="onboarding-link">
                     <i class="fas fa-book me-1"></i>Documentation

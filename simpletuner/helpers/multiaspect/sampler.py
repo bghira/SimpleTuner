@@ -827,6 +827,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             # Look through s2v_datasets for matching audio file
             audio_path = None
+            audio_backend_id = None
             for s2v_dataset in s2v_datasets:
                 s2v_config = s2v_dataset.get("config", {})
                 audio_config = s2v_config.get("audio", {})
@@ -835,6 +836,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 if audio_config.get("source_from_video", False):
                     # Audio comes from the video file itself
                     audio_path = video_path
+                    audio_backend_id = s2v_dataset.get("id")
                     break
 
                 # Original matching logic - look for separate audio files
@@ -848,6 +850,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     candidate = audio_root_path / f"{video_stem}{ext}"
                     if candidate.exists():
                         audio_path = str(candidate)
+                        audio_backend_id = s2v_dataset.get("id")
                         break
                 if audio_path:
                     break
@@ -855,11 +858,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Add audio path to sample metadata
             if isinstance(sample, dict):
                 sample["s2v_audio_path"] = audio_path
+                sample["s2v_audio_backend_id"] = audio_backend_id
             elif hasattr(sample, "image_metadata") and sample.image_metadata is not None:
                 sample.image_metadata["s2v_audio_path"] = audio_path
+                sample.image_metadata["s2v_audio_backend_id"] = audio_backend_id
             else:
                 # For TrainingSample objects, store in a new attribute
                 sample._s2v_audio_path = audio_path
+                sample._s2v_audio_backend_id = audio_backend_id
 
             outputs.append(sample)
 

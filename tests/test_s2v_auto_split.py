@@ -71,6 +71,26 @@ class TestS2VAudioInjection(unittest.TestCase):
         self.assertTrue(video_backend.get("_s2v_audio_autoinjected"))
         self.assertEqual(video_backend["s2v_datasets"], ["test-videos_audio"])
 
+    def test_inject_s2v_audio_defaults_to_auto_split(self):
+        """Test that auto_split defaults to true when unset."""
+        factory = self._make_factory()
+
+        data_backend_config = [
+            {
+                "id": "test-videos",
+                "type": "local",
+                "dataset_type": "video",
+                "instance_data_dir": "/data/videos",
+            }
+        ]
+
+        result = factory._inject_s2v_audio_configs(data_backend_config)
+
+        self.assertEqual(len(result), 2)
+        video_backend = result[0]
+        self.assertTrue(video_backend.get("_s2v_audio_autoinjected"))
+        self.assertTrue(video_backend.get("audio", {}).get("auto_split"))
+
     def test_inject_s2v_audio_skips_without_flag(self):
         """Test that injection is skipped when auto_split is false."""
         factory = self._make_factory()

@@ -180,6 +180,7 @@ def replace_all_layers_with_ramtorch(
     include_embedding: bool = True,
     include_conv: bool = True,
     include_layernorm: bool = True,
+    include_rmsnorm: bool = True,
     target_patterns: Optional[Sequence[str]] = None,
     name_prefix: str = "",
 ) -> dict:
@@ -196,6 +197,7 @@ def replace_all_layers_with_ramtorch(
         include_embedding: Replace nn.Embedding layers.
         include_conv: Replace nn.Conv2d and nn.Conv3d layers.
         include_layernorm: Replace nn.LayerNorm layers.
+        include_rmsnorm: Replace RMSNorm-like layers.
         target_patterns: Optional glob patterns to filter which modules are replaced.
         name_prefix: Optional prefix for module names.
 
@@ -223,6 +225,7 @@ def replace_all_layers_with_ramtorch(
         include_embedding=include_embedding,
         include_conv=include_conv,
         include_layernorm=include_layernorm,
+        include_rmsnorm=include_rmsnorm,
     )
 
     return counts

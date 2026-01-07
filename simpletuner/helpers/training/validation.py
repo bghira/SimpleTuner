@@ -1997,16 +1997,27 @@ class Validation:
                 float(getattr(self.config, "validation_lycoris_strength", 1.0))
             )
 
-        pipeline_type = (
-            PipelineTypes.CONTROLNET
-            if self.config.controlnet
-            else (PipelineTypes.CONTROL if self.config.control else self.model.DEFAULT_PIPELINE_TYPE)
-        )
+        if self.config.controlnet:
+            pipeline_type = PipelineTypes.CONTROLNET
+        elif self.config.control:
+            pipeline_type = PipelineTypes.CONTROL
+        else:
+            pipeline_type = self.model.DEFAULT_PIPELINE_TYPE
+            if getattr(self.model, "requires_s2v_validation_inputs", lambda: False)():
+                if PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2VIDEO
+            elif self.config.validation_using_datasets:
+                if PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2IMG
+                elif PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2VIDEO
+        self.model.load_validation_models(pipeline_type=pipeline_type)
         self.model.pipeline = self.model.get_pipeline(
             pipeline_type=pipeline_type,
             load_base_model=False,
         )
         self._active_pipeline_type = pipeline_type
+        self.model.load_validation_models(pipeline=self.model.pipeline, pipeline_type=pipeline_type)
 
         self.model.move_models(self.accelerator.device)
 
@@ -2035,7 +2046,13 @@ class Validation:
         is_fsdp = FSDP_AVAILABLE and pipeline_model is not None and isinstance(pipeline_model, FSDP)
 
         if not is_fsdp:
-            self.model.pipeline.to(self.accelerator.device)
+            base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+            if "torchao" in base_precision:
+                logger.info(
+                    "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
+                )
+            else:
+                self.model.pipeline.to(self.accelerator.device)
 
         self.model.pipeline.set_progress_bar_config(disable=True)
         if hasattr(self.model, "configure_assistant_lora_for_inference"):
@@ -3258,8 +3275,8 @@ class Validation:
                     call_kwargs = inspect.signature(self.model.pipeline.__call__).parameters
                     logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
                     # remove any kwargs that are not in the pipeline call
-                    pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
                     removed_kwargs = [k for k in pipeline_kwargs.keys() if k not in call_kwargs]
+                    pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
                     logger.debug(f"Running validations with inputs: {pipeline_kwargs.keys()}")
                     if removed_kwargs:
                         logger.warning(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")

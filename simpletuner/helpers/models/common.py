@@ -77,6 +77,7 @@ flow_matching_model_families = [
     "flux2",
     "sana",
     "ltxvideo",
+    "ltxvideo2",
     "wan",
     "wan_s2v",
     "sd3",
@@ -100,6 +101,7 @@ upstream_config_sources = {
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
+    "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
 }
@@ -507,6 +509,14 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    def load_validation_models(self, pipeline=None, pipeline_type=None) -> None:
+        """
+        Optional hook for models to lazily load validation-only components.
+
+        This is a no-op by default.
+        """
+        return
 
     @classmethod
     def supports_assistant_lora(cls, config=None) -> bool:
@@ -961,6 +971,15 @@ class ModelFoundation(ABC):
     def requires_conditioning_image_embeds(self) -> bool:
         return False
 
+    def supports_audio_inputs(self) -> bool:
+        return False
+
+    def uses_audio_latents(self) -> bool:
+        return False
+
+    def get_vae_for_dataset_type(self, dataset_type: str):
+        return self.get_vae()
+
     def conditioning_image_embeds_use_reference_dataset(self) -> bool:
         """
         Override to True when conditioning image embeds should be generated from the reference datasets
@@ -1400,6 +1419,8 @@ class ModelFoundation(ABC):
         """
         target_device_obj = torch.device(target_device) if isinstance(target_device, str) else target_device
         accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
+        base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+        torchao_quantized = "torchao" in base_precision
         should_configure_offload = (
             self.group_offload_requested()
             and accelerator_device is not None
@@ -1412,6 +1433,7 @@ class ModelFoundation(ABC):
                 self.config.musubi_blocks_to_swap or 0 > 0,
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
+                torchao_quantized,
             ]
         )
 
@@ -1419,6 +1441,11 @@ class ModelFoundation(ABC):
             model_ref = self.unwrap_model(model=self.model)
             if getattr(model_ref, "device", None) != "meta":
                 model_ref.to(target_device)
+        elif self.model is not None and torchao_quantized:
+            logger.info(
+                "Skipping model.to(%s) for TorchAO-quantized base model to avoid weight swap errors.",
+                target_device,
+            )
         if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
@@ -1720,6 +1747,38 @@ class ModelFoundation(ABC):
                 self.vae.to("meta")
             self.vae = None
 
+    @staticmethod
+    def _is_bitsandbytes_model(model) -> bool:
+        if model is None:
+            return False
+        if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
+            return True
+        try:
+            for param in model.parameters():
+                param_type = type(param).__name__
+                if "Params4bit" in param_type or "Int8Params" in param_type:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def _is_gemma_component(component_cls) -> bool:
+        if component_cls is None:
+            return False
+        component_name = getattr(component_cls, "__name__", "")
+        return "gemma" in component_name.lower()
+
+    def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
+        text_encoder_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
+        config_path = text_encoder_config.get("path", None)
+        if config_path is not None:
+            text_encoder_path = config_path
+        gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
+        if gemma_path and self._is_gemma_component(text_encoder_config.get("model")):
+            text_encoder_path = gemma_path
+        return text_encoder_path
+
     def load_text_tokenizer(self):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
@@ -1735,11 +1794,7 @@ class ModelFoundation(ABC):
             tokenizer_cls = text_encoder_config.get("tokenizer")
             tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
-            tokenizer_kwargs["pretrained_model_name_or_path"] = get_model_config_path(
-                self.config.model_family, self.config.pretrained_model_name_or_path
-            )
-            if text_encoder_config.get("path", None) is not None:
-                tokenizer_kwargs["pretrained_model_name_or_path"] = text_encoder_config.get("path")
+            tokenizer_kwargs["pretrained_model_name_or_path"] = self._resolve_text_encoder_path(text_encoder_config)
             logger.info(f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}")
             tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
             self.tokenizers.append(tokenizer)
@@ -1775,11 +1830,7 @@ class ModelFoundation(ABC):
                 if "torch_dtype" in signature.parameters:
                     extra_kwargs["torch_dtype"] = self.config.weight_dtype
                 logger.info(f"Loading {text_encoder_config.get('name')} text encoder")
-                text_encoder_path = get_model_config_path(
-                    self.config.model_family, self.config.pretrained_model_name_or_path
-                )
-                if text_encoder_config.get("path", None) is not None:
-                    text_encoder_path = text_encoder_config.get("path")
+                text_encoder_path = self._resolve_text_encoder_path(text_encoder_config)
 
                 # Register text encoder cache path for potential deletion
                 if should_track_for_deletion:
@@ -1831,6 +1882,9 @@ class ModelFoundation(ABC):
                 }
                 logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
                 text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
+                is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
+                if is_bnb_quantized:
+                    logger.info("Detected bitsandbytes-quantized text encoder; skipping device/dtype move.")
                 if text_encoder.__class__.__name__ in [
                     "UMT5EncoderModel",
                     "T5EncoderModel",
@@ -1846,6 +1900,7 @@ class ModelFoundation(ABC):
                     and text_encoder_precision in ["no_change", None]
                     and quantization_config is None
                     and not self._ramtorch_text_encoders_requested()
+                    and not is_bnb_quantized
                 ):
                     text_encoder.to(
                         self.accelerator.device,
@@ -1870,6 +1925,7 @@ class ModelFoundation(ABC):
                 if text_encoder is None:
                     continue
                 if hasattr(text_encoder, "to"):
+                    is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
                     # Log memory before move
                     if torch.cuda.is_available():
                         mem_before = torch.cuda.memory_allocated() / (1024**3)
@@ -1885,13 +1941,36 @@ class ModelFoundation(ABC):
                             cuda_buffers,
                         )
 
-                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
-                    try:
-                        text_encoder.to("meta")
-                        logger.info("Text encoder %s successfully moved to meta device", idx + 1)
-                    except Exception as exc:
-                        logger.warning("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
-                        text_encoder.to("cpu")
+                    if is_bnb_quantized:
+                        logger.info(
+                            "Text encoder %s is bitsandbytes-quantized; skipping meta/CPU move.",
+                            idx + 1,
+                        )
+                    else:
+                        # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                        try:
+                            text_encoder.to("meta")
+                            logger.info("Text encoder %s successfully moved to meta device", idx + 1)
+                        except Exception as exc:
+                            logger.warning(
+                                "Text encoder %s could not be moved to meta, moving to CPU instead: %s",
+                                idx + 1,
+                                exc,
+                            )
+                            exc_message = str(exc)
+                            if "Params4bit" in exc_message or "Int8Params" in exc_message:
+                                logger.warning(
+                                    "Text encoder %s appears to be bitsandbytes-quantized; skipping CPU move.",
+                                    idx + 1,
+                                )
+                            else:
+                                has_meta_tensors = any(p.is_meta for p in text_encoder.parameters()) or any(
+                                    b.is_meta for b in text_encoder.buffers()
+                                )
+                                if has_meta_tensors and hasattr(text_encoder, "to_empty"):
+                                    text_encoder.to_empty(device="cpu")
+                                else:
+                                    text_encoder.to("cpu")
 
                     # Log memory after move
                     if torch.cuda.is_available():
@@ -4421,6 +4500,25 @@ class VideoModelFoundation(ImageModelFoundation):
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
     def get_transforms(self, dataset_type: str = "image"):
+        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
+            if self.uses_audio_latents():
+
+                def _audio_transform(sample):
+                    waveform = sample
+                    if isinstance(sample, dict):
+                        waveform = sample.get("waveform")
+                    if waveform is None:
+                        raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
+                    if isinstance(waveform, np.ndarray):
+                        waveform = torch.from_numpy(waveform)
+                    if not torch.is_tensor(waveform):
+                        raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
+                    waveform = waveform.detach().clone()
+                    if waveform.ndim == 1:
+                        waveform = waveform.unsqueeze(0)
+                    return waveform
+
+                return _audio_transform
         return transforms.Compose(
             [
                 VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
@@ -4547,6 +4645,12 @@ class AudioModelFoundation(ModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+
+    def supports_audio_inputs(self) -> bool:
+        return True
+
+    def uses_audio_latents(self) -> bool:
+        return True
 
     def get_transforms(self, dataset_type: str = "image"):
         if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":

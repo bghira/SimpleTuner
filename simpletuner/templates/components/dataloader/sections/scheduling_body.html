@@ -10,7 +10,7 @@
         <div class="row g-2">
             <!-- Schedule Mode Selector -->
             <div class="col-md-4">
-                <label class="form-label small">Delay Mode <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#scheduling" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Delay Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#scheduling') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset._scheduleMode"
                         @change="
@@ -34,7 +34,7 @@
 
             <!-- Epoch-based scheduling -->
             <div class="col-md-4" x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
-                <label class="form-label small">Start Epoch <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#start_epoch" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Start Epoch <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_epoch') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="1"
@@ -47,7 +47,7 @@
 
             <!-- Step-based scheduling -->
             <div class="col-md-4" x-show="editingDataset._scheduleMode === 'step'" x-cloak>
-                <label class="form-label small">Start Step <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#start_step" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Start Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"

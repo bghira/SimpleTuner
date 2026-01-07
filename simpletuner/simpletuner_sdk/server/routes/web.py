@@ -17,6 +17,7 @@ from ..services.search_service import SearchService
 from ..services.tab_service import TabService
 from ..services.webui_state import WebUIStateStore
 from ..utils.cache_bust import setup_cache_busting
+from ..utils.docs import setup_docs_helpers
 from ..utils.paths import get_static_directory, get_template_directory
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ templates = Jinja2Templates(directory=str(candidate))
 
 # Set up cache busting for static assets
 setup_cache_busting(templates, static_dir=get_static_directory())
+setup_docs_helpers(templates)
 
 # Initialize services
 tab_service = TabService(templates)

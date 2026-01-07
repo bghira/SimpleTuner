@@ -379,7 +379,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and (backend.get("conditioning_data", None) is None and backend.get("conditioning", None) is None)
     ):
         raise ValueError(
-            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
+            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://bghira.github.io/SimpleTuner/CONTROLNET/"
         )
 
     if dataset_type not in choices:
@@ -660,7 +660,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 )
             video_config["is_i2v"] = True
         elif "is_i2v" not in video_config:
-            if model_family in ["ltxvideo"]:
+            if model_family in ["ltxvideo", "ltxvideo2"]:
                 warning_log(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."
                 )
@@ -684,6 +684,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
+        if model_family == "ltxvideo2":
+            for frame_value, frame_label in ((min_frames, "min_frames"), (num_frames, "num_frames")):
+                if frame_value % 8 != 1:
+                    raise ValueError(
+                        f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
+                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}."
+                    )
 
         # Warn about resolution_frames bucket strategy with fixed num_frames
         bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
@@ -1309,6 +1316,16 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _supports_audio_inputs(self) -> bool:
+        """Return whether the active model supports audio inputs alongside its primary modality."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.supports_audio_inputs()
+        except AttributeError:
+            return False
+        return result if isinstance(result, bool) else False
+
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
         Validate that Qwen edit models use appropriate conditioning_type values.
@@ -1688,7 +1705,7 @@ class FactoryRegistry:
         When a video dataset has `audio.auto_split: true`, this method creates an associated
         audio dataset configuration that extracts audio from the same video files.
         """
-        if not self._requires_s2v_datasets():
+        if not (self._requires_s2v_datasets() or self._supports_audio_inputs()):
             return data_backend_config
 
         auto_audio_configs: List[Dict[str, Any]] = []
@@ -1710,7 +1727,10 @@ class FactoryRegistry:
             audio_config = backend.get("audio", {})
             if not isinstance(audio_config, dict):
                 continue
-            if not audio_config.get("auto_split", False):
+            if "auto_split" not in audio_config:
+                audio_config["auto_split"] = True
+                backend["audio"] = audio_config
+            if not audio_config.get("auto_split"):
                 continue
 
             # Skip if already has s2v_datasets configured
@@ -2115,7 +2135,7 @@ class FactoryRegistry:
         if not self.text_embed_backends:
             raise ValueError(
                 "Your dataloader config must contain at least one image dataset AND at least one text_embed dataset."
-                " See this link for more information about dataset_type: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
+                " See this link for more information about dataset_type: https://bghira.github.io/SimpleTuner/DATALOADER/#configuration-options"
             )
 
         if not self.default_text_embed_backend_id and len(self.text_embed_backends) > 1:
@@ -2125,7 +2145,7 @@ class FactoryRegistry:
             self.default_text_embed_backend_id = chosen_id
             warning_log(
                 f"No default text embed was defined, using {chosen_id} as the default."
-                " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
+                " See this page for information about the default text embed backend: https://bghira.github.io/SimpleTuner/DATALOADER/#configuration-options"
             )
 
         info_log("Completed loading text embed services.")
@@ -3369,6 +3389,17 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Skipping VAE cache configuration for dataset_type={dataset_type_enum.value}."
             )
             return
+        if dataset_type_enum is DatasetType.AUDIO:
+            uses_audio_latents = False
+            try:
+                uses_audio_latents = bool(self.model.uses_audio_latents())
+            except AttributeError:
+                uses_audio_latents = False
+            if not uses_audio_latents:
+                info_log(
+                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents."
+                )
+                return
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if not vae_cache_dir:
             vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
@@ -3396,11 +3427,17 @@ class FactoryRegistry:
         move_text_encoders(self.args, self.text_encoders, "cpu")
 
         video_config = init_backend["config"].get("video", {})
+        vae = StateTracker.get_vae()
+        if hasattr(self.model, "get_vae_for_dataset_type"):
+            candidate = self.model.get_vae_for_dataset_type(dataset_type_enum.value)
+            if candidate is not None:
+                vae = candidate
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
             model=self.model,
-            vae=StateTracker.get_vae(),
+            vae=vae,
             accelerator=self.accelerator,
             metadata_backend=init_backend["metadata_backend"],
             image_data_backend=init_backend["data_backend"],
