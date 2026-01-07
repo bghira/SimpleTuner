@@ -17,6 +17,20 @@ This setup is VRAM-intensive, and the VAE pre-caching step can spike memory usag
 - **Multi-GPU training**: **FSDP2** or aggressive **Group Offload** is recommended if you need more headroom.
 - **System RAM**: 64GB+ is recommended for larger runs; more RAM helps with caching.
 
+### Observed performance and memory (field reports)
+
+- **Baseline settings**: 480p, 17 frames, batch size 2 (minimal video length/resolution).
+- **RamTorch (incl. text encoder)**: ~13 GB VRAM used on an AMD 7900XTX.
+  - NVIDIA 3090/4090/5090+ should see similar or better VRAM headroom.
+- **No offload (int8 TorchAO)**: ~29-30 GB VRAM used; 32 GB hardware recommended.
+  - Peak system RAM: ~46 GB when loading bf16 Gemma3 then quantizing to int8 (~32 GB VRAM).
+  - Peak system RAM: ~34 GB when loading bf16 LTX-2 transformer then quantizing to int8 (~30 GB VRAM).
+- **No offload (full bf16)**: ~48 GB VRAM required for model training without any offload enabled.
+- **Throughput**:
+  - ~8 sec/step on A100-80G SXM4 (no compile).
+  - ~16 sec/step on 7900XTX (local run).
+  - ~30 min for 200 steps on A100-80G SXM4.
+
 ### Memory offloading (Critical)
 
 For most single-GPU setups training LTX Video 2, you should enable grouped offloading. It is optional but recommended to keep VRAM headroom for larger batches/resolutions.
