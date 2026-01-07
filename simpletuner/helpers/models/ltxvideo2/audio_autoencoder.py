@@ -780,7 +780,14 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
             mel_bins=mel_bins,
         )
 
-        self.per_channel_statistics = LTX2AudioPerChannelStatistics(latent_channels=base_channels)
+        latent_mel_bins = None
+        if mel_bins is not None:
+            mel_downsample_factor = 2 ** (len(ch_mult) - 1)
+            latent_mel_bins = mel_bins // mel_downsample_factor
+        per_channel_features = base_channels if latent_mel_bins is None else latent_channels * latent_mel_bins
+        self.per_channel_statistics = LTX2AudioPerChannelStatistics(latent_channels=per_channel_features)
+        self.register_buffer("latents_mean", torch.zeros((latent_channels,), requires_grad=False), persistent=True)
+        self.register_buffer("latents_std", torch.ones((latent_channels,), requires_grad=False), persistent=True)
         self._latent_patchifier = LTX2AudioAudioPatchifier(
             patch_size=1,
             audio_latent_downsample_factor=LATENT_DOWNSAMPLE_FACTOR,
