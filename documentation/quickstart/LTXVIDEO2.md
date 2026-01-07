@@ -80,9 +80,8 @@ cp config/config.json.example config/config.json
 Key settings for LTX Video 2:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `2.0` (default)
+- `model_flavour`: `dev` (default), `dev-fp4`, or `dev-fp8`.
 - `pretrained_model_name_or_path`: `Lightricks/LTX-2` (Hub repo with the combined checkpoint) or a local `.safetensors` file.
-- `ltx2_checkpoint_filename`: Optional. Use this when pointing at a directory and the combined checkpoint filename is not `ltx-2-19b-dev.safetensors`.
 - `train_batch_size`: `1`. Do not increase this unless you have an A100/H100.
 - `validation_resolution`:
   - `512x768` is a safe default for testing.
@@ -93,8 +92,8 @@ Key settings for LTX Video 2:
 - `validation_guidance`: `5.0`.
 - `frame_rate`: Default is 25.
 
-LTX-2 ships as a single ~43GB `.safetensors` checkpoint that includes the transformer, video VAE, audio VAE, and vocoder.
-SimpleTuner loads from this combined file directly.
+LTX-2 ships as a single `.safetensors` checkpoint that includes the transformer, video VAE, audio VAE, and vocoder.
+SimpleTuner loads from this combined file directly based on `model_flavour` (dev/dev-fp4/dev-fp8).
 
 ### Optional: VRAM optimizations
 
@@ -248,3 +247,34 @@ This can speed up training by ~25-40% depending on the ratio.
 - **T2V (text-to-video)**: Leave `validation_using_datasets: false` and use `validation_prompt` or `validation_prompt_library`.
 - **I2V (image-to-video)**: Set `validation_using_datasets: true` and point `eval_dataset_id` at a validation split that provides a reference image. Validation will switch to the image-to-video pipeline and use that image as the conditioner.
 - **S2V (audio-conditioned)**: With `validation_using_datasets: true`, point `eval_dataset_id` at a dataset with `s2v_datasets` (or the default `audio.auto_split` behavior). Validation will load cached audio latents automatically.
+
+### Validation adapters (LoRAs)
+
+Lightricks provides several LoRAs that can be applied during validation via `validation_adapter_path` (single) or
+`validation_adapter_config` (multiple runs). These repos use nonstandard weight filenames, so include the filename
+via `repo_id:weight_name`:
+- `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Pose-Control:ltx-2-19b-ic-lora-pose-control.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-In:ltx-2-19b-lora-camera-control-dolly-in.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Out:ltx-2-19b-lora-camera-control-dolly-out.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Left:ltx-2-19b-lora-camera-control-dolly-left.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Right:ltx-2-19b-lora-camera-control-dolly-right.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Down:ltx-2-19b-lora-camera-control-jib-down.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Up:ltx-2-19b-lora-camera-control-jib-up.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Static:ltx-2-19b-lora-camera-control-static.safetensors`
+
+Example `validation_adapter_config`:
+
+```json
+{
+  "validation_adapter_config": [
+    { "label": "canny", "path": "Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors" },
+    { "label": "pose", "path": "Lightricks/LTX-2-19b-IC-LoRA-Pose-Control:ltx-2-19b-ic-lora-pose-control.safetensors" }
+  ]
+}
+```
+
+For faster validation, apply `Lightricks/LTX-2-19b-distilled-lora-384:ltx-2-19b-distilled-lora-384.safetensors`
+as a validation adapter and set `validation_guidance: 1` plus `validation_num_inference_steps: 8`.

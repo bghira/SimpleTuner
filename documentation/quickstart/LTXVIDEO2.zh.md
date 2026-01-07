@@ -81,9 +81,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 的关键设置：
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `2.0`（默认）
+- `model_flavour`: `dev`（默认）、`dev-fp4` 或 `dev-fp8`。
 - `pretrained_model_name_or_path`: `Lightricks/LTX-2`（包含 combined checkpoint 的仓库）或本地 `.safetensors` 文件。
-- `ltx2_checkpoint_filename`: 可选。当指向目录且 combined checkpoint 文件名不是 `ltx-2-19b-dev.safetensors` 时设置。
 - `train_batch_size`: `1`。除非有 A100/H100，否则不要提高。
 - `validation_resolution`:
   - `512x768` 是安全的测试默认值。
@@ -94,8 +93,8 @@ LTX Video 2 的关键设置：
 - `validation_guidance`: `5.0`。
 - `frame_rate`: 默认 25。
 
-LTX-2 以单个约 43GB 的 `.safetensors` checkpoint 形式发布，包含 transformer、视频 VAE、音频 VAE 和 vocoder。
-SimpleTuner 直接从该 combined 文件加载。
+LTX-2 以单个 `.safetensors` checkpoint 形式发布，包含 transformer、视频 VAE、音频 VAE 和 vocoder。
+SimpleTuner 会根据 `model_flavour`（dev/dev-fp4/dev-fp8）从该 combined 文件加载。
 
 ### 可选：VRAM 优化
 
@@ -248,3 +247,21 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 - **T2V（文生视频）**：保持 `validation_using_datasets: false`，使用 `validation_prompt` 或 `validation_prompt_library`。
 - **I2V（图生视频）**：设置 `validation_using_datasets: true`，并将 `eval_dataset_id` 指向提供参考图像的验证集。验证会切换到图生视频管线，并使用该图像作为条件输入。
 - **S2V（音频条件）**：在 `validation_using_datasets: true` 下，确保 `eval_dataset_id` 指向带有 `s2v_datasets`（或默认的 `audio.auto_split`）的数据集。验证会自动加载缓存的音频 latents。
+
+### 验证适配器（LoRAs）
+
+Lightricks 提供的 LoRA 可在验证中通过 `validation_adapter_path`（单个）或 `validation_adapter_config`（多次运行）加载。这些 repo 使用非标准权重文件名，请用 `repo_id:weight_name`：
+- `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Pose-Control:ltx-2-19b-ic-lora-pose-control.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-In:ltx-2-19b-lora-camera-control-dolly-in.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Out:ltx-2-19b-lora-camera-control-dolly-out.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Left:ltx-2-19b-lora-camera-control-dolly-left.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Right:ltx-2-19b-lora-camera-control-dolly-right.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Down:ltx-2-19b-lora-camera-control-jib-down.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Up:ltx-2-19b-lora-camera-control-jib-up.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Static:ltx-2-19b-lora-camera-control-static.safetensors`
+
+如需更快的验证，可将 `Lightricks/LTX-2-19b-distilled-lora-384:ltx-2-19b-distilled-lora-384.safetensors` 作为适配器，并设置
+`validation_guidance: 1` 与 `validation_num_inference_steps: 8`。

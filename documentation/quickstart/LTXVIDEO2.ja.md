@@ -81,9 +81,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 の主要設定:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `2.0` (デフォルト)
+- `model_flavour`: `dev` (デフォルト)、`dev-fp4`、`dev-fp8`。
 - `pretrained_model_name_or_path`: `Lightricks/LTX-2`（combined checkpoint の repo）またはローカル `.safetensors` ファイル。
-- `ltx2_checkpoint_filename`: 任意。ディレクトリを指していて combined checkpoint のファイル名が `ltx-2-19b-dev.safetensors` でない場合に指定。
 - `train_batch_size`: `1`。A100/H100 以外では増やさないでください。
 - `validation_resolution`:
   - `512x768` がテスト向けの安全なデフォルト。
@@ -94,8 +93,8 @@ LTX Video 2 の主要設定:
 - `validation_guidance`: `5.0`。
 - `frame_rate`: デフォルトは 25。
 
-LTX-2 は transformer / video VAE / audio VAE / vocoder を含む約 43GB の `.safetensors` 単体チェックポイントで配布されます。
-SimpleTuner はこの combined ファイルから直接読み込みます。
+LTX-2 は transformer / video VAE / audio VAE / vocoder を含む `.safetensors` 単体チェックポイントで配布されます。
+SimpleTuner は `model_flavour` (dev/dev-fp4/dev-fp8) に合わせてこの combined ファイルから読み込みます。
 
 ### 任意: VRAM 最適化
 
@@ -249,3 +248,21 @@ TREAD は動画にも有効で、計算を節約するため強く推奨され�
 - **T2V (text-to-video)**: `validation_using_datasets: false` のまま、`validation_prompt` または `validation_prompt_library` を使います。
 - **I2V (image-to-video)**: `validation_using_datasets: true` を設定し、`eval_dataset_id` を参照画像を含む検証スプリットに指定します。検証は image-to-video パイプラインに切り替わり、画像を条件として使用します。
 - **S2V (audio-conditioned)**: `validation_using_datasets: true` のとき、`eval_dataset_id` が `s2v_datasets`（またはデフォルトの `audio.auto_split`）を持つデータセットを指すようにします。検証はキャッシュ済み audio latents を自動で読み込みます。
+
+### Validation adapters (LoRAs)
+
+Lightricks の LoRA は `validation_adapter_path`（単体）または `validation_adapter_config`（複数実行）で検証時に適用できます。これらの repo は非標準の weight filename を使うため、`repo_id:weight_name` で指定してください:
+- `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Pose-Control:ltx-2-19b-ic-lora-pose-control.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-In:ltx-2-19b-lora-camera-control-dolly-in.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Out:ltx-2-19b-lora-camera-control-dolly-out.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Left:ltx-2-19b-lora-camera-control-dolly-left.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Right:ltx-2-19b-lora-camera-control-dolly-right.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Down:ltx-2-19b-lora-camera-control-jib-down.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Up:ltx-2-19b-lora-camera-control-jib-up.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Static:ltx-2-19b-lora-camera-control-static.safetensors`
+
+検証を高速化したい場合は `Lightricks/LTX-2-19b-distilled-lora-384:ltx-2-19b-distilled-lora-384.safetensors` を
+validation adapter として使い、`validation_guidance: 1` と `validation_num_inference_steps: 8` を設定してください。

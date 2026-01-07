@@ -41,6 +41,13 @@ else:
     logger.setLevel("ERROR")
 
 LTX2_COMBINED_FILENAME = "ltx-2-19b-dev.safetensors"
+LTX2_FLAVOUR_FILENAMES = {
+    "dev": "ltx-2-19b-dev.safetensors",
+    "dev-fp4": "ltx-2-19b-dev-fp4.safetensors",
+    "dev-fp8": "ltx-2-19b-dev-fp8.safetensors",
+    "2.0": "ltx-2-19b-dev.safetensors",
+    "2": "ltx-2-19b-dev.safetensors",
+}
 LTX2_TRANSFORMER_PREFIX = "model.diffusion_model."
 LTX2_VIDEO_VAE_PREFIX = "vae."
 LTX2_AUDIO_VAE_PREFIX = "audio_vae."
@@ -68,9 +75,11 @@ class LTXVideo2(VideoModelFoundation):
         PipelineTypes.IMG2VIDEO: LTX2ImageToVideoPipeline,
     }
 
-    DEFAULT_MODEL_FLAVOUR = "2.0"
+    DEFAULT_MODEL_FLAVOUR = "dev"
     HUGGINGFACE_PATHS = {
-        "2.0": "Lightricks/LTX-2",
+        "dev": "Lightricks/LTX-2",
+        "dev-fp4": "Lightricks/LTX-2",
+        "dev-fp8": "Lightricks/LTX-2",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -96,6 +105,14 @@ class LTXVideo2(VideoModelFoundation):
         self._vocoder_lock = threading.Lock()
         self._warned_missing_audio = False
         self._combined_checkpoint_path = None
+
+    def setup_model_flavour(self):
+        flavour = getattr(self.config, "model_flavour", None)
+        if flavour is not None:
+            flavour_value = str(flavour).strip().lower()
+            if flavour_value in {"2.0", "2"}:
+                self.config.model_flavour = "dev"
+        super().setup_model_flavour()
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -139,7 +156,7 @@ class LTXVideo2(VideoModelFoundation):
         if flavour is None:
             return self.DEFAULT_MODEL_FLAVOUR
         flavour_value = str(flavour).strip().lower()
-        if flavour_value in {"2", "2.0"}:
+        if flavour_value in {"2", "2.0", "dev", "dev-fp4", "dev-fp8"}:
             return "2.0"
         if flavour_value == "test":
             return "test"
@@ -149,7 +166,11 @@ class LTXVideo2(VideoModelFoundation):
         filename = getattr(self.config, "ltx2_checkpoint_filename", None) or getattr(
             self.config, "ltx2_combined_filename", None
         )
-        return filename or LTX2_COMBINED_FILENAME
+        if filename:
+            return filename
+        flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+        flavour_key = str(flavour).strip().lower() if flavour is not None else ""
+        return LTX2_FLAVOUR_FILENAMES.get(flavour_key, LTX2_COMBINED_FILENAME)
 
     def _uses_combined_checkpoint(self) -> bool:
         model_path = self.config.pretrained_model_name_or_path

@@ -80,9 +80,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 के लिए key settings:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `2.0` (डिफ़ॉल्ट)
+- `model_flavour`: `dev` (डिफ़ॉल्ट), `dev-fp4` या `dev-fp8`।
 - `pretrained_model_name_or_path`: `Lightricks/LTX-2` (combined checkpoint वाला repo) या local `.safetensors` फ़ाइल।
-- `ltx2_checkpoint_filename`: वैकल्पिक। अगर आप किसी directory की ओर इशारा कर रहे हैं और combined checkpoint का नाम `ltx-2-19b-dev.safetensors` नहीं है तो इसे सेट करें।
 - `train_batch_size`: `1`। इसे तब तक न बढ़ाएँ जब तक आपके पास A100/H100 न हो।
 - `validation_resolution`:
   - `512x768` परीक्षण के लिए सुरक्षित डिफ़ॉल्ट है।
@@ -93,8 +92,8 @@ LTX Video 2 के लिए key settings:
 - `validation_guidance`: `5.0`.
 - `frame_rate`: डिफ़ॉल्ट 25 है।
 
-LTX-2 एक ~43GB `.safetensors` checkpoint के रूप में आता है जिसमें transformer, video VAE, audio VAE, और vocoder शामिल हैं।
-SimpleTuner इसे सीधे इसी combined फ़ाइल से लोड करता है।
+LTX-2 एक `.safetensors` checkpoint के रूप में आता है जिसमें transformer, video VAE, audio VAE, और vocoder शामिल हैं।
+SimpleTuner इसे `model_flavour` (dev/dev-fp4/dev-fp8) के आधार पर इसी combined फ़ाइल से लोड करता है।
 
 ### वैकल्पिक: VRAM ऑप्टिमाइज़ेशन
 
@@ -248,3 +247,21 @@ ratio पर निर्भर करते हुए यह प्रशिक
 - **T2V (text‑to‑video)**: `validation_using_datasets: false` रखें और `validation_prompt` या `validation_prompt_library` का उपयोग करें।
 - **I2V (image‑to‑video)**: `validation_using_datasets: true` सेट करें और `eval_dataset_id` को ऐसे validation split पर पॉइंट करें जो reference image देता हो। Validation image‑to‑video pipeline पर स्विच करेगा और उसी image को conditioning के लिए उपयोग करेगा।
 - **S2V (audio‑conditioned)**: `validation_using_datasets: true` के साथ, `eval_dataset_id` को `s2v_datasets` (या default `audio.auto_split`) वाले dataset पर सेट करें। Validation cached audio latents अपने‑आप लोड करेगा।
+
+### Validation adapters (LoRAs)
+
+Lightricks के LoRAs को validation में `validation_adapter_path` (single) या `validation_adapter_config` (multiple runs) से लोड कर सकते हैं। इन repos में nonstandard weight filename हैं, इसलिए `repo_id:weight_name` के साथ दें:
+- `Lightricks/LTX-2-19b-IC-LoRA-Canny-Control:ltx-2-19b-ic-lora-canny-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Depth-Control:ltx-2-19b-ic-lora-depth-control.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Detailer:ltx-2-19b-ic-lora-detailer.safetensors`
+- `Lightricks/LTX-2-19b-IC-LoRA-Pose-Control:ltx-2-19b-ic-lora-pose-control.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-In:ltx-2-19b-lora-camera-control-dolly-in.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Out:ltx-2-19b-lora-camera-control-dolly-out.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Left:ltx-2-19b-lora-camera-control-dolly-left.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Dolly-Right:ltx-2-19b-lora-camera-control-dolly-right.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Down:ltx-2-19b-lora-camera-control-jib-down.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Jib-Up:ltx-2-19b-lora-camera-control-jib-up.safetensors`
+- `Lightricks/LTX-2-19b-LoRA-Camera-Control-Static:ltx-2-19b-lora-camera-control-static.safetensors`
+
+तेज़ validation के लिए `Lightricks/LTX-2-19b-distilled-lora-384:ltx-2-19b-distilled-lora-384.safetensors` को
+validation adapter के रूप में लगाएं और `validation_guidance: 1` तथा `validation_num_inference_steps: 8` सेट करें।
