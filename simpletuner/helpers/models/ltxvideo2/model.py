@@ -98,6 +98,7 @@ class LTXVideo2(VideoModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+        self._configure_gemma_path()
         self.audio_vae = None
         self.connectors = None
         self.vocoder = None
@@ -106,6 +107,16 @@ class LTXVideo2(VideoModelFoundation):
         self._vocoder_lock = threading.Lock()
         self._warned_missing_audio = False
         self._combined_checkpoint_path = None
+
+    def _configure_gemma_path(self) -> None:
+        gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
+        if not gemma_path:
+            return
+        text_encoder_config = dict(self.TEXT_ENCODER_CONFIGURATION.get("text_encoder", {}))
+        if not text_encoder_config:
+            return
+        text_encoder_config["path"] = gemma_path
+        self.TEXT_ENCODER_CONFIGURATION = {"text_encoder": text_encoder_config}
 
     def setup_model_flavour(self):
         flavour = getattr(self.config, "model_flavour", None)

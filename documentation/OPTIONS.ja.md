@@ -167,6 +167,11 @@ simpletuner configure config/foo/config.json
 - **内容**: 事前学習済み T5 モデルのパス、または <https://huggingface.co/models> の識別子。
 - **理由**: PixArt の学習時、T5 重みの取得元を指定することで、ベースモデル切り替え時の重複ダウンロードを避けられます。
 
+### `--pretrained_gemma_model_name_or_path`
+
+- **内容**: 事前学習済み Gemma モデルのパス、または <https://huggingface.co/models> の識別子。
+- **理由**: Gemma 系モデル（例: LTX-2、Sana、Lumina2）を学習する際、ベース拡散モデルのパスを変えずに Gemma 重みの参照先を指定できます。
+
 ### `--gradient_checkpointing`
 
 - **内容**: 学習中に勾配をレイヤー単位で計算・蓄積し、ピーク VRAM を削減します（学習速度は低下）。
@@ -1068,6 +1073,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_model_name_or_path PRETRAINED_UNET_MODEL_NAME_OR_PATH]
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
+                [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -1383,6 +1389,8 @@ options:
                         Subfolder containing UNet model weights
   --pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH
                         Path to pretrained T5 model
+  --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
+                        Path to pretrained Gemma model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}

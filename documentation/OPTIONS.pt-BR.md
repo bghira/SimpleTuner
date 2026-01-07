@@ -166,6 +166,11 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo T5 pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Ao treinar PixArt, voce pode querer usar uma fonte especifica para seus pesos T5 para evitar baixar varias vezes ao trocar o modelo base de treinamento.
 
+### `--pretrained_gemma_model_name_or_path`
+
+- **O que**: Caminho para o modelo Gemma pre-treinado ou seu identificador em <https://huggingface.co/models>.
+- **Por que**: Ao treinar modelos baseados em Gemma (por exemplo LTX-2, Sana ou Lumina2), voce pode apontar para um checkpoint Gemma compartilhado sem mudar o caminho do modelo base de difusao.
+
 ### `--gradient_checkpointing`
 
 - **O que**: Durante o treinamento, os gradientes serao calculados por camada e acumulados para economizar VRAM de pico, ao custo de treinos mais lentos.
@@ -1062,6 +1067,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_model_name_or_path PRETRAINED_UNET_MODEL_NAME_OR_PATH]
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
+                [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -1377,6 +1383,8 @@ options:
                         Subfolder containing UNet model weights
   --pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH
                         Path to pretrained T5 model
+  --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
+                        Path to pretrained Gemma model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}

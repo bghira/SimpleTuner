@@ -843,6 +843,26 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Pretrained Gemma Model Path
+    registry._add_field(
+        ConfigField(
+            name="pretrained_gemma_model_name_or_path",
+            arg_name="--pretrained_gemma_model_name_or_path",
+            ui_label="Gemma Model Path",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_config",
+            subsection="advanced_paths",
+            default_value=None,
+            placeholder="path/to/gemma",
+            help_text="Path to pretrained Gemma model",
+            tooltip="HuggingFace model ID or local path for the Gemma text encoder component (used by LTX-2/Sana/Lumina2).",
+            importance=ImportanceLevel.ADVANCED,
+            order=29,
+            documentation="OPTIONS.md#--pretrained_gemma_model_name_or_path",
+        )
+    )
+
     # Revision
     registry._add_field(
         ConfigField(
@@ -858,7 +878,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Git branch/tag/commit for model version",
             tooltip="Specific version of the model to load from HuggingFace. Useful for reproducible training.",
             importance=ImportanceLevel.ADVANCED,
-            order=29,
+            order=30,
         )
     )
 
@@ -877,7 +897,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Model variant (e.g., fp16, bf16)",
             tooltip="Specific variant of the model to load, such as precision variants.",
             importance=ImportanceLevel.ADVANCED,
-            order=30,
+            order=31,
         )
     )
 

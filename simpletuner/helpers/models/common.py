@@ -1731,6 +1731,23 @@ class ModelFoundation(ABC):
                 self.vae.to("meta")
             self.vae = None
 
+    @staticmethod
+    def _is_gemma_component(component_cls) -> bool:
+        if component_cls is None:
+            return False
+        component_name = getattr(component_cls, "__name__", "")
+        return "gemma" in component_name.lower()
+
+    def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
+        text_encoder_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
+        config_path = text_encoder_config.get("path", None)
+        if config_path is not None:
+            text_encoder_path = config_path
+        gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
+        if gemma_path and self._is_gemma_component(text_encoder_config.get("model")):
+            text_encoder_path = gemma_path
+        return text_encoder_path
+
     def load_text_tokenizer(self):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
@@ -1746,11 +1763,7 @@ class ModelFoundation(ABC):
             tokenizer_cls = text_encoder_config.get("tokenizer")
             tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
-            tokenizer_kwargs["pretrained_model_name_or_path"] = get_model_config_path(
-                self.config.model_family, self.config.pretrained_model_name_or_path
-            )
-            if text_encoder_config.get("path", None) is not None:
-                tokenizer_kwargs["pretrained_model_name_or_path"] = text_encoder_config.get("path")
+            tokenizer_kwargs["pretrained_model_name_or_path"] = self._resolve_text_encoder_path(text_encoder_config)
             logger.info(f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}")
             tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
             self.tokenizers.append(tokenizer)
@@ -1786,11 +1799,7 @@ class ModelFoundation(ABC):
                 if "torch_dtype" in signature.parameters:
                     extra_kwargs["torch_dtype"] = self.config.weight_dtype
                 logger.info(f"Loading {text_encoder_config.get('name')} text encoder")
-                text_encoder_path = get_model_config_path(
-                    self.config.model_family, self.config.pretrained_model_name_or_path
-                )
-                if text_encoder_config.get("path", None) is not None:
-                    text_encoder_path = text_encoder_config.get("path")
+                text_encoder_path = self._resolve_text_encoder_path(text_encoder_config)
 
                 # Register text encoder cache path for potential deletion
                 if should_track_for_deletion:
