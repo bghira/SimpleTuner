@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, Tuple
 
@@ -13,6 +14,8 @@ from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Vi
 from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
 from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder
+
+logger = logging.getLogger(__name__)
 
 LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT = {
     "patchify_proj": "proj_in",
@@ -508,6 +511,21 @@ def convert_ltx2_audio_vae(
     with init_empty_weights():
         vae = AutoencoderKLLTX2Audio.from_config(diffusers_config)
     _apply_remap_rules(original_state_dict, LTX_2_0_AUDIO_VAE_RENAME_DICT, LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP)
+    missing_stats = []
+    latent_channels = diffusers_config.get("latent_channels")
+    if latent_channels is None:
+        latent_channels = getattr(vae.config, "latent_channels", None)
+    if "latents_mean" not in original_state_dict and latent_channels is not None:
+        original_state_dict["latents_mean"] = torch.zeros((latent_channels,), dtype=torch.float32)
+        missing_stats.append("latents_mean")
+    if "latents_std" not in original_state_dict and latent_channels is not None:
+        original_state_dict["latents_std"] = torch.ones((latent_channels,), dtype=torch.float32)
+        missing_stats.append("latents_std")
+    if missing_stats:
+        logger.warning(
+            "LTX-2 audio VAE checkpoint missing %s; using default values.",
+            ", ".join(missing_stats),
+        )
     vae.load_state_dict(original_state_dict, strict=True, assign=True)
     return vae
 
