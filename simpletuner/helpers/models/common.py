@@ -1411,6 +1411,8 @@ class ModelFoundation(ABC):
         """
         target_device_obj = torch.device(target_device) if isinstance(target_device, str) else target_device
         accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
+        base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+        torchao_quantized = "torchao" in base_precision
         should_configure_offload = (
             self.group_offload_requested()
             and accelerator_device is not None
@@ -1423,6 +1425,7 @@ class ModelFoundation(ABC):
                 self.config.musubi_blocks_to_swap or 0 > 0,
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
+                torchao_quantized,
             ]
         )
 
@@ -1430,6 +1433,11 @@ class ModelFoundation(ABC):
             model_ref = self.unwrap_model(model=self.model)
             if getattr(model_ref, "device", None) != "meta":
                 model_ref.to(target_device)
+        elif self.model is not None and torchao_quantized:
+            logger.info(
+                "Skipping model.to(%s) for TorchAO-quantized base model to avoid weight swap errors.",
+                target_device,
+            )
         if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
