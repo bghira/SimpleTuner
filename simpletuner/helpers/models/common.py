@@ -1851,6 +1851,11 @@ class ModelFoundation(ABC):
                 }
                 logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
                 text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
+                is_bnb_quantized = bool(
+                    getattr(text_encoder, "is_loaded_in_4bit", False) or getattr(text_encoder, "is_loaded_in_8bit", False)
+                )
+                if is_bnb_quantized:
+                    logger.info("Detected bitsandbytes-quantized text encoder; skipping device/dtype move.")
                 if text_encoder.__class__.__name__ in [
                     "UMT5EncoderModel",
                     "T5EncoderModel",
@@ -1866,6 +1871,7 @@ class ModelFoundation(ABC):
                     and text_encoder_precision in ["no_change", None]
                     and quantization_config is None
                     and not self._ramtorch_text_encoders_requested()
+                    and not is_bnb_quantized
                 ):
                     text_encoder.to(
                         self.accelerator.device,
