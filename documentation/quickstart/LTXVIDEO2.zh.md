@@ -82,7 +82,8 @@ LTX Video 2 的关键设置：
 
 - `model_family`: `ltxvideo2`
 - `model_flavour`: `2.0`（默认）
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`（可选覆盖）
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`（包含 combined checkpoint 的仓库）或本地 `.safetensors` 文件。
+- `ltx2_checkpoint_filename`: 可选。当指向目录且 combined checkpoint 文件名不是 `ltx-2-19b-dev.safetensors` 时设置。
 - `train_batch_size`: `1`。除非有 A100/H100，否则不要提高。
 - `validation_resolution`:
   - `512x768` 是安全的测试默认值。
@@ -92,6 +93,9 @@ LTX Video 2 的关键设置：
   - 公式：`(frames - 1) % 4 == 0`。
 - `validation_guidance`: `5.0`。
 - `frame_rate`: 默认 25。
+
+LTX-2 以单个约 43GB 的 `.safetensors` checkpoint 形式发布，包含 transformer、视频 VAE、音频 VAE 和 vocoder。
+SimpleTuner 直接从该 combined 文件加载。
 
 ### 可选：VRAM 优化
 
@@ -141,6 +145,12 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
+    "audio": {
+        "auto_split": true,
+        "sample_rate": 16000,
+        "channels": 1,
+        "duration_interval": 3.0
+    },
     "repeats": 10
   },
   {
@@ -162,6 +172,9 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
   - `aspect_ratio`（默认）：只按空间宽高比分桶。
   - `resolution_frames`：按 `WxH@F` 格式（如 `1920x1080@61`）分桶，适合混合分辨率/时长数据。
 - `frame_interval`: 使用 `resolution_frames` 时，将帧数舍入到该间隔。
+
+如需音频条件，设置 `audio.auto_split: true`（如上）或提供单独音频数据集并通过 `s2v_datasets` 关联。
+SimpleTuner 会缓存音频 latents，并与视频 latents 一并管理。
 
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
@@ -234,3 +247,4 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 
 - **T2V（文生视频）**：保持 `validation_using_datasets: false`，使用 `validation_prompt` 或 `validation_prompt_library`。
 - **I2V（图生视频）**：设置 `validation_using_datasets: true`，并将 `eval_dataset_id` 指向提供参考图像的验证集。验证会切换到图生视频管线，并使用该图像作为条件输入。
+- **S2V（音频条件）**：在 `validation_using_datasets: true` 下，确保 `eval_dataset_id` 指向带有 `s2v_datasets`（或 `audio.auto_split`）的数据集。验证会自动加载缓存的音频 latents。

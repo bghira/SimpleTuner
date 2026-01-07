@@ -81,7 +81,8 @@ Ajustes clave para LTX Video 2:
 
 - `model_family`: `ltxvideo2`
 - `model_flavour`: `2.0` (predeterminado)
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (anulación opcional)
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (repositorio con el checkpoint combinado) o un archivo `.safetensors` local.
+- `ltx2_checkpoint_filename`: Opcional. Úsalo si apuntas a un directorio y el nombre del checkpoint combinado no es `ltx-2-19b-dev.safetensors`.
 - `train_batch_size`: `1`. No aumentes esto a menos que tengas una A100/H100.
 - `validation_resolution`:
   - `512x768` es un valor seguro para pruebas.
@@ -91,6 +92,9 @@ Ajustes clave para LTX Video 2:
   - Fórmula: `(frames - 1) % 4 == 0`.
 - `validation_guidance`: `5.0`.
 - `frame_rate`: Por defecto es 25.
+
+LTX-2 se distribuye como un único checkpoint `.safetensors` de ~43GB que incluye el transformer, el VAE de video,
+el VAE de audio y el vocoder. SimpleTuner carga directamente desde ese archivo combinado.
 
 ### Opcional: optimizaciones de VRAM
 
@@ -140,6 +144,12 @@ Los datasets de video requieren una configuración cuidadosa. Crea `config/multi
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
+    "audio": {
+        "auto_split": true,
+        "sample_rate": 16000,
+        "channels": 1,
+        "duration_interval": 3.0
+    },
     "repeats": 10
   },
   {
@@ -161,6 +171,9 @@ En la subsección `video`:
   - `aspect_ratio` (predeterminado): Agrupar solo por relación de aspecto espacial.
   - `resolution_frames`: Agrupar por formato `WxH@F` (p. ej., `1920x1080@61`) para datasets de resolución/duración mixta.
 - `frame_interval`: Al usar `resolution_frames`, redondea recuentos de frames a este intervalo.
+
+Si quieres condicionamiento de audio, configura `audio.auto_split: true` (como arriba) o proporciona un dataset de audio
+separado y enlázalo con `s2v_datasets`. SimpleTuner cacheará los latentes de audio junto con los latentes de video.
 
 > Consulta las opciones y requisitos de caption_strategy en [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
@@ -233,3 +246,4 @@ Esto puede acelerar el entrenamiento en ~25-40% dependiendo del ratio.
 
 - **T2V (texto a video)**: Deja `validation_using_datasets: false` y usa `validation_prompt` o `validation_prompt_library`.
 - **I2V (imagen a video)**: Configura `validation_using_datasets: true` y apunta `eval_dataset_id` a un split de validación que proporcione una imagen de referencia. La validación cambiará al pipeline de imagen a video y usará esa imagen como condicionamiento.
+- **S2V (condicionado por audio)**: Con `validation_using_datasets: true`, asegúrate de que `eval_dataset_id` apunte a un dataset con `s2v_datasets` (o `audio.auto_split`). La validación cargará los latentes de audio en caché automáticamente.

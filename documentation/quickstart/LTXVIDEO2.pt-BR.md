@@ -81,7 +81,8 @@ Configurações-chave para LTX Video 2:
 
 - `model_family`: `ltxvideo2`
 - `model_flavour`: `2.0` (padrão)
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (override opcional)
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (repositório com o checkpoint combinado) ou um arquivo `.safetensors` local.
+- `ltx2_checkpoint_filename`: Opcional. Use quando apontar para um diretório e o nome do checkpoint combinado não for `ltx-2-19b-dev.safetensors`.
 - `train_batch_size`: `1`. Não aumente isso a menos que você tenha um A100/H100.
 - `validation_resolution`:
   - `512x768` é um padrão seguro para testes.
@@ -91,6 +92,9 @@ Configurações-chave para LTX Video 2:
   - Fórmula: `(frames - 1) % 4 == 0`.
 - `validation_guidance`: `5.0`.
 - `frame_rate`: O padrão é 25.
+
+O LTX-2 é distribuído como um único checkpoint `.safetensors` de ~43GB que inclui o transformer, o VAE de vídeo,
+o VAE de áudio e o vocoder. O SimpleTuner carrega diretamente desse arquivo combinado.
 
 ### Opcional: otimizações de VRAM
 
@@ -140,6 +144,12 @@ Datasets de vídeo exigem configuração cuidadosa. Crie `config/multidatabacken
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
+    "audio": {
+        "auto_split": true,
+        "sample_rate": 16000,
+        "channels": 1,
+        "duration_interval": 3.0
+    },
     "repeats": 10
   },
   {
@@ -161,6 +171,9 @@ Na subseção `video`:
   - `aspect_ratio` (padrão): agrupa apenas pela proporção espacial.
   - `resolution_frames`: agrupa pelo formato `WxH@F` (ex.: `1920x1080@61`) para datasets com resolução/duração mistas.
 - `frame_interval`: Ao usar `resolution_frames`, arredonde a contagem de frames para este intervalo.
+
+Se quiser condicionamento de áudio, configure `audio.auto_split: true` (como acima) ou forneça um dataset de áudio
+separado e vincule via `s2v_datasets`. O SimpleTuner vai cachear os latentes de áudio junto com os latentes de vídeo.
 
 > Veja opções e requisitos de caption_strategy em [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
@@ -233,3 +246,4 @@ Isso pode acelerar o treino em ~25-40% dependendo da razão.
 
 - **T2V (texto para vídeo)**: Deixe `validation_using_datasets: false` e use `validation_prompt` ou `validation_prompt_library`.
 - **I2V (imagem para vídeo)**: Defina `validation_using_datasets: true` e aponte `eval_dataset_id` para um split de validação que forneça uma imagem de referência. A validação alterna para o pipeline de imagem para vídeo e usa essa imagem como condicionamento.
+- **S2V (condicionado por áudio)**: Com `validation_using_datasets: true`, garanta que `eval_dataset_id` aponte para um dataset com `s2v_datasets` (ou `audio.auto_split`). A validação carrega os latentes de áudio em cache automaticamente.

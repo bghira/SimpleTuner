@@ -82,7 +82,8 @@ LTX Video 2 の主要設定:
 
 - `model_family`: `ltxvideo2`
 - `model_flavour`: `2.0` (デフォルト)
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (任意の上書き)
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`（combined checkpoint の repo）またはローカル `.safetensors` ファイル。
+- `ltx2_checkpoint_filename`: 任意。ディレクトリを指していて combined checkpoint のファイル名が `ltx-2-19b-dev.safetensors` でない場合に指定。
 - `train_batch_size`: `1`。A100/H100 以外では増やさないでください。
 - `validation_resolution`:
   - `512x768` がテスト向けの安全なデフォルト。
@@ -92,6 +93,9 @@ LTX Video 2 の主要設定:
   - 公式: `(frames - 1) % 4 == 0`。
 - `validation_guidance`: `5.0`。
 - `frame_rate`: デフォルトは 25。
+
+LTX-2 は transformer / video VAE / audio VAE / vocoder を含む約 43GB の `.safetensors` 単体チェックポイントで配布されます。
+SimpleTuner はこの combined ファイルから直接読み込みます。
 
 ### 任意: VRAM 最適化
 
@@ -141,6 +145,12 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
+    "audio": {
+        "auto_split": true,
+        "sample_rate": 16000,
+        "channels": 1,
+        "duration_interval": 3.0
+    },
     "repeats": 10
   },
   {
@@ -162,6 +172,9 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
   - `aspect_ratio` (デフォルト): 空間アスペクト比のみでグループ化。
   - `resolution_frames`: `WxH@F` 形式 (例: `1920x1080@61`) で解像度/長さを併せてグループ化。
 - `frame_interval`: `resolution_frames` 使用時にフレーム数を丸める間隔。
+
+音声条件付けを使う場合は `audio.auto_split: true` を設定するか、別の audio dataset を用意して `s2v_datasets`
+で紐付けます。SimpleTuner は audio latents を video latents と一緒にキャッシュします。
 
 > caption_strategy のオプションと要件は [DATALOADER.md](../DATALOADER.md#caption_strategy) を参照してください。
 
@@ -234,3 +247,4 @@ TREAD は動画にも有効で、計算を節約するため強く推奨され�
 
 - **T2V (text-to-video)**: `validation_using_datasets: false` のまま、`validation_prompt` または `validation_prompt_library` を使います。
 - **I2V (image-to-video)**: `validation_using_datasets: true` を設定し、`eval_dataset_id` を参照画像を含む検証スプリットに指定します。検証は image-to-video パイプラインに切り替わり、画像を条件として使用します。
+- **S2V (audio-conditioned)**: `validation_using_datasets: true` のとき、`eval_dataset_id` が `s2v_datasets`（または `audio.auto_split`）を持つデータセットを指すようにします。検証はキャッシュ済み audio latents を自動で読み込みます。

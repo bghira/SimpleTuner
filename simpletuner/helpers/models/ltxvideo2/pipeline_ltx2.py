@@ -22,10 +22,17 @@ from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.loaders import FromSingleFileMixin, LTXVideoLoraLoaderMixin
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
+from diffusers.utils import USE_PEFT_BACKEND, is_peft_version, is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizer, GemmaTokenizerFast
+
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 
 from .audio_autoencoder import AutoencoderKLLTX2Audio
 from .autoencoder import AutoencoderKLLTX2Video
@@ -208,6 +215,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
             Text connector stack used to adapt text encoder hidden states for the video and audio branches.
     """
 
+    transformer_name = "transformer"
     model_cpu_offload_seq = "text_encoder->connectors->transformer->vae->audio_vae->vocoder"
     _optional_components = []
     _callback_tensor_inputs = ["latents", "prompt_embeds", "negative_prompt_embeds"]
@@ -263,6 +271,74 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
 
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_spatial_compression_ratio)
         self.tokenizer_max_length = self.tokenizer.model_max_length if getattr(self, "tokenizer", None) is not None else 1024
+
+    def load_lora_weights(
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name: Optional[str] = None,
+        hotswap: bool = False,
+        **kwargs,
+    ):
+        if not USE_PEFT_BACKEND:
+            raise ValueError("PEFT backend is required for LTX-2 LoRA loading.")
+
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", False)
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        if isinstance(pretrained_model_name_or_path_or_dict, dict):
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
+
+        lora_format = normalize_lora_format(kwargs.pop("lora_format", None))
+        kwargs["return_lora_metadata"] = True
+        state_dict, metadata = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+
+        weight_keys = [key for key in state_dict.keys() if not key.endswith(".alpha")]
+        if not weight_keys or not all("lora" in key for key in weight_keys):
+            raise ValueError("Invalid LoRA checkpoint.")
+
+        detected_format = detect_state_dict_format(state_dict)
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
+            lora_format = PEFTLoRAFormat.COMFYUI
+
+        network_alphas = None
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            state_dict, comfy_alphas = convert_comfyui_to_diffusers(state_dict, target_prefix=self.transformer_name)
+            network_alphas = comfy_alphas
+            if metadata is not None and network_alphas:
+                metadata = None
+
+        transformer_prefix = f"{self.transformer_name}."
+        transformer_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith(transformer_prefix):
+                transformer_state_dict[key] = value
+            elif not any(
+                key.startswith(prefix)
+                for prefix in (
+                    "text_encoder.",
+                    "text_encoder_2.",
+                    "controlnet.",
+                )
+            ):
+                transformer_state_dict[f"{transformer_prefix}{key}"] = value
+
+        if not transformer_state_dict:
+            raise ValueError("No transformer LoRA weights found for LTX-2.")
+
+        transformer = getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer
+        transformer.load_lora_adapter(
+            transformer_state_dict,
+            adapter_name=adapter_name,
+            metadata=metadata,
+            network_alphas=network_alphas,
+            _pipeline=self,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            hotswap=hotswap,
+            prefix=self.transformer_name,
+        )
 
     @staticmethod
     def _pack_text_embeds(

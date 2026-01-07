@@ -81,7 +81,8 @@ LTX Video 2 के लिए key settings:
 
 - `model_family`: `ltxvideo2`
 - `model_flavour`: `2.0` (डिफ़ॉल्ट)
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (वैकल्पिक override)
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (combined checkpoint वाला repo) या local `.safetensors` फ़ाइल।
+- `ltx2_checkpoint_filename`: वैकल्पिक। अगर आप किसी directory की ओर इशारा कर रहे हैं और combined checkpoint का नाम `ltx-2-19b-dev.safetensors` नहीं है तो इसे सेट करें।
 - `train_batch_size`: `1`। इसे तब तक न बढ़ाएँ जब तक आपके पास A100/H100 न हो।
 - `validation_resolution`:
   - `512x768` परीक्षण के लिए सुरक्षित डिफ़ॉल्ट है।
@@ -91,6 +92,9 @@ LTX Video 2 के लिए key settings:
   - सूत्र: `(frames - 1) % 4 == 0`.
 - `validation_guidance`: `5.0`.
 - `frame_rate`: डिफ़ॉल्ट 25 है।
+
+LTX-2 एक ~43GB `.safetensors` checkpoint के रूप में आता है जिसमें transformer, video VAE, audio VAE, और vocoder शामिल हैं।
+SimpleTuner इसे सीधे इसी combined फ़ाइल से लोड करता है।
 
 ### वैकल्पिक: VRAM ऑप्टिमाइज़ेशन
 
@@ -140,6 +144,12 @@ SimpleTuner में प्रयोगात्मक फीचर्स श�
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
+    "audio": {
+        "auto_split": true,
+        "sample_rate": 16000,
+        "channels": 1,
+        "duration_interval": 3.0
+    },
     "repeats": 10
   },
   {
@@ -161,6 +171,9 @@ SimpleTuner में प्रयोगात्मक फीचर्स श�
   - `aspect_ratio` (डिफ़ॉल्ट): केवल spatial aspect ratio से समूहित।
   - `resolution_frames`: mixed resolution/duration datasets के लिए `WxH@F` फॉर्मैट (जैसे `1920x1080@61`) के अनुसार समूहित।
 - `frame_interval`: `resolution_frames` उपयोग करते समय फ्रेम काउंट को इस इंटरवल तक राउंड करें।
+
+अगर आपको audio conditioning चाहिए, तो `audio.auto_split: true` सेट करें (ऊपर जैसा) या अलग audio dataset दें और उसे
+`s2v_datasets` से लिंक करें। SimpleTuner audio latents को video latents के साथ cache करेगा।
 
 > `caption_strategy` विकल्प और आवश्यकताओं के लिए [DATALOADER.md](../DATALOADER.md#caption_strategy) देखें।
 
@@ -233,3 +246,4 @@ ratio पर निर्भर करते हुए यह प्रशिक
 
 - **T2V (text‑to‑video)**: `validation_using_datasets: false` रखें और `validation_prompt` या `validation_prompt_library` का उपयोग करें।
 - **I2V (image‑to‑video)**: `validation_using_datasets: true` सेट करें और `eval_dataset_id` को ऐसे validation split पर पॉइंट करें जो reference image देता हो। Validation image‑to‑video pipeline पर स्विच करेगा और उसी image को conditioning के लिए उपयोग करेगा।
+- **S2V (audio‑conditioned)**: `validation_using_datasets: true` के साथ, `eval_dataset_id` को `s2v_datasets` (या `audio.auto_split`) वाले dataset पर सेट करें। Validation cached audio latents अपने‑आप लोड करेगा।
