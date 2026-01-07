@@ -25,7 +25,7 @@ _このファイルは `scripts/generate-webhook-documentation.py` により自�
 | init_resume_checkpoint | running | Resume Checkpoint | Resuming model: {path} | — | simpletuner/helpers/training/trainer.py:3820 |
 | init_resume_checkpoint | completed | Resume Checkpoint | Resumed from global_step {self.state['global_resume_step']} | — | simpletuner/helpers/training/trainer.py:3843 |
 | init_resume_checkpoint | completed | Resuming checkpoint | — | info | simpletuner/helpers/training/trainer.py:3895 |
-| init_vae_cache | completed | VAE Cache initialising | VAE cache initialization complete | — | simpletuner/helpers/caching/vae.py:1443 |
+| init_vae_cache | completed | VAE Cache initialising | VAE cache initialization complete | — | simpletuner/helpers/caching/vae.py:1497 |
 | model_save | running | Saving Final Model | Finalizing model and saving to {self.config.output_dir} | — | simpletuner/helpers/training/trainer.py:5530 |
 | model_save | completed | Saving Final Model | Model saved to {self.config.output_dir} | — | simpletuner/helpers/training/trainer.py:5649 |
 | training_abort | completed | Training Aborted | Aborting training run. | — | simpletuner/helpers/training/trainer.py:4527 |
