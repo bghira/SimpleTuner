@@ -1732,6 +1732,21 @@ class ModelFoundation(ABC):
             self.vae = None
 
     @staticmethod
+    def _is_bitsandbytes_model(model) -> bool:
+        if model is None:
+            return False
+        if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
+            return True
+        try:
+            for param in model.parameters():
+                param_type = type(param).__name__
+                if "Params4bit" in param_type or "Int8Params" in param_type:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
     def _is_gemma_component(component_cls) -> bool:
         if component_cls is None:
             return False
@@ -1851,9 +1866,7 @@ class ModelFoundation(ABC):
                 }
                 logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
                 text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
-                is_bnb_quantized = bool(
-                    getattr(text_encoder, "is_loaded_in_4bit", False) or getattr(text_encoder, "is_loaded_in_8bit", False)
-                )
+                is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
                 if is_bnb_quantized:
                     logger.info("Detected bitsandbytes-quantized text encoder; skipping device/dtype move.")
                 if text_encoder.__class__.__name__ in [
@@ -1896,6 +1909,7 @@ class ModelFoundation(ABC):
                 if text_encoder is None:
                     continue
                 if hasattr(text_encoder, "to"):
+                    is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
                     # Log memory before move
                     if torch.cuda.is_available():
                         mem_before = torch.cuda.memory_allocated() / (1024**3)
@@ -1911,13 +1925,36 @@ class ModelFoundation(ABC):
                             cuda_buffers,
                         )
 
-                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
-                    try:
-                        text_encoder.to("meta")
-                        logger.info("Text encoder %s successfully moved to meta device", idx + 1)
-                    except Exception as exc:
-                        logger.warning("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
-                        text_encoder.to("cpu")
+                    if is_bnb_quantized:
+                        logger.info(
+                            "Text encoder %s is bitsandbytes-quantized; skipping meta/CPU move.",
+                            idx + 1,
+                        )
+                    else:
+                        # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                        try:
+                            text_encoder.to("meta")
+                            logger.info("Text encoder %s successfully moved to meta device", idx + 1)
+                        except Exception as exc:
+                            logger.warning(
+                                "Text encoder %s could not be moved to meta, moving to CPU instead: %s",
+                                idx + 1,
+                                exc,
+                            )
+                            exc_message = str(exc)
+                            if "Params4bit" in exc_message or "Int8Params" in exc_message:
+                                logger.warning(
+                                    "Text encoder %s appears to be bitsandbytes-quantized; skipping CPU move.",
+                                    idx + 1,
+                                )
+                            else:
+                                has_meta_tensors = any(p.is_meta for p in text_encoder.parameters()) or any(
+                                    b.is_meta for b in text_encoder.buffers()
+                                )
+                                if has_meta_tensors and hasattr(text_encoder, "to_empty"):
+                                    text_encoder.to_empty(device="cpu")
+                                else:
+                                    text_encoder.to("cpu")
 
                     # Log memory after move
                     if torch.cuda.is_available():
