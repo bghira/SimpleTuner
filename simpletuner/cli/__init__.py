@@ -13,7 +13,7 @@ import argparse
 
 import simpletuner.helpers.log_format  # noqa: F401
 
-from .common import get_version
+from .common import _candidate_config_paths, get_version
 
 
 def create_parser() -> argparse.ArgumentParser:
