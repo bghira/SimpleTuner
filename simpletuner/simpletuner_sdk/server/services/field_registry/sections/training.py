@@ -264,7 +264,10 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Uses RamTorch to stream Linear weights from CPU with CUDA/ROCm streams. Not available on Apple/MPS.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
-            dependencies=[FieldDependency(field="enable_group_offload", operator="not_equals", value=True)],
+            dependencies=[
+                FieldDependency(field="enable_group_offload", operator="not_equals", value=True),
+                FieldDependency(field="musubi_blocks_to_swap", operator="equals", value=0, action="enable"),
+            ],
             documentation="OPTIONS.md#--ramtorch",
         )
     )
@@ -486,7 +489,10 @@ def register_training_fields(registry: "FieldRegistry") -> None:
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Blocks to swap must be non-negative"),
             ],
             help_text=("Offload the last N LongCat transformer blocks to CPU and stream weights per block during forward."),
-            tooltip="Musubi-style block weight offload; reduces VRAM at a performance cost. Leave at 0 to disable.",
+            tooltip=(
+                "Musubi-style block weight offload; reduces VRAM at a performance cost. "
+                "Leave at 0 to disable. Incompatible with RamTorch."
+            ),
             importance=ImportanceLevel.ADVANCED,
             model_specific=[
                 "longcat_video",
@@ -502,6 +508,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
                 "hunyuanvideo",
             ],
             order=11,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=False, action="enable")],
             documentation="OPTIONS.md#--musubi_blocks_to_swap",
         )
     )
@@ -532,7 +539,10 @@ def register_training_fields(registry: "FieldRegistry") -> None:
                 "hunyuanvideo",
             ],
             order=12,
-            dependencies=[FieldDependency(field="musubi_blocks_to_swap", operator="greater_than", value=0, action="show")],
+            dependencies=[
+                FieldDependency(field="musubi_blocks_to_swap", operator="greater_than", value=0, action="show"),
+                FieldDependency(field="ramtorch", operator="equals", value=False, action="enable"),
+            ],
             documentation="OPTIONS.md#--musubi_block_swap_device",
         )
     )
