@@ -307,14 +307,33 @@ class LTXVideo2(VideoModelFoundation):
                 if audio_vae_path is None:
                     raise ValueError("Unable to resolve audio VAE path for LTX-2.")
                 logger.info("Loading LTX-2 audio VAE from %s", audio_vae_path)
-                audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
-                    audio_vae_path,
-                    subfolder="audio_vae",
-                    torch_dtype=self._resolve_audio_vae_dtype(),
-                    revision=self.config.revision,
-                    variant=self.config.variant,
-                    use_safetensors=True,
-                )
+                try:
+                    audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
+                        audio_vae_path,
+                        subfolder="audio_vae",
+                        torch_dtype=self._resolve_audio_vae_dtype(),
+                        revision=self.config.revision,
+                        variant=self.config.variant,
+                        use_safetensors=True,
+                    )
+                except ValueError as exc:
+                    message = str(exc)
+                    if "latents_mean expected shape" not in message and "latents_std expected shape" not in message:
+                        raise
+                    logger.warning(
+                        "LTX-2 audio VAE stats mismatch detected in %s; retrying with ignore_mismatched_sizes.",
+                        audio_vae_path,
+                    )
+                    audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
+                        audio_vae_path,
+                        subfolder="audio_vae",
+                        torch_dtype=self._resolve_audio_vae_dtype(),
+                        revision=self.config.revision,
+                        variant=self.config.variant,
+                        use_safetensors=True,
+                        low_cpu_mem_usage=False,
+                        ignore_mismatched_sizes=True,
+                    )
             audio_vae.requires_grad_(False)
             if move_to_device:
                 audio_vae.to(self.accelerator.device, dtype=self._resolve_audio_vae_dtype())
