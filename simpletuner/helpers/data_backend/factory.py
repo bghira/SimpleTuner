@@ -3433,6 +3433,57 @@ class FactoryRegistry:
             if candidate is not None:
                 vae = candidate
 
+        process_queue_size = backend.get("image_processing_batch_size")
+        read_batch_size = backend.get("read_batch_size")
+        write_batch_size = backend.get("write_batch_size")
+        vae_batch_size = backend.get("vae_batch_size")
+
+        if dataset_type_enum is DatasetType.VIDEO:
+            if process_queue_size is None:
+                process_queue_size = self.args.image_processing_batch_size
+                if process_queue_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set image_processing_batch_size to override."
+                    )
+                process_queue_size = 1
+
+            if read_batch_size is None:
+                read_batch_size = self.args.read_batch_size
+                if read_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set read_batch_size to override."
+                    )
+                read_batch_size = 1
+
+            if write_batch_size is None:
+                write_batch_size = self.args.write_batch_size
+                if write_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set write_batch_size to override."
+                    )
+                write_batch_size = 1
+
+            if vae_batch_size is None:
+                vae_batch_size = self.args.vae_batch_size
+                if vae_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set vae_batch_size to override."
+                    )
+                vae_batch_size = 1
+        else:
+            if process_queue_size is None:
+                process_queue_size = self.args.image_processing_batch_size
+            if read_batch_size is None:
+                read_batch_size = self.args.read_batch_size
+            if write_batch_size is None:
+                write_batch_size = self.args.write_batch_size
+            if vae_batch_size is None:
+                vae_batch_size = self.args.vae_batch_size
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
@@ -3445,12 +3496,12 @@ class FactoryRegistry:
             instance_data_dir=init_backend["instance_data_dir"],
             delete_problematic_images=backend.get("delete_problematic_images", self.args.delete_problematic_images),
             num_video_frames=video_config.get("num_frames", None),
-            vae_batch_size=backend.get("vae_batch_size", self.args.vae_batch_size),
-            write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
-            read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
+            vae_batch_size=vae_batch_size,
+            write_batch_size=write_batch_size,
+            read_batch_size=read_batch_size,
             cache_dir=vae_cache_dir,
             max_workers=backend.get("max_workers", self.args.max_workers),
-            process_queue_size=backend.get("image_processing_batch_size", self.args.image_processing_batch_size),
+            process_queue_size=process_queue_size,
             vae_cache_ondemand=self.args.vae_cache_ondemand,
             vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
             hash_filenames=True,  # always enabled
