@@ -1,4 +1,5 @@
 import logging
+import numbers
 import os
 import threading
 import time
@@ -18,6 +19,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -29,6 +31,24 @@ else:
     logger.setLevel("ERROR")
 
 DEFAULT_AUDIO_BUCKET_INTERVAL = 3.0
+
+
+def _normalize_parallel_size(value: Any, name: str) -> int:
+    if value is None:
+        return 1
+    if isinstance(value, torch.SymInt):
+        return int(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    raise TypeError(f"{name} must be an integer type, got {type(value).__name__}.")
+
+
+def _normalize_parallel_rank(value: Any, name: str) -> int:
+    if isinstance(value, torch.SymInt):
+        return int(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    raise TypeError(f"{name} must be an integer type, got {type(value).__name__}.")
 
 
 def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
@@ -48,25 +68,27 @@ def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
     world_size = accelerator.num_processes
     global_rank = accelerator.process_index
 
-    # Check if context parallelism is enabled
+    cp_enabled, _cp_group, _cp_rank, cp_size = get_cp_info(accelerator)
+    if not cp_enabled:
+        return world_size, global_rank, 1
+
     parallelism_config = getattr(accelerator, "parallelism_config", None)
     if parallelism_config is None:
         return world_size, global_rank, 1
 
-    cp_size = getattr(parallelism_config, "cp_size", None)
-    if cp_size is None or not isinstance(cp_size, int) or cp_size <= 1:
-        return world_size, global_rank, 1
+    dp_replicate_size = _normalize_parallel_size(getattr(parallelism_config, "dp_replicate_size", 1), "dp_replicate_size")
+    dp_shard_size = _normalize_parallel_size(getattr(parallelism_config, "dp_shard_size", 1), "dp_shard_size")
 
-    cp_enabled = getattr(parallelism_config, "cp_enabled", False)
-    if not cp_enabled:
-        return world_size, global_rank, 1
+    dp_replicate_rank = 0
+    if dp_replicate_size > 1:
+        dp_replicate_rank = _normalize_parallel_rank(accelerator.data_parallel_rank, "data_parallel_rank")
 
-    # With CP enabled, calculate effective DP parameters
-    # All ranks in a CP group share the same data, so:
-    # - effective_dp_size = world_size / cp_size
-    # - dp_rank = global_rank // cp_size
-    effective_dp_size = world_size // cp_size
-    dp_rank = global_rank // cp_size
+    dp_shard_rank = 0
+    if dp_shard_size > 1:
+        dp_shard_rank = _normalize_parallel_rank(accelerator.data_parallel_shard_rank, "data_parallel_shard_rank")
+
+    effective_dp_size = dp_replicate_size * dp_shard_size
+    dp_rank = (dp_replicate_rank * dp_shard_size) + dp_shard_rank
 
     logger.debug(
         f"Context parallel data splitting: world_size={world_size}, cp_size={cp_size}, "

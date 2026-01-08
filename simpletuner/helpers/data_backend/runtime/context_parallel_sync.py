@@ -16,6 +16,7 @@ The synchronization addresses two key issues:
 """
 
 import logging
+import numbers
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -51,7 +52,15 @@ def get_cp_info(accelerator) -> Tuple[bool, Optional[Any], int, int]:
         return False, None, 0, 1
 
     cp_size = getattr(parallelism_config, "cp_size", None)
-    if cp_size is None or not isinstance(cp_size, int) or cp_size <= 1:
+    if cp_size is None:
+        return False, None, 0, 1
+    if isinstance(cp_size, torch.SymInt):
+        cp_size = int(cp_size)
+    elif isinstance(cp_size, numbers.Integral):
+        cp_size = int(cp_size)
+    else:
+        return False, None, 0, 1
+    if cp_size <= 1:
         return False, None, 0, 1
 
     cp_enabled = getattr(parallelism_config, "cp_enabled", False)
@@ -132,22 +141,12 @@ def sync_batch_for_context_parallel(
     batch_list = [batch if cp_rank == 0 else None]
 
     try:
-        # Get the global rank of the source (rank 0 within the CP group)
-        # The src for broadcast must be a global rank within the group
-        group_ranks = list(range(dist.get_world_size()))
-        if hasattr(cp_group, "ranks"):
-            group_ranks = cp_group.ranks()
-        elif hasattr(cp_group, "rank"):
-            # ProcessGroup may expose ranks differently
-            pass
-
         # For ProcessGroup from device_mesh.get_group(), src=0 means rank 0 within that group
         dist.broadcast_object_list(batch_list, src=0, group=cp_group)
         return batch_list[0]
     except Exception as e:
         logger.error(f"Failed to broadcast batch in CP group: {e}")
-        # Return the original batch as fallback (may cause inconsistency)
-        return batch
+        raise RuntimeError("Context-parallel batch broadcast failed.") from e
 
 
 class ContextParallelBatchSynchronizer:

@@ -826,5 +826,57 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
             self.assertEqual(result, {"broadcasted": True})
 
 
+class TestContextParallelDataParallelInfo(unittest.TestCase):
+    """Test CP-aware DP sharding uses data-parallel ranks from the accelerator."""
+
+    def test_get_cp_aware_dp_info_uses_dp_ranks(self):
+        """Ensure dp_rank derives from DP dims, not global rank ordering."""
+        from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+        mock_parallelism_config.dp_replicate_size = 2
+        mock_parallelism_config.dp_shard_size = 2
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 0
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 6
+        mock_accelerator.data_parallel_rank = 1
+        mock_accelerator.data_parallel_shard_rank = 0
+
+        effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(mock_accelerator)
+
+        self.assertEqual(effective_dp_size, 4)
+        self.assertEqual(dp_rank, 2)
+        self.assertEqual(cp_size, 2)
+
+    def test_get_cp_aware_dp_info_disables_without_mesh(self):
+        """CP sharding stays disabled when mesh is missing."""
+        from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = None
+        mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 3
+
+        effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(mock_accelerator)
+
+        self.assertEqual(effective_dp_size, 8)
+        self.assertEqual(dp_rank, 3)
+        self.assertEqual(cp_size, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
