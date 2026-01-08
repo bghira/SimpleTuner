@@ -48,6 +48,7 @@ class TabType(str, Enum):
     METRICS = "metrics"
     NOTIFICATIONS = "notifications"
     QUOTAS = "quotas"
+    WORKERS = "workers"
 
 
 @dataclass
@@ -229,6 +230,14 @@ class TabService:
                 description="Spending limits and job quotas",
                 extra_context_handler=None,
             ),
+            TabType.WORKERS: TabConfig(
+                id="workers-panel",
+                title="GPU Workers",
+                icon="fas fa-server",
+                template="workers_tab.html",
+                description="GPU worker management for distributed training",
+                extra_context_handler=None,
+            ),
         }
 
     def get_tab_config(self, tab_name: str) -> TabConfig:
@@ -259,7 +268,7 @@ class TabService:
 
         # These tabs follow the same access rules as admin tab
         if (
-            tab_type in (TabType.USERS, TabType.AUDIT, TabType.NOTIFICATIONS, TabType.QUOTAS)
+            tab_type in (TabType.USERS, TabType.AUDIT, TabType.NOTIFICATIONS, TabType.QUOTAS, TabType.WORKERS)
             and not self._admin_tab_enabled()
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")

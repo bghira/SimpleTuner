@@ -156,6 +156,14 @@
             "0.9.0"
         ]
     },
+    "ltxvideo2": {
+        "class_name": "LTXVideo2",
+        "module_path": "simpletuner.helpers.models.ltxvideo2.model",
+        "name": "LTX-2",
+        "flavour_choices": [
+            "2.0"
+        ]
+    },
     "longcat_video": {
         "class_name": "LongCatVideo",
         "module_path": "simpletuner.helpers.models.longcat_video.model",
@@ -232,6 +240,14 @@
             "base",
             "hd",
             "flash"
+        ]
+    },
+    "wan_s2v": {
+        "class_name": "WanS2V",
+        "module_path": "simpletuner.helpers.models.wan_s2v.model",
+        "name": "WanS2V",
+        "flavour_choices": [
+            "s2v-14b-2.2"
         ]
     },
     "cosmos": {

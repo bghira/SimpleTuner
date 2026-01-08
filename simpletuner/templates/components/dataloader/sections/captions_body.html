@@ -5,7 +5,7 @@
         <h6 class="modal-section-title">Caption Strategy</h6>
         <div class="row g-2">
             <div class="col-md-6">
-                <label class="form-label small">Strategy <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#caption_strategy" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Strategy <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#caption_strategy') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.caption_strategy"
                         @change="markAsUnsaved()"
@@ -42,7 +42,7 @@
         <h6 class="modal-section-title">Trigger Words</h6>
         <div class="row g-2">
             <div class="col-md-8">
-                <label class="form-label small">Instance Prompt <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#prepend_instance_prompt" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Instance Prompt <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#prepend_instance_prompt') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <textarea class="form-control form-control-sm"
                           rows="2"
                           x-model="editingDataset.instance_prompt"
@@ -59,7 +59,7 @@
                            @change="markAsUnsaved()"
                            :disabled="editingDataset.caption_strategy === 'instanceprompt'">
                     <label class="form-check-label small" :for="'prepend-prompt-' + editingDataset.id">
-                        Prepend to captions <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#prepend_instance_prompt" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                        Prepend to captions <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#prepend_instance_prompt') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
                     </label>
                 </div>
                 <div class="form-text small text-muted ps-4">
@@ -74,7 +74,7 @@
         <h6 class="modal-section-title">Parquet Configuration</h6>
         <div class="row g-2">
             <div class="col-md-6">
-                <label class="form-label small">Parquet Path <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Parquet Path <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.parquet.path"
@@ -82,7 +82,7 @@
                        placeholder="/path/to/file.parquet">
             </div>
             <div class="col-md-3">
-                <label class="form-label small">Filename Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Filename Column <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.parquet.filename_column"
@@ -90,7 +90,7 @@
                        placeholder="id">
             </div>
             <div class="col-md-3">
-                <label class="form-label small">Caption Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Caption Column <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.parquet.caption_column"
@@ -100,7 +100,7 @@
         </div>
         <div class="row g-2 mt-1">
             <div class="col-md-4">
-                <label class="form-label small">Fallback Caption <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Fallback Caption <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.parquet.fallback_caption_column"
@@ -108,7 +108,7 @@
                        placeholder="tags">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Width Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Width Column <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.parquet.width_column"
@@ -116,7 +116,7 @@
                        placeholder="width">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Height Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Height Column <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.parquet.height_column"
@@ -131,7 +131,7 @@
                    x-model="editingDataset.parquet.identifier_includes_extension"
                    @change="markAsUnsaved()">
             <label class="form-check-label small" :for="'parquet-ext-' + editingDataset.id">
-                Identifier includes extension <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#parquet-caption-strategy--json-lines-datasets" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                Identifier includes extension <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#parquet-caption-strategy--json-lines-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
             </label>
         </div>
         <div class="form-text small text-muted ps-4">

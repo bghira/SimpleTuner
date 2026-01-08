@@ -473,6 +473,17 @@ class UserStore:
             return await self.get_user(user_id)
         return None
 
+    async def get_expired_session_user_id(self, session_id: str) -> Optional[int]:
+        """Get the user ID for an expired session.
+
+        Used to detect when someone tries to use an expired session
+        for audit logging purposes.
+
+        Returns:
+            User ID if session exists but is expired, None otherwise
+        """
+        return await self._sessions.get_expired_session_user_id(session_id)
+
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
         return await self._sessions.delete(session_id)

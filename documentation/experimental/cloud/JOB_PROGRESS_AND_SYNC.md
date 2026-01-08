@@ -427,7 +427,7 @@ When webhooks are configured:
 
 2. Verify provider connectivity:
    ```bash
-   curl http://localhost:8001/api/cloud/replicate/validate
+   curl http://localhost:8001/api/cloud/providers/replicate/validate
    ```
 
 3. Force a sync:

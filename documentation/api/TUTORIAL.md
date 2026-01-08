@@ -834,6 +834,60 @@ simpletuner jobs submit my-config --any-gpu
 simpletuner jobs submit my-config --dry-run
 ```
 
+## Dispatch jobs to remote workers
+
+If you have remote GPU machines registered as workers (see [Worker Orchestration](../experimental/server/WORKERS.md)), you can dispatch jobs to them via the queue API.
+
+### Check available workers
+
+```bash
+curl -s http://localhost:8001/api/admin/workers | jq '.workers[] | {name, status, gpu_name, gpu_count}'
+```
+
+### Submit to a specific target
+
+```bash
+# Prefer remote workers, fall back to local GPUs (default)
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "auto"
+  }'
+
+# Force dispatch to remote workers only
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "worker"
+  }'
+
+# Run only on orchestrator's local GPUs
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "local"
+  }'
+```
+
+### Select workers by label
+
+Workers can have labels for filtering (e.g., GPU type, location, team):
+
+```bash
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "worker",
+    "worker_labels": {"gpu_type": "a100*", "team": "nlp"}
+  }'
+```
+
+Labels support glob patterns (`*` matches any characters).
+
 ## Useful endpoints at a glance
 
 - `GET /api/configs/` – list environments (pass `?config_type=model` for training configs)
@@ -844,8 +898,9 @@ simpletuner jobs submit my-config --dry-run
 - `POST /api/training/checkpoints` – list checkpoints for the active job's output directory
 - `GET /api/system/status?include_allocation=true` – system metrics with GPU allocation info
 - `GET /api/queue/stats` – queue statistics including local GPU allocation
-- `POST /api/queue/submit` – submit a local job with GPU-aware queuing
+- `POST /api/queue/submit` – submit a local or worker job with GPU-aware queuing
 - `POST /api/queue/concurrency` – update cloud and local concurrency limits
+- `GET /api/admin/workers` – list registered workers and their status
 
 ## Where to go next
 

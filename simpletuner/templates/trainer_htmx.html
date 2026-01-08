@@ -1336,7 +1336,7 @@ function trainerComponent() {
             ].map((value) => (typeof value === 'string' ? value.toLowerCase() : ''));
             const isVideoType = typeHints.some((value) => ['video', 'video_model', 'video-diffusion', 'video_diffusion'].includes(value));
             const family = typeof info?.modelFamily === 'string' ? info.modelFamily.toLowerCase() : '';
-            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'ltxvideo2', 'cosmos2image']);
             const isVideoFamily = knownVideoFamilies.has(family);
             const isVideoModel = Boolean((hasVideoFlag || isVideoType || isVideoFamily) && isVideoFamily);
             const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) && isVideoFamily);
@@ -1352,7 +1352,7 @@ function trainerComponent() {
                 return result;
             }
             const familyKey = typeof modelFamily === 'string' ? modelFamily.trim().toLowerCase() : '';
-            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'ltxvideo2', 'cosmos2image']);
             const isKnownVideoFamily = knownVideoFamilies.has(familyKey);
             const strictFlavoursRaw = Array.isArray(capabilities.strict_i2v_flavours)
                 ? capabilities.strict_i2v_flavours
@@ -4282,7 +4282,15 @@ function trainerComponent() {
                 }
             }
 
-            this.formDirty = isDirty;
+            // If _skipNextClean is set (from markFormDirty), preserve dirty state
+            // when FormData comparison says clean. This handles fields that are
+            // managed outside the form (e.g., Easy Mode selects without name attrs).
+            if (this._skipNextClean && !isDirty) {
+                // Keep formDirty as-is and clear the flag
+                this._skipNextClean = false;
+            } else {
+                this.formDirty = isDirty;
+            }
         },
 
         cssEscape(name) {
@@ -5258,6 +5266,40 @@ function trainerComponent() {
              return;
          }
 
+         // Set up HTMX afterSwap listener BEFORE loading initial tab
+         // to ensure _suppressDirtyTracking gets cleared
+         document.body.addEventListener('htmx:afterSwap', (evt) => {
+             if (evt.detail.target.id !== 'tab-content') {
+                 return;
+             }
+             setTimeout(() => {
+                 requestAnimationFrame(() => {
+                     if ($data._preservingFormState) {
+                         console.log('Applying stored form values after tab switch');
+                         $data.applyStoredValues();
+                         $data.updateBaselineFormData();
+                     } else if (!$data._skipNextClean) {
+                         $data.markFormClean();
+                     }
+                     delete $data._preservingFormState;
+                     $data._skipNextClean = false;
+                     $data._suppressDirtyTracking = false;
+                 });
+             }, 150);
+         });
+
+         document.body.addEventListener('htmx:afterSettle', (evt) => {
+             if (evt.detail.target.id !== 'tab-content') {
+                 return;
+             }
+             if ($data._preservingFormState) {
+                 console.log('Applying stored values on afterSettle');
+                 $data.applyStoredValues();
+                 $data.updateBaselineFormData();
+                 delete $data._preservingFormState;
+             }
+         });
+
          // Load initial tab content
          $nextTick(() => {
              const updateHash = !!window.location.hash;
@@ -5443,49 +5485,8 @@ function trainerComponent() {
 
                 form.addEventListener('input', handleFormChange);
                 form.addEventListener('change', handleFormChange);
-
-                // Listen for HTMX after swap events to reapply listeners
-                document.body.addEventListener('htmx:afterSwap', (evt) => {
-                    if (evt.detail.target.id !== 'tab-content') {
-                        return;
-                    }
-
-                    // Use a longer delay and requestAnimationFrame to ensure DOM is fully updated
-                    setTimeout(() => {
-                        requestAnimationFrame(() => {
-                            if ($data._preservingFormState) {
-                                console.log('Applying stored form values after tab switch');
-                                $data.applyStoredValues();
-                                // Update baseline so checkFormDirty compares against new tab's fields
-                                // This prevents false dirty detection when comparing against old tab's fields
-                                $data.updateBaselineFormData();
-                            } else if (!$data._skipNextClean) {
-                                $data.markFormClean();
-                            }
-
-                            delete $data._preservingFormState;
-                            $data._skipNextClean = false;
-                            // Clear dirty tracking suppression after tab is fully initialized
-                            $data._suppressDirtyTracking = false;
-                        });
-                    }, 150);
-                });
-
-                // Also listen for afterSettle event which fires after all animations complete
-                document.body.addEventListener('htmx:afterSettle', (evt) => {
-                    if (evt.detail.target.id !== 'tab-content') {
-                        return;
-                    }
-
-                    // Double-check if we still need to preserve form state
-                    if ($data._preservingFormState) {
-                        console.log('Applying stored values on afterSettle');
-                        $data.applyStoredValues();
-                        // Update baseline so checkFormDirty compares against new tab's fields
-                        $data.updateBaselineFormData();
-                        delete $data._preservingFormState;
-                    }
-                });
+                // Note: htmx:afterSwap and htmx:afterSettle listeners are set up earlier
+                // in the x-init block to ensure they're ready before the initial tab load
              }
 
             await $data.loadDatasetsAfterEnvironmentChange();
@@ -6021,7 +6022,7 @@ function trainerComponent() {
                     <i class="fab fa-github me-1"></i>GitHub
                 </a>
                 <span class="onboarding-link-separator">|</span>
-                <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation"
+                <a href="{{ docs_url('') }}"
                    target="_blank"
                    class="onboarding-link">
                     <i class="fas fa-book me-1"></i>Documentation
@@ -6211,6 +6212,17 @@ function trainerComponent() {
                         @click="switchTab('quotas'); closeSidebar()"
                         title="Manage spending limits and job quotas">
                     <i class="fas fa-tachometer-alt"></i> Quotas
+                </button>
+                <button type="button"
+                        class="tab-btn workers-btn"
+                        data-tab="workers"
+                        :class="{ 'active': activeTab === 'workers' }"
+                        hx-get="/web/trainer/tabs/workers"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('workers'); closeSidebar()"
+                        title="Manage GPU workers for distributed training">
+                    <i class="fas fa-server"></i> GPU Workers
                 </button>
                 <button type="button"
                         class="tab-btn audit-btn"
@@ -6541,7 +6553,7 @@ function trainerComponent() {
                     <div x-show="open"
                          x-transition
                          class="dropdown-menu show config-selector__menu"
-                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px; transform: translateX(calc(50% - var(--spacing-xl)));">
+                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px;">
 
                         <div class="dropdown-header">Configurations</div>
 
@@ -6676,6 +6688,11 @@ function trainerComponent() {
                         <li>
                             <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#apiKeysModal">
                                 <i class="fas fa-key me-2"></i>API Keys
+                            </button>
+                        </li>
+                        <li x-show="$store.cloudAuth.currentUser?.auth_provider === 'local'">
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#changePasswordModal">
+                                <i class="fas fa-lock me-2"></i>Change Password
                             </button>
                         </li>
                         <li><hr class="dropdown-divider"></li>
@@ -7394,5 +7411,6 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 {% include 'partials/memory_presets_modal.html' %}
 {% include 'partials/user_profile_modal.html' %}
 {% include 'partials/api_keys_modal.html' %}
+{% include 'partials/change_password_modal.html' %}
 
 {% endblock %}

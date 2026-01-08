@@ -268,7 +268,7 @@ Community contributions and testing results are welcome to help improve TREAD su
 ## References
 
 - [TREAD: Token Routing for Efficient Architecture-agnostic Diffusion Training](https://arxiv.org/abs/2501.04765)
-- [SimpleTuner Flux Documentation](/documentation/quickstart/FLUX.md#tread-training)
+- [SimpleTuner Flux Documentation](quickstart/FLUX.md#tread-training)
 
 ## Citation
 

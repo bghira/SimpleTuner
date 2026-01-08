@@ -312,7 +312,7 @@ If your dataset is smaller than this value, SimpleTuner will raise an error with
 - Increase the `repeats` value in your dataset configuration
 - Enable **Allow Dataset Oversubscription** in the Advanced settings to automatically adjust repeats
 
-See [DATALOADER.md](/documentation/DATALOADER.md#multi-gpu-training-and-dataset-sizing) for more details on dataset sizing.
+See [DATALOADER.md](../DATALOADER.md#multi-gpu-training-and-dataset-sizing) for more details on dataset sizing.
 
 <img width="1118" height="1015" alt="image" src="https://github.com/user-attachments/assets/25d5650d-e77b-42fe-b749-06c0ec92b1e2" />
 

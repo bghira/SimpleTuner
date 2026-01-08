@@ -1,10 +1,10 @@
 # Setup
 
-For users that wish to make use of Docker or another container orchestration platform, see [this document](/documentation/DOCKER.md) first.
+For users that wish to make use of Docker or another container orchestration platform, see [this document](DOCKER.md) first.
 
 ## Installation
 
-For  users operating on Windows 10 or newer, an installation guide based on Docker and WSL is available here [this document](/documentation/DOCKER.md).
+For  users operating on Windows 10 or newer, an installation guide based on Docker and WSL is available here [this document](DOCKER.md).
 
 ### Pip installation method
 
@@ -95,7 +95,7 @@ popd
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 
-#### MultiGPU training
+#### Multiple GPU training
 
 SimpleTuner now includes **automatic GPU detection and configuration** through the WebUI. Upon first load, you'll be guided through an onboarding step that detects your GPUs and configures Accelerate automatically.
 
@@ -150,7 +150,7 @@ Once that is done, any of your training sessions and validation data will be ava
 simpletuner train
 ```
 
-> ⚠️ At this point, if you used `simpletuner configure`, you are done! If not - these commands will work, but further configuration is required. See [the tutorial](/documentation/TUTORIAL.md) for more information.
+> ⚠️ At this point, if you used `simpletuner configure`, you are done! If not - these commands will work, but further configuration is required. See [the tutorial](TUTORIAL.md) for more information.
 
 ### Run unit tests
 
@@ -243,7 +243,7 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - Manually set `repeats` in your dataloader config
 - Reduce batch size or GPU count
 
-See [DATALOADER.md](/documentation/DATALOADER.md#multi-gpu-training-and-dataset-sizing) for complete details.
+See [DATALOADER.md](DATALOADER.md#multi-gpu-training-and-dataset-sizing) for complete details.
 
 ## Publishing to Hugging Face Hub
 

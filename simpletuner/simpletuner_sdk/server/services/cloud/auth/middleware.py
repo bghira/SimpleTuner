@@ -268,6 +268,23 @@ class AuthMiddleware:
             if result:
                 user, key = result
                 logger.debug("Authenticated via API key: %s (user: %s)", key.key_prefix, user.username)
+                # Log API key usage
+                try:
+                    from ..audit import AuditEventType, audit_log
+
+                    asyncio.get_running_loop().create_task(
+                        audit_log(
+                            event_type=AuditEventType.API_KEY_USED,
+                            actor_id=user.id,
+                            actor_ip=client_ip,
+                            target_type="api_key",
+                            target_id=key.key_prefix,
+                            details={"path": str(request.url.path)},
+                        )
+                    )
+                except Exception as exc:
+                    logger.debug("Failed to log API key usage: %s", exc)
+
                 return AuthContext(
                     user=user,
                     api_key=key,
@@ -291,7 +308,27 @@ class AuthMiddleware:
                     client_ip=client_ip,
                 )
             else:
-                logger.debug("Invalid or expired session")
+                # Check if session existed but expired
+                expired_user_id = await self.store.get_expired_session_user_id(session_id)
+                if expired_user_id:
+                    logger.debug("Session expired for user %d", expired_user_id)
+                    try:
+                        from ..audit import AuditEventType, audit_log
+
+                        asyncio.get_running_loop().create_task(
+                            audit_log(
+                                event_type=AuditEventType.SESSION_EXPIRED,
+                                actor_id=expired_user_id,
+                                actor_ip=client_ip,
+                                target_type="session",
+                                target_id=session_id[:16] + "...",  # Truncated for security
+                                details={"path": str(request.url.path)},
+                            )
+                        )
+                    except Exception as exc:
+                        logger.debug("Failed to log session expired: %s", exc)
+                else:
+                    logger.debug("Invalid or expired session")
 
         # Check for single-user mode (local development without auth setup)
         local_admin = await self._ensure_single_user_mode()

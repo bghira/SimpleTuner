@@ -5,7 +5,7 @@
         <h6 class="modal-section-title">Sizing</h6>
         <div class="row g-2">
             <div class="col-md-4" x-show="matchesParamFilter('resolution')">
-                <label class="form-label small">Resolution <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#resolution" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Resolution <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#resolution') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"
@@ -18,7 +18,7 @@
                 </div>
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('resolution', 'type')">
-                <label class="form-label small">Resolution Type <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#resolution" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Resolution Type <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#resolution') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.resolution_type"
                         @change="markAsUnsaved()">
@@ -27,7 +27,7 @@
                 </select>
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('downsample', 'target')">
-                <label class="form-label small">Downsample Target <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#maximum_image_size-and-target_downsample_size" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Downsample Target <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_image_size-and-target_downsample_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        x-model.number.lazy="editingDataset.target_downsample_size"
@@ -37,7 +37,7 @@
                        placeholder="Auto">
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('min', 'size', 'minimum')">
-                <label class="form-label small">Min Size <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#minimum_image_size" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Min Size <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#minimum_image_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        x-model.number.lazy="editingDataset.minimum_image_size"
@@ -47,7 +47,7 @@
                        placeholder="0 (no minimum)">
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('max', 'size', 'maximum')">
-                <label class="form-label small">Max Size <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#maximum_image_size-and-target_downsample_size" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Max Size <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_image_size-and-target_downsample_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        x-model.number.lazy="editingDataset.maximum_image_size"
@@ -69,7 +69,7 @@
                    x-model="editingDataset.crop"
                    @change="markAsUnsaved()">
             <label class="form-check-label small" :for="'crop-enable-' + editingDataset.id">
-                Enable cropping <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#cropping-options" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                Enable cropping <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#cropping-options') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
             </label>
         </div>
         <div class="form-text small text-muted ps-4 mb-2">
@@ -77,7 +77,7 @@
         </div>
         <div class="row g-2" x-show="editingDataset.crop" x-cloak>
             <div class="col-md-4" x-show="matchesParamFilter('crop', 'style')">
-                <label class="form-label small">Crop Style <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#cropping-options" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Crop Style <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#cropping-options') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.crop_style"
                         @change="markAsUnsaved()">
@@ -88,7 +88,7 @@
                 </select>
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('crop', 'aspect')">
-                <label class="form-label small">Crop Aspect <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#cropping-options" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Crop Aspect <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#cropping-options') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.crop_aspect"
                         @change="markAsUnsaved()">
@@ -99,7 +99,7 @@
                 </select>
             </div>
             <div class="col-md-4" x-show="['closest', 'random'].includes(editingDataset.crop_aspect) && matchesParamFilter('aspect', 'bucket')">
-                <label class="form-label small">Aspect Buckets <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#cropping-options" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Aspect Buckets <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#cropping-options') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset._cropAspectBucketsText"
@@ -107,7 +107,7 @@
                        placeholder="0.75, 1.0, 1.33">
             </div>
             <div class="col-md-4" x-show="['closest', 'random'].includes(editingDataset.crop_aspect) && matchesParamFilter('upscale', 'threshold', 'quality')">
-                <label class="form-label small">Max Upscale <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#max_upscale_threshold" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Max Upscale <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#max_upscale_threshold') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"
@@ -129,7 +129,7 @@
         </div>
         <div class="row g-2">
             <div class="col-md-6">
-                <label class="form-label small">Min Aspect Ratio <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#minimum_aspect_ratio" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Min Aspect Ratio <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#minimum_aspect_ratio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"
@@ -139,7 +139,7 @@
                        placeholder="0.5">
             </div>
             <div class="col-md-6">
-                <label class="form-label small">Max Aspect Ratio <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#maximum_aspect_ratio" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Max Aspect Ratio <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_aspect_ratio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"
@@ -161,7 +161,7 @@
                    x-model="editingDataset.is_regularisation_data"
                    @change="markAsUnsaved()">
             <label class="form-check-label small" :for="'regularisation-' + editingDataset.id">
-                Regularisation data <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#is_regularisation_data" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                Regularisation data <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#is_regularisation_data') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
             </label>
         </div>
         <div class="form-text small text-muted ps-4 mb-2">
@@ -169,7 +169,7 @@
         </div>
         <div class="row g-2">
             <div class="col-md-4">
-                <label class="form-label small">Repeats <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#repeats" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Repeats <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#repeats') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"
@@ -194,7 +194,7 @@
                 <div class="form-text small text-warning" x-show="!dangerModeEnabled()">Danger mode</div>
             </div>
             <div class="col-md-4" x-show="!['audio'].includes(editingDataset.dataset_type)">
-                <label class="form-label small">Slider Strength <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/SLIDER_LORA.md" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Slider Strength <a x-show="showDocLinks" href="{{ docs_url('SLIDER_LORA.md') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        step="0.1"

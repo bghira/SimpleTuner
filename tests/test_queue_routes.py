@@ -253,5 +253,145 @@ class TestQueueStatsEndpoint(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase)
         self.assertEqual(result.local.running_jobs, 1)
 
 
+class TestSubmitLocalJob(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase):
+    """Tests for POST /api/queue/submit endpoint."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        await super().asyncSetUp()
+
+        # Reset singletons
+        from simpletuner.simpletuner_sdk.server.services import local_gpu_allocator, worker_repository
+
+        local_gpu_allocator._allocator_instance = None
+        worker_repository._worker_repository = None
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        from simpletuner.simpletuner_sdk.server.services import local_gpu_allocator, worker_repository
+
+        local_gpu_allocator._allocator_instance = None
+        worker_repository._worker_repository = None
+
+        await super().asyncTearDown()
+
+    async def test_submit_local_job_initializes_worker_repo(self) -> None:
+        """Test that submit_local_job initializes worker repo for all targets.
+
+        This verifies the fix for an issue where --target=local would fail
+        but --target=auto would work, because the worker repository
+        initialization was only happening for auto/worker targets.
+        """
+        from simpletuner.simpletuner_sdk.server.routes.queue import LocalJobSubmitRequest, submit_local_job
+
+        # Mock dependencies
+        mock_config = {"model_family": "flux", "output_dir": "/output"}
+        mock_config_store = MagicMock()
+        mock_config_store.load_config = MagicMock(return_value=(mock_config, MagicMock()))
+
+        mock_defaults = MagicMock()
+        mock_defaults.configs_dir = "/configs"
+
+        mock_state_store = MagicMock()
+        mock_state_store.load_defaults = MagicMock(return_value=mock_defaults)
+
+        mock_training_result = MagicMock()
+        mock_training_result.status = "running"
+        mock_training_result.job_id = "test-job-123"
+        mock_training_result.allocated_gpus = [0]
+        mock_training_result.queue_position = None
+        mock_training_result.reason = None
+
+        # Track if worker repository was initialized
+        worker_repo_initialized = {"called": False}
+
+        def mock_get_worker_repo():
+            worker_repo_initialized["called"] = True
+            mock_repo = MagicMock()
+            mock_repo.get_idle_worker_for_job = AsyncMock(return_value=None)
+            return mock_repo
+
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.webui_state.WebUIStateStore",
+                return_value=mock_state_store,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.config_store.ConfigStore",
+                return_value=mock_config_store,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service.start_training_job",
+                return_value=mock_training_result,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository",
+                side_effect=mock_get_worker_repo,
+            ),
+        ):
+            # Submit with target=local
+            request = LocalJobSubmitRequest(config_name="test-config", target="local")
+            result = await submit_local_job(request, user=None)
+
+        # Verify worker repository was initialized even for target=local
+        self.assertTrue(
+            worker_repo_initialized["called"],
+            "Worker repository should be initialized for target=local",
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(result.job_id, "test-job-123")
+
+    async def test_submit_auto_without_workers_falls_through_to_local(self) -> None:
+        """Test that target=auto falls through to local when no workers available."""
+        from simpletuner.simpletuner_sdk.server.routes.queue import LocalJobSubmitRequest, submit_local_job
+
+        mock_config = {"model_family": "flux", "output_dir": "/output"}
+        mock_config_store = MagicMock()
+        mock_config_store.load_config = MagicMock(return_value=(mock_config, MagicMock()))
+
+        mock_defaults = MagicMock()
+        mock_defaults.configs_dir = "/configs"
+
+        mock_state_store = MagicMock()
+        mock_state_store.load_defaults = MagicMock(return_value=mock_defaults)
+
+        mock_training_result = MagicMock()
+        mock_training_result.status = "running"
+        mock_training_result.job_id = "test-job-456"
+        mock_training_result.allocated_gpus = [0, 1]
+        mock_training_result.queue_position = None
+        mock_training_result.reason = None
+
+        mock_worker_repo = MagicMock()
+        mock_worker_repo.get_idle_worker_for_job = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.webui_state.WebUIStateStore",
+                return_value=mock_state_store,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.config_store.ConfigStore",
+                return_value=mock_config_store,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service.start_training_job",
+                return_value=mock_training_result,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository",
+                return_value=mock_worker_repo,
+            ),
+        ):
+            # Submit with target=auto (no workers available)
+            request = LocalJobSubmitRequest(config_name="test-config", target="auto")
+            result = await submit_local_job(request, user=None)
+
+        # Should fall through to local execution
+        self.assertTrue(result.success)
+        self.assertEqual(result.job_id, "test-job-456")
+        self.assertEqual(result.allocated_gpus, [0, 1])
+
+
 if __name__ == "__main__":
     unittest.main()

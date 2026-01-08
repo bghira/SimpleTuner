@@ -119,6 +119,19 @@ class CredentialResolver:
                     logger.debug("Using user-specific %s/%s credential for user %d", provider, credential_name, user_id)
                     # Update last_used timestamp
                     await user_store.mark_credential_used(user_id, provider, credential_name)
+                    # Audit log credential usage
+                    try:
+                        from .audit import AuditEventType, audit_log
+
+                        await audit_log(
+                            event_type=AuditEventType.CREDENTIAL_USED,
+                            actor_id=user_id,
+                            target_type="credential",
+                            target_id=f"{provider}/{credential_name}",
+                            details={"provider": provider, "credential_name": credential_name},
+                        )
+                    except Exception as audit_exc:
+                        logger.debug("Failed to log credential usage: %s", audit_exc)
                     return user_cred
             except Exception as exc:
                 logger.warning("Failed to get user credential %s/%s: %s", provider, credential_name, exc)

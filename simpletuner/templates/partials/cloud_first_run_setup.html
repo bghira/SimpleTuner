@@ -53,7 +53,7 @@
                                                id="setup-email"
                                                class="form-control"
                                                x-model="setupState.form.email"
-                                               placeholder="admin@example.com"
+                                               placeholder=" "
                                                required
                                                :disabled="setupState.submitting">
                                         <label for="setup-email">Email Address</label>
@@ -67,7 +67,7 @@
                                                id="setup-username"
                                                class="form-control"
                                                x-model="setupState.form.username"
-                                               placeholder="admin"
+                                               placeholder=" "
                                                pattern="^[a-zA-Z0-9_\-]+$"
                                                minlength="3"
                                                maxlength="50"
@@ -84,7 +84,7 @@
                                                id="setup-display-name"
                                                class="form-control"
                                                x-model="setupState.form.displayName"
-                                               placeholder="Admin User"
+                                               placeholder=" "
                                                :disabled="setupState.submitting">
                                         <label for="setup-display-name">Display Name (optional)</label>
                                     </div>
@@ -97,7 +97,7 @@
                                                id="setup-password"
                                                class="form-control"
                                                x-model="setupState.form.password"
-                                               placeholder="Password"
+                                               placeholder=" "
                                                minlength="8"
                                                required
                                                :disabled="setupState.submitting">
@@ -112,7 +112,7 @@
                                                id="setup-confirm-password"
                                                class="form-control"
                                                x-model="setupState.form.confirmPassword"
-                                               placeholder="Confirm"
+                                               placeholder=" "
                                                minlength="8"
                                                required
                                                :disabled="setupState.submitting"
@@ -174,7 +174,7 @@
                     <i class="fab fa-github me-1"></i>GitHub
                 </a>
                 <span class="hero-link-separator">|</span>
-                <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation"
+                <a href="{{ docs_url('') }}"
                    target="_blank"
                    class="hero-link doc-link">
                     <i class="fas fa-book me-1"></i>Documentation

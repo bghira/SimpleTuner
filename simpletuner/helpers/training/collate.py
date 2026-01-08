@@ -968,6 +968,75 @@ def collate_fn(batch):
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
 
+    # Extract S2V audio paths for speech-to-video models
+    s2v_audio_paths = []
+    s2v_audio_backend_ids = []
+    for example in examples:
+        audio_path = None
+        audio_backend_id = None
+        if isinstance(example, dict):
+            audio_path = example.get("s2v_audio_path")
+            audio_backend_id = example.get("s2v_audio_backend_id")
+        elif hasattr(example, "image_metadata") and example.image_metadata:
+            audio_path = example.image_metadata.get("s2v_audio_path")
+            audio_backend_id = example.image_metadata.get("s2v_audio_backend_id")
+        elif hasattr(example, "_s2v_audio_path"):
+            audio_path = example._s2v_audio_path
+            audio_backend_id = getattr(example, "_s2v_audio_backend_id", None)
+        s2v_audio_paths.append(audio_path)
+        s2v_audio_backend_ids.append(audio_backend_id)
+
+    audio_latent_batch = None
+    audio_latent_mask = None
+    uses_audio_latents = False
+    if model is not None:
+        try:
+            uses_audio_latents = bool(model.uses_audio_latents())
+        except AttributeError:
+            uses_audio_latents = False
+    if uses_audio_latents and any(s2v_audio_paths):
+        backend_config = StateTracker.get_data_backend_config(data_backend_id) or {}
+        dataset_type = backend_config.get("dataset_type")
+        if dataset_type == "video":
+            s2v_datasets = StateTracker.get_s2v_datasets(data_backend_id)
+            default_audio_backend_id = s2v_datasets[0]["id"] if len(s2v_datasets) == 1 else None
+            grouped: dict[str, list[int]] = {}
+            for idx, path in enumerate(s2v_audio_paths):
+                if path is None:
+                    continue
+                backend_id = s2v_audio_backend_ids[idx] or default_audio_backend_id
+                if backend_id is None:
+                    raise ValueError(
+                        f"Missing s2v audio backend id for {path}. Ensure the audio dataset is linked via s2v_datasets."
+                    )
+                grouped.setdefault(backend_id, []).append(idx)
+
+            audio_latents_by_index: list[torch.Tensor | None] = [None] * len(s2v_audio_paths)
+            for backend_id, indices in grouped.items():
+                audio_paths = [s2v_audio_paths[i] for i in indices]
+                latents = compute_latents(audio_paths, backend_id, model)
+                for offset, latent in zip(indices, latents):
+                    if isinstance(latent, dict):
+                        latent = latent.get("latents")
+                    audio_latents_by_index[offset] = latent
+
+            first_latent = next((latent for latent in audio_latents_by_index if torch.is_tensor(latent)), None)
+            if first_latent is not None:
+                filled = []
+                for latent in audio_latents_by_index:
+                    if latent is None:
+                        filled.append(torch.zeros_like(first_latent))
+                    else:
+                        if latent.shape != first_latent.shape:
+                            raise ValueError(
+                                f"S2V audio latent shape mismatch. Expected {first_latent.shape} but got {latent.shape}."
+                            )
+                        filled.append(latent)
+                audio_latent_batch = torch.stack(filled, dim=0)
+                audio_latent_mask = torch.tensor(
+                    [1 if path is not None else 0 for path in s2v_audio_paths], dtype=torch.float32
+                )
+
     return {
         "latent_batch": latent_batch,
         "latent_metadata": latent_metadata,
@@ -985,4 +1054,8 @@ def collate_fn(batch):
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,
+        "audio_latent_batch": audio_latent_batch,
+        "audio_latent_mask": audio_latent_mask,
+        "s2v_audio_paths": s2v_audio_paths if any(s2v_audio_paths) else None,
+        "s2v_audio_backend_ids": s2v_audio_backend_ids if any(s2v_audio_backend_ids) else None,
     }

@@ -41,6 +41,7 @@ class AuditEventType(str, Enum):
     USER_CREATED = "user.created"
     USER_UPDATED = "user.updated"
     USER_DELETED = "user.deleted"
+    USER_PASSWORD_CHANGED = "user.password.changed"
     USER_LEVEL_CHANGED = "user.level.changed"
     USER_PERMISSION_CHANGED = "user.permission.changed"
 

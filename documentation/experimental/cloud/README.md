@@ -97,7 +97,18 @@ See [Costs](REPLICATE.md#costs) for pricing and limits.
 | Provider | Status | Features |
 |----------|--------|----------|
 | [Replicate](REPLICATE.md) | Supported | Cost tracking, live logs, webhooks |
+| [Worker Orchestration](../server/WORKERS.md) | Supported | Self-hosted distributed workers, any GPU |
 | SimpleTuner.io | Coming Soon | Managed training service by the SimpleTuner team |
+
+### Worker Orchestration
+
+For self-hosted distributed training across multiple machines, see the [Worker Orchestration Guide](../server/WORKERS.md). Workers can run on:
+
+- On-premise GPU servers
+- Cloud VMs (any provider)
+- Spot instances (RunPod, Vast.ai, Lambda Labs)
+
+Workers register with your SimpleTuner orchestrator and receive jobs automatically.
 
 ## Data Flow
 

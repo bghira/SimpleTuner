@@ -20,11 +20,15 @@ def get_default_db_path() -> Path:
     """Get the default database path for auth stores.
 
     Checks SIMPLETUNER_AUTH_DB_PATH environment variable first for test isolation.
+    Uses the same config directory resolution as the storage layer to ensure
+    consistency across ML environments (/workspace, /notebooks, ~/.simpletuner).
     """
     env_path = os.environ.get("SIMPLETUNER_AUTH_DB_PATH")
     if env_path:
         return Path(env_path)
-    return Path.home() / ".simpletuner" / "config" / "cloud" / "jobs.db"
+    from ...storage.base import get_default_config_dir
+
+    return get_default_config_dir() / "cloud" / "jobs.db"
 
 
 class BaseAuthStore:

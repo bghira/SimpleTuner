@@ -37,7 +37,7 @@ See [Replicate Security Docs](https://replicate.com/docs/reference/security) for
 
 </details>
 
-## Hardware & Costs
+## Hardware & Costs {#costs}
 
 | Hardware | VRAM | Cost | Best For |
 |----------|------|------|----------|
@@ -284,10 +284,12 @@ env | grep -i proxy
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/cloud/replicate/versions` | List model versions |
-| `GET /api/cloud/replicate/validate` | Validate credentials |
-| `GET /api/cloud/replicate/billing` | Get credit balance |
-| `POST /api/cloud/replicate/submit` | Submit training job |
+| `GET /api/cloud/providers/replicate/versions` | List model versions |
+| `GET /api/cloud/providers/replicate/validate` | Validate credentials |
+| `GET /api/cloud/providers/replicate/billing` | Get credit balance |
+| `PUT /api/cloud/providers/replicate/token` | Save API token |
+| `DELETE /api/cloud/providers/replicate/token` | Delete API token |
+| `POST /api/cloud/jobs/submit` | Submit training job |
 | `POST /api/webhooks/replicate` | Webhook receiver |
 
 ## Links

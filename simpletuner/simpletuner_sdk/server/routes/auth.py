@@ -207,6 +207,18 @@ async def create_first_admin(
             # Reload user with permissions
             user = await store.get_user(user.id)
 
+            # Audit log
+            await audit_log(
+                AuditEventType.USER_CREATED,
+                f"First admin user '{user.username}' created during initial setup",
+                actor_id=user.id,
+                actor_username=user.username,
+                actor_ip=client_ip,
+                target_type="user",
+                target_id=str(user.id),
+                details={"is_admin": True, "setup": "first_admin"},
+            )
+
             logger.info("First admin user created: %s", user.username)
 
             return LoginResponse(
@@ -421,6 +433,17 @@ async def create_api_key(
         scoped_permissions=scoped_permissions,
     )
 
+    # Audit log
+    await audit_log(
+        AuditEventType.API_KEY_CREATED,
+        f"API key '{data.name}' created by user '{user.username}'",
+        actor_id=user.id,
+        actor_username=user.username,
+        target_type="api_key",
+        target_id=str(api_key.id),
+        details={"key_prefix": api_key.key_prefix, "expires_days": data.expires_days},
+    )
+
     logger.info("API key created: %s for user %s", api_key.key_prefix, user.username)
 
     return APIKeyCreatedResponse(
@@ -462,6 +485,16 @@ async def revoke_api_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="API key not found or already revoked",
         )
+
+    # Audit log
+    await audit_log(
+        AuditEventType.API_KEY_REVOKED,
+        f"API key {key_id} revoked by user '{user.username}'",
+        actor_id=user.id,
+        actor_username=user.username,
+        target_type="api_key",
+        target_id=str(key_id),
+    )
 
     logger.info("API key revoked: %d by user %s", key_id, user.username)
 
@@ -534,6 +567,18 @@ async def register(
 
         # Reload user with permissions
         user = await store.get_user(user.id)
+
+        # Audit log
+        await audit_log(
+            AuditEventType.USER_CREATED,
+            f"User '{user.username}' registered via public registration",
+            actor_id=user.id,
+            actor_username=user.username,
+            actor_ip=client_ip,
+            target_type="user",
+            target_id=str(user.id),
+            details={"registration": "public"},
+        )
 
         logger.info("New user registered: %s", user.username)
 

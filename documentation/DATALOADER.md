@@ -123,6 +123,40 @@ Audio backends support a dedicated `audio` block so metadata and bucket math sta
 - **`truncation_mode`** – determines which portion of the clip is retained when we snap to the bucket interval. Options: `beginning`, `end`, or `random` (default: `beginning`).
 - Standard audio settings (channel count, cache directory) map directly to the runtime audio backend created by `simpletuner.helpers.data_backend.factory`. Padding is intentionally avoided—clips are truncated instead of extended to keep behaviour consistent with diffusion trainers like ACE-Step.
 
+#### Audio configuration for S2V training
+
+For S2V (Sound-to-Video) training, the `audio` block can be placed on **video** datasets to automatically extract audio from video files:
+
+```json
+{
+  "id": "my-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "instance_data_dir": "datasets/videos",
+  "cache_dir_vae": "cache/vae/videos",
+  "audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "allow_zero_audio": false
+  }
+}
+```
+
+This automatically creates a `my-videos_audio` dataset and links it via `s2v_datasets`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `audio.auto_split` | bool | false | Auto-generate audio dataset from video files |
+| `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
+| `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
+| `audio.sample_rate` | int | 16000 | Target sample rate for audio extraction |
+| `audio.channels` | int | 1 | Number of audio channels (1=mono, 2=stereo) |
+| `audio.bucket_strategy` | string | "duration" | Bucketing strategy for audio samples |
+| `audio.duration_interval` | float | 3.0 | Duration interval for bucket grouping (seconds) |
+| `audio.max_duration_seconds` | float | null | Maximum audio duration (longer files skipped) |
+| `audio.truncation_mode` | string | "beginning" | How to truncate long audio: "beginning", "end", "random" |
+
 ### Audio Captions (Hugging Face)
 For Hugging Face audio datasets, you can specify which columns form the caption (prompt) and which column contains the lyrics:
 ```json
@@ -159,7 +193,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 ### `conditioning_data`
 
 - **Values:** `id` value of conditioning dataset or an array of `id` values
-- **Description:** As described in [the ControlNet guide](/documentation/CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
+- **Description:** As described in [the ControlNet guide](CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
 - **Note:** If you have multiple conditioning datasets, you can specify them as an array of `id` values. When training Flux Kontext, this allows switching between conditions randomly or stitching inputs together to train in more advanced multi-image compositing tasks.
 
 ### `instance_data_dir` / `aws_data_prefix`
@@ -172,7 +206,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 - **textfile** requires your image.png be next to an image.txt that contains one or more captions, separated by newlines. These image+text pairs **must be in the same directory**.
 - **instanceprompt** requires a value for `instance_prompt` also be provided, and will use **only** this value for the caption of every image in the set.
 - **filename** will use a converted and cleaned-up version of the filename as its caption, eg. after swapping underscores for spaces.
-- **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+- **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy-json-lines-datasets).
 
 Both `textfile` and `parquet` support multi-captions:
 - textfiles are split by newlines. Each new line will be its own separate caption.
@@ -183,7 +217,7 @@ Both `textfile` and `parquet` support multi-captions:
 - **Values:** `discovery` | `parquet` | `huggingface`
 - **Description:** Controls how SimpleTuner discovers image dimensions and other metadata during dataset preparation.
   - **discovery** (default): Scans actual image files to read dimensions. Works with any storage backend but can be slow for large datasets.
-  - **parquet**: Reads dimensions from `width_column` and `height_column` in a parquet/JSONL file, skipping file access. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+  - **parquet**: Reads dimensions from `width_column` and `height_column` in a parquet/JSONL file, skipping file access. See [Parquet caption strategy](#parquet-caption-strategy-json-lines-datasets).
   - **huggingface**: Uses metadata from Hugging Face datasets. See [Hugging Face Datasets Support](#hugging-face-datasets-support).
 - **Note:** When using `parquet`, you must also configure the `parquet` block with `width_column` and `height_column`. This dramatically speeds up startup for large datasets.
 
@@ -304,7 +338,7 @@ Generates Canny edge detection maps:
 }
 ```
 
-See [the ControlNet guide](/documentation/CONTROLNET.md) for more details on how to use these conditioning datasets.
+See [the ControlNet guide](CONTROLNET.md) for more details on how to use these conditioning datasets.
 
 #### Examples
 
@@ -521,7 +555,7 @@ For example, with 4 GPUs, `train_batch_size=4`, and `gradient_accumulation_steps
 
 ##### Automatic Dataset Oversubscription
 
-To automatically adjust `repeats` when your dataset is smaller than the effective batch size, use the `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#allow_dataset_oversubscription)).
+To automatically adjust `repeats` when your dataset is smaller than the effective batch size, use the `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)).
 
 When enabled, SimpleTuner will:
 - Calculate the minimum repeats needed for training
@@ -577,7 +611,7 @@ This is particularly useful when:
   - **Negative values** (e.g., `-0.5`): "Less of the concept" — dimmer eyes, neutral expression, etc.
   - **Zero or omitted**: Neutral examples that don't push the concept in either direction.
 - **Note:** When datasets have `slider_strength` values, SimpleTuner rotates batches in a fixed cycle: positive → negative → neutral. Within each group, standard backend probabilities still apply.
-- **See also:** [SLIDER_LORA.md](/documentation/SLIDER_LORA.md) for a complete guide on setting up slider LoRA training.
+- **See also:** [SLIDER_LORA.md](SLIDER_LORA.md) for a complete guide on setting up slider LoRA training.
 
 ### `vae_cache_clear_each_epoch`
 
@@ -921,7 +955,7 @@ SimpleTuner now supports loading datasets directly from Hugging Face Hub without
 - Datasets with built-in metadata and quality assessments
 - Quick experimentation without local storage requirements
 
-For thorough documentation on this feature, refer to [this document](/documentation/HUGGINGFACE_DATASETS.md).
+For thorough documentation on this feature, refer to [this document](HUGGINGFACE_DATASETS.md).
 
 For a basic example of how to use a Hugging Face dataset, set `"type": "huggingface"` in your dataloader configuration:
 

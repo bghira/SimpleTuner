@@ -411,6 +411,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("Failed to configure rate limiters: %s", e)
 
+    # Initialize worker manager for GPU worker orchestration
+    worker_manager = None
+    try:
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import get_sse_manager
+        from simpletuner.simpletuner_sdk.server.services.worker_manager import WorkerManager
+        from simpletuner.simpletuner_sdk.server.services.worker_repository import WorkerRepository
+
+        worker_repository = WorkerRepository()
+
+        # Get job store for worker manager (uses cloud job store)
+        from simpletuner.simpletuner_sdk.server.services.cloud.container import get_job_store
+
+        job_store = get_job_store()
+        sse_manager = get_sse_manager()
+
+        worker_manager = WorkerManager(
+            worker_repository=worker_repository,
+            job_store=job_store,
+            sse_manager=sse_manager,
+        )
+
+        # Reconcile worker state from previous server run
+        await worker_manager.reconcile_on_startup()
+
+        # Start background health check loop
+        await worker_manager.start()
+    except Exception as e:
+        logger.warning("Failed to start worker manager: %s", e)
+
     try:
         yield
     except asyncio.CancelledError:
@@ -425,6 +454,14 @@ async def lifespan(app: FastAPI):
                 await stop_background_tasks()
             except Exception as e:
                 logger.warning("Error stopping background tasks: %s", e)
+
+        # Stop worker manager
+        if worker_manager:
+            try:
+                await worker_manager.stop()
+                logger.debug("Worker manager stopped")
+            except Exception as e:
+                logger.warning("Error stopping worker manager: %s", e)
 
         # Cancel cleanup task
         cleanup_task.cancel()

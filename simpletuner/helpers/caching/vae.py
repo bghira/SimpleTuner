@@ -20,9 +20,10 @@ from simpletuner.helpers.image_manipulation.batched_training_samples import Batc
 from simpletuner.helpers.image_manipulation.training_sample import PreparedSample, TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.models.ltxvideo import normalize_ltx_latents
+from simpletuner.helpers.models.ltxvideo2 import normalize_ltx2_audio_latents, normalize_ltx2_latents
 from simpletuner.helpers.models.wan import compute_wan_posterior
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.training import audio_file_extensions, image_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -218,7 +219,21 @@ class VAECache(WebhookMixin):
         if os.path.splitext(filename)[1] != ".pt":
             try:
                 if self.dataset_type_enum is DatasetType.AUDIO:
-                    sample = self.image_data_backend.read(filename, as_byteIO=False)
+                    audio_config = getattr(self.metadata_backend, "audio_config", None) or {}
+                    source_from_video = audio_config.get("source_from_video", False)
+                    file_ext = os.path.splitext(filename)[1].lower().lstrip(".")
+
+                    if source_from_video and file_ext in video_file_extensions:
+                        # Extract audio from video file
+                        from simpletuner.helpers.audio import load_audio_from_video
+
+                        video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
+                        target_sr = audio_config.get("sample_rate", 16000)
+                        target_channels = audio_config.get("channels", 1)
+                        waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
+                        sample = {"waveform": waveform, "sample_rate": sample_rate}
+                    else:
+                        sample = self.image_data_backend.read(filename, as_byteIO=False)
                 else:
                     sample = self.image_data_backend.read_image(filename)
                 return self._normalise_loaded_sample(sample)
@@ -333,7 +348,15 @@ class VAECache(WebhookMixin):
         return self.encode_images([None] * len(filepaths), filepaths)
 
     def discover_all_files(self):
-        extension_pool = audio_file_extensions if self.dataset_type_enum is DatasetType.AUDIO else image_file_extensions
+        if self.dataset_type_enum is DatasetType.AUDIO:
+            # Check if audio is sourced from video files
+            audio_config = getattr(self.metadata_backend, "audio_config", None) or {}
+            if audio_config.get("source_from_video", False):
+                extension_pool = video_file_extensions
+            else:
+                extension_pool = audio_file_extensions
+        else:
+            extension_pool = image_file_extensions
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id) or StateTracker.set_image_files(
             self.image_data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
@@ -360,7 +383,9 @@ class VAECache(WebhookMixin):
             from diffusers import AutoencoderDC as AutoencoderClass
         elif StateTracker.get_args().model_family == "ltxvideo":
             from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo as AutoencoderClass
-        elif StateTracker.get_args().model_family == "wan":
+        elif StateTracker.get_args().model_family == "ltxvideo2":
+            from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video as AutoencoderClass
+        elif StateTracker.get_args().model_family in ["wan", "wan_s2v"]:
             from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
@@ -487,7 +512,9 @@ class VAECache(WebhookMixin):
     def prepare_video_latents(self, samples):
         if StateTracker.get_model_family() in [
             "ltxvideo",
+            "ltxvideo2",
             "wan",
+            "wan_s2v",
             "sanavideo",
             "kandinsky5-video",
             "hunyuanvideo",
@@ -572,7 +599,23 @@ class VAECache(WebhookMixin):
             }
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan", "sanavideo"]:
+        elif StateTracker.get_model_family() in ["ltxvideo2"]:
+            _, _, _, height, width = latents_uncached.shape
+            logger.debug(f"Latents shape: {latents_uncached.shape}")
+            scaling_factor = getattr(getattr(self.vae, "config", None), "scaling_factor", 1.0)
+            latents_uncached = normalize_ltx2_latents(
+                latents_uncached, self.vae.latents_mean, self.vae.latents_std, scaling_factor=scaling_factor
+            )
+
+            output_cache_entry = {
+                "latents": latents_uncached.shape,
+                "num_frames": self.num_video_frames,
+                "height": height,
+                "width": width,
+            }
+            logger.debug(f"Video latent processing results: {output_cache_entry}")
+            output_cache_entry["latents"] = latents_uncached
+        elif StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
             logger.debug(
                 "Shape for Wan VAE encode: %s with latents_mean: %s and latents_std: %s",
                 latents_uncached.shape,
@@ -634,6 +677,11 @@ class VAECache(WebhookMixin):
             raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
 
         return output_cache_entry
+
+    def process_audio_latents(self, latents_uncached):
+        if StateTracker.get_model_family() in ["ltxvideo2"]:
+            latents_uncached = normalize_ltx2_audio_latents(latents_uncached, self.vae)
+        return latents_uncached
 
     def encode_images(self, images, filepaths, load_from_cache=True):
         # images must be same dimension
@@ -707,16 +755,22 @@ class VAECache(WebhookMixin):
                 )
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
-                if StateTracker.get_model_family() in ["wan", "sanavideo"]:
+                if StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         latents_uncached = latents_uncached.latent_dist.parameters
-                    latents_uncached = self.process_video_latents(latents_uncached)
+                    if self.dataset_type_enum is DatasetType.AUDIO:
+                        latents_uncached = self.process_audio_latents(latents_uncached)
+                    else:
+                        latents_uncached = self.process_video_latents(latents_uncached)
                 else:
                     if hasattr(latents_uncached, "latent_dist"):
                         latents_uncached = latents_uncached.latent_dist.sample()
                     elif hasattr(latents_uncached, "sample"):
                         latents_uncached = latents_uncached.sample()
-                    latents_uncached = self.process_video_latents(latents_uncached)
+                    if self.dataset_type_enum is DatasetType.AUDIO:
+                        latents_uncached = self.process_audio_latents(latents_uncached)
+                    else:
+                        latents_uncached = self.process_video_latents(latents_uncached)
 
                 latents_uncached = self.model.scale_vae_latents_for_cache(latents_uncached, self.vae)
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:

@@ -650,7 +650,11 @@ class Trainer:
             self.config = load_config(None, exit_on_error=True)
 
         if self.config is None:
-            raise ValueError("Training configuration could not be parsed")
+            config_source = "provided arguments" if args_payload else "file-based configuration"
+            raise ValueError(
+                f"Training configuration could not be parsed from {config_source}. "
+                "Check that your configuration file exists and is valid, or that command-line arguments are correctly formatted."
+            )
 
         accelerate_config_path = getattr(self.config, "accelerate_config", None)
         if accelerate_config_path not in (None, "", "None"):

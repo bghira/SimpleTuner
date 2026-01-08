@@ -71,18 +71,22 @@ def _configure_tf32(disable_tf32: bool) -> None:
     cudnn_conv_backend = getattr(cudnn_backend, "conv", None)
     cudnn_rnn_backend = getattr(cudnn_backend, "rnn", None)
 
-    supports_precision_overrides = (
-        hasattr(backend_root, "fp32_precision")
-        and matmul_backend is not None
-        and hasattr(matmul_backend, "fp32_precision")
-        and cudnn_backend is not None
-        and hasattr(cudnn_backend, "fp32_precision")
+    supports_precision_overrides = any(
+        (
+            hasattr(torch, "set_float32_matmul_precision"),
+            hasattr(backend_root, "fp32_precision"),
+            matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"),
+            cudnn_backend is not None and hasattr(cudnn_backend, "fp32_precision"),
+        )
     )
 
     def _set_tf32(enabled: bool) -> None:
         if supports_precision_overrides:
             precision = "tf32" if enabled else "ieee"
-            backend_root.fp32_precision = precision
+            if hasattr(torch, "set_float32_matmul_precision"):
+                torch.set_float32_matmul_precision("high" if enabled else "highest")
+            if hasattr(backend_root, "fp32_precision"):
+                backend_root.fp32_precision = precision
             if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
                 matmul_backend.fp32_precision = precision
             if cudnn_backend is not None and hasattr(cudnn_backend, "fp32_precision"):
@@ -90,6 +94,12 @@ def _configure_tf32(disable_tf32: bool) -> None:
             for cudnn_op_backend in (cudnn_conv_backend, cudnn_rnn_backend):
                 if cudnn_op_backend is not None and hasattr(cudnn_op_backend, "fp32_precision"):
                     cudnn_op_backend.fp32_precision = precision
+            if (
+                cudnn_backend is not None
+                and hasattr(cudnn_backend, "allow_tf32")
+                and not hasattr(cudnn_backend, "fp32_precision")
+            ):
+                cudnn_backend.allow_tf32 = enabled
         else:
             if matmul_backend is not None and hasattr(matmul_backend, "allow_tf32"):
                 matmul_backend.allow_tf32 = enabled
@@ -586,15 +596,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         return normalized_args
 
+    parser_error_traceback = None
     try:
         normalized_args = _normalize_input_args(input_args)
         args = parser.parse_args(normalized_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
         parser_error = sys.exc_info()[1]
-        logger.error(f"Could not parse input: {input_args}")
         import traceback
 
-        logger.error(traceback.format_exc())
+        parser_error_traceback = traceback.format_exc()
+        logger.error(f"Could not parse input: {input_args}")
+        logger.error(parser_error_traceback)
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
             try:
@@ -611,7 +623,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
-        raise ValueError(f"Could not parse command line arguments: {parser_error or 'see above logs for details'}")
+        error_detail = parser_error_traceback or str(parser_error) if parser_error else "unknown parsing error"
+        raise ValueError(f"Could not parse command line arguments:\n{error_detail}")
 
     if args is None:
         return None
@@ -1140,7 +1153,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError("--ramtorch cannot be used together with --enable_group_offload.")
 
     if args.validation_guidance_skip_layers is not None:
-        if args.model_family not in ["sd3", "wan"]:
+        if args.model_family not in ["sd3", "wan", "wan_s2v"]:
             raise ValueError("Currently, skip-layer guidance is not supported for {}".format(args.model_family))
         try:
             import json

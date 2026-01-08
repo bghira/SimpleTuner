@@ -741,3 +741,174 @@ describe('Form Value Store Structure', () => {
         expect(store.getStoredFieldValue('--field')).toBe('second');
     });
 });
+
+/**
+ * Tests for _skipNextClean flag behavior in checkFormDirty.
+ *
+ * This tests a regression where Easy Mode fields (without name attributes)
+ * would call markFormDirty() but then checkFormDirty() would immediately
+ * reset formDirty to false because FormData showed no changes.
+ *
+ * The fix: checkFormDirty() respects _skipNextClean flag set by markFormDirty().
+ */
+describe('Dirty State Preservation with _skipNextClean', () => {
+    // Create a mock that mirrors the actual trainer store behavior
+    const createRealisticTrainerStore = (initialFormData = {}) => ({
+        formDirty: false,
+        _skipNextClean: false,
+        _suppressDirtyTracking: false,
+        originalFormData: { ...initialFormData },
+        currentFormData: { ...initialFormData },
+
+        markFormDirty() {
+            if (this._suppressDirtyTracking) {
+                return;
+            }
+            this.formDirty = true;
+            this._skipNextClean = true;
+        },
+
+        markFormClean() {
+            this.formDirty = false;
+            this._skipNextClean = false;
+        },
+
+        // Simulates updating a form field that's in the DOM (has name attr)
+        updateFormField(fieldName, value) {
+            this.currentFormData[fieldName] = value;
+        },
+
+        // Mirrors the fixed checkFormDirty logic
+        checkFormDirty() {
+            if (this._suppressDirtyTracking) {
+                return;
+            }
+
+            let isDirty = false;
+
+            // Check for changes
+            for (const key in this.currentFormData) {
+                if (this.originalFormData[key] !== this.currentFormData[key]) {
+                    isDirty = true;
+                    break;
+                }
+            }
+
+            // Check for removed fields
+            if (!isDirty) {
+                for (const key in this.originalFormData) {
+                    if (!(key in this.currentFormData)) {
+                        isDirty = true;
+                        break;
+                    }
+                }
+            }
+
+            // If _skipNextClean is set (from markFormDirty), preserve dirty state
+            // when FormData comparison says clean. This handles fields that are
+            // managed outside the form (e.g., Easy Mode selects without name attrs).
+            if (this._skipNextClean && !isDirty) {
+                // Keep formDirty as-is and clear the flag
+                this._skipNextClean = false;
+            } else {
+                this.formDirty = isDirty;
+            }
+        },
+    });
+
+    test('markFormDirty sets _skipNextClean flag', () => {
+        const store = createRealisticTrainerStore();
+        expect(store._skipNextClean).toBe(false);
+
+        store.markFormDirty();
+
+        expect(store.formDirty).toBe(true);
+        expect(store._skipNextClean).toBe(true);
+    });
+
+    test('checkFormDirty preserves dirty state when _skipNextClean is set and form looks clean', () => {
+        // This is the core regression test:
+        // Simulates Easy Mode field change where no actual form element exists
+        const store = createRealisticTrainerStore({ '--output_dir': '/original' });
+
+        // Simulate: Easy Mode change calls markFormDirty but doesn't change FormData
+        store.markFormDirty();
+        expect(store.formDirty).toBe(true);
+        expect(store._skipNextClean).toBe(true);
+
+        // Simulate: Event bubbles to form, handleFieldInput calls checkFormDirty
+        // FormData comparison would say "no changes" since Easy Mode fields aren't in form
+        store.checkFormDirty();
+
+        // The fix: formDirty should still be true because _skipNextClean was set
+        expect(store.formDirty).toBe(true);
+        // Flag should be cleared after use
+        expect(store._skipNextClean).toBe(false);
+    });
+
+    test('checkFormDirty correctly detects actual form changes', () => {
+        const store = createRealisticTrainerStore({ '--output_dir': '/original' });
+
+        // Change a real form field
+        store.updateFormField('--output_dir', '/new-value');
+        store.checkFormDirty();
+
+        expect(store.formDirty).toBe(true);
+    });
+
+    test('checkFormDirty clears dirty state when form is actually clean', () => {
+        const store = createRealisticTrainerStore({ '--output_dir': '/original' });
+
+        // Mark dirty without _skipNextClean (e.g., after user reverts a change)
+        store.formDirty = true;
+        store._skipNextClean = false;
+
+        // Form data unchanged
+        store.checkFormDirty();
+
+        expect(store.formDirty).toBe(false);
+    });
+
+    test('_skipNextClean is cleared after checkFormDirty uses it', () => {
+        const store = createRealisticTrainerStore();
+
+        store.markFormDirty();
+        expect(store._skipNextClean).toBe(true);
+
+        store.checkFormDirty();
+        expect(store._skipNextClean).toBe(false);
+
+        // Second call should now correctly detect clean state
+        store.checkFormDirty();
+        expect(store.formDirty).toBe(false);
+    });
+
+    test('_suppressDirtyTracking prevents all dirty operations', () => {
+        const store = createRealisticTrainerStore();
+        store._suppressDirtyTracking = true;
+
+        store.markFormDirty();
+        expect(store.formDirty).toBe(false);
+
+        store._suppressDirtyTracking = false;
+        store.markFormDirty();
+        expect(store.formDirty).toBe(true);
+
+        store._suppressDirtyTracking = true;
+        store.checkFormDirty();
+        // formDirty should remain unchanged (true) because tracking is suppressed
+        expect(store.formDirty).toBe(true);
+    });
+
+    test('markFormClean resets both dirty state and _skipNextClean', () => {
+        const store = createRealisticTrainerStore();
+
+        store.markFormDirty();
+        expect(store.formDirty).toBe(true);
+        expect(store._skipNextClean).toBe(true);
+
+        store.markFormClean();
+        expect(store.formDirty).toBe(false);
+        expect(store._skipNextClean).toBe(false);
+    });
+});

@@ -299,13 +299,17 @@ if (!window.hardwareHeroCTA) {
                 }
             },
 
-            syncFromForm() {
+            async syncFromForm() {
                 const fields = [
                     'model_family', 'model_flavour', 'model_type', 'lora_rank',
                     'vae_enable_tiling', 'vae_enable_slicing', 'vae_batch_size',
                     'gradient_checkpointing', 'ramtorch', 'musubi_blocks_to_swap', 'use_ema',
                     'base_model_precision', 'text_encoder_1_precision'
                 ];
+
+                // Track which fields were set from config and save model_flavour for later
+                const setFromConfig = new Set();
+                let savedModelFlavour = null;
 
                 const trainerStore = window.Alpine?.store?.('trainer');
                 if (trainerStore?.activeEnvironmentConfig) {
@@ -314,6 +318,12 @@ if (!window.hardwareHeroCTA) {
                         const prefixedKey = `--${fieldName}`;
                         const value = config[prefixedKey] ?? config[fieldName];
                         if (value !== undefined && value !== null) {
+                            setFromConfig.add(fieldName);
+                            // Save model_flavour to apply after options load
+                            if (fieldName === 'model_flavour') {
+                                savedModelFlavour = value;
+                                continue;
+                            }
                             if (typeof value === 'boolean') {
                                 this[fieldName] = value;
                             } else if (typeof value === 'number') {
@@ -329,7 +339,9 @@ if (!window.hardwareHeroCTA) {
                     }
                 }
 
+                // Only read from DOM for fields not already set from config
                 for (const fieldName of fields) {
+                    if (setFromConfig.has(fieldName)) continue;
                     const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
                     if (el) {
                         if (el.type === 'checkbox') {
@@ -342,9 +354,15 @@ if (!window.hardwareHeroCTA) {
                     }
                 }
 
+                // Load flavours/presets first, then apply saved model_flavour
                 if (this.model_family) {
-                    this.loadModelFlavours(this.model_family);
+                    await this.loadModelFlavours(this.model_family);
                     this.loadMemoryPresets(this.model_family);
+                }
+
+                // Now apply model_flavour after options are available
+                if (savedModelFlavour !== null) {
+                    this.model_flavour = savedModelFlavour;
                 }
             },
 
@@ -380,15 +398,9 @@ if (!window.hardwareHeroCTA) {
             },
 
             updateFormField(fieldName, value) {
-                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
-                if (el) {
-                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
-                    else { el.value = value; }
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-
                 const trainerStore = window.Alpine?.store?.('trainer');
+
+                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -396,9 +408,16 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    if (typeof trainerStore.markFormDirty === 'function') {
-                        trainerStore.markFormDirty();
-                    }
+                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
+                    trainerStore.formDirty = true;
+                    trainerStore._skipNextClean = true;
+                }
+
+                // Update DOM element value (no events - they interfere with dirty tracking)
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value; }
                 }
             },
 
@@ -658,6 +677,9 @@ if (!window.hardwareHeroCTA) {
                     'resolution', 'caption_strategy'
                 ];
 
+                // Track which fields were set from config
+                const setFromConfig = new Set();
+
                 const trainerStore = window.Alpine?.store?.('trainer');
                 if (trainerStore?.activeEnvironmentConfig) {
                     const config = trainerStore.activeEnvironmentConfig;
@@ -665,6 +687,7 @@ if (!window.hardwareHeroCTA) {
                         const prefixedKey = `--${fieldName}`;
                         const value = config[prefixedKey] ?? config[fieldName];
                         if (value !== undefined && value !== null) {
+                            setFromConfig.add(fieldName);
                             if (typeof value === 'boolean') {
                                 this[fieldName] = value;
                             } else if (typeof value === 'number') {
@@ -680,7 +703,9 @@ if (!window.hardwareHeroCTA) {
                     }
                 }
 
+                // Only read from DOM for fields not already set from config
                 for (const fieldName of fields) {
+                    if (setFromConfig.has(fieldName)) continue;
                     const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
                     if (el) {
                         if (el.type === 'checkbox') {
@@ -731,15 +756,9 @@ if (!window.hardwareHeroCTA) {
             },
 
             updateFormField(fieldName, value) {
-                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
-                if (el) {
-                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
-                    else { el.value = value ?? ''; }
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-
                 const trainerStore = window.Alpine?.store?.('trainer');
+
+                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -747,9 +766,16 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    if (typeof trainerStore.markFormDirty === 'function') {
-                        trainerStore.markFormDirty();
-                    }
+                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
+                    trainerStore.formDirty = true;
+                    trainerStore._skipNextClean = true;
+                }
+
+                // Update DOM element value (no events - they interfere with dirty tracking)
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
                 }
             },
 
@@ -955,6 +981,9 @@ if (!window.hardwareHeroCTA) {
                     'flow_schedule_auto_shift', 'flow_schedule_shift'
                 ];
 
+                // Track which fields were set from config
+                const setFromConfig = new Set();
+
                 const trainerStore = window.Alpine?.store?.('trainer');
                 if (trainerStore?.activeEnvironmentConfig) {
                     const config = trainerStore.activeEnvironmentConfig;
@@ -962,6 +991,7 @@ if (!window.hardwareHeroCTA) {
                         const prefixedKey = `--${fieldName}`;
                         const value = config[prefixedKey] ?? config[fieldName];
                         if (value !== undefined && value !== null) {
+                            setFromConfig.add(fieldName);
                             if (typeof value === 'boolean') {
                                 this[fieldName] = value;
                             } else if (typeof value === 'number') {
@@ -977,7 +1007,9 @@ if (!window.hardwareHeroCTA) {
                     }
                 }
 
+                // Only read from DOM for fields not already set from config
                 for (const fieldName of fields) {
+                    if (setFromConfig.has(fieldName)) continue;
                     const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
                     if (el) {
                         if (el.type === 'checkbox') {
@@ -1025,15 +1057,9 @@ if (!window.hardwareHeroCTA) {
             },
 
             updateFormField(fieldName, value) {
-                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
-                if (el) {
-                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
-                    else { el.value = value ?? ''; }
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-
                 const trainerStore = window.Alpine?.store?.('trainer');
+
+                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -1041,9 +1067,16 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    if (typeof trainerStore.markFormDirty === 'function') {
-                        trainerStore.markFormDirty();
-                    }
+                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
+                    trainerStore.formDirty = true;
+                    trainerStore._skipNextClean = true;
+                }
+
+                // Update DOM element value (no events - they interfere with dirty tracking)
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
                 }
             },
 
@@ -1280,6 +1313,9 @@ if (!window.hardwareHeroCTA) {
                     'validation_prompt_library', 'user_prompt_library'
                 ];
 
+                // Track which fields were set from config
+                const setFromConfig = new Set();
+
                 const trainerStore = window.Alpine?.store?.('trainer');
                 if (trainerStore?.activeEnvironmentConfig) {
                     const config = trainerStore.activeEnvironmentConfig;
@@ -1287,6 +1323,7 @@ if (!window.hardwareHeroCTA) {
                         const prefixedKey = `--${fieldName}`;
                         const value = config[prefixedKey] ?? config[fieldName];
                         if (value !== undefined && value !== null) {
+                            setFromConfig.add(fieldName);
                             if (typeof value === 'boolean') {
                                 this[fieldName] = value;
                             } else if (typeof value === 'number') {
@@ -1302,7 +1339,9 @@ if (!window.hardwareHeroCTA) {
                     }
                 }
 
+                // Only read from DOM for fields not already set from config
                 for (const fieldName of fields) {
+                    if (setFromConfig.has(fieldName)) continue;
                     const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
                     if (el) {
                         if (el.type === 'checkbox') {
@@ -1358,15 +1397,9 @@ if (!window.hardwareHeroCTA) {
             },
 
             updateFormField(fieldName, value) {
-                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
-                if (el) {
-                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
-                    else { el.value = value ?? ''; }
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-
                 const trainerStore = window.Alpine?.store?.('trainer');
+
+                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -1374,9 +1407,16 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    if (typeof trainerStore.markFormDirty === 'function') {
-                        trainerStore.markFormDirty();
-                    }
+                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
+                    trainerStore.formDirty = true;
+                    trainerStore._skipNextClean = true;
+                }
+
+                // Update DOM element value (no events - they interfere with dirty tracking)
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
                 }
             },
 
@@ -1620,7 +1660,7 @@ if (!window.hardwareHeroCTA) {
                     <p class="small text-muted mb-0">
                         Scale beyond a single machine. <strong>Note:</strong> Multi-node via WebUI is experimental —
                         for production use, follow
-                        <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DISTRIBUTED.md" target="_blank" rel="noopener">DISTRIBUTED.md <i class="fas fa-external-link-alt fa-xs"></i></a>
+                        <a href="{{ docs_url('DISTRIBUTED.md') }}" target="_blank" rel="noopener">DISTRIBUTED.md <i class="fas fa-external-link-alt fa-xs"></i></a>
                         and use the command-line approach.
                     </p>
                 </div>
@@ -1688,7 +1728,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Project Name</label>
                                 <input type="text" class="form-control"
                                        x-model="tracker_project_name"
-                                       @input="onProjectNameChange($event.target.value)"
+                                       @input.stop="onProjectNameChange($event.target.value)"
                                        placeholder="simpletuner">
                                 <div class="form-text">Groups related training runs together in WandB or TensorBoard. Think of it as a folder name.</div>
                             </div>
@@ -1696,7 +1736,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Run Name</label>
                                 <input type="text" class="form-control"
                                        x-model="tracker_run_name"
-                                       @input="onRunNameChange($event.target.value)"
+                                       @input.stop="onRunNameChange($event.target.value)"
                                        placeholder="my-first-lora">
                                 <div class="form-text">Identifies this specific training attempt. Use something descriptive like "flux-style-v2" or "character-lora-attempt3".</div>
                             </div>
@@ -1707,7 +1747,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Logging Platform</label>
                                 <select class="form-select"
                                         x-model="report_to"
-                                        @change="onReportToChange($event.target.value)">
+                                        @change.stop="onReportToChange($event.target.value)">
                                     <option value="wandb">Weights & Biases (Recommended)</option>
                                     <option value="tensorboard">TensorBoard (Local)</option>
                                     <option value="none">None</option>
@@ -1722,7 +1762,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Output Directory</label>
                                 <input type="text" class="form-control"
                                        x-model="output_dir"
-                                       @input="onOutputDirChange($event.target.value)"
+                                       @input.stop="onOutputDirChange($event.target.value)"
                                        placeholder="simpletuner-results">
                                 <div class="form-text">Where checkpoints and trained weights will be saved. Use absolute paths (like /home/user/models) or relative paths from the SimpleTuner directory.</div>
                             </div>
@@ -1733,9 +1773,9 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Resume from Checkpoint</label>
                                 <select class="form-select"
                                         x-model="resume_from_checkpoint"
-                                        @change="onResumeFromCheckpointChange($event.target.value)">
+                                        @change.stop="onResumeFromCheckpointChange($event.target.value)">
                                     <template x-for="choice in checkpointChoices" :key="choice.value">
-                                        <option :value="choice.value" x-text="choice.label" :selected="choice.value === resume_from_checkpoint"></option>
+                                        <option :value="choice.value" x-text="choice.label"></option>
                                     </template>
                                 </select>
                                 <div class="form-text">Continue training from a previous checkpoint. "Latest" automatically finds the most recent one. Useful if training was interrupted or you want to train longer. <strong>Note:</strong> Cloud training runs are currently stateless and do not support resuming from checkpoints.</div>
@@ -1759,10 +1799,10 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Data Backend Config</label>
                                 <select class="form-select"
                                         x-model="data_backend_config"
-                                        @change="onDataBackendConfigChange($event.target.value)">
+                                        @change.stop="onDataBackendConfigChange($event.target.value)">
                                     <option value="">Select a dataset configuration...</option>
                                     <template x-for="choice in dataBackendChoices" :key="choice.value || choice">
-                                        <option :value="choice.value || choice" x-text="choice.label || choice" :selected="(choice.value || choice) === data_backend_config"></option>
+                                        <option :value="choice.value || choice" x-text="choice.label || choice"></option>
                                     </template>
                                 </select>
                                 <div class="form-text">The dataset plan that defines where your images are located and how they should be processed. Create new ones in the Datasets tab.</div>
@@ -1771,7 +1811,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Batch Size</label>
                                 <input type="number" class="form-control"
                                        x-model.number="train_batch_size"
-                                       @input="onBatchSizeChange($event.target.value)"
+                                       @input.stop="onBatchSizeChange($event.target.value)"
                                        min="1" max="64">
                                 <div class="form-text">Images processed per training step (per GPU). Higher = faster but needs more VRAM. Start with 1-4.</div>
                             </div>
@@ -1786,7 +1826,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-option-toggle">
                                     <input type="checkbox" class="form-check-input" id="ez_override_dataset_config"
                                            x-model="override_dataset_config"
-                                           @change="onOverrideDatasetConfigChange($event.target.checked)">
+                                           @change.stop="onOverrideDatasetConfigChange($event.target.checked)">
                                 </div>
                                 <label class="ez-option-info" for="ez_override_dataset_config">
                                     <div class="ez-option-name">Override Dataset Config</div>
@@ -1798,7 +1838,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-option-toggle">
                                     <input type="checkbox" class="form-check-input" id="ez_disable_bucket_pruning"
                                            x-model="disable_bucket_pruning"
-                                           @change="onDisableBucketPruningChange($event.target.checked)">
+                                           @change.stop="onDisableBucketPruningChange($event.target.checked)">
                                 </div>
                                 <label class="ez-option-info" for="ez_disable_bucket_pruning">
                                     <div class="ez-option-name">Disable Bucket Pruning</div>
@@ -1810,7 +1850,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-option-toggle">
                                     <input type="checkbox" class="form-check-input" id="ez_allow_oversubscription"
                                            x-model="allow_dataset_oversubscription"
-                                           @change="onAllowOversubscriptionChange($event.target.checked)">
+                                           @change.stop="onAllowOversubscriptionChange($event.target.checked)">
                                 </div>
                                 <label class="ez-option-info" for="ez_allow_oversubscription">
                                     <div class="ez-option-name">Allow Dataset Oversubscription</div>
@@ -1838,7 +1878,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Training Resolution</label>
                                 <input type="number" class="form-control"
                                        x-model.number="resolution"
-                                       @input="onResolutionChange($event.target.value)"
+                                       @input.stop="onResolutionChange($event.target.value)"
                                        min="256" max="4096" step="64">
                                 <div class="form-text">Default target resolution in pixels. Must be divisible by 64. SDXL/Flux typically use 1024, SD1.5 uses 512. Higher = better quality but more VRAM.</div>
                             </div>
@@ -1846,7 +1886,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Minimum Image Size</label>
                                 <input type="number" class="form-control"
                                        x-model.number="minimum_image_size"
-                                       @input="onMinImageSizeChange($event.target.value)"
+                                       @input.stop="onMinImageSizeChange($event.target.value)"
                                        min="128" step="64"
                                        placeholder="None">
                                 <div class="form-text">Images smaller than this (on any side) may be upscaled, which can harm quality. Leave empty for no minimum. Recommended: set near your training resolution.</div>
@@ -1855,7 +1895,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Maximum Image Size</label>
                                 <input type="number" class="form-control"
                                        x-model.number="maximum_image_size"
-                                       @input="onMaxImageSizeChange($event.target.value)"
+                                       @input.stop="onMaxImageSizeChange($event.target.value)"
                                        min="256" step="64"
                                        placeholder="None">
                                 <div class="form-text">Without this limit, very large images (e.g., 4000×3000) get randomly cropped to training resolution, often cutting out the subject entirely and training on meaningless background patches. Set this to downsample oversized images first, preserving the full scene before cropping.</div>
@@ -1867,7 +1907,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Downsample Target</label>
                                 <input type="number" class="form-control"
                                        x-model.number="target_downsample_size"
-                                       @input="onTargetDownsampleChange($event.target.value)"
+                                       @input.stop="onTargetDownsampleChange($event.target.value)"
                                        min="256" step="64"
                                        placeholder="None">
                                 <div class="form-text">When downsampling oversized images, resize them to this target before cropping. Works with Maximum Image Size. Leave empty to disable.</div>
@@ -1876,7 +1916,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Caption Strategy</label>
                                 <select class="form-select"
                                         x-model="caption_strategy"
-                                        @change="onCaptionStrategyChange($event.target.value)">
+                                        @change.stop="onCaptionStrategyChange($event.target.value)">
                                     <option value="textfile">Text Files (.txt)</option>
                                     <option value="filename">Filename</option>
                                     <option value="instance_prompt">Instance Prompt</option>
@@ -1958,7 +1998,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Number of Epochs</label>
                                 <input type="number" class="form-control"
                                        x-model.number="num_train_epochs"
-                                       @input="onNumEpochsChange($event.target.value)"
+                                       @input.stop="onNumEpochsChange($event.target.value)"
                                        min="1" max="1000">
                                 <div class="form-text">One epoch = one complete pass through all your training images. More epochs let the model see your data more times, but too many causes <strong>overfitting</strong>—the model memorizes instead of learning. Start with 1-3 for LoRA, 5-10 for full fine-tuning.</div>
                             </div>
@@ -1966,7 +2006,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Max Training Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="max_train_steps"
-                                       @input="onMaxStepsChange($event.target.value)"
+                                       @input.stop="onMaxStepsChange($event.target.value)"
                                        min="0"
                                        placeholder="Leave empty to use epochs">
                                 <div class="form-text">If set, training stops after this many steps regardless of epochs. Useful for consistent training runs across different dataset sizes. Common ranges: 500-2000 for LoRA, 5000-20000 for full fine-tuning. Leave empty to use epochs instead.</div>
@@ -1990,7 +2030,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Save Every N Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="checkpoint_step_interval"
-                                       @input="onCheckpointStepIntervalChange($event.target.value)"
+                                       @input.stop="onCheckpointStepIntervalChange($event.target.value)"
                                        min="1">
                                 <div class="form-text">Creates a checkpoint every N training steps. Lower values (100-250) give more recovery points but use more disk space. Higher values (500-1000) save less often. Match this to your training length—if training 1000 steps, 250 gives you 4 checkpoints to compare.</div>
                             </div>
@@ -1998,7 +2038,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Save Every N Epochs</label>
                                 <input type="number" class="form-control"
                                        x-model.number="checkpoint_epoch_interval"
-                                       @input="onCheckpointEpochIntervalChange($event.target.value)"
+                                       @input.stop="onCheckpointEpochIntervalChange($event.target.value)"
                                        min="1"
                                        placeholder="Disabled">
                                 <div class="form-text">Additionally save at the end of every N epochs. Useful for long training runs where you want guaranteed saves at epoch boundaries. Leave empty to only use step-based checkpointing.</div>
@@ -2007,7 +2047,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Checkpoints to Keep</label>
                                 <input type="number" class="form-control"
                                        x-model.number="checkpoints_total_limit"
-                                       @input="onCheckpointsTotalLimitChange($event.target.value)"
+                                       @input.stop="onCheckpointsTotalLimitChange($event.target.value)"
                                        min="0">
                                 <div class="form-text">Maximum checkpoints kept on disk. Older ones are automatically deleted. Set to 0 for unlimited (warning: can use significant disk space). 3-5 is usually enough to find the best training point.</div>
                             </div>
@@ -2030,7 +2070,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Learning Rate</label>
                                 <input type="number" class="form-control"
                                        x-model="learning_rate"
-                                       @input="onLearningRateChange($event.target.value)"
+                                       @input.stop="onLearningRateChange($event.target.value)"
                                        step="0.0000001" min="0">
                                 <div class="form-text">
                                     <strong>LoRA typical range:</strong> 1e-4 to 5e-4 (0.0001 to 0.0005)<br>
@@ -2042,7 +2082,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">LR Scheduler</label>
                                 <select class="form-select"
                                         x-model="lr_scheduler"
-                                        @change="onLrSchedulerChange($event.target.value)">
+                                        @change.stop="onLrSchedulerChange($event.target.value)">
                                     <option value="constant">Constant</option>
                                     <option value="constant_with_warmup">Constant with Warmup</option>
                                     <option value="linear">Linear Decay</option>
@@ -2061,7 +2101,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Warmup Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="lr_warmup_steps"
-                                       @input="onLrWarmupStepsChange($event.target.value)"
+                                       @input.stop="onLrWarmupStepsChange($event.target.value)"
                                        min="0">
                                 <div class="form-text">Number of steps to gradually increase LR from zero. Prevents early instability when the model hasn't "warmed up" yet. Typical: 5-10% of total steps. For a 1000-step run, try 50-100 warmup steps.</div>
                             </div>
@@ -2072,7 +2112,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Learning Rate End</label>
                                 <input type="number" class="form-control"
                                        x-model="lr_end"
-                                       @input="onLrEndChange($event.target.value)"
+                                       @input.stop="onLrEndChange($event.target.value)"
                                        step="0.0000001" min="0">
                                 <div class="form-text">The LR will decay to this value by the end of training. For cosine/sine/polynomial schedulers. Usually set to 10-100x lower than your starting LR (e.g., if LR is 1e-4, try lr_end of 1e-6).</div>
                             </div>
@@ -2095,9 +2135,9 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Optimizer</label>
                                 <select class="form-select"
                                         x-model="optimizer"
-                                        @change="onOptimizerChange($event.target.value)">
+                                        @change.stop="onOptimizerChange($event.target.value)">
                                     <template x-for="choice in optimizerChoices" :key="choice.value">
-                                        <option :value="choice.value" x-text="choice.label" :selected="choice.value === optimizer"></option>
+                                        <option :value="choice.value" x-text="choice.label"></option>
                                     </template>
                                 </select>
                                 <div class="form-text">
@@ -2110,7 +2150,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Max Gradient Norm</label>
                                 <input type="number" class="form-control"
                                        x-model.number="max_grad_norm"
-                                       @input="onMaxGradNormChange($event.target.value)"
+                                       @input.stop="onMaxGradNormChange($event.target.value)"
                                        step="0.1" min="0">
                                 <div class="form-text">Clips gradients that exceed this magnitude, preventing "exploding gradients" that can destabilize training. <strong>Default 2.0</strong> works well for most cases. If training is unstable with difficult data, try lowering to 1.0. Set to 0 to disable clipping entirely (not recommended).</div>
                             </div>
@@ -2134,7 +2174,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="form-check form-switch mb-2">
                                     <input type="checkbox" class="form-check-input" id="ez_flow_auto_shift"
                                            x-model="flow_schedule_auto_shift"
-                                           @change="onFlowAutoShiftChange($event.target.checked)">
+                                           @change.stop="onFlowAutoShiftChange($event.target.checked)">
                                     <label class="form-check-label" for="ez_flow_auto_shift">
                                         <strong>Auto Shift Schedule</strong>
                                     </label>
@@ -2145,7 +2185,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Schedule Shift Value</label>
                                 <input type="number" class="form-control"
                                        x-model.number="flow_schedule_shift"
-                                       @input="onFlowShiftChange($event.target.value)"
+                                       @input.stop="onFlowShiftChange($event.target.value)"
                                        step="0.1" min="0">
                                 <div class="form-text">
                                     <strong>Higher values (3-5):</strong> Focus on composition and large-scale structure.<br>
@@ -2222,7 +2262,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Validate Every N Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="validation_step_interval"
-                                       @input="onValidationStepIntervalChange($event.target.value)"
+                                       @input.stop="onValidationStepIntervalChange($event.target.value)"
                                        min="1">
                                 <div class="form-text">Generate validation images every N training steps. Lower values (50-100) catch problems faster but slow training. Higher values (250-500) are less intrusive. For quick 500-step runs, try 100. For longer runs, 250-500 works well.</div>
                             </div>
@@ -2230,7 +2270,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Validate Every N Epochs</label>
                                 <input type="number" class="form-control"
                                        x-model.number="validation_epoch_interval"
-                                       @input="onValidationEpochIntervalChange($event.target.value)"
+                                       @input.stop="onValidationEpochIntervalChange($event.target.value)"
                                        min="1"
                                        placeholder="Disabled">
                                 <div class="form-text">Additionally validate at the end of every N epochs. Complements step-based validation. Leave empty to only use step interval.</div>
@@ -2239,7 +2279,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Inference Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="validation_num_inference_steps"
-                                       @input="onValidationInferenceStepsChange($event.target.value)"
+                                       @input.stop="onValidationInferenceStepsChange($event.target.value)"
                                        min="1" max="100">
                                 <div class="form-text">Denoising steps for validation images. More steps = better quality but slower. 20-30 is typical. Use fewer (10-15) for speed during training; you're checking concepts, not final quality.</div>
                             </div>
@@ -2262,7 +2302,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Validation Prompt</label>
                                 <textarea class="form-control" rows="3"
                                           x-model="validation_prompt"
-                                          @input="onValidationPromptChange($event.target.value)"
+                                          @input.stop="onValidationPromptChange($event.target.value)"
                                           placeholder="e.g., a portrait photo of [trigger word], professional lighting, 4k"></textarea>
                                 <div class="form-text">The prompt used to generate validation images. Include your trigger word if training a concept. This tests whether your training is working—if the generated images don't match what you expect, something's wrong.</div>
                             </div>
@@ -2270,7 +2310,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Negative Prompt</label>
                                 <textarea class="form-control" rows="2"
                                           x-model="validation_negative_prompt"
-                                          @input="onValidationNegativePromptChange($event.target.value)"
+                                          @input.stop="onValidationNegativePromptChange($event.target.value)"
                                           placeholder="blurry, cropped, ugly"></textarea>
                                 <div class="form-text">What to avoid in generated images. Common values: "blurry, cropped, ugly, deformed". Leave empty to disable negative prompting.</div>
                             </div>
@@ -2294,7 +2334,7 @@ if (!window.hardwareHeroCTA) {
                             <div class="col-md-6">
                                 <label class="form-label">Select Prompt Library</label>
                                 <select class="form-select"
-                                        @change="onUserPromptLibraryChange($event.target.value)">
+                                        @change.stop="onUserPromptLibraryChange($event.target.value)">
                                     <option value="">None (use single prompt above)</option>
                                     <template x-for="lib in promptLibraries" :key="lib.filename">
                                         <option :value="lib.absolute_path" x-text="lib.display_name + ' (' + lib.prompt_count + ' prompts)'"
@@ -2396,7 +2436,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Guidance Scale (CFG)</label>
                                 <input type="number" class="form-control"
                                        x-model.number="validation_guidance"
-                                       @input="onValidationGuidanceChange($event.target.value)"
+                                       @input.stop="onValidationGuidanceChange($event.target.value)"
                                        step="0.5" min="1" max="30">
                                 <div class="form-text">How closely to follow the prompt. 7-8 is standard. Higher (10-15) = more literal. For distilled models (Flux schnell), use 1.0.</div>
                             </div>
@@ -2404,7 +2444,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="form-check form-switch mt-4">
                                     <input type="checkbox" class="form-check-input" id="ez_validation_randomize"
                                            x-model="validation_randomize"
-                                           @change="onValidationRandomizeChange($event.target.checked)">
+                                           @change.stop="onValidationRandomizeChange($event.target.checked)">
                                     <label class="form-check-label" for="ez_validation_randomize">
                                         <strong>Randomize Seeds</strong>
                                     </label>
@@ -2415,7 +2455,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Fixed Seed</label>
                                 <input type="number" class="form-control"
                                        x-model.number="validation_seed"
-                                       @input="onValidationSeedChange($event.target.value)"
+                                       @input.stop="onValidationSeedChange($event.target.value)"
                                        min="0"
                                        placeholder="Random">
                                 <div class="form-text">Using the same seed produces the same "random" noise, making it easier to compare outputs across training steps.</div>
@@ -2486,10 +2526,10 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Model Family</label>
                                 <select class="form-select"
                                         x-model="model_family"
-                                        @change="onModelFamilyChange($event.target.value)">
+                                        @change.stop="onModelFamilyChange($event.target.value)">
                                     <option value="">Select a model family...</option>
                                     <template x-for="fam in modelFamilies" :key="fam.value">
-                                        <option :value="fam.value" x-text="fam.label" :selected="fam.value === model_family"></option>
+                                        <option :value="fam.value" x-text="fam.label"></option>
                                     </template>
                                 </select>
                             </div>
@@ -2497,11 +2537,11 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Variant</label>
                                 <select class="form-select"
                                         x-model="model_flavour"
-                                        @change="onModelFlavourChange($event.target.value)"
+                                        @change.stop="onModelFlavourChange($event.target.value)"
                                         :disabled="modelFlavours.length === 0">
                                     <option value="">Select a variant...</option>
                                     <template x-for="flav in modelFlavours" :key="flav">
-                                        <option :value="flav" x-text="flav" :selected="flav === model_flavour"></option>
+                                        <option :value="flav" x-text="flav"></option>
                                     </template>
                                 </select>
                             </div>
@@ -2520,14 +2560,14 @@ if (!window.hardwareHeroCTA) {
                         <div class="ez-compact-choice-grid">
                             <label class="ez-compact-choice" :class="{ 'selected': model_type === 'lora' }">
                                 <input type="radio" value="lora"
-                                       x-model="model_type" @change="onModelTypeChange('lora')" class="d-none">
+                                       x-model="model_type" @change.stop="onModelTypeChange('lora')" class="d-none">
                                 <i class="fas fa-feather ez-compact-icon"></i>
                                 <span class="ez-compact-label">LoRA</span>
                                 <span class="ez-compact-badge">Recommended</span>
                             </label>
                             <label class="ez-compact-choice" :class="{ 'selected': model_type === 'full' }">
                                 <input type="radio" value="full"
-                                       x-model="model_type" @change="onModelTypeChange('full')" class="d-none">
+                                       x-model="model_type" @change.stop="onModelTypeChange('full')" class="d-none">
                                 <i class="fas fa-cube ez-compact-icon"></i>
                                 <span class="ez-compact-label">Full Model</span>
                                 <span class="ez-compact-badge warning">Advanced</span>
@@ -2551,7 +2591,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-rank-slider">
                                     <input type="range" class="form-range"
                                            :value="loraRankToSlider(lora_rank)"
-                                           @input="onLoraRankSlider($event.target.value)"
+                                           @input.stop="onLoraRankSlider($event.target.value)"
                                            min="0" max="7" step="1">
                                     <span class="ez-rank-value" x-text="lora_rank"></span>
                                 </div>
@@ -2596,7 +2636,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-option-toggle">
                                     <input type="checkbox" class="form-check-input" id="ez_grad_ckpt"
                                            x-model="gradient_checkpointing"
-                                           @change="onGradientCheckpointingChange($event.target.checked)">
+                                           @change.stop="onGradientCheckpointingChange($event.target.checked)">
                                 </div>
                                 <label class="ez-option-info" for="ez_grad_ckpt">
                                     <div class="ez-option-name">Gradient Checkpointing</div>
@@ -2613,7 +2653,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-option-select">
                                     <select class="form-select form-select-sm" style="width: 130px;"
                                             x-model="ramtorch_preset"
-                                            @change="onRamtorchPresetChange($event.target.value)"
+                                            @change.stop="onRamtorchPresetChange($event.target.value)"
                                             :disabled="!hasModelFamily">
                                         <option value="off">Off</option>
                                         <template x-for="preset in ramtorchPresets" :key="preset.level">
@@ -2651,7 +2691,7 @@ if (!window.hardwareHeroCTA) {
                                 </div>
                                 <input type="range" class="form-range ez-block-swap-range"
                                        :value="getBlockSwapPercentage(musubi_blocks_to_swap)"
-                                       @input="onBlockSwapSlider($event.target.value)"
+                                       @input.stop="onBlockSwapSlider($event.target.value)"
                                        min="0" max="100" step="5">
                                 <div class="ez-block-swap-presets">
                                     <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) === 0 }"
@@ -2686,13 +2726,13 @@ if (!window.hardwareHeroCTA) {
                                             <div class="form-check">
                                                 <input type="checkbox" class="form-check-input" id="ez_vae_tiling"
                                                        x-model="vae_enable_tiling"
-                                                       @change="onVaeTilingChange($event.target.checked)">
+                                                       @change.stop="onVaeTilingChange($event.target.checked)">
                                                 <label class="form-check-label" for="ez_vae_tiling">Tiling</label>
                                             </div>
                                             <div class="form-check">
                                                 <input type="checkbox" class="form-check-input" id="ez_vae_slicing"
                                                        x-model="vae_enable_slicing"
-                                                       @change="onVaeSlicingChange($event.target.checked)">
+                                                       @change.stop="onVaeSlicingChange($event.target.checked)">
                                                 <label class="form-check-label" for="ez_vae_slicing">Slicing</label>
                                             </div>
                                         </div>
@@ -2703,7 +2743,7 @@ if (!window.hardwareHeroCTA) {
                                             <label class="form-check-label" for="ez_vae_batch">Batch Size</label>
                                             <input type="number" class="form-control form-control-sm" id="ez_vae_batch"
                                                    x-model.number="vae_batch_size"
-                                                   @change="onVaeBatchSizeChange($event.target.value)"
+                                                   @change.stop="onVaeBatchSizeChange($event.target.value)"
                                                    min="1" max="32" style="width: 60px;">
                                         </div>
                                         <div class="ez-option-desc">How many images to process at once during VAE caching. Higher = faster but uses more VRAM. Reducing this has no impact on quality. For most datasets, 1 is fine.</div>
@@ -2727,7 +2767,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Base Model</label>
                                 <select class="form-select"
                                         x-model="base_model_precision"
-                                        @change="onBaseModelPrecisionChange($event.target.value)">
+                                        @change.stop="onBaseModelPrecisionChange($event.target.value)">
                                     <option value="no_change">No Change</option>
                                     <option value="int8-quanto">INT8 (Quanto)</option>
                                     <option value="int4-quanto">INT4 (Quanto)</option>
@@ -2742,7 +2782,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Text Encoder</label>
                                 <select class="form-select" :class="{ 'border-warning': text_encoder_1_precision !== 'no_change' }"
                                         x-model="text_encoder_1_precision"
-                                        @change="onTextEncoderPrecisionChange($event.target.value)">
+                                        @change.stop="onTextEncoderPrecisionChange($event.target.value)">
                                     <option value="no_change">No Change</option>
                                     <option value="int8-quanto">INT8 (Quanto)</option>
                                     <option value="int4-quanto">INT4 (Quanto)</option>
@@ -2773,7 +2813,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="ez-option-toggle">
                                     <input type="checkbox" class="form-check-input" id="ez_use_ema"
                                            x-model="use_ema"
-                                           @change="onUseEmaChange($event.target.checked)">
+                                           @change.stop="onUseEmaChange($event.target.checked)">
                                 </div>
                                 <label class="ez-option-info" for="ez_use_ema">
                                     <div class="ez-option-name">EMA (Exponential Moving Average)</div>

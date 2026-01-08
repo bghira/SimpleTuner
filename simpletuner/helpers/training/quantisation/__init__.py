@@ -201,7 +201,7 @@ def _quanto_model(
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     weight_quant = _quanto_type_map(model_precision)
     extra_quanto_args = {}
-    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "wan"]:
+    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "ltxvideo2", "wan", "wan_s2v"]:
         extra_quanto_args["exclude"] = [
             # Norm layers of all types
             "*norm*",  # catches *.norm, .norm1, .norm2, .norm_q, .norm_k, .norm_out, etc.

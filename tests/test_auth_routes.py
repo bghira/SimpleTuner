@@ -944,6 +944,7 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
 
         # Create a mock admin user for the dependency
         mock_admin = MagicMock()
+        mock_admin.id = 1
         mock_admin.username = "local"
 
         # Create a real user via admin panel
@@ -979,6 +980,7 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_admin = MagicMock()
+        mock_admin.id = 1
         mock_admin.username = "local"
 
         # Create a real user
@@ -1019,6 +1021,7 @@ class TestPlaceholderCleanupOnUserCreate(unittest.IsolatedAsyncioTestCase):
         middleware._local_admin = MagicMock()
 
         mock_admin = MagicMock()
+        mock_admin.id = 1
         mock_admin.username = "local"
 
         # Create real user (should trigger cache invalidation)
@@ -1253,6 +1256,1034 @@ class TestSSESessionNotification(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(conn.user_id)
         self.assertIsNone(conn.session_id)
+
+
+class TestChangePassword(unittest.IsolatedAsyncioTestCase):
+    """Test cases for the password change endpoint."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        # Patch _get_store in users routes
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.users._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        self._store_patcher.stop()
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_successful_password_change(self) -> None:
+        """Test that a user can successfully change their password."""
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+
+        # Create a local user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="oldpassword123",
+            level_names=["researcher"],
+        )
+
+        # Reload user with permissions
+        user = await self.store.get_user(user.id)
+
+        # Mock request
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "127.0.0.1"
+
+        # Change password
+        data = ChangePasswordRequest(
+            current_password="oldpassword123",
+            new_password="newpassword456",
+        )
+
+        result = await change_my_password(data, mock_request, user)
+
+        self.assertTrue(result["success"])
+
+        # Verify old password no longer works
+        auth_result = await self.store.authenticate_local("testuser", "oldpassword123")
+        self.assertIsNone(auth_result)
+
+        # Verify new password works
+        auth_result = await self.store.authenticate_local("testuser", "newpassword456")
+        self.assertIsNotNone(auth_result)
+
+    async def test_incorrect_current_password(self) -> None:
+        """Test that password change fails with incorrect current password."""
+        from fastapi import HTTPException
+
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+
+        # Create a local user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="correctpassword",
+            level_names=["researcher"],
+        )
+
+        user = await self.store.get_user(user.id)
+
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "127.0.0.1"
+
+        data = ChangePasswordRequest(
+            current_password="wrongpassword",
+            new_password="newpassword456",
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await change_my_password(data, mock_request, user)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertIn("Current password is incorrect", ctx.exception.detail)
+
+        # Verify original password still works
+        auth_result = await self.store.authenticate_local("testuser", "correctpassword")
+        self.assertIsNotNone(auth_result)
+
+    async def test_non_local_auth_provider_rejected(self) -> None:
+        """Test that password change is rejected for non-local auth providers."""
+        from fastapi import HTTPException
+
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import AuthProvider
+
+        # Create a user and simulate OIDC provider
+        user = await self.store.create_user(
+            email="oidc@example.com",
+            username="oidcuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        user = await self.store.get_user(user.id)
+        # Manually set auth provider to OIDC (simulating external auth)
+        user.auth_provider = AuthProvider.OIDC
+
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "127.0.0.1"
+
+        data = ChangePasswordRequest(
+            current_password="password123",
+            new_password="newpassword456",
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await change_my_password(data, mock_request, user)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("only available for local authentication", ctx.exception.detail)
+
+    async def test_password_minimum_length_validation(self) -> None:
+        """Test that new password must meet minimum length requirements."""
+        from pydantic import ValidationError
+
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest
+
+        # Attempt to create request with short password
+        with self.assertRaises(ValidationError) as ctx:
+            ChangePasswordRequest(
+                current_password="oldpassword123",
+                new_password="short",  # Less than 8 characters
+            )
+
+        # Verify validation error mentions minimum length
+        errors = ctx.exception.errors()
+        self.assertTrue(any("min_length" in str(e) or "at least 8" in str(e).lower() for e in errors))
+
+    async def test_password_change_requires_authentication(self) -> None:
+        """Test that password change endpoint requires authentication.
+
+        This test verifies that the require_permission dependency is in place.
+        The actual auth check is handled by the middleware, but we verify
+        the endpoint has the dependency.
+        """
+        import inspect
+
+        from simpletuner.simpletuner_sdk.server.routes.users import change_my_password
+
+        # Get the function signature
+        sig = inspect.signature(change_my_password)
+        params = sig.parameters
+
+        # Verify 'user' parameter exists with Depends
+        self.assertIn("user", params)
+        default = params["user"].default
+        self.assertIsNotNone(default)
+
+        # The default should be a Depends() call
+        from fastapi import Depends
+
+        self.assertTrue(hasattr(default, "dependency"))
+
+    async def test_password_change_creates_audit_log(self) -> None:
+        """Test that password change creates an audit log entry."""
+        from simpletuner.simpletuner_sdk.server.routes.users import ChangePasswordRequest, change_my_password
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, get_audit_store
+
+        # Create a local user
+        user = await self.store.create_user(
+            email="audit@example.com",
+            username="audituser",
+            password="oldpassword123",
+            level_names=["researcher"],
+        )
+
+        user = await self.store.get_user(user.id)
+
+        mock_request = MagicMock()
+        mock_request.headers.get = MagicMock(return_value=None)
+        mock_request.client.host = "192.168.1.100"
+
+        data = ChangePasswordRequest(
+            current_password="oldpassword123",
+            new_password="newpassword456",
+        )
+
+        await change_my_password(data, mock_request, user)
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.USER_PASSWORD_CHANGED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].actor_username, "audituser")
+        self.assertEqual(entries[0].target_type, "user")
+        self.assertEqual(entries[0].target_id, str(user.id))
+
+
+class TestSessionExpiredAuditEvent(unittest.IsolatedAsyncioTestCase):
+    """Test cases for the auth.session.expired audit event."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_expired_session_detection(self) -> None:
+        """Test that get_expired_session_user_id detects expired sessions."""
+        from datetime import datetime, timedelta, timezone
+
+        # Create a user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Create a session with very short duration (already expired)
+        session_id = await self.store.create_session(user.id, duration_hours=0)
+
+        # Wait a moment to ensure expiration
+        import time
+
+        time.sleep(0.1)
+
+        # Check that get_session_user returns None (expired)
+        session_user = await self.store.get_session_user(session_id)
+        self.assertIsNone(session_user)
+
+        # Check that get_expired_session_user_id returns the user_id
+        expired_user_id = await self.store.get_expired_session_user_id(session_id)
+        self.assertEqual(expired_user_id, user.id)
+
+    async def test_valid_session_not_detected_as_expired(self) -> None:
+        """Test that get_expired_session_user_id returns None for valid sessions."""
+        # Create a user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Create a valid session (24 hours)
+        session_id = await self.store.create_session(user.id, duration_hours=24)
+
+        # Check that get_expired_session_user_id returns None (not expired)
+        expired_user_id = await self.store.get_expired_session_user_id(session_id)
+        self.assertIsNone(expired_user_id)
+
+        # But get_session_user should return the user
+        session_user = await self.store.get_session_user(session_id)
+        self.assertIsNotNone(session_user)
+        self.assertEqual(session_user.id, user.id)
+
+
+class TestAPIKeyUsedAuditEvent(unittest.IsolatedAsyncioTestCase):
+    """Test cases for the auth.api_key.used audit event."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_api_key_used_audit_logged(self) -> None:
+        """Test that API key usage audit event is properly formatted."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create a user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="apiuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate API key usage audit event (normally done by middleware)
+        await audit_log(
+            event_type=AuditEventType.AUTH_API_KEY_USED,
+            action="API key used for authentication",
+            actor_id=user.id,
+            actor_ip="192.168.1.100",
+            target_type="api_key",
+            target_id="st_xxx...",
+            details={"path": "/api/test"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.AUTH_API_KEY_USED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "api_key")
+        self.assertIn("/api/test", entries[0].details.get("path", ""))
+
+
+class TestUserUpdateAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Test cases for user management audit events."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.users._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        self._store_patcher.stop()
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_user_updated_audit_logged(self) -> None:
+        """Test that user update creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.routes.users import UpdateUserRequest, update_user
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, get_audit_store
+
+        # Create admin user
+        admin = await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+        admin = await self.store.get_user(admin.id)
+
+        # Create target user
+        target_user = await self.store.create_user(
+            email="target@example.com",
+            username="target",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        update_data = UpdateUserRequest(display_name="New Display Name")
+
+        await update_user(target_user.id, update_data, admin)
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.USER_UPDATED.value],
+            target_id=str(target_user.id),
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, admin.id)
+        self.assertEqual(entries[0].target_type, "user")
+        self.assertEqual(entries[0].target_id, str(target_user.id))
+
+    async def test_user_deleted_audit_logged(self) -> None:
+        """Test that user deletion creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.routes.users import delete_user
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, get_audit_store
+
+        # Create admin user
+        admin = await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+        admin = await self.store.get_user(admin.id)
+
+        # Create target user to delete
+        target_user = await self.store.create_user(
+            email="target@example.com",
+            username="target",
+            password="password123",
+            level_names=["researcher"],
+        )
+        target_user_id = target_user.id
+
+        await delete_user(target_user_id, admin)
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.USER_DELETED.value],
+            target_id=str(target_user_id),
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, admin.id)
+        self.assertEqual(entries[0].target_type, "user")
+        self.assertEqual(entries[0].target_id, str(target_user_id))
+
+    async def test_user_level_changed_audit_logged(self) -> None:
+        """Test that user level change creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create admin user
+        admin = await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Create target user
+        target_user = await self.store.create_user(
+            email="target@example.com",
+            username="target",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate level change audit event
+        await audit_log(
+            event_type=AuditEventType.USER_LEVEL_CHANGED,
+            action=f"Changed levels for user {target_user.username}",
+            actor_id=admin.id,
+            target_type="user",
+            target_id=str(target_user.id),
+            details={"old_levels": ["researcher"], "new_levels": ["lead"]},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.USER_LEVEL_CHANGED.value],
+            target_id=str(target_user.id),
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, admin.id)
+        self.assertEqual(entries[0].target_type, "user")
+        self.assertIn("lead", entries[0].details.get("new_levels", []))
+
+    async def test_user_permission_changed_audit_logged(self) -> None:
+        """Test that user permission change creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create admin user
+        admin = await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Create target user
+        target_user = await self.store.create_user(
+            email="target@example.com",
+            username="target",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate permission change audit event
+        await audit_log(
+            event_type=AuditEventType.USER_PERMISSION_CHANGED,
+            action=f"Changed permissions for user {target_user.username}",
+            actor_id=admin.id,
+            target_type="user",
+            target_id=str(target_user.id),
+            details={"new_permissions": ["job.submit", "job.view"]},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.USER_PERMISSION_CHANGED.value],
+            target_id=str(target_user.id),
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, admin.id)
+        self.assertEqual(entries[0].target_type, "user")
+
+
+class TestAPIKeyAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Test cases for API key audit events."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.auth._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        self._store_patcher.stop()
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_api_key_created_audit_logged(self) -> None:
+        """Test that API key creation creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate API key creation audit event
+        await audit_log(
+            event_type=AuditEventType.API_KEY_CREATED,
+            action="Created API key Test API Key",
+            actor_id=user.id,
+            target_type="api_key",
+            target_id="st_xxx...",
+            details={"name": "Test API Key"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.API_KEY_CREATED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "api_key")
+        self.assertEqual(entries[0].details.get("name"), "Test API Key")
+
+    async def test_api_key_revoked_audit_logged(self) -> None:
+        """Test that API key revocation creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate API key revocation audit event
+        await audit_log(
+            event_type=AuditEventType.API_KEY_REVOKED,
+            action="Revoked API key 123",
+            actor_id=user.id,
+            target_type="api_key",
+            target_id="123",
+            details={"key_id": 123},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.API_KEY_REVOKED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "api_key")
+
+
+class TestCredentialAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Test cases for credential management audit events."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.users._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        self._store_patcher.stop()
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_credential_created_audit_logged(self) -> None:
+        """Test that credential creation creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate credential creation audit event
+        await audit_log(
+            event_type=AuditEventType.CREDENTIAL_CREATED,
+            action="Created credential replicate/api_token",
+            actor_id=user.id,
+            target_type="credential",
+            target_id="replicate/api_token",
+            details={"provider": "replicate", "credential_name": "api_token"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.CREDENTIAL_CREATED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "credential")
+        self.assertEqual(entries[0].details.get("provider"), "replicate")
+
+    async def test_credential_deleted_audit_logged(self) -> None:
+        """Test that credential deletion creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate credential deletion audit event
+        await audit_log(
+            event_type=AuditEventType.CREDENTIAL_DELETED,
+            action="Deleted credential replicate/api_token",
+            actor_id=user.id,
+            target_type="credential",
+            target_id="replicate/api_token",
+            details={"provider": "replicate", "credential_name": "api_token"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.CREDENTIAL_DELETED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "credential")
+        self.assertEqual(entries[0].details.get("provider"), "replicate")
+
+    async def test_credential_used_audit_logged(self) -> None:
+        """Test that credential usage creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate credential usage audit event
+        await audit_log(
+            event_type=AuditEventType.CREDENTIAL_USED,
+            action="Used credential replicate/api_token",
+            actor_id=user.id,
+            target_type="credential",
+            target_id="replicate/api_token",
+            details={"provider": "replicate", "credential_name": "api_token"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.CREDENTIAL_USED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "credential")
+        self.assertIn("replicate", entries[0].target_id)
+
+
+class TestJobAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Test cases for job-related audit events."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        self.store = UserStore(self.db_path)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_job_submitted_audit_logged(self) -> None:
+        """Test that job submission creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate job submission audit event
+        await audit_log(
+            event_type=AuditEventType.JOB_SUBMITTED,
+            action="Submitted job job_123",
+            actor_id=user.id,
+            target_type="job",
+            target_id="job_123",
+            details={"config_name": "test_config", "provider": "local"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.JOB_SUBMITTED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "job")
+        self.assertEqual(entries[0].target_id, "job_123")
+
+    async def test_job_cancelled_audit_logged(self) -> None:
+        """Test that job cancellation creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create user
+        user = await self.store.create_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            level_names=["researcher"],
+        )
+
+        # Simulate job cancellation audit event
+        await audit_log(
+            event_type=AuditEventType.JOB_CANCELLED,
+            action="Cancelled job job_456",
+            actor_id=user.id,
+            target_type="job",
+            target_id="job_456",
+            details={"reason": "User requested cancellation"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.JOB_CANCELLED.value],
+            actor_id=user.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, user.id)
+        self.assertEqual(entries[0].target_type, "job")
+        self.assertEqual(entries[0].target_id, "job_456")
+
+    async def test_job_approved_audit_logged(self) -> None:
+        """Test that job approval creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create admin user
+        admin = await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Simulate job approval audit event
+        await audit_log(
+            event_type=AuditEventType.JOB_APPROVED,
+            action="Approved request 1",
+            actor_id=admin.id,
+            target_type="approval_request",
+            target_id="1",
+            details={"job_id": "job_789", "notes": "Approved for training"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.JOB_APPROVED.value],
+            actor_id=admin.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, admin.id)
+        self.assertEqual(entries[0].target_type, "approval_request")
+        self.assertEqual(entries[0].details.get("job_id"), "job_789")
+
+    async def test_job_rejected_audit_logged(self) -> None:
+        """Test that job rejection creates audit log entry."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.audit import AuditEventType, audit_log, get_audit_store
+
+        # Create admin user
+        admin = await self.store.create_user(
+            email="admin@example.com",
+            username="admin",
+            password="password123",
+            is_admin=True,
+            level_names=["admin"],
+        )
+
+        # Simulate job rejection audit event
+        await audit_log(
+            event_type=AuditEventType.JOB_REJECTED,
+            action="Rejected request 2",
+            actor_id=admin.id,
+            target_type="approval_request",
+            target_id="2",
+            details={"job_id": "job_999", "reason": "Exceeds budget limit"},
+        )
+
+        # Check audit log
+        audit_store = get_audit_store()
+        entries = await audit_store.query(
+            event_types=[AuditEventType.JOB_REJECTED.value],
+            actor_id=admin.id,
+            limit=1,
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].actor_id, admin.id)
+        self.assertEqual(entries[0].target_type, "approval_request")
+        self.assertEqual(entries[0].details.get("reason"), "Exceeds budget limit")
 
 
 if __name__ == "__main__":

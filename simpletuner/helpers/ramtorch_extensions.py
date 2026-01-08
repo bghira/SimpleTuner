@@ -380,12 +380,124 @@ class CPUBouncingLayerNorm(nn.Module):
         return F.layer_norm(x, self.normalized_shape, weight_gpu, bias_gpu, self.eps)
 
 
+class CPUBouncingRMSNorm(nn.Module):
+    """
+    RMSNorm with CPU-stored weights that bounce to GPU on demand.
+    """
+
+    def __init__(
+        self,
+        normalized_shape,
+        eps: float = 1e-6,
+        elementwise_affine: bool = True,
+        bias: bool = False,
+        device="cuda",
+        dtype=None,
+        _weight=None,
+        _bias=None,
+        use_weight_addition: bool = False,
+    ):
+        super().__init__()
+        if isinstance(normalized_shape, int):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = tuple(normalized_shape)
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        self.use_weight_addition = use_weight_addition
+        self.device = device
+
+        if dtype is None:
+            dtype = torch.float32
+
+        self.is_ramtorch = True
+
+        if elementwise_affine:
+            if _weight is not None:
+                weight = _weight.to("cpu").pin_memory()
+            else:
+                init = torch.zeros if use_weight_addition else torch.ones
+                weight = init(self.normalized_shape, dtype=dtype, device="cpu").pin_memory()
+            self.weight = nn.Parameter(weight)
+            self.weight.is_ramtorch = True
+
+            if bias:
+                if _bias is not None:
+                    bias_tensor = _bias.to("cpu").pin_memory()
+                else:
+                    bias_tensor = torch.zeros(self.normalized_shape, dtype=dtype, device="cpu").pin_memory()
+                self.bias = nn.Parameter(bias_tensor)
+                self.bias.is_ramtorch = True
+            else:
+                self.register_parameter("bias", None)
+        else:
+            self.register_parameter("weight", None)
+            self.register_parameter("bias", None)
+
+    def _apply(self, fn):
+        dummy = torch.tensor(0.0, device="cpu", dtype=torch.float32)
+        result = fn(dummy)
+        if self.weight is not None and result.dtype != dummy.dtype:
+            self.weight.data = self.weight.data.to(dtype=result.dtype)
+            if self.bias is not None:
+                self.bias.data = self.bias.data.to(dtype=result.dtype)
+        return self
+
+    def cuda(self, device=None):
+        return self
+
+    def cpu(self):
+        return self
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        dims = tuple(range(-len(self.normalized_shape), 0))
+        variance = x.float().pow(2).mean(dim=dims, keepdim=True)
+        output = x * torch.rsqrt(variance + self.eps).to(dtype=x.dtype)
+
+        if not self.elementwise_affine:
+            return output
+
+        state = _get_device_state(self.device)
+        transfer_stream = state["transfer_stream"]
+
+        with torch.cuda.stream(transfer_stream):
+            weight_gpu = self.weight.to(self.device, non_blocking=True)
+            bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
+
+        torch.cuda.current_stream().wait_stream(transfer_stream)
+
+        if self.use_weight_addition:
+            output = output * (1.0 + weight_gpu.float())
+        else:
+            output = output * weight_gpu
+
+        if bias_gpu is not None:
+            output = output + bias_gpu
+
+        return output.to(dtype=x.dtype)
+
+
+def _is_rmsnorm_module(module: nn.Module) -> bool:
+    rmsnorm_cls = getattr(nn, "RMSNorm", None)
+    if rmsnorm_cls is not None and isinstance(module, rmsnorm_cls):
+        return True
+    name = module.__class__.__name__.lower()
+    return name.endswith("rmsnorm") and "perchannel" not in name
+
+
+def _rmsnorm_use_weight_addition(module: nn.Module) -> bool:
+    for attr in ("unit_offset", "use_unit_offset", "use_weight_addition", "add_unit_offset"):
+        if getattr(module, attr, False):
+            return True
+    return "gemma" in module.__class__.__name__.lower()
+
+
 def replace_module_with_ramtorch(
     module: nn.Module,
     device: str = "cuda",
     include_embedding: bool = True,
     include_conv: bool = True,
     include_layernorm: bool = True,
+    include_rmsnorm: bool = True,
 ) -> int:
     """
     Replace supported layer types with CPU-bouncing versions.
@@ -396,6 +508,7 @@ def replace_module_with_ramtorch(
         include_embedding: Replace nn.Embedding layers
         include_conv: Replace nn.Conv2d and nn.Conv3d layers
         include_layernorm: Replace nn.LayerNorm layers
+        include_rmsnorm: Replace RMSNorm-like layers
 
     Returns:
         Number of modules replaced
@@ -463,6 +576,33 @@ def replace_module_with_ramtorch(
             replaced += 1
             continue
 
+        # Check for RMSNorm
+        if include_rmsnorm and _is_rmsnorm_module(child) and not isinstance(child, CPUBouncingRMSNorm):
+            weight = getattr(child, "weight", None)
+            bias = getattr(child, "bias", None) if hasattr(child, "bias") else None
+            normalized_shape = getattr(child, "normalized_shape", None)
+            if normalized_shape is None:
+                if weight is not None:
+                    normalized_shape = weight.shape
+                else:
+                    normalized_shape = getattr(child, "hidden_size", None) or getattr(child, "dim", None)
+            if normalized_shape is not None:
+                use_weight_addition = _rmsnorm_use_weight_addition(child)
+                new_layer = CPUBouncingRMSNorm(
+                    normalized_shape=normalized_shape,
+                    eps=getattr(child, "eps", 1e-6),
+                    elementwise_affine=getattr(child, "elementwise_affine", weight is not None),
+                    bias=bias is not None,
+                    device=device,
+                    dtype=weight.dtype if weight is not None else None,
+                    _weight=weight.data if weight is not None else None,
+                    _bias=bias.data if bias is not None else None,
+                    use_weight_addition=use_weight_addition,
+                )
+                setattr(module, name, new_layer)
+                replaced += 1
+                continue
+
         # Check for LayerNorm
         if include_layernorm and isinstance(child, nn.LayerNorm) and not isinstance(child, CPUBouncingLayerNorm):
             new_layer = CPUBouncingLayerNorm(
@@ -486,6 +626,7 @@ def replace_module_with_ramtorch(
             include_embedding=include_embedding,
             include_conv=include_conv,
             include_layernorm=include_layernorm,
+            include_rmsnorm=include_rmsnorm,
         )
 
     return replaced

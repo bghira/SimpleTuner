@@ -114,9 +114,9 @@ class CallbackServiceTestCase(unittest.TestCase):
     @patch("simpletuner.simpletuner_sdk.server.services.callback_service.get_sse_manager")
     def test_progress_event_broadcasts_via_sse(self, mock_get_sse_manager: Mock) -> None:
         """Test that progress events trigger SSE broadcasts with correct payload."""
-        # Setup mock SSE manager
+        # Setup mock SSE manager with thread-safe broadcast method
         mock_sse_manager = Mock()
-        mock_sse_manager.broadcast = AsyncMock()
+        mock_sse_manager.broadcast_threadsafe = Mock(return_value=True)
         mock_get_sse_manager.return_value = mock_sse_manager
 
         # Handle a progress event
@@ -142,12 +142,14 @@ class CallbackServiceTestCase(unittest.TestCase):
         # Verify SSE manager was called
         mock_get_sse_manager.assert_called()
 
-        # Verify broadcast was actually called (not just that it exists)
-        self.assertTrue(mock_sse_manager.broadcast.called, "SSE manager broadcast should have been called")
-        self.assertEqual(mock_sse_manager.broadcast.call_count, 1, "Broadcast should be called exactly once")
+        # Verify thread-safe broadcast was called
+        self.assertTrue(
+            mock_sse_manager.broadcast_threadsafe.called, "SSE manager broadcast_threadsafe should have been called"
+        )
+        self.assertEqual(mock_sse_manager.broadcast_threadsafe.call_count, 1, "Broadcast should be called exactly once")
 
         # Verify the broadcast payload contains expected fields
-        call_args = mock_sse_manager.broadcast.call_args
+        call_args = mock_sse_manager.broadcast_threadsafe.call_args
         self.assertIsNotNone(call_args, "Broadcast should have been called with arguments")
 
         args, kwargs = call_args
@@ -167,9 +169,9 @@ class CallbackServiceTestCase(unittest.TestCase):
     @patch("simpletuner.simpletuner_sdk.server.services.callback_service.get_sse_manager")
     def test_lifecycle_stage_broadcasts_via_sse(self, mock_get_sse_manager: Mock) -> None:
         """Test that lifecycle stage events trigger SSE broadcasts."""
-        # Setup mock SSE manager
+        # Setup mock SSE manager with thread-safe broadcast method
         mock_sse_manager = Mock()
-        mock_sse_manager.broadcast = AsyncMock()
+        mock_sse_manager.broadcast_threadsafe = Mock(return_value=True)
         mock_get_sse_manager.return_value = mock_sse_manager
 
         # Handle a lifecycle stage event
@@ -194,12 +196,14 @@ class CallbackServiceTestCase(unittest.TestCase):
         # Verify SSE manager was called
         mock_get_sse_manager.assert_called()
 
-        # Verify broadcast was actually called
-        self.assertTrue(mock_sse_manager.broadcast.called, "SSE manager broadcast should have been called")
-        self.assertEqual(mock_sse_manager.broadcast.call_count, 1, "Broadcast should be called exactly once")
+        # Verify thread-safe broadcast was called
+        self.assertTrue(
+            mock_sse_manager.broadcast_threadsafe.called, "SSE manager broadcast_threadsafe should have been called"
+        )
+        self.assertEqual(mock_sse_manager.broadcast_threadsafe.call_count, 1, "Broadcast should be called exactly once")
 
         # Verify the broadcast payload
-        call_args = mock_sse_manager.broadcast.call_args
+        call_args = mock_sse_manager.broadcast_threadsafe.call_args
         self.assertIsNotNone(call_args, "Broadcast should have been called with arguments")
 
         args, kwargs = call_args
@@ -215,9 +219,9 @@ class CallbackServiceTestCase(unittest.TestCase):
     @patch("simpletuner.simpletuner_sdk.server.services.callback_service.get_sse_manager")
     def test_error_status_broadcasts_progress_reset(self, mock_get_sse_manager: Mock) -> None:
         """Test that error status events trigger progress reset broadcasts."""
-        # Setup mock SSE manager
+        # Setup mock SSE manager with thread-safe broadcast method
         mock_sse_manager = Mock()
-        mock_sse_manager.broadcast = AsyncMock()
+        mock_sse_manager.broadcast_threadsafe = Mock(return_value=True)
         mock_get_sse_manager.return_value = mock_sse_manager
 
         # Handle an error status event
@@ -234,12 +238,14 @@ class CallbackServiceTestCase(unittest.TestCase):
         # Verify SSE manager was called for progress reset
         mock_get_sse_manager.assert_called()
 
-        # Verify broadcast was actually called
-        self.assertTrue(mock_sse_manager.broadcast.called, "SSE manager broadcast should have been called")
-        self.assertEqual(mock_sse_manager.broadcast.call_count, 1, "Broadcast should be called exactly once")
+        # Verify thread-safe broadcast was called
+        self.assertTrue(
+            mock_sse_manager.broadcast_threadsafe.called, "SSE manager broadcast_threadsafe should have been called"
+        )
+        self.assertEqual(mock_sse_manager.broadcast_threadsafe.call_count, 1, "Broadcast should be called exactly once")
 
         # Verify the broadcast payload for progress reset
-        call_args = mock_sse_manager.broadcast.call_args
+        call_args = mock_sse_manager.broadcast_threadsafe.call_args
         self.assertIsNotNone(call_args, "Broadcast should have been called with arguments")
 
         args, kwargs = call_args

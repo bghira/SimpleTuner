@@ -252,6 +252,20 @@ async def cancel_job(
         user_id=str(user.id) if user else None,
     )
 
+    # Cloud auth audit log
+    from ...services.cloud.audit import AuditEventType, audit_log
+
+    await audit_log(
+        AuditEventType.JOB_CANCELLED,
+        f"Job '{job_id}' cancelled",
+        actor_id=user.id if user else None,
+        actor_username=user.username if user else None,
+        actor_ip=client_ip,
+        target_type="job",
+        target_id=job_id,
+        details={"provider": job.provider, "config_name": job.config_name},
+    )
+
     emit_cloud_event(
         "cloud.job.cancelled",
         job_id,
@@ -577,8 +591,22 @@ async def submit_job(
     dispatcher = get_dispatcher()
     result = await dispatcher.dispatch(command, ctx)
 
-    # Emit event on success
+    # Emit event and audit log on success
     if result.success and result.data:
         _emit_job_submitted_event(result.data.job_id, result.data.config_name, provider)
+
+        # Audit log
+        from ...services.cloud.audit import AuditEventType, audit_log
+
+        await audit_log(
+            AuditEventType.JOB_SUBMITTED,
+            f"Job '{result.data.job_id}' submitted to {provider}",
+            actor_id=user.id if user else None,
+            actor_username=user.username if user else None,
+            actor_ip=client_ip,
+            target_type="job",
+            target_id=result.data.job_id,
+            details={"provider": provider, "config_name": result.data.config_name},
+        )
 
     return _build_submit_response(result)

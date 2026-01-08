@@ -412,6 +412,28 @@ window.adminPanelComponent = function() {
         teamMembersLoading: false,
         availableTeamUsers: [],
         addMemberUserId: null,
+
+        // Workers management
+        workers: [],
+        workersLoading: false,
+        workerStats: {
+            total: 0,
+            idle: 0,
+            busy: 0,
+            offline: 0,
+        },
+        workerFormOpen: false,
+        workerForm: {
+            name: '',
+            worker_type: 'persistent',
+            labels_str: '',
+        },
+        workerTokenModalOpen: false,
+        workerToken: '',
+        workerConnectionCommand: '',
+        deleteWorkerOpen: false,
+        deletingWorker: null,
+        workerRefreshInterval: null,
     };
 
     // Core methods that orchestrate initialization
@@ -472,19 +494,7 @@ window.adminPanelComponent = function() {
             }
         },
 
-        get setupFormValid() {
-            const form = this.setupState?.form;
-            if (!form) return false;
-            return (
-                form.email &&
-                form.email.includes('@') &&
-                form.username &&
-                form.username.length >= 3 &&
-                form.password &&
-                form.password.length >= 8 &&
-                form.password === form.confirmPassword
-            );
-        },
+        // Note: setupFormValid getter moved to return object to avoid spread evaluation issue
 
         async submitFirstRunSetup() {
             if (!this.setupFormValid) return;
@@ -519,7 +529,12 @@ window.adminPanelComponent = function() {
                     }
                 } else {
                     const data = await response.json();
-                    this.setupState.error = data.detail || 'Failed to create admin account';
+                    // Handle Pydantic validation errors (array of objects with msg field)
+                    if (Array.isArray(data.detail)) {
+                        this.setupState.error = data.detail.map(e => e.msg || e.message || String(e)).join('; ');
+                    } else {
+                        this.setupState.error = data.detail || 'Failed to create admin account';
+                    }
                 }
             } catch (error) {
                 this.setupState.error = 'Network error: ' + error.message;
@@ -541,6 +556,14 @@ window.adminPanelComponent = function() {
             // Refresh registration settings when tab is selected
             if (tabName === 'registration') {
                 this.loadRegistrationSettings();
+            }
+            // Load and auto-refresh workers when tab is selected
+            if (tabName === 'workers') {
+                this.loadWorkers();
+                this.startWorkerAutoRefresh();
+            } else {
+                // Stop auto-refresh when leaving workers tab
+                this.stopWorkerAutoRefresh();
             }
         },
 
@@ -566,10 +589,24 @@ window.adminPanelComponent = function() {
         ...(window.adminEnterpriseOnboardingMethods || {}),
         ...(window.adminNotificationMethods || {}),
         ...(window.adminRegistrationMethods || {}),
+        ...(window.adminWorkerMethods || {}),
 
         // Getters must be defined here, not in spread modules, to avoid evaluation issues
         get anyHintsDismissed() {
             return this.hints && Object.values(this.hints).some(v => !v);
+        },
+        get setupFormValid() {
+            const form = this.setupState?.form;
+            if (!form) return false;
+            return (
+                form.email &&
+                form.email.includes('@') &&
+                form.username &&
+                form.username.length >= 3 &&
+                form.password &&
+                form.password.length >= 8 &&
+                form.password === form.confirmPassword
+            );
         },
     };
 };

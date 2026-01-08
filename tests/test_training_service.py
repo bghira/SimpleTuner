@@ -300,6 +300,11 @@ class TrainingServiceTests(unittest.TestCase):
             patch(
                 "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
             ),
+            # Mock get_authenticated_webhook_config to return DEFAULT_WEBHOOK_CONFIG
+            # (without auth_token) so the test compares against a predictable value
+            patch.object(
+                training_service, "get_authenticated_webhook_config", return_value=training_service.DEFAULT_WEBHOOK_CONFIG
+            ),
         ):
             result = training_service.start_training_job({"--foo": "bar"})
             job_id = result.job_id

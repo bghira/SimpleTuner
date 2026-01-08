@@ -29,7 +29,12 @@ from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
-from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
+from .webhook_defaults import (
+    DEFAULT_CALLBACK_URL,
+    DEFAULT_WEBHOOK_CONFIG,
+    get_authenticated_webhook_config,
+    get_default_callback_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1160,6 +1165,15 @@ def start_training_job(
         or "local"
     )
 
+    # Extract output_url and run_name for job tracking
+    output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+    run_name = (
+        runtime_config.get("--tracker_run_name")
+        or runtime_config.get("tracker_run_name")
+        or runtime_config.get("--model_alias")
+        or runtime_config.get("model_alias")
+    )
+
     def _create_running_entry():
         """Create a job entry with status=running and allocated GPUs."""
         from datetime import datetime, timezone
@@ -1172,6 +1186,13 @@ def start_training_job(
 
             # Create job directly as running with allocated GPUs
             now = datetime.now(timezone.utc).isoformat()
+            metadata = {
+                "runtime_config": runtime_config,
+                "env_name": env_name,
+                "any_gpu": any_gpu,
+            }
+            if run_name:
+                metadata["run_name"] = run_name
             job = UnifiedJob(
                 job_id=job_id,
                 job_type=JobType.LOCAL,
@@ -1185,11 +1206,9 @@ def start_training_job(
                 org_id=org_id,
                 num_processes=num_processes,
                 allocated_gpus=gpus_to_use,
-                metadata={
-                    "runtime_config": runtime_config,
-                    "env_name": env_name,
-                    "any_gpu": any_gpu,
-                },
+                output_url=output_url,
+                hardware_type=_detect_local_hardware(),
+                metadata=metadata,
             )
             await job_repo.add(job)
             return job
@@ -1213,7 +1232,7 @@ def start_training_job(
 
     runtime_payload = dict(runtime_config)
 
-    # Merge user webhook_config with WebUI callback
+    # Merge user webhook_config with WebUI callback (with authentication token)
     user_webhooks = runtime_payload.get("--webhook_config") or runtime_payload.get("webhook_config") or []
     if isinstance(user_webhooks, str):
         try:
@@ -1223,7 +1242,15 @@ def start_training_job(
     if not isinstance(user_webhooks, list):
         user_webhooks = [user_webhooks] if user_webhooks else []
 
-    merged_webhooks = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG) + user_webhooks
+    # Use authenticated webhook config which includes the callback auth token
+    authenticated_config = get_authenticated_webhook_config()
+
+    # Filter out any existing default callback URLs from user_webhooks to avoid duplicates
+    # (build_config_bundle may have already added DEFAULT_WEBHOOK_CONFIG without auth)
+    default_callback_url = get_default_callback_url()
+    user_webhooks = [w for w in user_webhooks if w.get("callback_url") != default_callback_url]
+
+    merged_webhooks = authenticated_config + user_webhooks
     runtime_payload["--webhook_config"] = merged_webhooks
 
     # Resolve the prompt library into a job-scoped path if one was configured.
@@ -1292,60 +1319,6 @@ def start_training_job(
         job_config.pop(key, None)
 
     process_keeper.submit_job(job_id, run_trainer_job, job_config)
-
-    # Track local job in unified JobStore for Job Queue visibility
-    try:
-        UnifiedJob = _get_unified_job_class()
-        CloudJobStatus = _get_cloud_job_status()
-        job_store = _get_job_store()
-
-        config_name = (
-            env_name
-            or runtime_config.get("--model_alias")
-            or runtime_config.get("model_alias")
-            or runtime_config.get("--tracker_run_name")
-            or runtime_config.get("tracker_run_name")
-            or "local"
-        )
-        output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
-
-        local_job = UnifiedJob.create_local(
-            job_id=job_id,
-            config_name=config_name,
-            hardware_type=_detect_local_hardware(),
-        )
-        local_job.output_url = output_url
-        local_job.status = CloudJobStatus.RUNNING.value
-        local_job.started_at = datetime.now(timezone.utc).isoformat()
-
-        # Store run name in metadata for display in job list
-        run_name = (
-            runtime_config.get("--tracker_run_name")
-            or runtime_config.get("tracker_run_name")
-            or runtime_config.get("--model_alias")
-            or runtime_config.get("model_alias")
-        )
-        if run_name:
-            local_job.metadata["run_name"] = run_name
-
-        # Store job asynchronously (fire-and-forget)
-        import asyncio
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(job_store.add_job(local_job))
-        except RuntimeError:
-            # No running event loop, use sync approach via thread
-            import threading
-
-            def _add_job():
-                import asyncio as aio
-
-                aio.run(job_store.add_job(local_job))
-
-            threading.Thread(target=_add_job, daemon=True).start()
-    except Exception as exc:
-        logger.warning("Failed to track local job in JobStore: %s", exc)
 
     APIState.set_state("current_job_id", job_id)
     return TrainingJobResult(
