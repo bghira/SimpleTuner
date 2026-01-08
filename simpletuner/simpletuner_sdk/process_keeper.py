@@ -8,6 +8,7 @@ import logging
 import marshal
 import os
 import pickle
+import re
 import signal
 import subprocess
 import sys
@@ -707,6 +708,13 @@ logger.info("Subprocess exiting")
             if "childfailederror" in lowered:
                 preferred_message = line.strip()
                 break
+            if "died with <signals." in lowered:
+                match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", line)
+                if match:
+                    signal_name = match.group(1)
+                    signal_num = match.group(2)
+                    preferred_message = f"Training subprocess was killed by {signal_name} (signal {signal_num})."
+                    break
             if "nccl" in lowered and "warning" in lowered:
                 # Skip NCCL warnings as final result unless nothing better is found
                 preferred_message = preferred_message or line.strip()
