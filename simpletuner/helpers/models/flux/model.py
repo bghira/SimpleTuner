@@ -456,13 +456,19 @@ class Flux(ImageModelFoundation):
         if self.config.validation_guidance_real is None or self.config.validation_guidance_real <= 1.0:
             # CFG is disabled, no negative prompts.
             return {}
-        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks", None)
-        if attention_mask.dim() == 1:  # Shape: [512]
-            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
+
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_prompt_embeds.dim() == 1:  # Shape: [dim]
+            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)  # Shape: [1, dim]
+        if attention_mask is not None and attention_mask.dim() == 1:  # Shape: [seq]
+            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, seq]
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "negative_prompt_embeds": prompt_embeds,
+            "negative_pooled_prompt_embeds": pooled_prompt_embeds,
             "negative_mask": (attention_mask if self.config.flux_attention_masked_training else None),
             "guidance_scale_real": float(self.config.validation_guidance_real),
             "no_cfg_until_timestep": int(self.config.validation_no_cfg_until_timestep),
