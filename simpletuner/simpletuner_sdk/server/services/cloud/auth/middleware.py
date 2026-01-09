@@ -274,7 +274,8 @@ class AuthMiddleware:
 
                     asyncio.get_running_loop().create_task(
                         audit_log(
-                            event_type=AuditEventType.API_KEY_USED,
+                            event_type=AuditEventType.AUTH_API_KEY_USED,
+                            action=f"API key '{key.key_prefix}' used by '{user.username}'",
                             actor_id=user.id,
                             actor_ip=client_ip,
                             target_type="api_key",
@@ -318,6 +319,7 @@ class AuthMiddleware:
                         asyncio.get_running_loop().create_task(
                             audit_log(
                                 event_type=AuditEventType.SESSION_EXPIRED,
+                                action=f"Session expired for user id {expired_user_id}",
                                 actor_id=expired_user_id,
                                 actor_ip=client_ip,
                                 target_type="session",
