@@ -845,11 +845,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     continue
 
                 # Try common audio extensions
-                audio_root_path = Path(audio_root)
+                audio_backend = s2v_dataset.get("data_backend")
                 for ext in [".wav", ".mp3", ".flac", ".ogg", ".m4a"]:
-                    candidate = audio_root_path / f"{video_stem}{ext}"
-                    if candidate.exists():
-                        audio_path = str(candidate)
+                    candidate = os.path.join(audio_root, f"{video_stem}{ext}")
+                    exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
+                    if exists:
+                        audio_path = candidate
                         audio_backend_id = s2v_dataset.get("id")
                         break
                 if audio_path:

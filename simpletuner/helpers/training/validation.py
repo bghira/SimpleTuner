@@ -493,16 +493,22 @@ def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
 
                 for s2v_dataset in s2v_datasets:
                     s2v_config = s2v_dataset.get("config", {})
+                    audio_config = s2v_config.get("audio", {})
+                    if audio_config.get("source_from_video", False):
+                        audio_path = sample_path
+                        break
                     audio_root = s2v_config.get("instance_data_dir")
                     if not audio_root:
                         continue
 
+                    audio_backend = s2v_dataset.get("data_backend")
                     # Search for matching audio files
                     audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
                     for ext in audio_extensions:
-                        candidate = Path(audio_root) / f"{video_stem}{ext}"
-                        if candidate.exists():
-                            audio_path = str(candidate)
+                        candidate = os.path.join(audio_root, f"{video_stem}{ext}")
+                        exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
+                        if exists:
+                            audio_path = candidate
                             break
                     if audio_path:
                         break
