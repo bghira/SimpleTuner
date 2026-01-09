@@ -227,10 +227,13 @@ class VAECache(WebhookMixin):
                         # Extract audio from video file
                         from simpletuner.helpers.audio import load_audio_from_video
 
-                        video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
                         target_sr = audio_config.get("sample_rate", 16000)
                         target_channels = audio_config.get("channels", 1)
-                        waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
+                        if self.image_data_backend.type == "local":
+                            waveform, sample_rate = load_audio_from_video(filename, target_sr, target_channels)
+                        else:
+                            video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
+                            waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
                         sample = {"waveform": waveform, "sample_rate": sample_rate}
                     else:
                         sample = self.image_data_backend.read(filename, as_byteIO=False)
@@ -745,7 +748,8 @@ class VAECache(WebhookMixin):
                 processed_images = torch.stack(uncached_images).to(
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
-                processed_images = self.prepare_video_latents(processed_images)
+                if self.dataset_type_enum is not DatasetType.AUDIO:
+                    processed_images = self.prepare_video_latents(processed_images)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
                 metadata_for_batch = self._gather_sample_metadata([filepaths[i] for i in uncached_image_indices])
                 latents_uncached = self.model.encode_cache_batch(
@@ -1066,8 +1070,16 @@ class VAECache(WebhookMixin):
         waveform = None
         sample_rate = None
         if isinstance(sample, dict):
-            waveform = sample.get("waveform") or sample.get("audio") or sample.get("data")
-            sample_rate = sample.get("sample_rate") or sample.get("sampling_rate")
+            if "waveform" in sample and sample["waveform"] is not None:
+                waveform = sample["waveform"]
+            elif "audio" in sample and sample["audio"] is not None:
+                waveform = sample["audio"]
+            elif "data" in sample and sample["data"] is not None:
+                waveform = sample["data"]
+            if "sample_rate" in sample and sample["sample_rate"] is not None:
+                sample_rate = sample["sample_rate"]
+            elif "sampling_rate" in sample and sample["sampling_rate"] is not None:
+                sample_rate = sample["sampling_rate"]
         elif isinstance(sample, (list, tuple)):
             if len(sample) > 0:
                 waveform = sample[0]

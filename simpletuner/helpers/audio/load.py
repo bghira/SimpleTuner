@@ -184,28 +184,7 @@ def load_audio_from_video(
         source_path = Path(source) if isinstance(source, str) else source
 
     try:
-        # Try torchaudio first (supports many video containers)
-        try:
-            waveform, sample_rate = torchaudio.load(str(source_path))
-            # Resample if needed
-            if sample_rate != target_sample_rate:
-                resampler = torchaudio.transforms.Resample(sample_rate, target_sample_rate)
-                waveform = resampler(waveform)
-                sample_rate = target_sample_rate
-            # Convert to target channels
-            if waveform.shape[0] > target_channels:
-                # Downmix: average all channels to mono (or target channel count)
-                waveform = waveform.mean(dim=0, keepdim=True)
-                if target_channels > 1:
-                    waveform = waveform.repeat(target_channels, 1)
-            elif waveform.shape[0] < target_channels:
-                # Upmix: duplicate channels (clone to avoid shared memory)
-                waveform = waveform.repeat(target_channels // waveform.shape[0], 1)
-            return waveform, sample_rate
-        except Exception as e:
-            logger.debug(f"torchaudio failed to load audio from {source_path}, falling back to ffmpeg: {e}")
-
-        # Fallback: ffmpeg extraction to temporary WAV
+        # Use ffmpeg to extract audio from video to avoid torchaudio video decode crashes.
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_wav_path = tmp.name
 
@@ -236,7 +215,7 @@ def load_audio_from_video(
             if not os.path.exists(tmp_wav_path) or os.path.getsize(tmp_wav_path) < 100:
                 raise ValueError(f"Video has no audio stream: {source_path}")
 
-            waveform, sample_rate = torchaudio.load(tmp_wav_path)
+            waveform, sample_rate = _load_with_wave(tmp_wav_path)
             return waveform, sample_rate
         finally:
             if os.path.exists(tmp_wav_path):
