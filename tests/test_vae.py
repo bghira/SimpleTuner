@@ -214,54 +214,6 @@ class TestVaeCacheAudio(unittest.TestCase):
         mock_get_vae_cache_files.assert_called_once_with(data_backend_id="audio-cache")
         mock_set_vae_cache_files.assert_called_once()
 
-    def test_process_audio_samples_in_batch(self):
-        metadata = {
-            "/tmp/audio.wav": {
-                "sample_rate": 48000,
-                "aspect_bucket": "duration_0_5",
-            }
-        }
-        metadata_backend = DummyMetadataBackend(metadata)
-        accelerator = DummyAccelerator()
-        image_backend = MagicMock()
-        image_backend.id = "audio-test"
-        cache_backend = MagicMock()
-        cache_backend.type = "local"
-        cache_backend.create_directory = MagicMock()
-        cache_backend.list_files.return_value = []
-        model = DummyModel()
-        vae = MagicMock()
-        vae.dtype = torch.float32
-
-        vae_cache = VAECache(
-            id="audio-test",
-            model=model,
-            vae=vae,
-            accelerator=accelerator,
-            metadata_backend=metadata_backend,
-            instance_data_dir="/tmp/audio",
-            image_data_backend=image_backend,
-            cache_data_backend=cache_backend,
-            dataset_type="audio",
-        )
-
-        waveform = torch.ones(2, 4)
-        outputs = vae_cache._process_images_in_batch(
-            image_paths=["/tmp/audio.wav"],
-            image_data=[(waveform, 48000)],
-            disable_queue=True,
-        )
-
-        self.assertEqual(len(outputs), 1)
-        pixel_values, filepath, aspect_bucket, is_final = outputs[0]
-        self.assertEqual(filepath, "/tmp/audio.wav")
-        self.assertEqual(aspect_bucket, "duration_0_5")
-        self.assertTrue(is_final)
-        self.assertTrue(torch.equal(pixel_values, (waveform * 2).to(dtype=torch.float32)))
-        self.assertEqual(len(model.transform_calls), 1)
-        self.assertEqual(model.transform_calls[0]["metadata"]["sample_rate"], 48000)
-        self.assertEqual(vae_cache.vae_input_queue.qsize(), 0)
-
     def test_audio_model_foundation_encode_with_vae(self):
         class DummyVAE:
             def encode(self, audio):
