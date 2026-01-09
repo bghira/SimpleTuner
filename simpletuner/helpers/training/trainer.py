@@ -96,6 +96,34 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
 
     best_index: Optional[int] = None
     best_line: Optional[str] = None
+    exception_fallback: Optional[tuple[int, str]] = None
+    signal_fallback: Optional[tuple[int, str]] = None
+
+    def _extract_exception_name(text: str) -> Optional[str]:
+        match = re.search(r"\b([A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit))\b", text)
+        return match.group(1) if match else None
+
+    exception_wrappers = (
+        "subprocess.CalledProcessError",
+        "ChildFailedError",
+        "torch.distributed.elastic.multiprocessing.errors.ChildFailedError",
+    )
+    wrapper_tokens = ("accelerate launch exited", "subprocess.calledprocesserror", "childfailederror")
+
+    def _is_wrapper_line(text: str) -> bool:
+        lowered = text.lower()
+        return any(token in lowered for token in wrapper_tokens)
+
+    for idx in range(len(cleaned) - 1, -1, -1):
+        candidate_raw = cleaned[idx].strip()
+        if not candidate_raw:
+            continue
+        match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", candidate_raw)
+        if match:
+            signal_name = match.group(1)
+            signal_num = match.group(2)
+            signal_fallback = (idx, f"Training subprocess was killed by {signal_name} (signal {signal_num}).")
+            break
 
     for idx in range(len(cleaned) - 1, -1, -1):
         candidate_raw = cleaned[idx].strip()
@@ -118,6 +146,49 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
             if best_line is None:
                 best_index = idx
                 best_line = candidate_raw
+
+    prefer_exception = best_line is None
+    if best_line:
+        if _is_wrapper_line(best_line):
+            prefer_exception = True
+
+    if prefer_exception:
+        traceback_idx = None
+        for idx in range(len(cleaned) - 1, -1, -1):
+            if cleaned[idx].strip().startswith("Traceback (most recent call last):"):
+                traceback_idx = idx
+                break
+
+        def _find_exception_line(start_idx: int, end_idx: int) -> Optional[tuple[int, str]]:
+            nonlocal exception_fallback
+            for idx in range(end_idx, start_idx - 1, -1):
+                candidate_raw = cleaned[idx].strip()
+                if not candidate_raw:
+                    continue
+                exc_name = _extract_exception_name(candidate_raw)
+                if not exc_name:
+                    continue
+                if exc_name in exception_wrappers or _is_wrapper_line(candidate_raw):
+                    if exception_fallback is None:
+                        exception_fallback = (idx, candidate_raw)
+                    continue
+                return idx, candidate_raw
+            return None
+
+        preferred = None
+        if traceback_idx is not None:
+            preferred = _find_exception_line(traceback_idx + 1, len(cleaned) - 1)
+        if preferred is None:
+            preferred = _find_exception_line(0, len(cleaned) - 1)
+        if preferred is not None:
+            best_index, best_line = preferred
+        elif exception_fallback is not None:
+            best_index, best_line = exception_fallback
+        elif signal_fallback is not None:
+            best_index, best_line = signal_fallback
+
+    if best_line is not None and _is_wrapper_line(best_line) and signal_fallback is not None:
+        best_index, best_line = signal_fallback
 
     if best_line is None:
         for idx in range(len(cleaned) - 1, -1, -1):
@@ -1806,7 +1877,6 @@ class Trainer:
         self.lr = 0.0
 
     def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
-        self.webhook_handler = None
         if raw_config is not None:
             # Handle both dict and argparse.Namespace
             if hasattr(raw_config, "get"):
@@ -1819,6 +1889,9 @@ class Trainer:
             webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
         if webhook_config is None:
             return
+
+        # Only reset webhook_handler if we have a valid config to replace it with
+        self.webhook_handler = None
 
         # Handle string webhook_config (file path or JSON string)
         if isinstance(webhook_config, str):
