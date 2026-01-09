@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import tempfile
 import wave
 from io import BytesIO
@@ -167,8 +168,6 @@ def load_audio_from_video(
         ValueError: If the video has no audio stream.
         RuntimeError: If ffmpeg extraction fails for other reasons.
     """
-    import subprocess
-
     # Handle byte streams (from S3/HuggingFace backends)
     cleanup_source = False
     if isinstance(source, (bytes, BytesIO)):

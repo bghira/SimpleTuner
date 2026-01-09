@@ -581,6 +581,7 @@ def collate_fn(batch):
             example["drop_conditioning"] = False
 
     assert isinstance(data_backend_id, str)
+    batch_backend_id = data_backend_id
     debug_log("Collect luminance values")
     if "luminance" in examples[0]:
         batch_luminance = [example.get("luminance", 0) for example in examples]
@@ -590,12 +591,12 @@ def collate_fn(batch):
     batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
-    data_backend = StateTracker.get_data_backend(data_backend_id)
+    data_backend = StateTracker.get_data_backend(batch_backend_id)
     training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
     debug_log("Compute latents")
     model = StateTracker.get_model()
-    batch_data = compute_latents(filepaths, data_backend_id, model)
+    batch_data = compute_latents(filepaths, batch_backend_id, model)
     latent_metadata = None
     if isinstance(batch_data[0], dict):
         latent_metadata = []
@@ -617,7 +618,7 @@ def collate_fn(batch):
                 latent_metadata.append(meta)
     if "deepfloyd" not in StateTracker.get_args().model_family:
         debug_log("Check latents")
-        latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
+        latent_batch = check_latent_shapes(latent_batch, filepaths, batch_backend_id, examples)
 
     conditioning_image_embeds = None
     conditioning_captions = [
@@ -921,14 +922,14 @@ def collate_fn(batch):
     for idx, caption in enumerate(captions):
         example = examples[idx]
         example_path = example.get("image_path")
-        data_backend_id = example.get("data_backend_id")
-        backend_config = StateTracker.get_data_backend_config(data_backend_id) if data_backend_id else {}
+        example_backend_id = example.get("data_backend_id")
+        backend_config = StateTracker.get_data_backend_config(example_backend_id) if example_backend_id else {}
         backend_config = backend_config or {}
         dataset_root = backend_config.get("instance_data_dir")
         normalized_identifier = normalize_data_path(example_path, dataset_root)
         metadata = {
             "image_path": example_path,
-            "data_backend_id": data_backend_id,
+            "data_backend_id": example_backend_id,
             "prompt": caption,
             "dataset_relative_path": normalized_identifier,
         }
@@ -942,8 +943,8 @@ def collate_fn(batch):
             pixel_value = _conditioning_pixel_value_for_example(idx)
             if pixel_value is not None:
                 metadata["conditioning_pixel_values"] = pixel_value
-        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and data_backend_id and example_path:
-            key_value = f"{data_backend_id}:{normalized_identifier}"
+        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
+            key_value = f"{example_backend_id}:{normalized_identifier}"
         elif key_type is TextEmbedCacheKey.FILENAME and example_path:
             key_value = normalize_data_path(example_path, None)
         else:
@@ -987,6 +988,20 @@ def collate_fn(batch):
         s2v_audio_paths.append(audio_path)
         s2v_audio_backend_ids.append(audio_backend_id)
 
+    if not any(s2v_audio_paths):
+        backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
+        dataset_type = backend_config.get("dataset_type")
+        if dataset_type == "video":
+            s2v_datasets = StateTracker.get_s2v_datasets(batch_backend_id)
+            if len(s2v_datasets) == 1:
+                s2v_config = s2v_datasets[0].get("config", {})
+                audio_config = s2v_config.get("audio", {})
+                if audio_config.get("source_from_video", False):
+                    audio_backend_id = s2v_datasets[0].get("id")
+                    if audio_backend_id is not None:
+                        s2v_audio_paths = list(filepaths)
+                        s2v_audio_backend_ids = [audio_backend_id] * len(s2v_audio_paths)
+
     audio_latent_batch = None
     audio_latent_mask = None
     uses_audio_latents = False
@@ -996,10 +1011,10 @@ def collate_fn(batch):
         except AttributeError:
             uses_audio_latents = False
     if uses_audio_latents and any(s2v_audio_paths):
-        backend_config = StateTracker.get_data_backend_config(data_backend_id) or {}
+        backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
         dataset_type = backend_config.get("dataset_type")
         if dataset_type == "video":
-            s2v_datasets = StateTracker.get_s2v_datasets(data_backend_id)
+            s2v_datasets = StateTracker.get_s2v_datasets(batch_backend_id)
             default_audio_backend_id = s2v_datasets[0]["id"] if len(s2v_datasets) == 1 else None
             grouped: dict[str, list[int]] = {}
             for idx, path in enumerate(s2v_audio_paths):
