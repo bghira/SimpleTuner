@@ -773,10 +773,14 @@ def create_unified_app() -> FastAPI:
     app = create_app(mode=ServerMode.UNIFIED)
 
     # Set up shared event store for unified mode
+    import os
+
     from .services.callback_service import CallbackService
     from .services.event_store import EventStore
 
-    event_store = EventStore()
+    # Allow configuring event buffer size via environment variable
+    max_events = int(os.environ.get("SIMPLETUNER_EVENT_BUFFER_SIZE", "1000"))
+    event_store = EventStore(max_events=max_events)
     callback_service = CallbackService(event_store)
 
     # Store event service in app state for access by routes
