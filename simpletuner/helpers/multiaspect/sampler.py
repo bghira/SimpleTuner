@@ -834,6 +834,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
                 # Check if audio is extracted from video files
                 if audio_config.get("source_from_video", False):
+                    metadata_backend = s2v_dataset.get("metadata_backend")
+                    if metadata_backend is not None:
+                        metadata = metadata_backend.get_metadata_by_filepath(video_path)
+                        if metadata is None:
+                            self.debug_log(f"No matching audio found for video: {video_path}")
+                            continue
                     # Audio comes from the video file itself
                     audio_path = video_path
                     audio_backend_id = s2v_dataset.get("id")

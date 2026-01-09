@@ -26,7 +26,7 @@ def _mux_audio_into_video(video_path, audio, sample_rate):
         raise ValueError("Unable to coerce validation audio for muxing.")
     temp_video_path = f"{video_path}.tmp"
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 ffmpeg_path,
                 "-y",
@@ -46,8 +46,13 @@ def _mux_audio_into_video(video_path, audio, sample_rate):
                 temp_video_path,
             ],
             input=audio_buffer.getvalue(),
-            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
         )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"ffmpeg failed with exit code {result.returncode}: {stderr}")
         os.replace(temp_video_path, video_path)
     finally:
         if os.path.exists(temp_video_path):

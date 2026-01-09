@@ -71,6 +71,9 @@ def _tensor_to_wav_buffer(audio: Any, sample_rate: int) -> BytesIO | None:
         audio_np = tensor.numpy().T
         if audio_np.shape[1] == 1:
             audio_np = audio_np.squeeze(1)
+        if np.issubdtype(audio_np.dtype, np.floating):
+            audio_np = np.clip(audio_np, -1.0, 1.0)
+            audio_np = (audio_np * 32767.0).astype(np.int16)
         scipy.io.wavfile.write(buffer, sample_rate, audio_np)
     except Exception as exc:
         logger.warning("Unable to encode validation audio for webhook delivery: %s", exc)

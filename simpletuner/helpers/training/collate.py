@@ -999,8 +999,20 @@ def collate_fn(batch):
                 if audio_config.get("source_from_video", False):
                     audio_backend_id = s2v_datasets[0].get("id")
                     if audio_backend_id is not None:
-                        s2v_audio_paths = list(filepaths)
-                        s2v_audio_backend_ids = [audio_backend_id] * len(s2v_audio_paths)
+                        metadata_backend = s2v_datasets[0].get("metadata_backend")
+                        if metadata_backend is None:
+                            s2v_audio_paths = list(filepaths)
+                            s2v_audio_backend_ids = [audio_backend_id] * len(s2v_audio_paths)
+                        else:
+                            s2v_audio_paths = []
+                            s2v_audio_backend_ids = []
+                            for path in filepaths:
+                                if metadata_backend.get_metadata_by_filepath(path) is None:
+                                    s2v_audio_paths.append(None)
+                                    s2v_audio_backend_ids.append(None)
+                                else:
+                                    s2v_audio_paths.append(path)
+                                    s2v_audio_backend_ids.append(audio_backend_id)
 
     audio_latent_batch = None
     audio_latent_mask = None

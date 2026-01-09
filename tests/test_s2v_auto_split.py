@@ -271,6 +271,42 @@ class TestS2VSampleConnection(unittest.TestCase):
             # Video path should be used directly as audio path
             self.assertEqual(result[0]["s2v_audio_path"], "/data/videos/test.mp4")
 
+    def test_connect_s2v_samples_source_from_video_skips_missing_metadata(self):
+        """Skip source_from_video samples when the audio metadata is missing."""
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        metadata_backend = MagicMock()
+        metadata_backend.get_metadata_by_filepath.side_effect = lambda path: (
+            {"duration_seconds": 1.0} if path.endswith("has_audio.mp4") else None
+        )
+
+        s2v_datasets = [
+            {
+                "id": "audio-backend",
+                "config": {"audio": {"source_from_video": True}},
+                "metadata_backend": metadata_backend,
+            }
+        ]
+
+        samples = [
+            {"image_path": "/data/videos/has_audio.mp4"},
+            {"image_path": "/data/videos/no_audio.mp4"},
+        ]
+
+        with patch.object(StateTracker, "get_s2v_datasets", return_value=s2v_datasets):
+            sampler = MagicMock()
+            sampler.id = "test-videos"
+            sampler.debug_log = MagicMock()
+
+            from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+
+            result = MultiAspectSampler.connect_s2v_samples(sampler, tuple(samples))
+
+        self.assertEqual(result[0]["s2v_audio_path"], "/data/videos/has_audio.mp4")
+        self.assertEqual(result[0]["s2v_audio_backend_id"], "audio-backend")
+        self.assertIsNone(result[1]["s2v_audio_path"])
+        self.assertIsNone(result[1]["s2v_audio_backend_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
