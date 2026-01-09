@@ -60,6 +60,7 @@ class LTXVideo2(VideoModelFoundation):
     NAME = "LTXVideo2"
     MODEL_DESCRIPTION = "Audio-video generation model with flow matching"
     ENABLED_IN_WIZARD = True
+    DEFAULT_AUDIO_CHANNELS = 2
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLLTX2Video
