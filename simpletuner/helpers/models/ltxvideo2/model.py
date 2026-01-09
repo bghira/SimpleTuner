@@ -881,7 +881,7 @@ class LTXVideo2(VideoModelFoundation):
         target_dtype = self.config.weight_dtype
 
         if audio_latents is None:
-            audio_latents = self._build_empty_audio_latents(batch, target_device, target_dtype)
+            audio_latents = self._build_empty_audio_latents(batch, target_device, torch.float32)
             if audio_mask is None:
                 audio_mask = torch.zeros(audio_latents.shape[0], device=target_device, dtype=torch.float32)
             if not self._warned_missing_audio and _get_rank() == 0:
@@ -895,7 +895,7 @@ class LTXVideo2(VideoModelFoundation):
                 audio_latents = audio_latents.get("latents")
             if not torch.is_tensor(audio_latents):
                 raise ValueError(f"Expected audio latents to be a Tensor, got {type(audio_latents)}.")
-            audio_latents = audio_latents.to(device=target_device, dtype=target_dtype)
+            audio_latents = audio_latents.to(device=target_device, dtype=torch.float32)
 
             # Validate and adjust audio latent duration to match video
             expected_latent_length = self._calculate_expected_audio_latent_length(batch)
@@ -926,7 +926,7 @@ class LTXVideo2(VideoModelFoundation):
             audio_input_noise = audio_noise + input_perturbation * torch.randn_like(audio_latents)
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            sigmas_1d = self._extract_sigmas_1d(batch["sigmas"])
+            sigmas_1d = self._extract_sigmas_1d(batch["sigmas"]).to(dtype=torch.float32)
             audio_sigmas = sigmas_1d.view(sigmas_1d.shape[0], *([1] * (audio_latents.ndim - 1)))
             audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
             batch["audio_sigmas"] = audio_sigmas
@@ -935,12 +935,12 @@ class LTXVideo2(VideoModelFoundation):
                 audio_latents.float(),
                 audio_input_noise.float(),
                 batch["timesteps"],
-            ).to(device=target_device, dtype=target_dtype)
+            )
 
         batch["audio_latents"] = audio_latents
         batch["audio_latent_mask"] = audio_mask
         batch["audio_noise"] = audio_noise
-        batch["audio_noisy_latents"] = audio_noisy
+        batch["audio_noisy_latents"] = audio_noisy.to(device=target_device, dtype=target_dtype)
 
         return batch
 
