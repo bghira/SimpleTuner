@@ -123,6 +123,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net",  # Allow HTMX, Alpine.js, Bootstrap
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",  # Allow inline styles, Bootstrap CSS, Font Awesome
             "img-src 'self' data: blob:",
+            "media-src 'self' data: blob:",  # Allow video/audio from same origin, data URIs, and blob URLs
             "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",  # Allow Bootstrap and Font Awesome fonts
             "connect-src 'self'",
             "frame-ancestors 'none'",
