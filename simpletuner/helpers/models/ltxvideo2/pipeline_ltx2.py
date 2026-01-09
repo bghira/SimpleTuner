@@ -1038,6 +1038,11 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
             self.scheduler.config.get("base_shift", 0.95),
             self.scheduler.config.get("max_shift", 2.05),
         )
+        # Check if scheduler supports custom sigmas
+        accept_sigmas = "sigmas" in set(inspect.signature(self.scheduler.set_timesteps).parameters.keys())
+        sigmas_to_pass = sigmas if accept_sigmas else None
+        mu_to_pass = mu if accept_sigmas else None
+
         # For now, duplicate the scheduler for use with the audio latents
         audio_scheduler = copy.deepcopy(self.scheduler)
         _, _ = retrieve_timesteps(
@@ -1045,16 +1050,16 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
             num_inference_steps,
             device,
             timesteps,
-            sigmas=sigmas,
-            mu=mu,
+            sigmas=sigmas_to_pass,
+            mu=mu_to_pass,
         )
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler,
             num_inference_steps,
             device,
             timesteps,
-            sigmas=sigmas,
-            mu=mu,
+            sigmas=sigmas_to_pass,
+            mu=mu_to_pass,
         )
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
