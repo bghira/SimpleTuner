@@ -15,7 +15,7 @@ logger = logging.getLogger("EventStore")
 class EventStore:
     """Thread-safe event storage with circular buffer."""
 
-    def __init__(self, max_events: int = 100):
+    def __init__(self, max_events: int = 1000):
         self.max_events = max_events
         self.events: deque = deque(maxlen=max_events)
         self.lock = threading.Lock()
@@ -91,10 +91,13 @@ _store_lock = threading.Lock()
 
 def get_default_store() -> EventStore:
     """Get or create the default event store."""
+    import os
+
     global _default_store
     with _store_lock:
         if _default_store is None:
-            _default_store = EventStore()
+            max_events = int(os.environ.get("SIMPLETUNER_EVENT_BUFFER_SIZE", "1000"))
+            _default_store = EventStore(max_events=max_events)
         return _default_store
 
 
