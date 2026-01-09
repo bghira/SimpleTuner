@@ -275,26 +275,31 @@ class HubManager:
                     except (IndexError, ValueError):
                         logger.warning(f"Could not extract step number from checkpoint path: {checkpoint_path}")
 
-                # Filter validation images to only include those for this checkpoint step
+                # Filter validation images/videos to only include those for this checkpoint step
                 filtered_images = {}
                 if validation_images and checkpoint_step is not None:
                     validation_dir = os.path.join(self.config.output_dir, "validation_images")
                     if os.path.exists(validation_dir):
-                        # Look for images with step_{checkpoint_step}_ in the filename
+                        # Look for images/videos with step_{checkpoint_step}_ in the filename
                         for shortname, images in validation_images.items():
                             filtered_images[shortname] = []
-                            # Get the actual image files for this step
+                            # Get the actual image/video files for this step
                             step_pattern = f"step_{checkpoint_step}_"
                             for img_file in os.listdir(validation_dir):
                                 if step_pattern in img_file and shortname in img_file:
                                     img_path = os.path.join(validation_dir, img_file)
                                     try:
-                                        from PIL import Image
+                                        # Handle video files differently from images
+                                        if img_path.endswith((".mp4", ".avi", ".mov", ".webm")):
+                                            # For videos, store the file path as a string marker
+                                            filtered_images[shortname].append(img_path)
+                                        else:
+                                            from PIL import Image
 
-                                        img = Image.open(img_path)
-                                        filtered_images[shortname].append(img)
+                                            img = Image.open(img_path)
+                                            filtered_images[shortname].append(img)
                                     except Exception as e:
-                                        logger.warning(f"Could not load validation image {img_path}: {e}")
+                                        logger.warning(f"Could not load validation asset {img_path}: {e}")
                             # Remove empty entries
                             if not filtered_images[shortname]:
                                 del filtered_images[shortname]
