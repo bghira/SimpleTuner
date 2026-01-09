@@ -1,23 +1,81 @@
 import base64
 import logging
 import os
+import shutil
+import subprocess
 from io import BytesIO
 
 from diffusers.utils.export_utils import export_to_video
 
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training import validation_audio
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
 
-def save_videos(save_dir, validation_images, validation_shortname, validation_resolutions, config):
+def _mux_audio_into_video(video_path, audio, sample_rate):
+    if sample_rate is None:
+        raise ValueError("audio_sample_rate is required to mux validation audio into video.")
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path is None:
+        raise RuntimeError("ffmpeg is required to mux validation audio into video.")
+
+    audio_buffer = validation_audio._tensor_to_wav_buffer(audio, sample_rate)
+    if audio_buffer is None:
+        raise ValueError("Unable to coerce validation audio for muxing.")
+    temp_video_path = f"{video_path}.tmp"
+    try:
+        subprocess.run(
+            [
+                ffmpeg_path,
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                video_path,
+                "-f",
+                "wav",
+                "-i",
+                "pipe:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-shortest",
+                temp_video_path,
+            ],
+            input=audio_buffer.getvalue(),
+            check=True,
+        )
+        os.replace(temp_video_path, video_path)
+    finally:
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+
+
+def save_videos(
+    save_dir,
+    validation_images,
+    validation_shortname,
+    validation_resolutions,
+    config,
+    validation_audios=None,
+    audio_sample_rate=None,
+):
     """
-    Save validation videos to disk.
+    Save validation videos to disk (with audio if provided).
     Returns a list of video paths.
     """
     validation_img_idx = 0
     video_paths = []
+    audio_list = None
+    if validation_audios is not None:
+        audio_list = validation_audios.get(validation_shortname)
+        if audio_list is not None:
+            expected = len(validation_images.get(validation_shortname, []))
+            if len(audio_list) != expected:
+                raise ValueError(f"Validation audio count ({len(audio_list)}) does not match video count ({expected}).")
 
     # validation_images[validation_shortname] is a list of image lists (frames) or single images
     for validation_image in validation_images.get(validation_shortname, []):
@@ -68,6 +126,8 @@ def save_videos(save_dir, validation_images, validation_shortname, validation_re
                 fps=config.framerate,
             )
             video_paths.append(video_path)
+            if audio_list is not None:
+                _mux_audio_into_video(video_path, audio_list[validation_img_idx], audio_sample_rate)
         except Exception as e:
             logger.error(f"Failed to save validation video to {video_path}: {e}")
 

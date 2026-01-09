@@ -8,8 +8,8 @@ import numpy as np
 import scipy.io.wavfile
 import torch
 import torchaudio
-import wandb
 
+import wandb
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -24,13 +24,9 @@ def save_audio(save_dir, validation_audios, validation_shortname, sample_rate=44
     saved_paths = []
 
     for idx, audio in enumerate(audio_list):
-        # Ensure audio is on CPU
-        if hasattr(audio, "cpu"):
-            audio = audio.cpu()
-
-        # Ensure audio is 2D (Channels, Time)
-        if audio.ndim == 1:
-            audio = audio.unsqueeze(0)
+        audio = _coerce_audio_tensor(audio)
+        if audio is None:
+            continue
 
         filename = f"step_{StateTracker.get_global_step()}_{validation_shortname}_{idx}.wav"
         save_path = os.path.join(save_dir, filename)
@@ -53,6 +49,8 @@ def _coerce_audio_tensor(audio: Any) -> torch.Tensor | None:
         return None
 
     tensor = audio.detach().cpu()
+    if tensor.is_floating_point() and tensor.dtype != torch.float32:
+        tensor = tensor.to(dtype=torch.float32)
     if tensor.ndim == 1:
         tensor = tensor.unsqueeze(0)
     if tensor.ndim != 2:
@@ -91,9 +89,10 @@ def log_audio_to_trackers(accelerator, validation_audios, validation_shortname, 
         if tracker.name == "wandb":
             wandb_audios = []
             for audio in audio_list:
-                # WandB expects numpy array or path
-                if hasattr(audio, "cpu"):
-                    audio = audio.cpu().numpy()
+                audio_tensor = _coerce_audio_tensor(audio)
+                if audio_tensor is None:
+                    continue
+                audio = audio_tensor.numpy()
                 # If (C, T), wandb expects (T,) for mono or (T, C) ?
                 # WandB docs: "numpy array of audio data"
                 # Usually expects (samples,) or (samples, channels)
