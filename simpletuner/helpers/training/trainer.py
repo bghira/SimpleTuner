@@ -24,10 +24,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
-import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -4951,7 +4951,7 @@ class Trainer:
             disable=not show_progress_bar,
             initial=self.state["global_step"],
             desc=f"Epoch {self.state['first_epoch']}/{self.config.num_train_epochs} Steps",
-            ncols=125,
+            dynamic_ncols=True,
         )
         self.accelerator.wait_for_everyone()
         self.iteration_tracker.mark_start()
@@ -5538,8 +5538,15 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
+                progress_logs = dict(logs)
                 if loss_logs is not None:
                     logs.update(loss_logs)
+                    if "video_loss" in loss_logs:
+                        progress_logs["v_loss"] = loss_logs["video_loss"]
+                    if "audio_loss" in loss_logs:
+                        progress_logs["a_loss"] = loss_logs["audio_loss"]
+                    if "audio_loss_weighted" in loss_logs:
+                        progress_logs["a_w"] = loss_logs["audio_loss_weighted"]
                 if aux_loss_logs is not None:
                     logs_to_print = {}
                     for key, value in aux_loss_logs.items():
@@ -5551,7 +5558,7 @@ class Trainer:
                     clone_norm_value=True,
                 )
 
-                progress_bar.set_postfix(**logs)
+                progress_bar.set_postfix(**progress_logs)
 
                 if self.validation is not None:
                     manual_validation_requested = self._consume_manual_validation_request()
