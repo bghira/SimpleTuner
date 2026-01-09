@@ -5126,7 +5126,7 @@ class Trainer:
                     model_pred = self.model_predict(
                         prepared_batch=prepared_batch,
                     )
-                    loss = self.model.loss(
+                    loss, loss_logs = self.model.loss_with_logs(
                         prepared_batch=prepared_batch,
                         model_output=model_pred,
                         apply_conditioning_mask=True,
@@ -5346,6 +5346,8 @@ class Trainer:
                         for key, value in aux_loss_logs.items():
                             wandb_logs[f"aux_loss/{key}"] = value
                         wandb_logs["diffusion_loss"] = self.train_diffusion_loss
+                    if loss_logs is not None:
+                        wandb_logs.update(loss_logs)
                     self._update_grad_metrics(wandb_logs)
                     if self.validation is not None and hasattr(self.validation, "evaluation_result"):
                         eval_result = self.validation.get_eval_result()
@@ -5536,6 +5538,8 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
+                if loss_logs is not None:
+                    logs.update(loss_logs)
                 if aux_loss_logs is not None:
                     logs_to_print = {}
                     for key, value in aux_loss_logs.items():
