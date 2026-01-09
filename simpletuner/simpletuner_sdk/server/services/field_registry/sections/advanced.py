@@ -1987,6 +1987,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             section="accelerate",
             subsection="advanced",
             default_value="no",
+            required=True,
             choices=[
                 {"value": "no", "label": "Disabled"},
                 {"value": "inductor", "label": "Inductor"},

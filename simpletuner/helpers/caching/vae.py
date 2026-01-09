@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
@@ -10,6 +11,7 @@ from random import shuffle
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from numpy import str_ as numpy_str
 from PIL import Image
 from tqdm import tqdm
@@ -1123,6 +1125,12 @@ class VAECache(WebhookMixin):
         waveform, sample_rate = self._coerce_audio_waveform(raw_sample, metadata, filepath)
         if waveform is None:
             return None
+        waveform, metadata = self._align_audio_waveform_to_video(
+            waveform=waveform,
+            sample_rate=sample_rate,
+            metadata=metadata,
+            filepath=filepath,
+        )
         return {
             "waveform": waveform,
             "sample_rate": sample_rate,
@@ -1130,6 +1138,50 @@ class VAECache(WebhookMixin):
             "filepath": filepath,
             "num_frames": waveform.shape[-1],
         }
+
+    def _align_audio_waveform_to_video(self, waveform, sample_rate, metadata: dict, filepath: str):
+        backend_config = StateTracker.get_data_backend_config(data_backend_id=self.id) or {}
+        audio_config = backend_config.get("audio") or {}
+        if not audio_config.get("source_from_video", False):
+            return waveform, metadata
+        source_dataset_id = backend_config.get("source_dataset_id") or audio_config.get("source_dataset_id")
+        if not source_dataset_id or sample_rate is None:
+            return waveform, metadata
+
+        video_meta = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=source_dataset_id) or {}
+        source_config = StateTracker.get_data_backend_config(data_backend_id=source_dataset_id) or {}
+        video_config = source_config.get("video") or {}
+
+        target_num_frames = video_config.get("num_frames") or video_meta.get("num_frames")
+        fps = video_meta.get("fps") or getattr(StateTracker.get_args(), "framerate", None) or 25
+        if not target_num_frames or not fps:
+            return waveform, metadata
+
+        target_samples = int(round((float(target_num_frames) / float(fps)) * float(sample_rate)))
+        if target_samples <= 0:
+            return waveform, metadata
+
+        num_samples = waveform.shape[-1]
+        if num_samples == target_samples:
+            return waveform, metadata
+
+        truncation_mode = (metadata.get("truncation_mode") or audio_config.get("truncation_mode") or "beginning").lower()
+        if num_samples > target_samples:
+            if truncation_mode == "end":
+                start = num_samples - target_samples
+            elif truncation_mode == "random":
+                start = random.randint(0, num_samples - target_samples)
+            else:
+                start = 0
+            waveform = waveform[:, start : start + target_samples]
+        else:
+            pad_amount = target_samples - num_samples
+            waveform = F.pad(waveform, (0, pad_amount))
+
+        metadata = dict(metadata)
+        metadata["num_samples"] = waveform.shape[-1]
+        metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
+        return waveform, metadata
 
     def _coerce_audio_waveform(self, sample, metadata: dict, filepath: str):
         waveform = None

@@ -620,7 +620,12 @@ class LTXVideo2(VideoModelFoundation):
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
         if isinstance(vae, AutoencoderKLLTX2Audio):
             sample_rates = self._resolve_audio_sample_rates(metadata_entries, samples.shape[0])
-            return vae.encode_waveform(samples, sample_rates=sample_rates, return_dict=True)
+            output = vae.encode_waveform(samples, sample_rates=sample_rates, return_dict=True)
+            if hasattr(output, "latent_dist"):
+                return output.latent_dist.mode()
+            if hasattr(output, "sample"):
+                return output.sample()
+            return output
         return super().encode_cache_batch(vae, samples, metadata_entries=metadata_entries)
 
     def _resolve_audio_sample_rates(self, metadata_entries: Optional[list], batch_size: int) -> Sequence[int]:
@@ -808,6 +813,66 @@ class LTXVideo2(VideoModelFoundation):
         shape = (video_latents.shape[0], latent_channels, latent_length, latent_mel_bins)
         return torch.zeros(shape, device=device, dtype=dtype)
 
+    def _calculate_expected_audio_latent_length(self, batch: dict) -> int:
+        """
+        Calculate the expected audio latent length based on video duration.
+        This matches the upstream LTX-2 logic for duration matching.
+        """
+        self._load_audio_vae(move_to_device=True)
+        if self.audio_vae is None:
+            raise ValueError("Audio VAE is required to calculate expected audio latent length.")
+
+        video_latents = batch.get("latents")
+        if video_latents is None:
+            raise ValueError("Cannot infer expected audio latent length without video latents.")
+
+        # Calculate video duration from latent frames
+        latent_frames = int(video_latents.shape[2])
+        temporal_ratio = getattr(self.get_vae(), "temporal_compression_ratio", 8)
+        video_frames = int((latent_frames - 1) * temporal_ratio + 1)
+        frame_rate = self.config.framerate or 25
+        duration_s = video_frames / frame_rate
+
+        # Calculate expected audio latent length
+        sampling_rate = getattr(self.audio_vae.config, "sample_rate", 16000)
+        hop_length = getattr(self.audio_vae.config, "mel_hop_length", 160)
+        temporal_compression = getattr(self.audio_vae, "temporal_compression_ratio", 4)
+        latents_per_second = float(sampling_rate) / float(hop_length) / float(temporal_compression)
+        expected_latent_length = max(1, int(duration_s * latents_per_second))
+
+        return expected_latent_length
+
+    def _adjust_audio_latent_duration(
+        self, audio_latents: torch.Tensor, expected_length: int, actual_length: int
+    ) -> torch.Tensor:
+        """
+        Adjust audio latent duration to match expected length by trimming or padding.
+        Follows upstream LTX-2 approach for duration matching.
+        """
+        if actual_length > expected_length:
+            # Trim to expected length
+            logger.debug(f"Trimming audio latents from {actual_length} to {expected_length} frames to match video duration.")
+            audio_latents = audio_latents[:, :, :expected_length, :]
+        elif actual_length < expected_length:
+            # Pad with zeros to expected length
+            padding_length = expected_length - actual_length
+            logger.warning(
+                f"Padding audio latents from {actual_length} to {expected_length} frames "
+                f"(+{padding_length} frames) to match video duration. "
+                "This may indicate a mismatch between cached audio and video durations."
+            )
+            padding = torch.zeros(
+                audio_latents.shape[0],
+                audio_latents.shape[1],
+                padding_length,
+                audio_latents.shape[3],
+                device=audio_latents.device,
+                dtype=audio_latents.dtype,
+            )
+            audio_latents = torch.cat([audio_latents, padding], dim=2)
+
+        return audio_latents
+
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch_conditions(batch=batch, state=state)
 
@@ -817,7 +882,7 @@ class LTXVideo2(VideoModelFoundation):
         target_dtype = self.config.weight_dtype
 
         if audio_latents is None:
-            audio_latents = self._build_empty_audio_latents(batch, target_device, target_dtype)
+            audio_latents = self._build_empty_audio_latents(batch, target_device, torch.float32)
             if audio_mask is None:
                 audio_mask = torch.zeros(audio_latents.shape[0], device=target_device, dtype=torch.float32)
             if not self._warned_missing_audio and _get_rank() == 0:
@@ -831,7 +896,16 @@ class LTXVideo2(VideoModelFoundation):
                 audio_latents = audio_latents.get("latents")
             if not torch.is_tensor(audio_latents):
                 raise ValueError(f"Expected audio latents to be a Tensor, got {type(audio_latents)}.")
-            audio_latents = audio_latents.to(device=target_device, dtype=target_dtype)
+            audio_latents = audio_latents.to(device=target_device, dtype=torch.float32)
+
+            # Validate and adjust audio latent duration to match video
+            expected_latent_length = self._calculate_expected_audio_latent_length(batch)
+            actual_latent_length = audio_latents.shape[2]
+
+            if actual_latent_length != expected_latent_length:
+                audio_latents = self._adjust_audio_latent_duration(
+                    audio_latents, expected_latent_length, actual_latent_length
+                )
 
         if audio_mask is None:
             audio_mask = torch.ones(audio_latents.shape[0], device=target_device, dtype=torch.float32)
@@ -853,7 +927,7 @@ class LTXVideo2(VideoModelFoundation):
             audio_input_noise = audio_noise + input_perturbation * torch.randn_like(audio_latents)
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            sigmas_1d = self._extract_sigmas_1d(batch["sigmas"])
+            sigmas_1d = self._extract_sigmas_1d(batch["sigmas"]).to(dtype=torch.float32)
             audio_sigmas = sigmas_1d.view(sigmas_1d.shape[0], *([1] * (audio_latents.ndim - 1)))
             audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
             batch["audio_sigmas"] = audio_sigmas
@@ -862,12 +936,12 @@ class LTXVideo2(VideoModelFoundation):
                 audio_latents.float(),
                 audio_input_noise.float(),
                 batch["timesteps"],
-            ).to(device=target_device, dtype=target_dtype)
+            )
 
         batch["audio_latents"] = audio_latents
         batch["audio_latent_mask"] = audio_mask
         batch["audio_noise"] = audio_noise
-        batch["audio_noisy_latents"] = audio_noisy
+        batch["audio_noisy_latents"] = audio_noisy.to(device=target_device, dtype=target_dtype)
 
         return batch
 
