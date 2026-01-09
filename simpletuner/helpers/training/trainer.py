@@ -3032,6 +3032,19 @@ class Trainer:
                 continue
             if backend_type not in training_dataset_types:
                 continue
+            backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
+            probability = backend_config.get("probability", 1.0)
+            if probability is None:
+                probability_value = 1.0
+            else:
+                try:
+                    probability_value = float(probability)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Dataset {backend_id} has invalid probability={probability!r}; must be a number."
+                    ) from exc
+            if probability_value <= 0:
+                continue
             try:
                 dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
             except Exception:

@@ -28,8 +28,9 @@ class TestLTXVideo2AudioAutoencoder(unittest.TestCase):
 
         self.assertIsInstance(output, AutoencoderKLOutput)
         self.assertEqual(output.latent_dist.mean.shape[1], 4)
-        self.assertEqual(tuple(model.latents_mean.shape), (4,))
-        self.assertEqual(tuple(model.latents_std.shape), (4,))
+        # per_channel_features = latent_channels * latent_mel_bins = 4 * 4 = 16
+        self.assertEqual(tuple(model.latents_mean.shape), (16,))
+        self.assertEqual(tuple(model.latents_std.shape), (16,))
 
 
 if __name__ == "__main__":

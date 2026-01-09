@@ -387,7 +387,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
     if "probability" in backend:
-        output["config"]["probability"] = float(backend["probability"]) if backend["probability"] else 1.0
+        probability = backend["probability"]
+        if probability is None or probability == "":
+            output["config"]["probability"] = 1.0
+        else:
+            output["config"]["probability"] = float(probability)
     if "ignore_epochs" in backend:
         logger.error("ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration.")
     if "repeats" in backend:
@@ -1769,6 +1773,7 @@ class FactoryRegistry:
                 "instance_data_dir": backend.get("instance_data_dir"),
                 "source_dataset_id": source_id,
                 "cache_dir_vae": audio_vae_cache,
+                "probability": 0.0,
                 "audio": {
                     "source_from_video": True,
                     "allow_zero_audio": audio_config.get("allow_zero_audio", False),
