@@ -1758,19 +1758,22 @@ class FactoryRegistry:
                 audio_vae_cache = self._default_vae_cache_dir(audio_backend_id, DatasetType.AUDIO)
 
             # Build the auto-generated audio dataset config
+            default_audio_channels = getattr(self.model, "DEFAULT_AUDIO_CHANNELS", 1)
+            channels = audio_config.get("channels")
+            if channels is None:
+                channels = default_audio_channels
             audio_dataset_config = {
                 "id": audio_backend_id,
                 "type": backend.get("type", "local"),
                 "dataset_type": "audio",
                 "instance_data_dir": backend.get("instance_data_dir"),
                 "source_dataset_id": source_id,
-                "auto_generated": True,
                 "cache_dir_vae": audio_vae_cache,
                 "audio": {
                     "source_from_video": True,
                     "allow_zero_audio": audio_config.get("allow_zero_audio", False),
                     "sample_rate": audio_config.get("sample_rate", 16000),
-                    "channels": audio_config.get("channels", 1),
+                    "channels": channels,
                     "bucket_strategy": "duration",
                     "duration_interval": audio_config.get("duration_interval", 3.0),
                     "max_duration_seconds": audio_config.get("max_duration_seconds"),
@@ -4133,29 +4136,21 @@ def configure_multi_databackend_new(
     if data_backend_config is None:
         data_backend_config = factory.load_configuration()
 
-    data_backend_config = factory.process_conditioning_datasets(data_backend_config)
-
-    factory.configure_text_embed_backends(data_backend_config)
-    factory.configure_image_embed_backends(data_backend_config)
-    factory.configure_conditioning_image_embed_backends(data_backend_config)
-    factory.configure_distillation_cache_backends(data_backend_config)
-    factory.configure_data_backends(data_backend_config)
+    result = factory.configure(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
-
-    result = {
-        "data_backends": StateTracker.get_data_backends(),
-        "text_embed_backends": factory.text_embed_backends,
-        "image_embed_backends": factory.image_embed_backends,
-        "conditioning_image_embed_backends": factory.conditioning_image_embed_backends,
-        "distillation_cache_backends": factory.distillation_cache_backends,
-        "default_text_embed_backend_id": factory.default_text_embed_backend_id,
-    }
 
     factory._finalize_metrics()
     total_time = time.time() - start_time
 
-    return result
+    return {
+        "data_backends": result["data_backends"],
+        "text_embed_backends": result["text_embed_backends"],
+        "image_embed_backends": result["image_embed_backends"],
+        "conditioning_image_embed_backends": result["conditioning_image_embed_backends"],
+        "distillation_cache_backends": result["distillation_cache_backends"],
+        "default_text_embed_backend_id": result["default_text_embed_backend_id"],
+    }
 
 
 def check_huggingface_config(backend: dict) -> None:

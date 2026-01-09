@@ -61,7 +61,7 @@ class TestS2VAudioInjection(unittest.TestCase):
         self.assertEqual(audio_backend["id"], "test-videos_audio")
         self.assertEqual(audio_backend["type"], "local")
         self.assertEqual(audio_backend["instance_data_dir"], "/data/videos")
-        self.assertTrue(audio_backend.get("auto_generated"))
+        self.assertEqual(audio_backend.get("source_dataset_id"), "test-videos")
         self.assertTrue(audio_backend["audio"]["source_from_video"])
         self.assertEqual(audio_backend["audio"]["sample_rate"], 16000)
         self.assertEqual(audio_backend["audio"]["channels"], 1)
