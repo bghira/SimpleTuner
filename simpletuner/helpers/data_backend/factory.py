@@ -2585,6 +2585,12 @@ class FactoryRegistry:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
         video_config = init_backend["config"].get("video", {})
+        metadata_cache_root = backend.get(
+            "instance_data_dir",
+            backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+        )
+        metadata_cache_root = metadata_cache_root or ""
+
         init_backend["metadata_backend"] = MetadataBackendCls(
             id=init_backend["id"],
             instance_data_dir=init_backend["instance_data_dir"],
@@ -2601,17 +2607,11 @@ class FactoryRegistry:
             batch_size=self.args.train_batch_size,
             metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
             cache_file=os.path.join(
-                backend.get(
-                    "instance_data_dir",
-                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
-                ),
+                metadata_cache_root,
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                backend.get(
-                    "instance_data_dir",
-                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
-                ),
+                metadata_cache_root,
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=self.args.delete_problematic_images or False,
