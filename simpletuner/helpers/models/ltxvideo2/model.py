@@ -1125,29 +1125,50 @@ class LTXVideo2(VideoModelFoundation):
         return apply_musubi_pretrained_defaults(self.config, args)
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
-        loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
+        total_loss, _, _, _ = self._compute_av_loss(
+            prepared_batch=prepared_batch,
+            model_output=model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        return total_loss
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        total_loss, video_loss, audio_loss, audio_weight = self._compute_av_loss(
+            prepared_batch=prepared_batch,
+            model_output=model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        logs = {"video_loss": video_loss.detach().item()}
+        if audio_loss is not None:
+            logs["audio_loss"] = audio_loss.detach().item()
+            if audio_weight != 1.0:
+                logs["audio_loss_weighted"] = (audio_loss * audio_weight).detach().item()
+        return total_loss, logs
+
+    def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        video_loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
 
         audio_pred = model_output.get("audio_prediction")
         if audio_pred is None:
-            return loss
+            return video_loss, video_loss, None, 0.0
         audio_target = prepared_batch.get("audio_noise") - prepared_batch.get("audio_latents")
         if audio_target is None:
-            return loss
+            return video_loss, video_loss, None, 0.0
         weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
         if weight == 0.0:
-            return loss
+            return video_loss, video_loss, None, weight
 
         audio_mask = prepared_batch.get("audio_latent_mask")
         if audio_mask is not None:
             if torch.all(audio_mask == 0):
-                return loss
+                return video_loss, video_loss, None, weight
             mask = audio_mask.view(audio_mask.shape[0], *([1] * (audio_pred.ndim - 1)))
             audio_pred = torch.where(mask > 0, audio_pred, torch.zeros_like(audio_pred))
             audio_target = torch.where(mask > 0, audio_target, torch.zeros_like(audio_target))
         audio_loss = (audio_pred.float() - audio_target.float()) ** 2
         audio_loss = audio_loss.mean()
 
-        return loss + audio_loss * weight
+        return video_loss + audio_loss * weight, video_loss, audio_loss, weight
 
 
 from simpletuner.helpers.models.registry import ModelRegistry

@@ -4152,6 +4152,12 @@ class ModelFoundation(ABC):
         loss = loss.mean()
         return loss
 
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        """
+        Computes loss and optional per-batch metrics for logging.
+        """
+        return self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask), None
+
     def auxiliary_loss(
         self,
         model_output,
