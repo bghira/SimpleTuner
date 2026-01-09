@@ -214,8 +214,9 @@ class TestS2VAudioInjection(unittest.TestCase):
 class TestLoadAudioFromVideo(unittest.TestCase):
     """Test audio extraction from video files."""
 
+    @patch("subprocess.run")
     @patch("simpletuner.helpers.audio.load.torchaudio")
-    def test_load_audio_from_video_uses_torchaudio(self, mock_torchaudio):
+    def test_load_audio_from_video_uses_torchaudio(self, mock_torchaudio, mock_subprocess):
         """Test that torchaudio is tried first."""
         import torch
 
@@ -228,6 +229,8 @@ class TestLoadAudioFromVideo(unittest.TestCase):
         waveform, sample_rate = load_audio_from_video("/path/to/video.mp4")
 
         mock_torchaudio.load.assert_called_once()
+        # ffmpeg should not be called when torchaudio succeeds
+        mock_subprocess.assert_not_called()
         self.assertEqual(sample_rate, 16000)
 
     def test_generate_zero_audio(self):

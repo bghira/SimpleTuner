@@ -519,8 +519,9 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch, is_condition
             raise ValueError(error_msg)
         if torch.isnan(latent).any() or torch.isinf(latent).any():
             data_backend = StateTracker.get_data_backend(data_backend_id)
-            data_backend["vaecache"].cache_data_backend.delete(filepaths[idx])
-            raise ValueError(f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values")
+            cache_filepath, _ = data_backend["vaecache"].generate_vae_cache_filename(filepaths[idx])
+            data_backend["vaecache"].cache_data_backend.delete(cache_filepath)
+            raise ValueError(f"(id={data_backend_id}) Deleted cache file {cache_filepath}: contains NaN or Inf values")
 
         # For conditioning latents, allow different shapes
         if not is_conditioning:

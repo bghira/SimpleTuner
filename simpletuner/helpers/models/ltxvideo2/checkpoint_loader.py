@@ -515,11 +515,19 @@ def convert_ltx2_audio_vae(
     latent_channels = diffusers_config.get("latent_channels")
     if latent_channels is None:
         latent_channels = getattr(vae.config, "latent_channels", None)
-    if "latents_mean" not in original_state_dict and latent_channels is not None:
-        original_state_dict["latents_mean"] = torch.zeros((latent_channels,), dtype=torch.float32)
+    mel_bins = diffusers_config.get("mel_bins")
+    ch_mult = diffusers_config.get("ch_mult", (1, 2, 4))
+    base_channels = diffusers_config.get("base_channels", latent_channels)
+    latent_mel_bins = None
+    if mel_bins is not None and latent_channels is not None:
+        mel_downsample_factor = 2 ** (len(ch_mult) - 1)
+        latent_mel_bins = mel_bins // mel_downsample_factor
+    per_channel_features = base_channels if latent_mel_bins is None else latent_channels * latent_mel_bins
+    if "latents_mean" not in original_state_dict and per_channel_features is not None:
+        original_state_dict["latents_mean"] = torch.zeros((per_channel_features,), dtype=torch.float32)
         missing_stats.append("latents_mean")
-    if "latents_std" not in original_state_dict and latent_channels is not None:
-        original_state_dict["latents_std"] = torch.ones((latent_channels,), dtype=torch.float32)
+    if "latents_std" not in original_state_dict and per_channel_features is not None:
+        original_state_dict["latents_std"] = torch.ones((per_channel_features,), dtype=torch.float32)
         missing_stats.append("latents_std")
     if missing_stats:
         logger.warning(

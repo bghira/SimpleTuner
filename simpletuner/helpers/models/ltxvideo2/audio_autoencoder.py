@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import os
 from typing import List, Optional, Sequence, Set, Tuple, Union
 
 import torch
@@ -25,6 +27,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils.accelerate_utils import apply_forward_hook
 
 LATENT_DOWNSAMPLE_FACTOR = 4
+logger = logging.getLogger(__name__)
 
 
 def _require_torchaudio():
@@ -33,6 +36,32 @@ def _require_torchaudio():
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError("torchaudio is required for LTX-2 audio encoding.") from exc
     return torchaudio
+
+
+def _log_audio_tensor_stats(label: str, tensor: torch.Tensor) -> None:
+    if os.environ.get("SIMPLETUNER_AUDIO_DEBUG", "").lower() not in {"1", "true", "yes", "y", "on"}:
+        return
+    if not torch.is_tensor(tensor):
+        return
+    sample = tensor.detach()
+    if sample.numel() == 0:
+        logger.warning("audio_%s: empty tensor", label)
+        return
+    sample = sample.to(device="cpu", dtype=torch.float32)
+    nan_count = int(torch.isnan(sample).sum().item()) if sample.is_floating_point() else 0
+    inf_count = int(torch.isinf(sample).sum().item()) if sample.is_floating_point() else 0
+    logger.warning(
+        "audio_%s: shape=%s dtype=%s device=%s min=%s max=%s mean=%s nan=%s inf=%s",
+        label,
+        tuple(sample.shape),
+        sample.dtype,
+        tensor.device,
+        float(sample.min().item()),
+        float(sample.max().item()),
+        float(sample.mean().item()),
+        nan_count,
+        inf_count,
+    )
 
 
 class LTX2AudioProcessor(nn.Module):
@@ -72,15 +101,17 @@ class LTX2AudioProcessor(nn.Module):
         return resampled.to(device=waveform.device, dtype=waveform.dtype)
 
     def waveform_to_mel(self, waveform: torch.Tensor, waveform_sample_rate: int) -> torch.Tensor:
+        target_device = waveform.device
+        waveform = waveform.to(dtype=torch.float32)
         waveform = self.resample_waveform(waveform, waveform_sample_rate, self.sample_rate)
+
         mel_transform = self.mel_transform
         buffer = next(mel_transform.buffers(), None)
-        if buffer is None or buffer.device != waveform.device or buffer.dtype != waveform.dtype:
-            mel_transform = mel_transform.to(device=waveform.device, dtype=waveform.dtype)
+        if buffer is None or buffer.device != target_device or buffer.dtype != torch.float32:
+            mel_transform = mel_transform.to(device=target_device, dtype=torch.float32)
             self.mel_transform = mel_transform
         mel = mel_transform(waveform)
         mel = torch.log(torch.clamp(mel, min=1e-5))
-        mel = mel.to(device=waveform.device, dtype=waveform.dtype)
         return mel.permute(0, 1, 3, 2).contiguous()
 
 
@@ -91,8 +122,8 @@ class LTX2AudioPerChannelStatistics(nn.Module):
 
     def __init__(self, latent_channels: int) -> None:
         super().__init__()
-        self.register_buffer("std-of-means", torch.empty(latent_channels))
-        self.register_buffer("mean-of-means", torch.empty(latent_channels))
+        self.register_buffer("std-of-means", torch.ones(latent_channels))
+        self.register_buffer("mean-of-means", torch.zeros(latent_channels))
 
     def un_normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x * self.get_buffer("std-of-means").to(x)) + self.get_buffer("mean-of-means").to(x)
@@ -791,8 +822,8 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
             latent_mel_bins = mel_bins // mel_downsample_factor
         per_channel_features = base_channels if latent_mel_bins is None else latent_channels * latent_mel_bins
         self.per_channel_statistics = LTX2AudioPerChannelStatistics(latent_channels=per_channel_features)
-        self.register_buffer("latents_mean", torch.zeros((latent_channels,), requires_grad=False), persistent=True)
-        self.register_buffer("latents_std", torch.ones((latent_channels,), requires_grad=False), persistent=True)
+        self.register_buffer("latents_mean", torch.zeros((per_channel_features,), requires_grad=False), persistent=True)
+        self.register_buffer("latents_std", torch.ones((per_channel_features,), requires_grad=False), persistent=True)
         self._latent_patchifier = LTX2AudioAudioPatchifier(
             patch_size=1,
             audio_latent_downsample_factor=LATENT_DOWNSAMPLE_FACTOR,
@@ -813,7 +844,35 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
         self.mel_hop_length = mel_hop_length
         self.mel_bins = mel_bins
 
+    def _ensure_per_channel_statistics(self) -> None:
+        if getattr(self, "_per_channel_stats_checked", False):
+            return
+        self._per_channel_stats_checked = True
+        stats_mean = self.per_channel_statistics.get_buffer("mean-of-means")
+        stats_std = self.per_channel_statistics.get_buffer("std-of-means")
+        if stats_mean is None or stats_std is None:
+            return
+        if torch.isfinite(stats_mean).all() and torch.isfinite(stats_std).all():
+            default_mean = torch.zeros_like(stats_mean)
+            default_std = torch.ones_like(stats_std)
+            if not (torch.allclose(stats_mean, default_mean) and torch.allclose(stats_std, default_std)):
+                return
+        latents_mean = getattr(self, "latents_mean", None)
+        latents_std = getattr(self, "latents_std", None)
+        if latents_mean is None or latents_std is None:
+            raise ValueError("LTX-2 audio VAE missing per-channel statistics and latents_mean/latents_std buffers.")
+        if latents_mean.shape != stats_mean.shape or latents_std.shape != stats_std.shape:
+            raise ValueError(
+                "LTX-2 audio VAE per-channel stats shape mismatch: "
+                f"mean={tuple(stats_mean.shape)} std={tuple(stats_std.shape)} "
+                f"latents_mean={tuple(latents_mean.shape)} latents_std={tuple(latents_std.shape)}."
+            )
+        stats_mean.copy_(latents_mean.to(stats_mean))
+        stats_std.copy_(latents_std.to(stats_std))
+        logger.warning("LTX-2 audio VAE per-channel stats missing; using latents_mean/latents_std instead.")
+
     def _normalize_latents(self, latent_output: torch.Tensor) -> torch.Tensor:
+        self._ensure_per_channel_statistics()
         means = latent_output
         if self.encoder.double_z:
             means = torch.chunk(latent_output, 2, dim=1)[0]
@@ -823,6 +882,7 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
         return self._latent_patchifier.unpatchify(latent_normalized, channels=channels, mel_bins=mel_bins)
 
     def _denormalize_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        self._ensure_per_channel_statistics()
         _, channels, _, mel_bins = latents.shape
         latents_patched = self._latent_patchifier.patchify(latents)
         latents_denormalized = self.per_channel_statistics.un_normalize(latents_patched)
@@ -840,6 +900,9 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
             h = torch.cat(encoded_slices)
         else:
             h = self._encode(x)
+        if not getattr(self, "_debug_encode_logged", False):
+            _log_audio_tensor_stats("encoder_output", h)
+            self._debug_encode_logged = True
         if h.shape[1] == self.encoder.latent_channels:
             zeros = torch.zeros_like(h)
             h = torch.cat([h, zeros], dim=1)
@@ -848,12 +911,18 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
                 "Audio encoder output channels must be either latent_channels or 2 * latent_channels, " f"got {h.shape}."
             )
         posterior = DiagonalGaussianDistribution(h)
+        if not getattr(self, "_debug_posterior_logged", False):
+            _log_audio_tensor_stats("posterior_params", posterior.parameters)
+            self._debug_posterior_logged = True
         if not return_dict:
             return (posterior,)
         return AutoencoderKLOutput(latent_dist=posterior)
 
     def _encode(self, x: torch.Tensor) -> torch.Tensor:
         latent_output = self.encoder(x)
+        if not getattr(self, "_debug_encoder_raw_logged", False):
+            _log_audio_tensor_stats("encoder_raw", latent_output)
+            self._debug_encoder_raw_logged = True
         return self._normalize_latents(latent_output)
 
     def _get_audio_processor(self) -> LTX2AudioProcessor:
@@ -909,6 +978,10 @@ class AutoencoderKLLTX2Audio(ModelMixin, AutoencoderMixin, ConfigMixin):
                     mel_item = F.pad(mel_item, (0, 0, 0, pad_frames))
                 padded.append(mel_item)
             mel = torch.cat(padded, dim=0)
+
+        if not getattr(self, "_debug_mel_logged", False):
+            _log_audio_tensor_stats("mel", mel)
+            self._debug_mel_logged = True
 
         encoder_dtype = next(self.encoder.parameters()).dtype
         mel = mel.to(device=waveform.device, dtype=encoder_dtype)
