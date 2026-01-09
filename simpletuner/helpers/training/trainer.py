@@ -5564,6 +5564,11 @@ class Trainer:
                             force_evaluation=manual_validation_requested,
                         )
                     except Exception as error:
+                        # Re-raise abort exceptions to allow graceful shutdown
+                        from simpletuner.helpers.training.validation import ValidationAbortedException
+
+                        if isinstance(error, ValidationAbortedException):
+                            raise
                         # let's not crash training because of a validation error.
                         root_logger = logging.getLogger()
                         root_logger.error(f"Validation run failed at step {step}: {error}")

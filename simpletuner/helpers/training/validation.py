@@ -2599,6 +2599,7 @@ class Validation:
         validation_images: dict,
         validation_type: str | None,
     ) -> None:
+        self._check_abort()
         decorated_shortname: str = payload["decorated_shortname"]
         prompt: str = payload["prompt"]
         stitched_results = self._deserialise_media_list(payload.get("stitched", []))
@@ -3368,6 +3369,9 @@ class Validation:
                             all_validation_type_results[current_validation_type] = []
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
+
+                    # Check for abort after pipeline completes
+                    self._check_abort()
 
                 # Keep the original unstitched results for checkpoint storage and benchmark comparison
                 # Retrieve the default image result for stitching
