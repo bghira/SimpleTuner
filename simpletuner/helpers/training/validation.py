@@ -1095,6 +1095,13 @@ class ValidationPreviewer:
             return
 
         def _callback(pipe, step, timestep, callback_kwargs):
+            # Check for abort before handling preview
+            if hasattr(self.config, "should_abort") and callable(self.config.should_abort):
+                if self.config.should_abort():
+                    logger.info("Validation aborted during pipeline execution (preview callback)")
+                    from simpletuner.helpers.training.validation import ValidationAbortedException
+
+                    raise ValidationAbortedException("Validation aborted")
             self._handle_callback(step, timestep, callback_kwargs, metadata)
             return callback_kwargs
 
@@ -1208,6 +1215,12 @@ class ValidationPreviewer:
         return ((step + 1) % self.step_interval) == 0
 
 
+class ValidationAbortedException(Exception):
+    """Raised when validation is aborted via should_abort signal."""
+
+    pass
+
+
 class Validation:
     def __init__(
         self,
@@ -1293,6 +1306,13 @@ class Validation:
         self._active_adapter_run: ValidationAdapterRun | None = None
         self.preview = ValidationPreviewer(self.model, self.accelerator, self.config)
         self._active_pipeline_type: str | None = None
+
+    def _check_abort(self):
+        """Check if abort signal has been received and raise exception if so."""
+        if hasattr(self.config, "should_abort") and callable(self.config.should_abort):
+            if self.config.should_abort():
+                logger.info("Validation aborted via should_abort signal")
+                raise ValidationAbortedException("Validation aborted")
 
     def _validation_method(self) -> str:
         configured_method = getattr(self.config, "validation_method", "simpletuner-local")
@@ -1796,6 +1816,7 @@ class Validation:
                 diffusers.utils.logging._tqdm_active = False
                 pipeline_prepared = False
                 try:
+                    self._check_abort()
                     self.setup_pipeline(validation_type)
                     pipeline_prepared = self.model.pipeline is not None
                     if self.model.pipeline is None:
@@ -1808,6 +1829,7 @@ class Validation:
                     self.validation_video_paths.clear()
                     self.eval_scores = {}
                     for adapter_run in self.validation_adapter_runs:
+                        self._check_abort()
                         self._log_adapter_run(adapter_run)
                         with self._temporary_validation_adapters(adapter_run):
                             self.process_prompts(
@@ -1828,6 +1850,16 @@ class Validation:
                             stage_status="completed",
                             message="Validation completed.",
                         )
+                except ValidationAbortedException:
+                    logger.info("Validation was aborted during execution")
+                    if should_notify:
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key="validation",
+                            stage_label="Running Validation",
+                            stage_status="cancelled",
+                            message="Validation was cancelled.",
+                        )
+                    raise
                 finally:
                     if pipeline_prepared:
                         # Always clean up to release GPU memory, even when validation fails partway.
@@ -2681,6 +2713,7 @@ class Validation:
             position=1,
             disable=progress_disable,
         ):
+            self._check_abort()
             decorated_shortname = self._decorate_shortname(item.shortname, adapter_run)
             self.validation_prompt_dict[decorated_shortname] = item.prompt
             logger.debug(f"validation prompt (shortname={decorated_shortname}): '{item.prompt}'")
@@ -3022,6 +3055,7 @@ class Validation:
         cache_shortname: str | None = None,
     ):
         """Generate validation images for a single prompt."""
+        self._check_abort()
         # Placeholder for actual image generation and logging
         logger.debug(f"Validating ({validation_shortname}) prompt: {prompt}")
         # benchmarked / stitched validation images
@@ -3038,6 +3072,7 @@ class Validation:
         cache_key = cache_shortname or validation_shortname
 
         for resolution in resolutions:
+            self._check_abort()
             extra_validation_kwargs = {}
             validation_input_image_for_resolution = None
 
@@ -3223,17 +3258,18 @@ class Validation:
                             load_from_cache=True,
                         )
                     if _negative_embed is not None:
-                        negative_embed_data = {
-                            k: (
-                                v.to(
-                                    device=self.inference_device,
-                                    dtype=self.config.weight_dtype,
-                                )
-                                if hasattr(v, "to")
-                                else v
-                            )
-                            for k, v in _negative_embed.items()
-                        }
+                        negative_embed_data = {}
+                        for key, value in _negative_embed.items():
+                            if hasattr(value, "to"):
+                                if "mask" in key:
+                                    negative_embed_data[key] = value.to(device=self.inference_device)
+                                else:
+                                    negative_embed_data[key] = value.to(
+                                        device=self.inference_device,
+                                        dtype=self.config.weight_dtype,
+                                    )
+                            else:
+                                negative_embed_data[key] = value
                         pipeline_kwargs.update(
                             self.model.convert_negative_text_embed_for_pipeline(
                                 text_embedding=negative_embed_data,
@@ -3261,6 +3297,7 @@ class Validation:
                 validation_types = self._validation_types()
                 all_validation_type_results = {}
                 for current_validation_type in validation_types:
+                    self._check_abort()
                     if not self.config.validation_randomize:
                         pipeline_kwargs["generator"] = self._get_generator()
                         logger.debug(f"Using a generator? {pipeline_kwargs['generator']}")
@@ -3279,7 +3316,21 @@ class Validation:
                     }
 
                     call_kwargs = inspect.signature(self.model.pipeline.__call__).parameters
+                    if "num_videos_per_prompt" in call_kwargs and "num_images_per_prompt" in pipeline_kwargs:
+                        pipeline_kwargs["num_videos_per_prompt"] = pipeline_kwargs.pop("num_images_per_prompt")
                     logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
+
+                    # Add abort checking callback for pipeline execution
+                    if "callback_on_step_end" in call_kwargs:
+
+                        def abort_check_callback(pipe, step_index, timestep, callback_kwargs):
+                            self._check_abort()
+                            return callback_kwargs
+
+                        # Only set callback if not already provided
+                        if "callback_on_step_end" not in pipeline_kwargs:
+                            pipeline_kwargs["callback_on_step_end"] = abort_check_callback
+
                     # remove any kwargs that are not in the pipeline call
                     removed_kwargs = [k for k in pipeline_kwargs.keys() if k not in call_kwargs]
                     pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
@@ -3436,6 +3487,9 @@ class Validation:
                 checkpoint_validation_images[validation_shortname].extend(original_validation_image_results)
                 stitched_validation_images[validation_shortname].extend(display_validation_results)
 
+            except ValidationAbortedException:
+                # Re-raise abort exceptions to propagate cancellation
+                raise
             except Exception as e:
                 import traceback
 
