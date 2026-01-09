@@ -376,9 +376,16 @@ def model_card_note(args):
 
 def save_metadata_sample(
     image_path: str,
-    image: Union[Image.Image, np.ndarray, list],
+    image: Union[Image.Image, np.ndarray, list, str],
 ):
-    if isinstance(image, list):
+    if isinstance(image, str):
+        # Video file path - copy it to the destination
+        import shutil
+
+        file_extension = os.path.splitext(image)[1][1:]  # Get extension without dot
+        output_path = f"{image_path}.{file_extension}"
+        shutil.copy2(image, output_path)
+    elif isinstance(image, list):
         file_extension = "gif"
         output_path = f"{image_path}.{file_extension}"
         export_to_gif(

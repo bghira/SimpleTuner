@@ -73,7 +73,12 @@ class LTX2AudioProcessor(nn.Module):
 
     def waveform_to_mel(self, waveform: torch.Tensor, waveform_sample_rate: int) -> torch.Tensor:
         waveform = self.resample_waveform(waveform, waveform_sample_rate, self.sample_rate)
-        mel = self.mel_transform(waveform)
+        mel_transform = self.mel_transform
+        buffer = next(mel_transform.buffers(), None)
+        if buffer is None or buffer.device != waveform.device or buffer.dtype != waveform.dtype:
+            mel_transform = mel_transform.to(device=waveform.device, dtype=waveform.dtype)
+            self.mel_transform = mel_transform
+        mel = mel_transform(waveform)
         mel = torch.log(torch.clamp(mel, min=1e-5))
         mel = mel.to(device=waveform.device, dtype=waveform.dtype)
         return mel.permute(0, 1, 3, 2).contiguous()

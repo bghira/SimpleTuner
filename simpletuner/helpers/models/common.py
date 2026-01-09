@@ -445,6 +445,7 @@ class ModelFoundation(ABC):
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
+    DEFAULT_AUDIO_CHANNELS = 1
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
