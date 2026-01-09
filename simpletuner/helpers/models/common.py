@@ -446,6 +446,7 @@ class ModelFoundation(ABC):
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
     DEFAULT_AUDIO_CHANNELS = 1
+    DEFAULT_LORA_EXCLUDE_TARGETS = None # regex, not list
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
@@ -797,6 +798,7 @@ class ModelFoundation(ABC):
                 module_dropout=0.0,
                 use_effective_conv2d=True,
                 target_modules=target_modules,
+                exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
                 modules_to_save=save_modules,
             )
         else:
@@ -820,6 +822,7 @@ class ModelFoundation(ABC):
                 init_lora_weights=self.config.lora_initialisation_style,
                 target_modules=target_modules,
                 modules_to_save=save_modules,
+                exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
                 use_dora=getattr(self.config, "use_dora", False),
                 **lora_config_kwargs,
             )

@@ -70,6 +70,7 @@ class LTXVideo2(VideoModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
+    DEFAULT_LORA_EXCLUDE_TARGETS = ".*connector.*|.*embedding.*"
 
     MODEL_CLASS = LTX2VideoTransformer3DModel
     MODEL_SUBFOLDER = "transformer"
