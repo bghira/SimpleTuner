@@ -18,6 +18,36 @@
         { value: 'superresolution', label: 'Super Resolution', description: 'Reconstructs high-res conditioning frames.' },
     ];
 
+    const buildDefaultDataset = () => ({
+        id: '',
+        type: 'local',
+        dataset_type: 'image',
+        is_regularisation_data: false,
+        resolution: 1024,
+        resolution_type: 'pixel_area',
+        crop: false,
+        crop_style: 'random',
+        crop_aspect: 'square',
+        crop_aspect_buckets: [],
+        caption_strategy: 'textfile',
+        instance_prompt: '',
+        prepend_instance_prompt: false,
+        metadata_backend: 'discovery',
+        cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
+        cache_dir_text: '{output_dir}/cache/text/{model_family}/{id}',
+        probability: 1,
+        repeats: 0,
+        parquet: {
+            path: '',
+            filename_column: 'id',
+            caption_column: 'caption',
+            width_column: '',
+            height_column: '',
+            fallback_caption_column: '',
+            identifier_includes_extension: false
+        }
+    });
+
     window.datasetWizardComponent = function() {
         console.log('[WIZARD] datasetWizardComponent function called (Alpine initializing component)');
         return {
@@ -33,7 +63,7 @@
             selectedBlueprint: null,
 
             // Current dataset being configured
-            currentDataset: {},
+            currentDataset: buildDefaultDataset(),
             datasetQueue: [],
             editingQueuedDataset: false,
             editingIndex: -1,
@@ -382,35 +412,7 @@
             },
 
             getDefaultDataset() {
-                return {
-                    id: '',
-                    type: 'local',
-                    dataset_type: 'image',
-                    is_regularisation_data: false,
-                    resolution: 1024,
-                    resolution_type: 'pixel_area',
-                    crop: false,
-                    crop_style: 'random',
-                    crop_aspect: 'square',
-                    crop_aspect_buckets: [],
-                    caption_strategy: 'textfile',
-                    instance_prompt: '',
-                    prepend_instance_prompt: false,
-                    metadata_backend: 'discovery',
-                    cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
-                    cache_dir_text: '{output_dir}/cache/text/{model_family}/{id}',
-                    probability: 1,
-                    repeats: 0,
-                    parquet: {
-                        path: '',
-                        filename_column: 'id',
-                        caption_column: 'caption',
-                        width_column: '',
-                        height_column: '',
-                        fallback_caption_column: '',
-                        identifier_includes_extension: false
-                    }
-                };
+                return buildDefaultDataset();
             },
 
             selectDatasetType(type) {

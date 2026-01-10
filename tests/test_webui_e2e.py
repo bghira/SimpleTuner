@@ -976,6 +976,50 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(state.get("showNewFolder"), state)
             self.assertTrue(state.get("uploadOpen"), state)
 
+            step_ready = driver.execute_script(
+                """
+                const comp = window.datasetWizardComponentInstance;
+                if (!comp) { return null; }
+                const captionsStep = comp.getStepNumber('captions');
+                if (!captionsStep) { return null; }
+                comp.wizardStep = captionsStep;
+                if (typeof comp.updateWizardTitle === 'function') {
+                    comp.updateWizardTitle();
+                }
+                comp.selectedBackend = 'local';
+                comp.currentDataset.type = 'local';
+                comp.currentDataset.caption_strategy = 'parquet';
+                return captionsStep;
+                """
+            )
+            self.assertIsNotNone(step_ready)
+
+            trainer_page.wait.until(
+                lambda d: d.execute_script(
+                    "const pathInput = document.querySelector('input[x-model=\"currentDataset.parquet.path\"]');"
+                    "const filenameInput = document.querySelector('input[x-model=\"currentDataset.parquet.filename_column\"]');"
+                    "const captionInput = document.querySelector('input[x-model=\"currentDataset.parquet.caption_column\"]');"
+                    "const extToggle = document.querySelector('#identifierExt');"
+                    "return !!(pathInput && filenameInput && captionInput && extToggle);"
+                )
+            )
+
+            parquet_state = driver.execute_script(
+                """
+                const filenameInput = document.querySelector('input[x-model="currentDataset.parquet.filename_column"]');
+                const captionInput = document.querySelector('input[x-model="currentDataset.parquet.caption_column"]');
+                const extToggle = document.querySelector('#identifierExt');
+                return {
+                    filenameValue: filenameInput ? filenameInput.value : null,
+                    captionValue: captionInput ? captionInput.value : null,
+                    extChecked: extToggle ? extToggle.checked : null
+                };
+                """
+            )
+            self.assertEqual(parquet_state.get("filenameValue"), "id")
+            self.assertEqual(parquet_state.get("captionValue"), "caption")
+            self.assertFalse(parquet_state.get("extChecked"))
+
             try:
                 logs = driver.get_log("browser")
             except Exception:
