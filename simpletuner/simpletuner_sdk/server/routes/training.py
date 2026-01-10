@@ -158,7 +158,6 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
         """
 
     try:
-        training_service.persist_config_bundle(bundle)
         result = training_service.start_training_job(
             bundle.complete_config,
             env_name=bundle.active_config,
