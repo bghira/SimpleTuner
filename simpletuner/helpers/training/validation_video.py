@@ -24,7 +24,10 @@ def _mux_audio_into_video(video_path, audio, sample_rate):
     audio_buffer = validation_audio._tensor_to_wav_buffer(audio, sample_rate)
     if audio_buffer is None:
         raise ValueError("Unable to coerce validation audio for muxing.")
-    temp_video_path = f"{video_path}.tmp"
+    base_path, ext = os.path.splitext(video_path)
+    if not ext:
+        ext = ".mp4"
+    temp_video_path = f"{base_path}.tmp{ext}"
     try:
         result = subprocess.run(
             [
