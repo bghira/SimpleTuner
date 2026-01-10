@@ -68,7 +68,7 @@ DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
 
 # Default rate limit for unauthenticated/anonymous requests
 # Set high enough to allow page loads (which trigger 10+ API calls each)
-DEFAULT_ANONYMOUS_RATE_LIMIT = 180  # calls per period
+DEFAULT_ANONYMOUS_RATE_LIMIT = 360  # calls per period
 
 # Multiplier for authenticated users (they get this many times more requests)
 # e.g., if anonymous limit is 60/min, authenticated users get 600/min
