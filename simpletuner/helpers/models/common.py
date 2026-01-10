@@ -9,7 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -519,6 +519,48 @@ class ModelFoundation(ABC):
         This is a no-op by default.
         """
         return
+
+    def validation_audio_sample_rate(self) -> Optional[int]:
+        """
+        Optional hook for models that emit audio during validation.
+        """
+        return None
+
+    def extract_validation_audio(self, pipeline_result: Any, expected_count: Optional[int] = None) -> Optional[list[Any]]:
+        """
+        Extract audio outputs from a pipeline result, normalising to a list of samples.
+        """
+        audio = None
+        if hasattr(pipeline_result, "audio"):
+            audio = pipeline_result.audio
+        elif hasattr(pipeline_result, "audios"):
+            audio = pipeline_result.audios
+
+        if audio is None:
+            return None
+
+        if isinstance(audio, (list, tuple)):
+            items = []
+            for item in audio:
+                if torch.is_tensor(item):
+                    items.append(item.detach().cpu())
+                else:
+                    items.append(item)
+        elif torch.is_tensor(audio) or isinstance(audio, np.ndarray):
+            if torch.is_tensor(audio):
+                audio = audio.detach().cpu()
+            if getattr(audio, "ndim", 0) >= 3:
+                items = [audio[idx] for idx in range(audio.shape[0])]
+            else:
+                items = [audio]
+        else:
+            logger.warning("Unsupported validation audio payload type %s", type(audio))
+            return None
+
+        if expected_count is not None and len(items) != expected_count:
+            raise ValueError(f"Validation audio count ({len(items)}) does not match validation samples ({expected_count}).")
+
+        return items
 
     @classmethod
     def supports_assistant_lora(cls, config=None) -> bool:

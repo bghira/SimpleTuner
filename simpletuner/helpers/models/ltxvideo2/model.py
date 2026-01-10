@@ -680,6 +680,15 @@ class LTXVideo2(VideoModelFoundation):
                     pipeline_kwargs["audio_latents"] = audio_latents
         return pipeline_kwargs
 
+    def validation_audio_sample_rate(self) -> Optional[int]:
+        vocoder = self.vocoder
+        if vocoder is None:
+            pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG) or self.pipelines.get(PipelineTypes.IMG2VIDEO)
+            vocoder = getattr(pipeline, "vocoder", None) if pipeline is not None else None
+        if vocoder is None:
+            return None
+        return getattr(getattr(vocoder, "config", None), "output_sampling_rate", None)
+
     def requires_s2v_validation_inputs(self) -> bool:
         args = StateTracker.get_args()
         if not getattr(args, "validation_using_datasets", False):

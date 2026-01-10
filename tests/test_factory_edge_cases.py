@@ -280,6 +280,45 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(conditioning_cfg.get("type"), "canny")
         self.assertEqual(conditioning_cfg.get("conditioning_type"), "controlnet")
 
+    def test_huggingface_metadata_paths_without_instance_data_dir(self):
+        """Huggingface metadata backend should allow missing instance_data_dir."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "hf_video",
+            "type": "huggingface",
+            "dataset_type": "video",
+            "metadata_backend": "huggingface",
+            "huggingface": {},
+        }
+        init_backend = {
+            "id": backend["id"],
+            "config": backend.copy(),
+            "instance_data_dir": "",
+            "data_backend": MagicMock(),
+            "bucket_report": MagicMock(),
+        }
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        with patch("simpletuner.helpers.metadata.backends.huggingface.HuggingfaceMetadataBackend") as mock_backend:
+            mock_backend_instance = MagicMock()
+            mock_backend.return_value = mock_backend_instance
+
+            factory._configure_metadata_backend(backend, init_backend)
+
+        self.assertIs(init_backend["metadata_backend"], mock_backend_instance)
+        metadata_file = mock_backend.call_args.kwargs.get("metadata_file")
+        cache_file = mock_backend.call_args.kwargs.get("cache_file")
+        self.assertIsInstance(metadata_file, str)
+        self.assertIsInstance(cache_file, str)
+
     def test_multiple_default_text_embed_backends(self):
         """Test error when multiple text embed backends are marked as default."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
