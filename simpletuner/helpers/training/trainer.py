@@ -5694,9 +5694,7 @@ class Trainer:
                     text_encoder_lora_layers = None
                     text_encoder_2_lora_layers = None
 
-                from simpletuner.helpers.models.common import PipelineTypes
-
-                self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+                self.model.save_lora_weights(
                     **lora_save_kwargs,
                 )
                 del text_encoder_lora_layers
