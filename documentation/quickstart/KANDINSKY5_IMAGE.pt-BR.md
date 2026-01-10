@@ -61,7 +61,7 @@ apt -y install python3.12 python3.12-venv
 Instale o SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 Para instalação manual ou setup de desenvolvimento, veja a [documentação de instalação](../INSTALL.md).

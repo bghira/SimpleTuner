@@ -46,7 +46,7 @@ apt -y install nvidia-cuda-toolkit
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 For manual installation or development setup, see the [installation documentation](../INSTALL.md).
@@ -166,7 +166,7 @@ For a quick sanity check with a known working configuration:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train example=qwen_image.peft-lora
 ```
 

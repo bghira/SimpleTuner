@@ -189,13 +189,13 @@ SimpleTuner 包含完整的多用户训练平台，具有企业级功能——**
 pip install simpletuner
 
 # CUDA 用户（NVIDIA GPU）
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 
 # ROCm 用户（AMD GPU）
-pip install simpletuner[rocm]
+pip install 'simpletuner[rocm]'
 
 # Apple Silicon 用户（M1/M2/M3/M4 Mac）
-pip install simpletuner[apple]
+pip install 'simpletuner[apple]'
 ```
 
 有关手动安装或开发设置，请参阅[安装文档](/documentation/INSTALL.md)。

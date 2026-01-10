@@ -45,7 +45,7 @@ apt -y install nvidia-cuda-toolkit
 Instala SimpleTuner vía pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 Para instalación manual o entorno de desarrollo, consulta la [documentación de instalación](../INSTALL.md).
@@ -237,7 +237,7 @@ Desde el directorio de SimpleTuner, tienes varias opciones para iniciar el entre
 
 **Opción 1 (Recomendada - instalación con pip):**
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train
 ```
 

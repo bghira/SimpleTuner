@@ -189,13 +189,13 @@ SimpleTuner को अधिकांश उपयोगकर्ताओं �
 pip install simpletuner
 
 # CUDA users (NVIDIA GPUs)
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 
 # ROCm users (AMD GPUs)
-pip install simpletuner[rocm]
+pip install 'simpletuner[rocm]'
 
 # Apple Silicon users (M1/M2/M3/M4 Macs)
-pip install simpletuner[apple]
+pip install 'simpletuner[apple]'
 ```
 
 मैन्युअल इंस्टॉलेशन या डेवलपमेंट सेटअप के लिए, [इंस्टॉलेशन दस्तावेज़](/documentation/INSTALL.md) देखें।
