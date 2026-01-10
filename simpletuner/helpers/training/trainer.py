@@ -19,6 +19,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
@@ -4078,6 +4079,61 @@ class Trainer:
             }
         return init_kwargs
 
+    def _serialize_pipeline_quantization_config(self, payload: Any, _seen: set[int]) -> dict[str, Any]:
+        serialized: dict[str, Any] = {
+            "quant_backend": getattr(payload, "quant_backend", None),
+            "quant_kwargs": self._sanitize_for_json(getattr(payload, "quant_kwargs", None), _seen),
+            "components_to_quantize": self._sanitize_for_json(getattr(payload, "components_to_quantize", None), _seen),
+        }
+        quant_mapping = getattr(payload, "quant_mapping", None)
+        if quant_mapping is not None:
+            serialized["quant_mapping"] = self._sanitize_for_json(quant_mapping, _seen)
+        return serialized
+
+    def _sanitize_for_json(self, payload: Any, _seen: set[int] | None = None) -> Any:
+        if _seen is None:
+            _seen = set()
+
+        if payload is None or isinstance(payload, (str, int, float, bool)):
+            return payload
+
+        if isinstance(payload, Path):
+            return str(payload)
+
+        if isinstance(payload, Enum):
+            return payload.value
+
+        if isinstance(payload, torch.dtype):
+            return str(payload)
+
+        if isinstance(payload, torch.device):
+            return str(payload)
+
+        obj_id = id(payload)
+        if obj_id in _seen:
+            return f"<cycle:{payload.__class__.__name__}>"
+        _seen.add(obj_id)
+
+        if isinstance(payload, Mapping):
+            return {str(key): self._sanitize_for_json(value, _seen) for key, value in payload.items()}
+
+        if isinstance(payload, (list, tuple, set)):
+            return [self._sanitize_for_json(item, _seen) for item in payload]
+
+        if payload.__class__.__name__ == "PipelineQuantizationConfig":
+            return self._serialize_pipeline_quantization_config(payload, _seen)
+
+        if hasattr(payload, "to_dict") and callable(payload.to_dict):
+            return self._sanitize_for_json(payload.to_dict(), _seen)
+
+        if hasattr(payload, "__dict__"):
+            try:
+                return self._sanitize_for_json(vars(payload), _seen)
+            except TypeError:
+                pass
+
+        raise TypeError(f"Object of type {payload.__class__.__name__} is not JSON serializable")
+
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
@@ -4097,14 +4153,15 @@ class Trainer:
             if hasattr(public_args, "sana_complex_human_instruction"):
                 delattr(public_args, "sana_complex_human_instruction")
 
+            public_args_payload = self._sanitize_for_json(vars(public_args))
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
-            public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
+            public_args_hash = hashlib.md5(json.dumps(public_args_payload, sort_keys=True).encode("utf-8")).hexdigest()
             project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
                 init_kwargs = self._build_init_tracker_kwargs(tracker_run_name, public_args_hash)
                 self.accelerator.init_trackers(
                     project_name,
-                    config=vars(public_args),
+                    config=public_args_payload,
                     init_kwargs=init_kwargs,
                 )
             except Exception as e:
@@ -4122,7 +4179,7 @@ class Trainer:
                 message="Training configuration initialized",
                 title="Training Config",
                 job_id=self.job_id,
-                data=public_args.__dict__,
+                data=public_args_payload,
             )
             self._emit_event(event)
 
