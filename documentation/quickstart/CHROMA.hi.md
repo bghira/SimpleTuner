@@ -34,7 +34,7 @@ python3 --version
 SimpleTuner इंस्टॉल करें (CUDA उदाहरण):
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 बैकएंड‑विशिष्ट सेटअप विवरण (CUDA, ROCm, Apple) के लिए [installation guide](../INSTALL.md) देखें।

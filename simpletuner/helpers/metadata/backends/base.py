@@ -1015,6 +1015,36 @@ class MetadataBackend:
             return True
         if self.dataset_type is DatasetType.AUDIO:
             return True
+
+        # Adjust video frame count to satisfy model constraints
+        if image_metadata and "num_frames" in image_metadata:
+            from simpletuner.helpers.models import ModelRegistry
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            model_family = StateTracker.get_model_family()
+            model_class = None
+            if model_family and model_family in ModelRegistry.model_families():
+                model_class = ModelRegistry.model_families()[model_family]
+
+            if model_class and hasattr(model_class, "adjust_video_frames"):
+                original_frames = image_metadata["num_frames"]
+                adjusted_frames = model_class.adjust_video_frames(original_frames)
+
+                if adjusted_frames != original_frames:
+                    logger.debug(f"(id={self.id}) Adjusted frame count from {original_frames} to {adjusted_frames}")
+                    image_metadata["num_frames"] = adjusted_frames
+                    image_metadata["original_num_frames"] = original_frames
+
+            # Check minimum after adjustment
+            if self.minimum_num_frames is not None:
+                if image_metadata["num_frames"] < self.minimum_num_frames:
+                    return False
+
+            # Check maximum
+            if self.maximum_num_frames is not None:
+                if image_metadata["num_frames"] > self.maximum_num_frames:
+                    return False
+
         if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:

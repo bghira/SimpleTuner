@@ -68,7 +68,7 @@ FLUX.2-dev के लिए Hugging Face पर access approval चाहिए:
 ## इंस्टॉलेशन
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 Development setup के लिए:

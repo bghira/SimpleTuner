@@ -16,6 +16,7 @@ _thread_local = threading.local()
 _task_queue: Queue["_WebhookTask"] = Queue(maxsize=int(os.environ.get("SIMPLETUNER_WEBHOOK_QUEUE_SIZE", "512")))
 _worker_thread: threading.Thread | None = None
 _worker_lock = threading.Lock()
+_no_webhook_logged = False
 
 _EXCLUDED_LOGGER_PREFIXES: tuple[str, ...] = tuple(
     os.environ.get("SIMPLETUNER_WEBHOOK_LOGGER_EXCLUDE", "uvicorn,gunicorn,werkzeug,urllib3").split(",")
@@ -200,11 +201,14 @@ def _load_env_webhook_config() -> Optional[Any]:
 
 def _fallback_webhook_config() -> Optional[Any]:
     """Fallback to default webhook configuration when nothing else is available."""
+    global _no_webhook_logged
     env_config = _load_env_webhook_config()
     if env_config:
         return env_config
 
-    logging.getLogger(INTERNAL_LOGGER_NAME).debug("No webhook configuration provided; webhook forwarding disabled.")
+    if not _no_webhook_logged:
+        logging.getLogger(INTERNAL_LOGGER_NAME).debug("No webhook configuration provided; webhook forwarding disabled.")
+        _no_webhook_logged = True
     return None
 
 
@@ -455,3 +459,83 @@ logging.setLoggerClass(WebhookLogger)
 # Internal logger for diagnostics; disable webhook forwarding to avoid loops.
 internal_logger = get_logger(INTERNAL_LOGGER_NAME, disable_webhook=True)
 internal_logger.propagate = True
+
+
+class WebhookForwardingHandler(logging.Handler):
+    """Handler that forwards all log messages to webhooks, even from non-WebhookLogger instances."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            # Skip internal webhook logger to avoid loops
+            if record.name.startswith(INTERNAL_LOGGER_NAME):
+                return
+
+            # Skip if webhook is suspended for this thread
+            if getattr(_thread_local, "skip_webhook", False):
+                return
+
+            # Get webhook handler from StateTracker
+            try:
+                from simpletuner.helpers.training.state_tracker import StateTracker
+
+                get_handler = getattr(StateTracker, "get_webhook_handler", None)
+                if not get_handler:
+                    return
+
+                handler = get_handler()
+                if not handler:
+                    return
+
+                # Get job ID if available
+                job_id = None
+                job_id_getter = getattr(StateTracker, "get_job_id", None)
+                if callable(job_id_getter):
+                    job_id = job_id_getter()
+
+                # Format the message
+                message = self.format(record)
+                severity = record.levelname.lower()
+
+                # Create structured data
+                structured = {
+                    "type": "log.message",
+                    "logger": record.name,
+                    "message": message,
+                    "severity": severity,
+                }
+                if job_id:
+                    structured["job_id"] = job_id
+
+                # Enqueue for webhook sending
+                decorated = f"[{record.name}] {message}" if record.name else message
+                _enqueue_webhook_task(
+                    _WebhookTask(
+                        handler=handler,
+                        severity=severity,
+                        text_message=decorated,
+                        structured_data=structured,
+                    )
+                )
+            except Exception:
+                # Silently fail to avoid disrupting logging
+                pass
+        except Exception:
+            pass
+
+
+# Install the forwarding handler on the root logger to catch all log messages
+def _install_root_forwarding_handler():
+    """Install a handler on the root logger to forward all messages to webhooks."""
+    root_logger = logging.getLogger()
+    # Check if already installed
+    for handler in root_logger.handlers:
+        if isinstance(handler, WebhookForwardingHandler):
+            return
+    # Install the handler
+    forwarding_handler = WebhookForwardingHandler()
+    forwarding_handler.setLevel(logging.INFO)  # Only forward INFO and above
+    root_logger.addHandler(forwarding_handler)
+
+
+# Install it immediately
+_install_root_forwarding_handler()

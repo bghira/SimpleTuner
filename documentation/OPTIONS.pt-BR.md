@@ -191,16 +191,17 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Opcoes**: `cpu`, `accelerator`, `pipeline`
   - Em `accelerator`, pode funcionar um pouco mais rapido com risco de OOM em placas 24G para modelos grandes como Flux.
   - Em `cpu`, a quantizacao leva cerca de 30 segundos. (**Padrao**)
-  - `pipeline` delega a quantizacao para o Diffusers usando `--quantization_config` ou presets compatíveis com pipeline (ex.: `nf4-bnb`, `int4-torchao` ou checkpoints `.gguf`). Presets manuais de Quanto/TorchAO nao sao suportados quando esse modo esta habilitado.
+  - `pipeline` delega a quantizacao para o Diffusers usando `--quantization_config` ou presets compatíveis com pipeline (ex.: `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto` ou checkpoints `.gguf`).
 
 ### `--base_model_precision`
 
-- **O que**: Reduz a precisao do modelo e treina com menos memoria. Existem tres backends de quantizacao suportados: BitsAndBytes (pipeline), TorchAO (pipeline ou manual) e Optimum Quanto (manual).
+- **O que**: Reduz a precisao do modelo e treina com menos memoria. Existem tres backends de quantizacao suportados: BitsAndBytes (pipeline), TorchAO (pipeline ou manual) e Optimum Quanto (pipeline ou manual).
 
 #### Presets de pipeline Diffusers
 
 - `nf4-bnb` carrega via Diffusers com config BitsAndBytes NF4 4-bit (apenas CUDA). Requer `bitsandbytes` e um build do diffusers com suporte BnB.
-- `int4-torchao` usa um TorchAoConfig com `Int4WeightOnlyConfig` via Diffusers (CUDA). Requer `torchao` e `transformers>=4.39`.
+- `int4-torchao`, `int8-torchao` e `fp8-torchao` usam TorchAoConfig via Diffusers (CUDA). Requer `torchao` e diffusers/transformers recentes.
+- `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto` e `fp8uz-quanto` usam QuantoConfig via Diffusers. O diffusers mapeia FP8-NUZ para pesos float8; use quantizacao manual do quanto se precisar da variante NUZ.
 - Checkpoints `.gguf` sao auto-detectados e carregados com `GGUFQuantizationConfig` quando disponivel. Instale diffusers/transformers recentes para suporte GGUF.
 
 #### Optimum Quanto

@@ -1506,14 +1506,14 @@ class LTX2VideoTransformer3DModel(
                 musubi_manager.stream_out(block)
 
         # 6. Output layers (including unpatchification)
-        scale_shift_values = self.scale_shift_table[None, None] + embedded_timestep[:, :, None]
+        scale_shift_values = self.scale_shift_table[None, None].to(embedded_timestep.device) + embedded_timestep[:, :, None]
         shift, scale = scale_shift_values[:, :, 0], scale_shift_values[:, :, 1]
 
         hidden_states = self.norm_out(hidden_states)
         hidden_states = hidden_states * (1 + scale) + shift
         output = self.proj_out(hidden_states)
 
-        audio_scale_shift_values = self.audio_scale_shift_table[None, None] + audio_embedded_timestep[:, :, None]
+        audio_scale_shift_values = self.audio_scale_shift_table[None, None].to(audio_embedded_timestep.device) + audio_embedded_timestep[:, :, None]
         audio_shift, audio_scale = audio_scale_shift_values[:, :, 0], audio_scale_shift_values[:, :, 1]
 
         audio_hidden_states = self.audio_norm_out(audio_hidden_states)

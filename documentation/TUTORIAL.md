@@ -4,7 +4,7 @@ This tutorial has been consolidated into the [Installation Guide](INSTALL.md).
 
 ## Quick Start
 
-1. **Install SimpleTuner**: `pip install simpletuner[cuda]` (see README for other platforms)
+1. **Install SimpleTuner**: `pip install 'simpletuner[cuda]'` (see README for other platforms)
 2. **Configure**: `simpletuner configure` (interactive setup)
 3. **Train**: `simpletuner train`
 

@@ -192,16 +192,17 @@ simpletuner configure config/foo/config.json
 - **选项**：`cpu`、`accelerator`、`pipeline`
   - `accelerator` 可能稍快，但在 Flux 等大模型上 24G 卡可能 OOM。
   - `cpu` 量化约需 30 秒。（**默认**）
-  - `pipeline` 将量化交给 Diffusers，通过 `--quantization_config` 或管线可用的预设（如 `nf4-bnb`、`int4-torchao`、`.gguf` 检查点）。启用该模式时不支持手动 Quanto/TorchAO 预设。
+  - `pipeline` 将量化交给 Diffusers，通过 `--quantization_config` 或管线可用的预设（如 `nf4-bnb`、`int8-torchao`、`fp8-torchao`、`int8-quanto`、`.gguf` 检查点）。
 
 ### `--base_model_precision`
 
-- **内容**：降低模型精度并用更少内存训练。支持三种量化后端：BitsAndBytes（pipeline）、TorchAO（pipeline 或手动）、Optimum Quanto（手动）。
+- **内容**：降低模型精度并用更少内存训练。支持三种量化后端：BitsAndBytes（pipeline）、TorchAO（pipeline 或手动）、Optimum Quanto（pipeline 或手动）。
 
 #### Diffusers 管线预设
 
 - `nf4-bnb` 通过 Diffusers 加载 4-bit NF4 BitsAndBytes 配置（仅 CUDA）。需要 `bitsandbytes` 与支持 BnB 的 diffusers。
-- `int4-torchao` 通过 Diffusers 使用 TorchAoConfig 与 `Int4WeightOnlyConfig`（CUDA）。需要 `torchao` 与 `transformers>=4.39`。
+- `int4-torchao`、`int8-torchao`、`fp8-torchao` 通过 Diffusers 使用 TorchAoConfig（CUDA）。需要 `torchao` 与较新的 diffusers/transformers。
+- `int8-quanto`、`int4-quanto`、`int2-quanto`、`fp8-quanto`、`fp8uz-quanto` 通过 Diffusers 使用 QuantoConfig。Diffusers 会将 FP8-NUZ 映射为 float8 权重；如需 NUZ 变体请使用手动 quanto 量化。
 - `.gguf` 检查点会被自动检测，并在可用时使用 `GGUFQuantizationConfig` 加载。需安装较新的 diffusers/transformers 以支持 GGUF。
 
 #### Optimum Quanto

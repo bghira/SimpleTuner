@@ -10,7 +10,7 @@ Glance एक "single-image LoRA with a split schedule" जैसा है, न
 
 ## प्रीरिक्विज़िट्स
 
-- Python 3.10–3.12, SimpleTuner इंस्टॉल (`pip install simpletuner[cuda]`)
+- Python 3.10–3.12, SimpleTuner इंस्टॉल (`pip install 'simpletuner[cuda]'`)
 - एक इमेज और एक कैप्शन फ़ाइल एक ही basename के साथ (उदाहरण: `data/glance.png` + `data/glance.txt`)
 - एक flow-model checkpoint (नीचे उदाहरण में `black-forest-labs/FLUX.1-dev`)
 

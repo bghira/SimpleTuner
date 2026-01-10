@@ -698,6 +698,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     manual_quant_precisions = set(MANUAL_QUANTIZATION_PRESETS)
     pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
+    manual_only_precisions = manual_quant_precisions - pipeline_quant_precisions
+    quantization_precisions = manual_quant_precisions | pipeline_quant_precisions
     base_precision = getattr(args, "base_model_precision", "no_change")
     model_path = str(getattr(args, "pretrained_model_name_or_path", "") or "")
     is_gguf_checkpoint = model_path.endswith(".gguf")
@@ -706,7 +708,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.quantization_config is not None and args.model_type != "lora":
         raise ValueError("quantization_config is only supported for LoRA training.")
 
-    if quantize_via_pipeline and base_precision in manual_quant_precisions:
+    if quantize_via_pipeline and base_precision in manual_only_precisions:
         raise ValueError(
             f"quantize_via=pipeline cannot be combined with base_model_precision '{base_precision}'. "
             "Use a Diffusers-compatible preset such as nf4-bnb or int4-torchao, or provide a pipeline quantization_config."
@@ -715,7 +717,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if quantize_via_pipeline:
         for idx in range(1, 5):
             te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
-            if te_precision in manual_quant_precisions:
+            if te_precision in manual_only_precisions:
                 raise ValueError(
                     f"quantize_via=pipeline cannot be combined with manual text encoder quantization ({te_precision}). "
                     "Provide a pipeline quantization_config entry for text encoders instead."
@@ -734,7 +736,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if base_precision in pipeline_quant_precisions:
         for idx in range(1, 5):
             te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
-            if te_precision in manual_quant_precisions:
+            if te_precision in manual_only_precisions:
                 raise ValueError(
                     f"base_model_precision '{base_precision}' cannot be combined with manual text encoder quantization ({te_precision}). "
                     "Use pipeline presets for text encoders or disable manual quantization."
@@ -751,10 +753,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.quantization_config is not None:
         for idx in range(1, 5):
             te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
-            if te_precision in manual_quant_precisions:
+            if te_precision in quantization_precisions:
                 raise ValueError(
                     "quantization_config should include any text encoder quantization settings. "
-                    f"Manual text encoder precision '{te_precision}' is not supported alongside quantization_config."
+                    f"Text encoder precision '{te_precision}' is not supported alongside quantization_config."
                 )
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))

@@ -61,7 +61,7 @@ python --version
 ## Instalação
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 Veja [INSTALL.md](../INSTALL.md) para opções avançadas de instalação.

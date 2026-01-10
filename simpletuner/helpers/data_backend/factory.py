@@ -387,7 +387,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
     if "probability" in backend:
-        output["config"]["probability"] = float(backend["probability"]) if backend["probability"] else 1.0
+        probability = backend["probability"]
+        if probability is None or probability == "":
+            output["config"]["probability"] = 1.0
+        else:
+            output["config"]["probability"] = float(probability)
     if "ignore_epochs" in backend:
         logger.error("ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration.")
     if "repeats" in backend:
@@ -689,7 +693,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 if frame_value % 8 != 1:
                     raise ValueError(
                         f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
-                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}."
+                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}. "
+                        f"Note: Individual videos are automatically trimmed to satisfy this constraint. "
+                        f"Videos shorter than min_frames after trimming will be skipped."
                     )
 
         # Warn about resolution_frames bucket strategy with fixed num_frames
@@ -1758,19 +1764,23 @@ class FactoryRegistry:
                 audio_vae_cache = self._default_vae_cache_dir(audio_backend_id, DatasetType.AUDIO)
 
             # Build the auto-generated audio dataset config
+            default_audio_channels = getattr(self.model, "DEFAULT_AUDIO_CHANNELS", 1)
+            channels = audio_config.get("channels")
+            if channels is None:
+                channels = default_audio_channels
             audio_dataset_config = {
                 "id": audio_backend_id,
                 "type": backend.get("type", "local"),
                 "dataset_type": "audio",
                 "instance_data_dir": backend.get("instance_data_dir"),
                 "source_dataset_id": source_id,
-                "auto_generated": True,
                 "cache_dir_vae": audio_vae_cache,
+                "probability": 0.0,
                 "audio": {
                     "source_from_video": True,
                     "allow_zero_audio": audio_config.get("allow_zero_audio", False),
                     "sample_rate": audio_config.get("sample_rate", 16000),
-                    "channels": audio_config.get("channels", 1),
+                    "channels": channels,
                     "bucket_strategy": "duration",
                     "duration_interval": audio_config.get("duration_interval", 3.0),
                     "max_duration_seconds": audio_config.get("max_duration_seconds"),
@@ -2577,6 +2587,12 @@ class FactoryRegistry:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
         video_config = init_backend["config"].get("video", {})
+        metadata_cache_root = backend.get(
+            "instance_data_dir",
+            backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+        )
+        metadata_cache_root = metadata_cache_root or ""
+
         init_backend["metadata_backend"] = MetadataBackendCls(
             id=init_backend["id"],
             instance_data_dir=init_backend["instance_data_dir"],
@@ -2593,17 +2609,11 @@ class FactoryRegistry:
             batch_size=self.args.train_batch_size,
             metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
             cache_file=os.path.join(
-                backend.get(
-                    "instance_data_dir",
-                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
-                ),
+                metadata_cache_root,
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                backend.get(
-                    "instance_data_dir",
-                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
-                ),
+                metadata_cache_root,
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=self.args.delete_problematic_images or False,
@@ -3433,6 +3443,57 @@ class FactoryRegistry:
             if candidate is not None:
                 vae = candidate
 
+        process_queue_size = backend.get("image_processing_batch_size")
+        read_batch_size = backend.get("read_batch_size")
+        write_batch_size = backend.get("write_batch_size")
+        vae_batch_size = backend.get("vae_batch_size")
+
+        if dataset_type_enum is DatasetType.VIDEO:
+            if process_queue_size is None:
+                process_queue_size = self.args.image_processing_batch_size
+                if process_queue_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set image_processing_batch_size to override."
+                    )
+                process_queue_size = 1
+
+            if read_batch_size is None:
+                read_batch_size = self.args.read_batch_size
+                if read_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set read_batch_size to override."
+                    )
+                read_batch_size = 1
+
+            if write_batch_size is None:
+                write_batch_size = self.args.write_batch_size
+                if write_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set write_batch_size to override."
+                    )
+                write_batch_size = 1
+
+            if vae_batch_size is None:
+                vae_batch_size = self.args.vae_batch_size
+                if vae_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set vae_batch_size to override."
+                    )
+                vae_batch_size = 1
+        else:
+            if process_queue_size is None:
+                process_queue_size = self.args.image_processing_batch_size
+            if read_batch_size is None:
+                read_batch_size = self.args.read_batch_size
+            if write_batch_size is None:
+                write_batch_size = self.args.write_batch_size
+            if vae_batch_size is None:
+                vae_batch_size = self.args.vae_batch_size
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
@@ -3445,12 +3506,12 @@ class FactoryRegistry:
             instance_data_dir=init_backend["instance_data_dir"],
             delete_problematic_images=backend.get("delete_problematic_images", self.args.delete_problematic_images),
             num_video_frames=video_config.get("num_frames", None),
-            vae_batch_size=backend.get("vae_batch_size", self.args.vae_batch_size),
-            write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
-            read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
+            vae_batch_size=vae_batch_size,
+            write_batch_size=write_batch_size,
+            read_batch_size=read_batch_size,
             cache_dir=vae_cache_dir,
             max_workers=backend.get("max_workers", self.args.max_workers),
-            process_queue_size=backend.get("image_processing_batch_size", self.args.image_processing_batch_size),
+            process_queue_size=process_queue_size,
             vae_cache_ondemand=self.args.vae_cache_ondemand,
             vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
             hash_filenames=True,  # always enabled
@@ -4082,29 +4143,21 @@ def configure_multi_databackend_new(
     if data_backend_config is None:
         data_backend_config = factory.load_configuration()
 
-    data_backend_config = factory.process_conditioning_datasets(data_backend_config)
-
-    factory.configure_text_embed_backends(data_backend_config)
-    factory.configure_image_embed_backends(data_backend_config)
-    factory.configure_conditioning_image_embed_backends(data_backend_config)
-    factory.configure_distillation_cache_backends(data_backend_config)
-    factory.configure_data_backends(data_backend_config)
+    result = factory.configure(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
-
-    result = {
-        "data_backends": StateTracker.get_data_backends(),
-        "text_embed_backends": factory.text_embed_backends,
-        "image_embed_backends": factory.image_embed_backends,
-        "conditioning_image_embed_backends": factory.conditioning_image_embed_backends,
-        "distillation_cache_backends": factory.distillation_cache_backends,
-        "default_text_embed_backend_id": factory.default_text_embed_backend_id,
-    }
 
     factory._finalize_metrics()
     total_time = time.time() - start_time
 
-    return result
+    return {
+        "data_backends": result["data_backends"],
+        "text_embed_backends": result["text_embed_backends"],
+        "image_embed_backends": result["image_embed_backends"],
+        "conditioning_image_embed_backends": result["conditioning_image_embed_backends"],
+        "distillation_cache_backends": result["distillation_cache_backends"],
+        "default_text_embed_backend_id": result["default_text_embed_backend_id"],
+    }
 
 
 def check_huggingface_config(backend: dict) -> None:

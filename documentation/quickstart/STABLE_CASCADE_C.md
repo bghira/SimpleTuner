@@ -37,7 +37,7 @@ Follow the standard SimpleTuner installation (pip or source). For a typical CUDA
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 For contributors or anyone hacking on the repo directly, install from source and then run `pip install -e .[cuda,dev]`.

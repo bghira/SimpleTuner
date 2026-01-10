@@ -9,7 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -54,6 +54,7 @@ from simpletuner.helpers.training.lora_format import (
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.quantisation import (
+    PIPELINE_ONLY_PRESETS,
     PIPELINE_QUANTIZATION_PRESETS,
     build_gguf_quantization_config,
     get_pipeline_quantization_builder,
@@ -445,6 +446,8 @@ class ModelFoundation(ABC):
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
+    DEFAULT_AUDIO_CHANNELS = 1
+    DEFAULT_LORA_EXCLUDE_TARGETS = None  # regex, not list
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
@@ -517,6 +520,48 @@ class ModelFoundation(ABC):
         This is a no-op by default.
         """
         return
+
+    def validation_audio_sample_rate(self) -> Optional[int]:
+        """
+        Optional hook for models that emit audio during validation.
+        """
+        return None
+
+    def extract_validation_audio(self, pipeline_result: Any, expected_count: Optional[int] = None) -> Optional[list[Any]]:
+        """
+        Extract audio outputs from a pipeline result, normalising to a list of samples.
+        """
+        audio = None
+        if hasattr(pipeline_result, "audio"):
+            audio = pipeline_result.audio
+        elif hasattr(pipeline_result, "audios"):
+            audio = pipeline_result.audios
+
+        if audio is None:
+            return None
+
+        if isinstance(audio, (list, tuple)):
+            items = []
+            for item in audio:
+                if torch.is_tensor(item):
+                    items.append(item.detach().cpu())
+                else:
+                    items.append(item)
+        elif torch.is_tensor(audio) or isinstance(audio, np.ndarray):
+            if torch.is_tensor(audio):
+                audio = audio.detach().cpu()
+            if getattr(audio, "ndim", 0) >= 3:
+                items = [audio[idx] for idx in range(audio.shape[0])]
+            else:
+                items = [audio]
+        else:
+            logger.warning("Unsupported validation audio payload type %s", type(audio))
+            return None
+
+        if expected_count is not None and len(items) != expected_count:
+            raise ValueError(f"Validation audio count ({len(items)}) does not match validation samples ({expected_count}).")
+
+        return items
 
     @classmethod
     def supports_assistant_lora(cls, config=None) -> bool:
@@ -796,6 +841,7 @@ class ModelFoundation(ABC):
                 module_dropout=0.0,
                 use_effective_conv2d=True,
                 target_modules=target_modules,
+                exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
                 modules_to_save=save_modules,
             )
         else:
@@ -819,6 +865,7 @@ class ModelFoundation(ABC):
                 init_lora_weights=self.config.lora_initialisation_style,
                 target_modules=target_modules,
                 modules_to_save=save_modules,
+                exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
                 use_dora=getattr(self.config, "use_dora", False),
                 **lora_config_kwargs,
             )
@@ -1823,7 +1870,15 @@ class ModelFoundation(ABC):
                 text_encoder_precision = getattr(
                     self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
                 )
-                pipeline_preset = text_encoder_precision if text_encoder_precision in PIPELINE_QUANTIZATION_PRESETS else None
+                quantize_via_pipeline = getattr(self.config, "quantize_via", None) == "pipeline"
+                pipeline_preset = (
+                    text_encoder_precision
+                    if (
+                        text_encoder_precision in PIPELINE_ONLY_PRESETS
+                        or (quantize_via_pipeline and text_encoder_precision in PIPELINE_QUANTIZATION_PRESETS)
+                    )
+                    else None
+                )
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
@@ -2060,14 +2115,17 @@ class ModelFoundation(ABC):
         if raw_config is None:
             return None
         try:
-            from diffusers import DiffusersPipelineQuantizationConfig
+            from diffusers import PipelineQuantizationConfig
 
-            if isinstance(raw_config, DiffusersPipelineQuantizationConfig):
-                for key in component_keys:
-                    entry = getattr(raw_config, key, None)
-                    if entry is not None:
-                        return entry
-                return getattr(raw_config, "default", None)
+            if isinstance(raw_config, PipelineQuantizationConfig):
+                quant_mapping = getattr(raw_config, "quant_mapping", None) or {}
+                if isinstance(quant_mapping, Mapping):
+                    for key in component_keys:
+                        if key in quant_mapping:
+                            return quant_mapping[key]
+                    if "default" in quant_mapping:
+                        return quant_mapping["default"]
+                return raw_config
         except Exception:
             # Avoid failing when diffusers is unavailable or the config type differs.
             pass
@@ -2085,6 +2143,8 @@ class ModelFoundation(ABC):
 
     def _build_component_quantization_config(self, component_keys: list[str], preset: Optional[str] = None):
         raw_config = getattr(self.config, "quantization_config", None)
+        if raw_config is None:
+            raw_config = getattr(self.config, "pipeline_quantization_config", None)
         entry = self._extract_quantization_entry(raw_config, component_keys)
         preset_candidate = preset
         if isinstance(entry, str):
@@ -2093,16 +2153,92 @@ class ModelFoundation(ABC):
         builder = get_pipeline_quantization_builder(preset_candidate)
         if builder is None and isinstance(entry, Mapping):
             entry_keys = set(entry.keys())
-            if any(key.startswith("bnb_") or key == "load_in_4bit" for key in entry_keys):
+            if any(key.startswith("bnb_") or key in {"load_in_4bit", "load_in_8bit"} for key in entry_keys):
                 builder = get_pipeline_quantization_builder("nf4-bnb")
-            elif "quant_type" in entry_keys or "modules_to_not_convert" in entry_keys:
+            elif "weights_dtype" in entry_keys or "weights" in entry_keys:
+                builder = get_pipeline_quantization_builder("int8-quanto")
+            elif "quant_type" in entry_keys or "quant_type_kwargs" in entry_keys or "modules_to_not_convert" in entry_keys:
                 builder = get_pipeline_quantization_builder("int4-torchao")
         # If we have a known preset builder, prefer it and treat mapping entries as overrides.
         if builder is not None and (entry is None or isinstance(entry, (Mapping, str))):
             overrides = entry if isinstance(entry, Mapping) else None
-            return builder(getattr(self.config, "weight_dtype", None), overrides)
+            component_type = "transformers" if any("text_encoder" in key for key in component_keys) else "diffusers"
+            quantization_config = builder(getattr(self.config, "weight_dtype", None), overrides, component_type)
+            self._register_pipeline_quantization_config(component_keys, quantization_config)
+            return quantization_config
 
+        if entry is not None:
+            try:
+                from diffusers import PipelineQuantizationConfig
+            except Exception:
+                PipelineQuantizationConfig = None
+            if PipelineQuantizationConfig is not None and isinstance(entry, PipelineQuantizationConfig):
+                component_type = "transformers" if any("text_encoder" in key for key in component_keys) else "diffusers"
+                quantization_config = self._resolve_pipeline_backend_config(entry, component_keys, component_type)
+                self._register_pipeline_quantization_config(component_keys, quantization_config)
+                return quantization_config
+        if entry is not None:
+            self._register_pipeline_quantization_config(component_keys, entry)
         return entry
+
+    def _resolve_pipeline_backend_config(self, pipeline_config, component_keys: list[str], component_type: str):
+        quant_backend = getattr(pipeline_config, "quant_backend", None)
+        if not quant_backend:
+            return None
+        components_to_quantize = getattr(pipeline_config, "components_to_quantize", None)
+        if components_to_quantize:
+            if not any(key in components_to_quantize for key in component_keys):
+                return None
+
+        quant_kwargs = getattr(pipeline_config, "quant_kwargs", None) or {}
+        if component_type == "transformers":
+            try:
+                from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING as auto_mapping
+            except ImportError as exc:
+                raise ImportError(
+                    "Pipeline quantization for text encoders requires transformers with quantization config support."
+                ) from exc
+        else:
+            try:
+                from diffusers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING as auto_mapping
+            except ImportError as exc:
+                raise ImportError(
+                    "Pipeline quantization for diffusion components requires diffusers quantization config support."
+                ) from exc
+
+        config_cls = auto_mapping.get(quant_backend)
+        if config_cls is None:
+            raise ValueError(f"Unknown pipeline quantization backend: {quant_backend}")
+        return config_cls(**quant_kwargs)
+
+    def _register_pipeline_quantization_config(self, component_keys: list[str], quantization_config) -> None:
+        if (
+            quantization_config is None
+            or isinstance(quantization_config, Mapping)
+            or getattr(self.config, "quantize_via", None) != "pipeline"
+        ):
+            return
+        try:
+            from diffusers import PipelineQuantizationConfig
+        except ImportError as exc:
+            raise ImportError("Pipeline quantization requires diffusers with PipelineQuantizationConfig support.") from exc
+
+        if isinstance(quantization_config, PipelineQuantizationConfig):
+            setattr(self.config, "pipeline_quantization_config", quantization_config)
+            return
+
+        pipeline_config = getattr(self.config, "pipeline_quantization_config", None)
+        if pipeline_config is None:
+            pipeline_config = PipelineQuantizationConfig(quant_mapping={key: quantization_config for key in component_keys})
+            setattr(self.config, "pipeline_quantization_config", pipeline_config)
+            return
+
+        quant_mapping = getattr(pipeline_config, "quant_mapping", None)
+        if quant_mapping is None:
+            quant_mapping = {}
+            pipeline_config.quant_mapping = quant_mapping
+        for key in component_keys:
+            quant_mapping.setdefault(key, quantization_config)
 
     def load_model(self, move_to_device: bool = True):
         self._group_offload_configured = False
@@ -2145,11 +2281,16 @@ class ModelFoundation(ABC):
         if is_gguf:
             setattr(self.config, "pipeline_quantization", True)
             setattr(self.config, "pipeline_quantization_base", True)
-        if getattr(self.config, "quantize_via", None) == "pipeline":
+        quantize_via_pipeline = getattr(self.config, "quantize_via", None) == "pipeline"
+        if quantize_via_pipeline:
             setattr(self.config, "pipeline_quantization", True)
 
+        pipeline_only_precision = self.config.base_model_precision in PIPELINE_ONLY_PRESETS
+        pipeline_capable_precision = self.config.base_model_precision in PIPELINE_QUANTIZATION_PRESETS
         base_pipeline_preset = (
-            self.config.base_model_precision if self.config.base_model_precision in PIPELINE_QUANTIZATION_PRESETS else None
+            self.config.base_model_precision
+            if (pipeline_only_precision or (quantize_via_pipeline and pipeline_capable_precision))
+            else None
         )
         if base_pipeline_preset is not None:
             setattr(self.config, "pipeline_quantization", True)
@@ -4151,6 +4292,12 @@ class ModelFoundation(ABC):
         loss = loss.mean()
         return loss
 
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        """
+        Computes loss and optional per-batch metrics for logging.
+        """
+        return self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask), None
+
     def auxiliary_loss(
         self,
         model_output,
@@ -4498,6 +4645,21 @@ class VideoModelFoundation(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.config = config
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
+
+    @classmethod
+    def adjust_video_frames(cls, num_frames: int) -> int:
+        """
+        Calculate nearest valid frame count at or below the given count.
+        Default implementation returns the input unchanged.
+        Subclasses override to enforce model-specific constraints.
+
+        Args:
+            num_frames: The desired number of frames
+
+        Returns:
+            Adjusted frame count (always >= 1)
+        """
+        return num_frames
 
     def get_transforms(self, dataset_type: str = "image"):
         if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":

@@ -4,7 +4,7 @@
 
 ## क्विक स्टार्ट
 
-1. **SimpleTuner इंस्टॉल करें**: `pip install simpletuner[cuda]` (अन्य प्लेटफ़ॉर्म्स के लिए README देखें)
+1. **SimpleTuner इंस्टॉल करें**: `pip install 'simpletuner[cuda]'` (अन्य प्लेटफ़ॉर्म्स के लिए README देखें)
 2. **कॉन्फ़िगर करें**: `simpletuner configure` (इंटरैक्टिव सेटअप)
 3. **ट्रेन करें**: `simpletuner train`
 

@@ -71,7 +71,7 @@ popd
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 For manual installation or development setup, see the [installation documentation](../INSTALL.md).

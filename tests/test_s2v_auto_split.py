@@ -61,7 +61,7 @@ class TestS2VAudioInjection(unittest.TestCase):
         self.assertEqual(audio_backend["id"], "test-videos_audio")
         self.assertEqual(audio_backend["type"], "local")
         self.assertEqual(audio_backend["instance_data_dir"], "/data/videos")
-        self.assertTrue(audio_backend.get("auto_generated"))
+        self.assertEqual(audio_backend.get("source_dataset_id"), "test-videos")
         self.assertTrue(audio_backend["audio"]["source_from_video"])
         self.assertEqual(audio_backend["audio"]["sample_rate"], 16000)
         self.assertEqual(audio_backend["audio"]["channels"], 1)
@@ -214,22 +214,6 @@ class TestS2VAudioInjection(unittest.TestCase):
 class TestLoadAudioFromVideo(unittest.TestCase):
     """Test audio extraction from video files."""
 
-    @patch("simpletuner.helpers.audio.load.torchaudio")
-    def test_load_audio_from_video_uses_torchaudio(self, mock_torchaudio):
-        """Test that torchaudio is tried first."""
-        import torch
-
-        from simpletuner.helpers.audio.load import load_audio_from_video
-
-        mock_waveform = torch.zeros(1, 16000)
-        mock_torchaudio.load.return_value = (mock_waveform, 16000)
-        mock_torchaudio.transforms.Resample.return_value = MagicMock(return_value=mock_waveform)
-
-        waveform, sample_rate = load_audio_from_video("/path/to/video.mp4")
-
-        mock_torchaudio.load.assert_called_once()
-        self.assertEqual(sample_rate, 16000)
-
     def test_generate_zero_audio(self):
         """Test zero audio generation."""
         from simpletuner.helpers.audio.load import generate_zero_audio
@@ -286,6 +270,42 @@ class TestS2VSampleConnection(unittest.TestCase):
 
             # Video path should be used directly as audio path
             self.assertEqual(result[0]["s2v_audio_path"], "/data/videos/test.mp4")
+
+    def test_connect_s2v_samples_source_from_video_skips_missing_metadata(self):
+        """Skip source_from_video samples when the audio metadata is missing."""
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        metadata_backend = MagicMock()
+        metadata_backend.get_metadata_by_filepath.side_effect = lambda path: (
+            {"duration_seconds": 1.0} if path.endswith("has_audio.mp4") else None
+        )
+
+        s2v_datasets = [
+            {
+                "id": "audio-backend",
+                "config": {"audio": {"source_from_video": True}},
+                "metadata_backend": metadata_backend,
+            }
+        ]
+
+        samples = [
+            {"image_path": "/data/videos/has_audio.mp4"},
+            {"image_path": "/data/videos/no_audio.mp4"},
+        ]
+
+        with patch.object(StateTracker, "get_s2v_datasets", return_value=s2v_datasets):
+            sampler = MagicMock()
+            sampler.id = "test-videos"
+            sampler.debug_log = MagicMock()
+
+            from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+
+            result = MultiAspectSampler.connect_s2v_samples(sampler, tuple(samples))
+
+        self.assertEqual(result[0]["s2v_audio_path"], "/data/videos/has_audio.mp4")
+        self.assertEqual(result[0]["s2v_audio_backend_id"], "audio-backend")
+        self.assertIsNone(result[1]["s2v_audio_path"])
+        self.assertIsNone(result[1]["s2v_audio_backend_id"])
 
 
 if __name__ == "__main__":

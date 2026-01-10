@@ -360,6 +360,8 @@ Um dataset de vídeo deve ser uma pasta de arquivos de vídeo (ex.: mp4) e os m�
     - `resolution_frames`: Agrupa por resolução e contagem de frames no formato `WxH@F` (ex.: `1920x1080@125`). Útil para treinar em datasets com resoluções e durações variadas.
   - `frame_interval` (opcional, int) ao usar `bucket_strategy: "resolution_frames"`, a contagem de frames é arredondada para baixo para o múltiplo mais próximo desse valor. Defina isso como o fator de contagem de frames exigido pelo seu modelo (alguns modelos exigem que `num_frames - 1` seja divisível por um certo valor).
 
+**Ajuste Automático de Contagem de Frames:** SimpleTuner ajusta automaticamente as contagens de frames de vídeo para atender aos requisitos específicos do modelo. Por exemplo, LTX-2 requer contagens de frames que satisfaçam `frames % 8 == 1` (ex.: 49, 57, 65, 73, 81, etc.). Se seus vídeos tiverem contagens de frames diferentes (ex.: 119 frames), eles serão automaticamente cortados para a contagem de frames válida mais próxima (ex.: 113 frames). Vídeos que ficam mais curtos que `min_frames` após o ajuste são ignorados com uma mensagem de aviso. Este ajuste automático previne erros de treinamento e não requer nenhuma configuração da sua parte.
+
 **Nota:** Ao usar `bucket_strategy: "resolution_frames"` com `num_frames` definido, você terá um único bucket de frames e vídeos menores que `num_frames` serão descartados. Remova `num_frames` se você quiser múltiplos buckets de frames com menos descartes.
 
 Exemplo usando bucketing `resolution_frames` para datasets de vídeo com resolução mista:

@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
@@ -10,6 +11,7 @@ from random import shuffle
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from numpy import str_ as numpy_str
 from PIL import Image
 from tqdm import tqdm
@@ -175,6 +177,48 @@ class VAECache(WebhookMixin):
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
 
+    def _cache_vae_dtype(self) -> torch.dtype:
+        if self.dataset_type_enum is DatasetType.AUDIO and StateTracker.get_model_family() == "ltxvideo2":
+            return torch.float32
+        return StateTracker.get_vae_dtype()
+
+    def _audio_debug_enabled(self, filepath: str | None = None) -> bool:
+        flag = os.environ.get("SIMPLETUNER_AUDIO_DEBUG", "")
+        if str(flag).lower() not in {"1", "true", "yes", "y", "on"}:
+            return False
+        if filepath is None:
+            return True
+        filters = os.environ.get("SIMPLETUNER_AUDIO_DEBUG_PATHS", "")
+        if not filters:
+            return True
+        return any(part.strip() and part.strip() in filepath for part in filters.split(","))
+
+    def _log_audio_tensor_stats(self, label: str, tensor: torch.Tensor, filepath: str | None = None) -> None:
+        if not torch.is_tensor(tensor):
+            return
+        if filepath is not None and not self._audio_debug_enabled(filepath):
+            return
+        sample = tensor.detach()
+        if sample.numel() == 0:
+            logger.warning("%s: empty tensor for %s", label, filepath or "(unknown)")
+            return
+        sample = sample.to(device="cpu", dtype=torch.float32)
+        nan_count = int(torch.isnan(sample).sum().item()) if sample.is_floating_point() else 0
+        inf_count = int(torch.isinf(sample).sum().item()) if sample.is_floating_point() else 0
+        logger.warning(
+            "%s: path=%s shape=%s dtype=%s device=%s min=%s max=%s mean=%s nan=%s inf=%s",
+            label,
+            filepath or "(unknown)",
+            tuple(sample.shape),
+            sample.dtype,
+            tensor.device,
+            float(sample.min().item()),
+            float(sample.max().item()),
+            float(sample.mean().item()),
+            nan_count,
+            inf_count,
+        )
+
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         if filepath.endswith(".pt"):
             return filepath, os.path.basename(filepath)
@@ -227,10 +271,13 @@ class VAECache(WebhookMixin):
                         # Extract audio from video file
                         from simpletuner.helpers.audio import load_audio_from_video
 
-                        video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
                         target_sr = audio_config.get("sample_rate", 16000)
                         target_channels = audio_config.get("channels", 1)
-                        waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
+                        if self.image_data_backend.type == "local":
+                            waveform, sample_rate = load_audio_from_video(filename, target_sr, target_channels)
+                        else:
+                            video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
+                            waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
                         sample = {"waveform": waveform, "sample_rate": sample_rate}
                     else:
                         sample = self.image_data_backend.read(filename, as_byteIO=False)
@@ -397,7 +444,7 @@ class VAECache(WebhookMixin):
             else args.pretrained_vae_model_name_or_path
         )
         self.vae = self.model.get_vae()
-        self.vae.to(self.accelerator.device, dtype=StateTracker.get_vae_dtype())
+        self.vae.to(self.accelerator.device, dtype=self._cache_vae_dtype())
 
     def rebuild_cache(self):
         self.debug_log("Rebuilding cache.")
@@ -740,12 +787,17 @@ class VAECache(WebhookMixin):
 
         if len(uncached_images) > 0 and (len(images) != len(latents) or len(filepaths) != len(latents)):
             with torch.no_grad():
-                if hasattr(self.vae, "device") and self.vae.device != self.accelerator.device:
-                    self.vae.to(self.accelerator.device, dtype=StateTracker.get_vae_dtype())
-                processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=StateTracker.get_vae_dtype()
-                )
-                processed_images = self.prepare_video_latents(processed_images)
+                cache_dtype = self._cache_vae_dtype()
+                target_device = self.accelerator.device
+                if hasattr(self.vae, "device") and (self.vae.device != target_device or self.vae.dtype != cache_dtype):
+                    self.vae.to(target_device, dtype=cache_dtype)
+                processed_images = torch.stack(uncached_images).to(target_device, dtype=cache_dtype)
+                if self.dataset_type_enum is not DatasetType.AUDIO:
+                    processed_images = self.prepare_video_latents(processed_images)
+                if self.dataset_type_enum is DatasetType.AUDIO:
+                    debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                    for idx, fp in enumerate(debug_filepaths):
+                        self._log_audio_tensor_stats("audio_waveform_batch", processed_images[idx], fp)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
                 metadata_for_batch = self._gather_sample_metadata([filepaths[i] for i in uncached_image_indices])
                 latents_uncached = self.model.encode_cache_batch(
@@ -757,6 +809,11 @@ class VAECache(WebhookMixin):
 
                 if StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
                     if hasattr(latents_uncached, "latent_dist"):
+                        if self.dataset_type_enum is DatasetType.AUDIO:
+                            debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                            dist_params = latents_uncached.latent_dist.parameters
+                            for idx, fp in enumerate(debug_filepaths):
+                                self._log_audio_tensor_stats("audio_latents_dist", dist_params[idx], fp)
                         latents_uncached = latents_uncached.latent_dist.parameters
                     if self.dataset_type_enum is DatasetType.AUDIO:
                         latents_uncached = self.process_audio_latents(latents_uncached)
@@ -764,6 +821,11 @@ class VAECache(WebhookMixin):
                         latents_uncached = self.process_video_latents(latents_uncached)
                 else:
                     if hasattr(latents_uncached, "latent_dist"):
+                        if self.dataset_type_enum is DatasetType.AUDIO:
+                            debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                            dist_params = latents_uncached.latent_dist.parameters
+                            for idx, fp in enumerate(debug_filepaths):
+                                self._log_audio_tensor_stats("audio_latents_dist", dist_params[idx], fp)
                         latents_uncached = latents_uncached.latent_dist.sample()
                     elif hasattr(latents_uncached, "sample"):
                         latents_uncached = latents_uncached.sample()
@@ -772,7 +834,16 @@ class VAECache(WebhookMixin):
                     else:
                         latents_uncached = self.process_video_latents(latents_uncached)
 
+                if self.dataset_type_enum is DatasetType.AUDIO:
+                    debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                    for idx, fp in enumerate(debug_filepaths):
+                        self._log_audio_tensor_stats("audio_latents_processed", latents_uncached[idx], fp)
+
                 latents_uncached = self.model.scale_vae_latents_for_cache(latents_uncached, self.vae)
+                if self.dataset_type_enum is DatasetType.AUDIO:
+                    debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                    for idx, fp in enumerate(debug_filepaths):
+                        self._log_audio_tensor_stats("audio_latents_scaled", latents_uncached[idx], fp)
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
@@ -1054,6 +1125,12 @@ class VAECache(WebhookMixin):
         waveform, sample_rate = self._coerce_audio_waveform(raw_sample, metadata, filepath)
         if waveform is None:
             return None
+        waveform, metadata = self._align_audio_waveform_to_video(
+            waveform=waveform,
+            sample_rate=sample_rate,
+            metadata=metadata,
+            filepath=filepath,
+        )
         return {
             "waveform": waveform,
             "sample_rate": sample_rate,
@@ -1062,12 +1139,64 @@ class VAECache(WebhookMixin):
             "num_frames": waveform.shape[-1],
         }
 
+    def _align_audio_waveform_to_video(self, waveform, sample_rate, metadata: dict, filepath: str):
+        backend_config = StateTracker.get_data_backend_config(data_backend_id=self.id) or {}
+        audio_config = backend_config.get("audio") or {}
+        if not audio_config.get("source_from_video", False):
+            return waveform, metadata
+        source_dataset_id = backend_config.get("source_dataset_id") or audio_config.get("source_dataset_id")
+        if not source_dataset_id or sample_rate is None:
+            return waveform, metadata
+
+        video_meta = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=source_dataset_id) or {}
+        source_config = StateTracker.get_data_backend_config(data_backend_id=source_dataset_id) or {}
+        video_config = source_config.get("video") or {}
+
+        target_num_frames = video_config.get("num_frames") or video_meta.get("num_frames")
+        fps = video_meta.get("fps") or getattr(StateTracker.get_args(), "framerate", None) or 25
+        if not target_num_frames or not fps:
+            return waveform, metadata
+
+        target_samples = int(round((float(target_num_frames) / float(fps)) * float(sample_rate)))
+        if target_samples <= 0:
+            return waveform, metadata
+
+        num_samples = waveform.shape[-1]
+        if num_samples == target_samples:
+            return waveform, metadata
+
+        truncation_mode = (metadata.get("truncation_mode") or audio_config.get("truncation_mode") or "beginning").lower()
+        if num_samples > target_samples:
+            if truncation_mode == "end":
+                start = num_samples - target_samples
+            elif truncation_mode == "random":
+                start = random.randint(0, num_samples - target_samples)
+            else:
+                start = 0
+            waveform = waveform[:, start : start + target_samples]
+        else:
+            pad_amount = target_samples - num_samples
+            waveform = F.pad(waveform, (0, pad_amount))
+
+        metadata = dict(metadata)
+        metadata["num_samples"] = waveform.shape[-1]
+        metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
+        return waveform, metadata
+
     def _coerce_audio_waveform(self, sample, metadata: dict, filepath: str):
         waveform = None
         sample_rate = None
         if isinstance(sample, dict):
-            waveform = sample.get("waveform") or sample.get("audio") or sample.get("data")
-            sample_rate = sample.get("sample_rate") or sample.get("sampling_rate")
+            if "waveform" in sample and sample["waveform"] is not None:
+                waveform = sample["waveform"]
+            elif "audio" in sample and sample["audio"] is not None:
+                waveform = sample["audio"]
+            elif "data" in sample and sample["data"] is not None:
+                waveform = sample["data"]
+            if "sample_rate" in sample and sample["sample_rate"] is not None:
+                sample_rate = sample["sample_rate"]
+            elif "sampling_rate" in sample and sample["sampling_rate"] is not None:
+                sample_rate = sample["sampling_rate"]
         elif isinstance(sample, (list, tuple)):
             if len(sample) > 0:
                 waveform = sample[0]
@@ -1106,6 +1235,7 @@ class VAECache(WebhookMixin):
             raise ValueError(
                 f"Audio sample {filepath} must have shape (channels, samples); received {tuple(waveform_tensor.shape)}."
             )
+        self._log_audio_tensor_stats("audio_waveform_decoded", waveform_tensor, filepath)
 
         metadata_rate = metadata.get("sample_rate")
         if metadata_rate is not None:
@@ -1168,7 +1298,7 @@ class VAECache(WebhookMixin):
                         break
 
                 latents = self.encode_images(
-                    [sample.to(dtype=StateTracker.get_vae_dtype()) for sample in vae_input_images],
+                    [sample.to(dtype=self._cache_vae_dtype()) for sample in vae_input_images],
                     vae_input_filepaths,
                     load_from_cache=False,
                 )

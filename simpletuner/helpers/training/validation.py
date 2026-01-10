@@ -14,9 +14,9 @@ from typing import Any, Optional, Union
 import diffusers
 import numpy as np
 import torch
-import wandb
 from tqdm import tqdm
 
+import wandb
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training import validation_audio
@@ -493,16 +493,22 @@ def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
 
                 for s2v_dataset in s2v_datasets:
                     s2v_config = s2v_dataset.get("config", {})
+                    audio_config = s2v_config.get("audio", {})
+                    if audio_config.get("source_from_video", False):
+                        audio_path = sample_path
+                        break
                     audio_root = s2v_config.get("instance_data_dir")
                     if not audio_root:
                         continue
 
+                    audio_backend = s2v_dataset.get("data_backend")
                     # Search for matching audio files
                     audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
                     for ext in audio_extensions:
-                        candidate = Path(audio_root) / f"{video_stem}{ext}"
-                        if candidate.exists():
-                            audio_path = str(candidate)
+                        candidate = os.path.join(audio_root, f"{video_stem}{ext}")
+                        exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
+                        if exists:
+                            audio_path = candidate
                             break
                     if audio_path:
                         break
@@ -1089,6 +1095,13 @@ class ValidationPreviewer:
             return
 
         def _callback(pipe, step, timestep, callback_kwargs):
+            # Check for abort before handling preview
+            if hasattr(self.config, "should_abort") and callable(self.config.should_abort):
+                if self.config.should_abort():
+                    logger.info("Validation aborted during pipeline execution (preview callback)")
+                    from simpletuner.helpers.training.validation import ValidationAbortedException
+
+                    raise ValidationAbortedException("Validation aborted")
             self._handle_callback(step, timestep, callback_kwargs, metadata)
             return callback_kwargs
 
@@ -1202,6 +1215,12 @@ class ValidationPreviewer:
         return ((step + 1) % self.step_interval) == 0
 
 
+class ValidationAbortedException(Exception):
+    """Raised when validation is aborted via should_abort signal."""
+
+    pass
+
+
 class Validation:
     def __init__(
         self,
@@ -1240,6 +1259,7 @@ class Validation:
         self.global_resume_step = None
         self.validation_prompt_metadata = validation_prompt_metadata
         self.validation_images = None
+        self.validation_audios = None
         self.validation_video_paths: dict[str, list[str]] = {}
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
@@ -1287,6 +1307,13 @@ class Validation:
         self._active_adapter_run: ValidationAdapterRun | None = None
         self.preview = ValidationPreviewer(self.model, self.accelerator, self.config)
         self._active_pipeline_type: str | None = None
+
+    def _check_abort(self):
+        """Check if abort signal has been received and raise exception if so."""
+        if hasattr(self.config, "should_abort") and callable(self.config.should_abort):
+            if self.config.should_abort():
+                logger.info("Validation aborted via should_abort signal")
+                raise ValidationAbortedException("Validation aborted")
 
     def _validation_method(self) -> str:
         configured_method = getattr(self.config, "validation_method", "simpletuner-local")
@@ -1773,6 +1800,7 @@ class Validation:
         if should_execute_locally:
             if validation_method == "external-script":
                 self.validation_images = {}
+                self.validation_audios = {}
                 self.validation_prompt_dict = {}
                 self.validation_video_paths.clear()
                 self.eval_scores = {}
@@ -1790,6 +1818,7 @@ class Validation:
                 diffusers.utils.logging._tqdm_active = False
                 pipeline_prepared = False
                 try:
+                    self._check_abort()
                     self.setup_pipeline(validation_type)
                     pipeline_prepared = self.model.pipeline is not None
                     if self.model.pipeline is None:
@@ -1798,18 +1827,22 @@ class Validation:
                         return self
                     self.setup_scheduler()
                     master_validation_images: dict = {}
+                    master_validation_audios: dict = {}
                     self.validation_prompt_dict = {}
                     self.validation_video_paths.clear()
                     self.eval_scores = {}
                     for adapter_run in self.validation_adapter_runs:
+                        self._check_abort()
                         self._log_adapter_run(adapter_run)
                         with self._temporary_validation_adapters(adapter_run):
                             self.process_prompts(
                                 validation_type=validation_type,
                                 adapter_run=adapter_run,
                                 image_accumulator=master_validation_images,
+                                audio_accumulator=master_validation_audios,
                             )
                     self.validation_images = master_validation_images
+                    self.validation_audios = master_validation_audios
                     self.finalize_validation(validation_type)
                     self._publish_validation_artifacts(validation_type)
                     if self.evaluation_result is not None:
@@ -1822,6 +1855,16 @@ class Validation:
                             stage_status="completed",
                             message="Validation completed.",
                         )
+                except ValidationAbortedException:
+                    logger.info("Validation was aborted during execution")
+                    if should_notify:
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key="validation",
+                            stage_label="Running Validation",
+                            stage_status="cancelled",
+                            message="Validation was cancelled.",
+                        )
+                    raise
                 finally:
                     if pipeline_prepared:
                         # Always clean up to release GPU memory, even when validation fails partway.
@@ -2537,6 +2580,7 @@ class Validation:
             stitched_validation_images,
             checkpoint_validation_images,
             _ema_validation_images,
+            validation_audio_results,
         ) = self.validate_prompt(
             item.prompt,
             decorated_shortname,
@@ -2552,6 +2596,7 @@ class Validation:
             "prompt": item.prompt,
             "stitched": self._serialise_media_list(stitched_validation_images.get(decorated_shortname, [])),
             "checkpoint": self._serialise_media_list(checkpoint_validation_images.get(decorated_shortname, [])),
+            "audio": self._serialise_media_list(validation_audio_results.get(decorated_shortname, [])),
         }
 
     def _apply_serialised_validation_result(
@@ -2559,34 +2604,61 @@ class Validation:
         *,
         payload: dict[str, Any],
         validation_images: dict,
+        validation_audios: dict,
         validation_type: str | None,
     ) -> None:
+        self._check_abort()
         decorated_shortname: str = payload["decorated_shortname"]
         prompt: str = payload["prompt"]
         stitched_results = self._deserialise_media_list(payload.get("stitched", []))
         checkpoint_results = self._deserialise_media_list(payload.get("checkpoint", []))
+        audio_results = self._deserialise_media_list(payload.get("audio", []))
         self.validation_prompt_dict[decorated_shortname] = prompt
         logger.debug(f"Completed generating image: {prompt}")
         validation_images.setdefault(decorated_shortname, []).extend(stitched_results)
+        if audio_results:
+            validation_audios.setdefault(decorated_shortname, []).extend(audio_results)
 
         if isinstance(self.model, AudioModelFoundation):
-            validation_audio.save_audio(
-                self.save_dir,
-                validation_images,
-                decorated_shortname,
-            )
-            validation_audio.log_audio_to_webhook(
-                validation_images,
-                decorated_shortname,
-                prompt,
-            )
+            sample_rate = self.model.validation_audio_sample_rate()
+            if sample_rate is None:
+                validation_audio.save_audio(
+                    self.save_dir,
+                    validation_images,
+                    decorated_shortname,
+                )
+                validation_audio.log_audio_to_webhook(
+                    validation_images,
+                    decorated_shortname,
+                    prompt,
+                )
+            else:
+                validation_audio.save_audio(
+                    self.save_dir,
+                    validation_images,
+                    decorated_shortname,
+                    sample_rate=sample_rate,
+                )
+                validation_audio.log_audio_to_webhook(
+                    validation_images,
+                    decorated_shortname,
+                    prompt,
+                    sample_rate=sample_rate,
+                )
         elif isinstance(self.model, VideoModelFoundation):
+            audio_sample_rate = None
+            if audio_results:
+                audio_sample_rate = self.model.validation_audio_sample_rate()
+                if audio_sample_rate is None:
+                    raise ValueError("validation_audio_sample_rate is required to mux audio into validation videos.")
             video_paths = validation_video.save_videos(
                 self.save_dir,
                 validation_images,
                 decorated_shortname,
                 self.validation_resolutions,
                 self.config,
+                validation_audios=validation_audios if audio_results else None,
+                audio_sample_rate=audio_sample_rate,
             )
             self.validation_video_paths[decorated_shortname] = video_paths
             validation_video.log_videos_to_webhook(
@@ -2596,6 +2668,13 @@ class Validation:
                 prompt,
                 self.eval_scores,
             )
+            if audio_results:
+                validation_audio.log_audio_to_webhook(
+                    validation_audios,
+                    decorated_shortname,
+                    prompt,
+                    sample_rate=audio_sample_rate,
+                )
         else:
             validation_images_utils.save_images(
                 self.save_dir,
@@ -2620,12 +2699,14 @@ class Validation:
         validation_type: str = None,
         adapter_run: ValidationAdapterRun | None = None,
         image_accumulator: dict | None = None,
+        audio_accumulator: dict | None = None,
     ):
         """Processes each validation prompt and logs the result."""
         self.evaluation_result = None
         if self.validation_prompt_dict is None:
             self.validation_prompt_dict = {}
         validation_images = image_accumulator if image_accumulator is not None else {}
+        validation_audios = audio_accumulator if audio_accumulator is not None else {}
         _content = self.validation_prompt_metadata.get("validation_prompts", []) if self.validation_prompt_metadata else []
         total_samples = len(_content) if _content is not None else 0
         if self.validation_image_inputs:
@@ -2675,6 +2756,7 @@ class Validation:
             position=1,
             disable=progress_disable,
         ):
+            self._check_abort()
             decorated_shortname = self._decorate_shortname(item.shortname, adapter_run)
             self.validation_prompt_dict[decorated_shortname] = item.prompt
             logger.debug(f"validation prompt (shortname={decorated_shortname}): '{item.prompt}'")
@@ -2691,6 +2773,7 @@ class Validation:
                 self._apply_serialised_validation_result(
                     payload=payload,
                     validation_images=validation_images,
+                    validation_audios=validation_audios,
                     validation_type=validation_type,
                 )
 
@@ -2710,12 +2793,14 @@ class Validation:
                 self._apply_serialised_validation_result(
                     payload=payload,
                     validation_images=validation_images,
+                    validation_audios=validation_audios,
                     validation_type=validation_type,
                 )
         self.validation_images = validation_images
+        self.validation_audios = validation_audios
         if not use_distributed or self.accelerator.is_main_process:
             try:
-                self._log_validations_to_trackers(validation_images)
+                self._log_validations_to_trackers(validation_images, validation_audios)
             except Exception as e:
                 logger.error(f"Error logging validation images: {e}")
                 import traceback
@@ -3016,6 +3101,7 @@ class Validation:
         cache_shortname: str | None = None,
     ):
         """Generate validation images for a single prompt."""
+        self._check_abort()
         # Placeholder for actual image generation and logging
         logger.debug(f"Validating ({validation_shortname}) prompt: {prompt}")
         # benchmarked / stitched validation images
@@ -3023,6 +3109,7 @@ class Validation:
         # untouched / un-stitched validation images
         checkpoint_validation_images = {}
         ema_validation_images = {}
+        validation_audio_results = {}
         benchmark_image = None
         is_audio = isinstance(self.model, AudioModelFoundation)
         resolutions = self.validation_resolutions if not is_audio else [(0, 0)]
@@ -3032,6 +3119,7 @@ class Validation:
         cache_key = cache_shortname or validation_shortname
 
         for resolution in resolutions:
+            self._check_abort()
             extra_validation_kwargs = {}
             validation_input_image_for_resolution = None
 
@@ -3151,6 +3239,7 @@ class Validation:
                 stitched_validation_images[validation_shortname] = []
                 checkpoint_validation_images[validation_shortname] = []
                 ema_validation_images[validation_shortname] = []
+                validation_audio_results[validation_shortname] = []
             try:
                 _embed = self._gather_prompt_embeds(
                     prompt, validation_shortname, validation_input_image_for_resolution, cache_shortname=cache_key
@@ -3217,17 +3306,18 @@ class Validation:
                             load_from_cache=True,
                         )
                     if _negative_embed is not None:
-                        negative_embed_data = {
-                            k: (
-                                v.to(
-                                    device=self.inference_device,
-                                    dtype=self.config.weight_dtype,
-                                )
-                                if hasattr(v, "to")
-                                else v
-                            )
-                            for k, v in _negative_embed.items()
-                        }
+                        negative_embed_data = {}
+                        for key, value in _negative_embed.items():
+                            if hasattr(value, "to"):
+                                if "mask" in key:
+                                    negative_embed_data[key] = value.to(device=self.inference_device)
+                                else:
+                                    negative_embed_data[key] = value.to(
+                                        device=self.inference_device,
+                                        dtype=self.config.weight_dtype,
+                                    )
+                            else:
+                                negative_embed_data[key] = value
                         pipeline_kwargs.update(
                             self.model.convert_negative_text_embed_for_pipeline(
                                 text_embedding=negative_embed_data,
@@ -3254,7 +3344,9 @@ class Validation:
 
                 validation_types = self._validation_types()
                 all_validation_type_results = {}
+                all_validation_type_audio = {}
                 for current_validation_type in validation_types:
+                    self._check_abort()
                     if not self.config.validation_randomize:
                         pipeline_kwargs["generator"] = self._get_generator()
                         logger.debug(f"Using a generator? {pipeline_kwargs['generator']}")
@@ -3273,7 +3365,21 @@ class Validation:
                     }
 
                     call_kwargs = inspect.signature(self.model.pipeline.__call__).parameters
+                    if "num_videos_per_prompt" in call_kwargs and "num_images_per_prompt" in pipeline_kwargs:
+                        pipeline_kwargs["num_videos_per_prompt"] = pipeline_kwargs.pop("num_images_per_prompt")
                     logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
+
+                    # Add abort checking callback for pipeline execution
+                    if "callback_on_step_end" in call_kwargs:
+
+                        def abort_check_callback(pipe, step_index, timestep, callback_kwargs):
+                            self._check_abort()
+                            return callback_kwargs
+
+                        # Only set callback if not already provided
+                        if "callback_on_step_end" not in pipeline_kwargs:
+                            pipeline_kwargs["callback_on_step_end"] = abort_check_callback
+
                     # remove any kwargs that are not in the pipeline call
                     removed_kwargs = [k for k in pipeline_kwargs.keys() if k not in call_kwargs]
                     pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
@@ -3300,22 +3406,43 @@ class Validation:
                             dtype=self.config.weight_dtype,
                         ):
                             pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                        current_results = None
                         if hasattr(pipeline_result, "frames"):
-                            all_validation_type_results[current_validation_type] = pipeline_result.frames
+                            current_results = pipeline_result.frames
                         elif hasattr(pipeline_result, "images"):
-                            all_validation_type_results[current_validation_type] = pipeline_result.images
+                            current_results = pipeline_result.images
                         elif hasattr(pipeline_result, "audios"):
-                            all_validation_type_results[current_validation_type] = pipeline_result.audios
-                        else:
-                            logger.error(f"Pipeline result does not have 'frames', 'images' or 'audios': {pipeline_result}")
-                            all_validation_type_results[current_validation_type] = []
+                            current_results = pipeline_result.audios
+                        elif hasattr(pipeline_result, "audio"):
+                            current_results = pipeline_result.audio
+                        if current_results is None:
+                            logger.error(
+                                "Pipeline result does not have 'frames', 'images', 'audios', or 'audio': %s",
+                                pipeline_result,
+                            )
+                            current_results = []
+                        all_validation_type_results[current_validation_type] = current_results
+                        if isinstance(self.model, VideoModelFoundation):
+                            expected_count = None
+                            if isinstance(current_results, list):
+                                expected_count = len(current_results)
+                            elif hasattr(current_results, "shape") and len(getattr(current_results, "shape", [])) > 0:
+                                expected_count = current_results.shape[0]
+                            audio_results = self.model.extract_validation_audio(pipeline_result, expected_count)
+                            if audio_results is not None:
+                                all_validation_type_audio[current_validation_type] = audio_results
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
+
+                    # Check for abort after pipeline completes
+                    self._check_abort()
 
                 # Keep the original unstitched results for checkpoint storage and benchmark comparison
                 # Retrieve the default image result for stitching
                 ema_image_results = all_validation_type_results.get("ema")
                 validation_image_results = all_validation_type_results.get("checkpoint", ema_image_results)
+                ema_audio_results = all_validation_type_audio.get("ema")
+                validation_audio_result = all_validation_type_audio.get("checkpoint", ema_audio_results)
                 original_validation_image_results = validation_image_results
                 display_validation_results = validation_image_results.copy()
 
@@ -3429,7 +3556,12 @@ class Validation:
                 # Use original results for checkpoint storage, display results for viewing
                 checkpoint_validation_images[validation_shortname].extend(original_validation_image_results)
                 stitched_validation_images[validation_shortname].extend(display_validation_results)
+                if validation_audio_result:
+                    validation_audio_results[validation_shortname].extend(validation_audio_result)
 
+            except ValidationAbortedException:
+                # Re-raise abort exceptions to propagate cancellation
+                raise
             except Exception as e:
                 import traceback
 
@@ -3441,6 +3573,7 @@ class Validation:
             stitched_validation_images,
             checkpoint_validation_images,
             ema_validation_images,
+            validation_audio_results,
         )
 
     def _save_videos(self, validation_images, validation_shortname, validation_prompt):
@@ -3497,14 +3630,23 @@ class Validation:
         if video_paths:
             self.validation_video_paths[validation_shortname] = video_paths
 
-    def _log_validations_to_trackers(self, validation_images):
+    def _log_validations_to_trackers(self, validation_images, validation_audios=None):
         if isinstance(self.model, AudioModelFoundation):
+            sample_rate = self.model.validation_audio_sample_rate()
             for validation_shortname in validation_images.keys():
-                validation_audio.log_audio_to_trackers(
-                    self.accelerator,
-                    validation_images,
-                    validation_shortname,
-                )
+                if sample_rate is None:
+                    validation_audio.log_audio_to_trackers(
+                        self.accelerator,
+                        validation_images,
+                        validation_shortname,
+                    )
+                else:
+                    validation_audio.log_audio_to_trackers(
+                        self.accelerator,
+                        validation_images,
+                        validation_shortname,
+                        sample_rate=sample_rate,
+                    )
         elif isinstance(self.model, VideoModelFoundation):
             validation_images_utils.log_images_to_trackers(
                 self.accelerator,
@@ -3512,6 +3654,22 @@ class Validation:
                 self.validation_resolutions,
                 self.config,
             )
+            if validation_audios:
+                sample_rate = self.model.validation_audio_sample_rate()
+                for validation_shortname in validation_audios.keys():
+                    if sample_rate is None:
+                        validation_audio.log_audio_to_trackers(
+                            self.accelerator,
+                            validation_audios,
+                            validation_shortname,
+                        )
+                    else:
+                        validation_audio.log_audio_to_trackers(
+                            self.accelerator,
+                            validation_audios,
+                            validation_shortname,
+                            sample_rate=sample_rate,
+                        )
         else:
             validation_images_utils.log_images_to_trackers(
                 self.accelerator,

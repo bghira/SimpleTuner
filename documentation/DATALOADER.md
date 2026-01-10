@@ -394,6 +394,8 @@ A video dataset should be a folder of (eg. mp4) video files and the usual method
     - `resolution_frames`: Bucket by resolution and frame count in `WxH@F` format (e.g., `1920x1080@125`). Useful for training on datasets with varying resolutions and durations.
   - `frame_interval` (optional, int) when using `bucket_strategy: "resolution_frames"`, frame counts are rounded down to the nearest multiple of this value. Set this to your model's required frame count factor (some models require `num_frames - 1` to be divisible by a certain value).
 
+**Automatic Frame Count Adjustment:** SimpleTuner automatically adjusts video frame counts to satisfy model-specific constraints. For example, LTX-2 requires frame counts that satisfy `frames % 8 == 1` (e.g., 49, 57, 65, 73, 81, etc.). If your videos have different frame counts (e.g., 119 frames), they are automatically trimmed down to the nearest valid frame count (e.g., 113 frames). Videos that become shorter than `min_frames` after adjustment are skipped with a warning message. This automatic adjustment prevents training errors and requires no configuration on your part.
+
 **Note:** When using `bucket_strategy: "resolution_frames"` with `num_frames` set, you'll get a single frame bucket and videos shorter than `num_frames` will be discarded. Unset `num_frames` if you want multiple frame buckets with fewer discards.
 
 Example using `resolution_frames` bucketing for mixed-resolution video datasets:

@@ -37,7 +37,7 @@ sudo apt update && sudo apt install -y python3.12 python3.12-venv
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 如果直接在仓库开发，请从源码安装并执行 `pip install -e .[cuda,dev]`。

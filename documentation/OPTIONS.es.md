@@ -191,16 +191,17 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Opciones**: `cpu`, `accelerator`, `pipeline`
   - En `accelerator`, puede funcionar moderadamente más rápido con el riesgo de posibles OOM en tarjetas de 24G para un modelo tan grande como Flux.
   - En `cpu`, la cuantización tarda unos 30 segundos. (**Predeterminado**)
-  - `pipeline` delega la cuantización a Diffusers usando `--quantization_config` o presets compatibles con pipeline (p. ej., `nf4-bnb`, `int4-torchao`, o checkpoints `.gguf`). Los presets manuales de Quanto/TorchAO no son compatibles cuando este modo está habilitado.
+  - `pipeline` delega la cuantización a Diffusers usando `--quantization_config` o presets compatibles con pipeline (p. ej., `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, o checkpoints `.gguf`).
 
 ### `--base_model_precision`
 
-- **Qué**: Reduce la precisión del modelo y entrena usando menos memoria. Hay tres backends de cuantización compatibles: BitsAndBytes (pipeline), TorchAO (pipeline o manual) y Optimum Quanto (manual).
+- **Qué**: Reduce la precisión del modelo y entrena usando menos memoria. Hay tres backends de cuantización compatibles: BitsAndBytes (pipeline), TorchAO (pipeline o manual) y Optimum Quanto (pipeline o manual).
 
 #### Presets de pipeline de Diffusers
 
 - `nf4-bnb` se carga a través de Diffusers con una configuración BitsAndBytes NF4 de 4 bits (solo CUDA). Requiere `bitsandbytes` y una build de diffusers con soporte BnB.
-- `int4-torchao` usa un TorchAoConfig con `Int4WeightOnlyConfig` vía Diffusers (CUDA). Requiere `torchao` y `transformers>=4.39`.
+- `int4-torchao`, `int8-torchao` y `fp8-torchao` usan TorchAoConfig vía Diffusers (CUDA). Requiere `torchao` y diffusers/transformers recientes.
+- `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto` y `fp8uz-quanto` usan QuantoConfig vía Diffusers. Diffusers asigna FP8-NUZ a pesos float8; usa cuantización manual de quanto si necesitas la variante NUZ.
 - `.gguf` checkpoints se detectan automáticamente y se cargan con `GGUFQuantizationConfig` cuando está disponible. Instala versiones recientes de diffusers/transformers para soporte GGUF.
 
 #### Optimum Quanto
