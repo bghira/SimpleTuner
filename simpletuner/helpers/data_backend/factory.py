@@ -693,7 +693,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 if frame_value % 8 != 1:
                     raise ValueError(
                         f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
-                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}."
+                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}. "
+                        f"Note: Individual videos are automatically trimmed to satisfy this constraint. "
+                        f"Videos shorter than min_frames after trimming will be skipped."
                     )
 
         # Warn about resolution_frames bucket strategy with fixed num_frames

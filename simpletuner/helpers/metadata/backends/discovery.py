@@ -395,6 +395,28 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 if video_metadata:
                     use_metadata_only = True
                     image_metadata.update(video_metadata)
+
+                    # Adjust video frame count in metadata to satisfy model constraints (metadata-only path)
+                    if "num_frames" in image_metadata:
+                        from simpletuner.helpers.models import ModelRegistry
+
+                        model_family = StateTracker.get_model_family()
+                        model_class = None
+                        if model_family and model_family in ModelRegistry.model_families():
+                            model_class = ModelRegistry.model_families()[model_family]
+
+                        if model_class and hasattr(model_class, "adjust_video_frames"):
+                            original_frames = image_metadata["num_frames"]
+                            adjusted_frames = model_class.adjust_video_frames(original_frames)
+
+                            if adjusted_frames != original_frames:
+                                logger.info(
+                                    f"(id={self.id}) Adjusted video {image_path_str} from {original_frames} to "
+                                    f"{adjusted_frames} frames to satisfy model constraints (metadata-only)."
+                                )
+                                image_metadata["num_frames"] = adjusted_frames
+                                image_metadata["original_num_frames"] = original_frames
+
                     logger.debug("(id=%s) Using ffprobe metadata-only scan for %s", self.id, image_path_str)
 
             if use_metadata_only:
@@ -420,6 +442,36 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 if is_video_file:
                     file_loader = load_video
                 image = file_loader(BytesIO(image_data))
+
+                # Adjust video frames to satisfy model constraints (full decode path)
+                if is_video_file and hasattr(image, "shape"):
+                    from simpletuner.helpers.image_manipulation.load import adjust_video_frames_for_model
+                    from simpletuner.helpers.models import ModelRegistry
+
+                    model_family = StateTracker.get_model_family()
+                    model_class = None
+                    if model_family and model_family in ModelRegistry.model_families():
+                        model_class = ModelRegistry.model_families()[model_family]
+
+                    image, original_frames, was_adjusted = adjust_video_frames_for_model(image, model_class)
+
+                    if was_adjusted:
+                        adjusted_frames = image.shape[0]
+                        logger.info(
+                            f"(id={self.id}) Adjusted video {image_path_str} from {original_frames} to "
+                            f"{adjusted_frames} frames to satisfy model constraints."
+                        )
+
+                        # Check if adjusted frames meet minimum requirements
+                        if self.minimum_num_frames is not None and adjusted_frames < self.minimum_num_frames:
+                            logger.warning(
+                                f"(id={self.id}) Skipping video {image_path_str}: after adjusting from {original_frames} to "
+                                f"{adjusted_frames} frames, it is below minimum required {self.minimum_num_frames} frames."
+                            )
+                            statistics.setdefault("skipped", {}).setdefault("insufficient_frames_after_adjustment", 0)
+                            statistics["skipped"]["insufficient_frames_after_adjustment"] += 1
+                            return aspect_ratio_bucket_indices
+
                 if not self.meets_resolution_requirements(image=image):
                     if not self.delete_unwanted_images:
                         logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")

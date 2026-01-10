@@ -442,6 +442,25 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             if "num_frames" not in metadata and "num_frames" in video_metadata:
                 metadata["num_frames"] = video_metadata["num_frames"]
 
+        # Adjust video frame count to satisfy model constraints
+        if "num_frames" in metadata:
+            from simpletuner.helpers.models import ModelRegistry
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            original_frames = metadata["num_frames"]
+            model_family = StateTracker.get_model_family()
+            if model_family and model_family in ModelRegistry.model_families():
+                model_class = ModelRegistry.model_families()[model_family]
+                if hasattr(model_class, "adjust_video_frames"):
+                    adjusted_frames = model_class.adjust_video_frames(original_frames)
+                    if adjusted_frames != original_frames:
+                        logger.info(
+                            f"(id={self.id}) Adjusted video from {original_frames} to {adjusted_frames} frames "
+                            f"(HuggingFace metadata)"
+                        )
+                        metadata["num_frames"] = adjusted_frames
+                        metadata["original_num_frames"] = original_frames
+
         return metadata
 
     def _get_image_metadata_from_item(self, item: Dict) -> Dict[str, Any]:
