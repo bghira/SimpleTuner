@@ -72,6 +72,15 @@ class LTXVideo2(VideoModelFoundation):
     DEFAULT_LYCORIS_TARGET = ["Attention"]
     DEFAULT_LORA_EXCLUDE_TARGETS = ".*connector.*|.*embedding.*"
 
+    @classmethod
+    def adjust_video_frames(cls, num_frames: int) -> int:
+        """Adjust frame count to satisfy frames % 8 == 1 constraint."""
+        if num_frames % 8 == 1:
+            return num_frames
+        # Round down to nearest valid count: (frames - 1) // 8 * 8 + 1
+        adjusted = ((num_frames - 1) // 8) * 8 + 1
+        return max(adjusted, 1)
+
     MODEL_CLASS = LTX2VideoTransformer3DModel
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
@@ -665,7 +674,8 @@ class LTXVideo2(VideoModelFoundation):
         if validation_frames is not None and validation_frames % 8 != 1:
             raise ValueError(
                 f"{self.NAME} requires validation_num_video_frames to satisfy frames % 8 == 1 (e.g., 49, 57, 65, 73, 81). "
-                f"Received {validation_frames}."
+                f"Received {validation_frames}. Training videos are automatically adjusted, but validation frame "
+                f"count must be configured correctly."
             )
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):

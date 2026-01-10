@@ -446,7 +446,7 @@ class ModelFoundation(ABC):
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
     DEFAULT_AUDIO_CHANNELS = 1
-    DEFAULT_LORA_EXCLUDE_TARGETS = None # regex, not list
+    DEFAULT_LORA_EXCLUDE_TARGETS = None  # regex, not list
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
@@ -4550,6 +4550,21 @@ class VideoModelFoundation(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.config = config
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
+
+    @classmethod
+    def adjust_video_frames(cls, num_frames: int) -> int:
+        """
+        Calculate nearest valid frame count at or below the given count.
+        Default implementation returns the input unchanged.
+        Subclasses override to enforce model-specific constraints.
+
+        Args:
+            num_frames: The desired number of frames
+
+        Returns:
+            Adjusted frame count (always >= 1)
+        """
+        return num_frames
 
     def get_transforms(self, dataset_type: str = "image"):
         if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
