@@ -402,7 +402,28 @@ class JobSubmissionService:
         if not push_to_hub:
             return None
 
-        return os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        for env_key in (
+            "HF_TOKEN",
+            "HUGGINGFACE_HUB_TOKEN",
+            "HUGGINGFACEHUB_API_TOKEN",
+            "HF_API_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+        ):
+            token = os.environ.get(env_key)
+            if token:
+                return token
+
+        from huggingface_hub import HfFolder
+
+        token = HfFolder.get_token()
+        if token:
+            return token
+
+        token_path = Path.home() / ".cache" / "huggingface" / "token"
+        if token_path.exists():
+            return token_path.read_text().strip()
+
+        return None
 
     def _load_lycoris_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Load lycoris config if specified."""
