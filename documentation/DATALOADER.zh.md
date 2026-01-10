@@ -360,6 +360,8 @@
     - `resolution_frames`：按分辨率与帧数以 `WxH@F` 格式分桶（如 `1920x1080@125`）。适用于分辨率与时长变化较大的数据集。
   - `frame_interval`（可选，int）：当使用 `bucket_strategy: "resolution_frames"` 时，帧数会向下舍入到该值的最近倍数。应设置为模型要求的帧数因子（某些模型要求 `num_frames - 1` 可被某值整除）。
 
+**自动帧数调整:** SimpleTuner 自动调整视频帧数以满足特定的模型约束。例如，LTX-2 要求帧数满足 `frames % 8 == 1`（如 49、57、65、73、81 等）。如果你的视频帧数不同（如 119 帧），会自动调整至最近的有效帧数（如 113 帧）。调整后短于 `min_frames` 的视频会被跳过并显示警告信息。此自动调整可防止训练错误，无需任何配置。
+
 **注记:** 当使用 `bucket_strategy: "resolution_frames"` 且设置 `num_frames` 时，会得到单一帧桶，且短于 `num_frames` 的视频会被丢弃。若希望更多帧桶且减少丢弃，请取消设置 `num_frames`。
 
 混合分辨率视频数据集使用 `resolution_frames` 分桶的示例：
