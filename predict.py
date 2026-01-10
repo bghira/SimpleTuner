@@ -37,6 +37,24 @@ class Predictor(BasePredictor):
             raise FileNotFoundError(f"{param_name} file not found: {value}")
         return path, None
 
+    def _normalize_hub_model_id(self, hub_model_id: str) -> str:
+        from urllib.parse import urlparse
+
+        cleaned = hub_model_id.strip()
+        if not cleaned:
+            return cleaned
+
+        parsed = urlparse(cleaned)
+        if parsed.scheme and parsed.netloc:
+            cleaned = parsed.path
+
+        cleaned = cleaned.split("?", 1)[0].split("#", 1)[0].lstrip("/")
+        if "huggingface.co/" in cleaned:
+            cleaned = cleaned.split("huggingface.co/", 1)[1]
+        if cleaned.startswith("huggingface.co"):
+            cleaned = cleaned[len("huggingface.co") :].lstrip("/")
+        return cleaned
+
     def predict(
         self,
         images: Path = Input(
@@ -160,11 +178,7 @@ class Predictor(BasePredictor):
             if not token_value:
                 raise ValueError("hf_token is required when using hub_model_id for HuggingFace Hub publishing.")
             # Strip any URL prefix from hub_model_id (Replicate's proxy can add prefixes)
-            clean_hub_model_id = hub_model_id
-            for prefix in ["https://huggingface.co/", "http://huggingface.co/", "huggingface.co/"]:
-                if clean_hub_model_id.startswith(prefix):
-                    clean_hub_model_id = clean_hub_model_id[len(prefix):]
-                    break
+            clean_hub_model_id = self._normalize_hub_model_id(hub_model_id)
             # Override HF_ENDPOINT to bypass Replicate's proxy for Hub uploads
             os.environ["HF_ENDPOINT"] = "https://huggingface.co"
             config_overrides["--push_to_hub"] = True
@@ -206,7 +220,7 @@ class Predictor(BasePredictor):
                 output_url = f"s3://{s3_bucket}/{path_prefix}"
             print(f"\nCheckpoints published to: {output_url}")
         elif hub_model_id:
-            output_url = f"https://huggingface.co/{hub_model_id}"
+            output_url = f"https://huggingface.co/{self._normalize_hub_model_id(hub_model_id)}"
             print(f"\nModel published to: {output_url}")
         else:
             # Publishing configured via config_json
