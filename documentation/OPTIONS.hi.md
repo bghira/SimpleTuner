@@ -191,16 +191,17 @@ simpletuner configure config/foo/config.json
 - **Choices**: `cpu`, `accelerator`, `pipeline`
   - `accelerator` पर यह मध्यम रूप से तेज़ हो सकता है लेकिन Flux जैसे बड़े मॉडल के लिए 24G cards पर OOM का जोखिम रहता है।
   - `cpu` पर quantisation में लगभग 30 seconds लगते हैं। (**Default**)
-  - `pipeline` Diffusers को `--quantization_config` या pipeline‑capable presets (उदा. `nf4-bnb`, `int4-torchao`, या `.gguf` checkpoints) के साथ quantization delegate करता है। यह मोड enabled होने पर manual Quanto/TorchAO presets समर्थित नहीं हैं।
+  - `pipeline` Diffusers को `--quantization_config` या pipeline‑capable presets (उदा. `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, या `.gguf` checkpoints) के साथ quantization delegate करता है।
 
 ### `--base_model_precision`
 
-- **What**: model precision घटाएँ और कम memory में training करें। तीन समर्थित quantisation backends हैं: BitsAndBytes (pipeline), TorchAO (pipeline या manual), और Optimum Quanto (manual)।
+- **What**: model precision घटाएँ और कम memory में training करें। तीन समर्थित quantisation backends हैं: BitsAndBytes (pipeline), TorchAO (pipeline या manual), और Optimum Quanto (pipeline या manual)।
 
 #### Diffusers pipeline presets
 
 - `nf4-bnb` Diffusers के माध्यम से 4‑bit NF4 BitsAndBytes config के साथ लोड होता है (CUDA only)। `bitsandbytes` और BnB support वाली diffusers build आवश्यक है।
-- `int4-torchao` Diffusers के माध्यम से TorchAoConfig with `Int4WeightOnlyConfig` का उपयोग करता है (CUDA)। `torchao` और `transformers>=4.39` आवश्यक है।
+- `int4-torchao`, `int8-torchao`, और `fp8-torchao` Diffusers के माध्यम से TorchAoConfig का उपयोग करते हैं (CUDA)। `torchao` और recent diffusers/transformers आवश्यक है।
+- `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto`, और `fp8uz-quanto` Diffusers के माध्यम से QuantoConfig का उपयोग करते हैं। Diffusers FP8-NUZ को float8 weights पर map करता है; NUZ variant के लिए manual quanto quantization उपयोग करें।
 - `.gguf` checkpoints auto‑detect होकर उपलब्ध होने पर `GGUFQuantizationConfig` के साथ लोड होते हैं। GGUF support के लिए recent diffusers/transformers install करें।
 
 #### Optimum Quanto

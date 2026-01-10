@@ -191,16 +191,17 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `cpu`, `accelerator`, `pipeline`
   - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
   - On `cpu`, quantisation takes about 30 seconds. (**Default**)
-  - `pipeline` delegates quantization to Diffusers using `--quantization_config` or pipeline-capable presets (e.g., `nf4-bnb`, `int4-torchao`, or `.gguf` checkpoints). Manual Quanto/TorchAO presets are not supported when this mode is enabled.
+  - `pipeline` delegates quantization to Diffusers using `--quantization_config` or pipeline-capable presets (e.g., `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, or `.gguf` checkpoints).
 
 ### `--base_model_precision`
 
-- **What**: Reduce model precision and train using less memory. There are three supported quantisation backends: BitsAndBytes (pipeline), TorchAO (pipeline or manual), and Optimum Quanto (manual).
+- **What**: Reduce model precision and train using less memory. There are three supported quantisation backends: BitsAndBytes (pipeline), TorchAO (pipeline or manual), and Optimum Quanto (pipeline or manual).
 
 #### Diffusers pipeline presets
 
 - `nf4-bnb` loads through Diffusers with a 4-bit NF4 BitsAndBytes config (CUDA only). Requires `bitsandbytes` and a diffusers build with BnB support.
-- `int4-torchao` uses a TorchAoConfig with `Int4WeightOnlyConfig` via Diffusers (CUDA). Requires `torchao` and `transformers>=4.39`.
+- `int4-torchao`, `int8-torchao`, and `fp8-torchao` use a TorchAoConfig via Diffusers (CUDA). Requires `torchao` and a recent diffusers/transformers build.
+- `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto`, and `fp8uz-quanto` use QuantoConfig via Diffusers. Diffusers maps FP8-NUZ to float8 weights; use manual quanto quantization if you need the NUZ variant.
 - `.gguf` checkpoints are auto-detected and loaded with `GGUFQuantizationConfig` when available. Install recent diffusers/transformers for GGUF support.
 
 #### Optimum Quanto
