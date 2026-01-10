@@ -4,7 +4,7 @@
 
 ## 快速开始
 
-1. **安装 SimpleTuner**：`pip install simpletuner[cuda]`（其他平台请参阅 README）
+1. **安装 SimpleTuner**：`pip install 'simpletuner[cuda]'`（其他平台请参阅 README）
 2. **配置**：`simpletuner configure`（交互式设置）
 3. **训练**：`simpletuner train`
 

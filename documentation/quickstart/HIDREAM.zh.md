@@ -39,7 +39,7 @@ apt -y install nvidia-cuda-toolkit
 通过 pip 安装 SimpleTuner：
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 如需手动安装或开发环境设置，请参阅[安装文档](../INSTALL.md)。
@@ -444,7 +444,7 @@ huggingface-cli login
 
 **选项 1（推荐 - pip 安装）：**
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train
 ```
 

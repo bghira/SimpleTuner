@@ -37,7 +37,7 @@ Siga a instalação padrão do SimpleTuner (pip ou código-fonte). Para uma work
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 Para contribuidores ou quem estiver trabalhando diretamente no repositório, instale a partir da fonte e depois rode `pip install -e .[cuda,dev]`.

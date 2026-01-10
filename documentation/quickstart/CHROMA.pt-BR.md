@@ -34,7 +34,7 @@ python3 --version
 Instale o SimpleTuner (exemplo CUDA):
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 Para detalhes de setup específicos do backend (CUDA, ROCm, Apple), consulte o [guia de instalação](../INSTALL.md).

@@ -4,7 +4,7 @@
 
 ## クイックスタート
 
-1. **SimpleTunerのインストール**: `pip install simpletuner[cuda]` (他のプラットフォームについてはREADMEを参照)
+1. **SimpleTunerのインストール**: `pip install 'simpletuner[cuda]'` (他のプラットフォームについてはREADMEを参照)
 2. **設定**: `simpletuner configure` (対話型セットアップ)
 3. **トレーニング**: `simpletuner train`
 
