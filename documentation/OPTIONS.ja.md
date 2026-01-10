@@ -192,16 +192,17 @@ simpletuner configure config/foo/config.json
 - **選択肢**: `cpu`、`accelerator`、`pipeline`
   - `accelerator` では若干高速になる可能性がありますが、Flux のように大きなモデルでは 24G カードで OOM するリスクがあります。
   - `cpu` では量子化に約 30 秒かかります。（**既定**）
-  - `pipeline` は `--quantization_config` またはパイプライン対応のプリセット（例: `nf4-bnb`、`int4-torchao`、`.gguf` チェックポイント）を使って Diffusers に量子化を委譲します。手動の Quanto/TorchAO プリセットはこのモードでは非対応です。
+  - `pipeline` は `--quantization_config` またはパイプライン対応のプリセット（例: `nf4-bnb`、`int8-torchao`、`fp8-torchao`、`int8-quanto`、`.gguf` チェックポイント）を使って Diffusers に量子化を委譲します。
 
 ### `--base_model_precision`
 
-- **内容**: モデル精度を下げ、少ないメモリで学習します。対応する量子化バックエンドは BitsAndBytes（pipeline）、TorchAO（pipeline または手動）、Optimum Quanto（手動）の 3 つです。
+- **内容**: モデル精度を下げ、少ないメモリで学習します。対応する量子化バックエンドは BitsAndBytes（pipeline）、TorchAO（pipeline または手動）、Optimum Quanto（pipeline または手動）の 3 つです。
 
 #### Diffusers のパイプラインプリセット
 
 - `nf4-bnb` は Diffusers 経由で 4-bit NF4 BitsAndBytes 設定で読み込みます（CUDA のみ）。`bitsandbytes` と BnB 対応の diffusers が必要です。
-- `int4-torchao` は Diffusers 経由で TorchAoConfig と `Int4WeightOnlyConfig` を使用します（CUDA）。`torchao` と `transformers>=4.39` が必要です。
+- `int4-torchao`、`int8-torchao`、`fp8-torchao` は Diffusers 経由で TorchAoConfig を使用します（CUDA）。`torchao` と最新の diffusers/transformers が必要です。
+- `int8-quanto`、`int4-quanto`、`int2-quanto`、`fp8-quanto`、`fp8uz-quanto` は Diffusers 経由で QuantoConfig を使用します。Diffusers は FP8-NUZ を float8 重みにマップするため、NUZ 変種が必要な場合は手動の quanto 量子化を使ってください。
 - `.gguf` チェックポイントは自動検出され、`GGUFQuantizationConfig` で読み込まれます。GGUF 対応には最新の diffusers/transformers をインストールしてください。
 
 #### Optimum Quanto

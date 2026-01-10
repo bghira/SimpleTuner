@@ -70,7 +70,7 @@ from simpletuner.helpers.training.optimizer_param import (
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
-from simpletuner.helpers.training.quantisation import PIPELINE_QUANTIZATION_PRESETS
+from simpletuner.helpers.training.quantisation import PIPELINE_ONLY_PRESETS, PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -2173,7 +2173,9 @@ class Trainer:
             return isinstance(candidate, str) and candidate.endswith(".gguf")
 
         gguf_requested = any(_is_gguf_path(path) for path in base_paths if path)
-        base_pipeline_precision = base_model_precision in PIPELINE_QUANTIZATION_PRESETS
+        pipeline_only_precision = base_model_precision in PIPELINE_ONLY_PRESETS
+        pipeline_capable_precision = base_model_precision in PIPELINE_QUANTIZATION_PRESETS
+        base_pipeline_precision = pipeline_only_precision or (quantize_via_pipeline and pipeline_capable_precision)
         self.config.is_quanto = False
         self.config.is_torchao = False
         self.config.is_bnb = False
