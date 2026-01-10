@@ -673,6 +673,7 @@ class WebhookHandler:
         images: list | None = None,
         videos: list | None = None,
         audios: list | None = None,
+        exclude_webhook_urls: list[str] | set[str] | tuple[str, ...] | str | None = None,
     ):
         """
         Send structured data to all "raw" webhooks (JSON payload) with optional media attachments.
@@ -706,9 +707,18 @@ class WebhookHandler:
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
 
+        exclude_urls = set()
+        if exclude_webhook_urls:
+            if isinstance(exclude_webhook_urls, str):
+                exclude_urls.add(exclude_webhook_urls)
+            else:
+                exclude_urls.update([url for url in exclude_webhook_urls if isinstance(url, str) and url])
+
         # Send to all raw webhook backends that meet the log level
         for backend in self.backends:
             if backend["webhook_type"] != "raw":
+                continue
+            if exclude_urls and backend.get("webhook_url") in exclude_urls:
                 continue
             if not self._check_level(message_level, backend["log_level"]):
                 continue

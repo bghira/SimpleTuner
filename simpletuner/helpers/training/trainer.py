@@ -88,6 +88,45 @@ from simpletuner.helpers.webhooks.events import (
 from simpletuner.simpletuner_sdk.api_state import APIState
 
 
+def _format_signal_message(signal_num: int, signal_name: Optional[str] = None) -> str:
+    if signal_name is None:
+        try:
+            signal_name = signal.Signals(signal_num).name
+        except ValueError:
+            signal_name = None
+
+    sigkill_value = getattr(signal, "SIGKILL", None)
+    if signal_name == "SIGKILL" or (sigkill_value is not None and signal_num == sigkill_value):
+        return "Training subprocess was killed by SIGKILL (likely out of system memory or critical system condition)."
+    if signal_name:
+        return f"Training subprocess was killed by {signal_name} (signal {signal_num})."
+    return f"Training subprocess was killed by signal {signal_num}."
+
+
+def _format_signal_exit_message(exit_code: int) -> Optional[str]:
+    if exit_code >= 0:
+        return None
+    return _format_signal_message(-exit_code)
+
+
+def _default_callback_url() -> str:
+    ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"
+    protocol = "https" if ssl_enabled else "http"
+    host = os.environ.get("SIMPLETUNER_WEBHOOK_HOST", "localhost")
+    port = os.environ.get("SIMPLETUNER_WEBHOOK_PORT", "8001")
+    base_url = f"{protocol}://{host}:{port}"
+    return os.environ.get("SIMPLETUNER_WEBHOOK_CALLBACK_URL", f"{base_url}/callback")
+
+
+def _webui_callback_exclusions() -> Optional[set[str]]:
+    if not os.environ.get("SIMPLETUNER_PARENT_PID"):
+        return None
+    callback_url = _default_callback_url()
+    if not callback_url:
+        return None
+    return {callback_url}
+
+
 def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
     """Derive a concise failure summary and optional log excerpt from accelerate output."""
 
@@ -98,6 +137,7 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
     best_line: Optional[str] = None
     exception_fallback: Optional[tuple[int, str]] = None
     signal_fallback: Optional[tuple[int, str]] = None
+    signal_exit_message = _format_signal_exit_message(exit_code)
 
     def _extract_exception_name(text: str) -> Optional[str]:
         match = re.search(r"\b([A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit))\b", text)
@@ -121,9 +161,12 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
         match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", candidate_raw)
         if match:
             signal_name = match.group(1)
-            signal_num = match.group(2)
-            signal_fallback = (idx, f"Training subprocess was killed by {signal_name} (signal {signal_num}).")
+            signal_num = int(match.group(2))
+            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
             break
+
+    if signal_fallback is None and signal_exit_message is not None:
+        signal_fallback = (max(len(cleaned) - 1, 0), signal_exit_message)
 
     for idx in range(len(cleaned) - 1, -1, -1):
         candidate_raw = cleaned[idx].strip()
@@ -6415,11 +6458,13 @@ def run_trainer_job(config):
                 payload["traceback"] = traceback.format_exc()
             except Exception:
                 pass
+            exclude_urls = _webui_callback_exclusions()
             webhook_handler.send_raw(
                 structured_data=payload,
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
+                exclude_webhook_urls=exclude_urls,
             )
             try:
                 APIState.set_state("training_status", "failed")
@@ -6460,11 +6505,13 @@ def run_trainer_job(config):
                 payload["traceback"] = traceback.format_exc()
             except Exception:
                 pass
+            exclude_urls = _webui_callback_exclusions()
             webhook_handler.send_raw(
                 structured_data=payload,
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
+                exclude_webhook_urls=exclude_urls,
             )
             try:
                 APIState.set_state("training_status", "failed")
