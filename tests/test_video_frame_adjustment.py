@@ -5,7 +5,11 @@ import numpy as np
 
 from simpletuner.helpers.image_manipulation.load import adjust_video_frames_for_model
 from simpletuner.helpers.models.common import VideoModelFoundation
+from simpletuner.helpers.models.longcat_video.model import LongCatVideo
 from simpletuner.helpers.models.ltxvideo2.model import LTXVideo2
+from simpletuner.helpers.models.ltxvideo.model import LTXVideo
+from simpletuner.helpers.models.sanavideo.model import SanaVideo
+from simpletuner.helpers.models.wan.model import Wan
 
 
 class TestVideoFrameAdjustmentBase(unittest.TestCase):
@@ -71,6 +75,138 @@ class TestLTXVideo2FrameAdjustment(unittest.TestCase):
             self.assertEqual(adjusted % 8, 1)
             # Verify adjustment only rounds down
             self.assertLessEqual(adjusted, frames)
+
+
+class TestWanFrameAdjustment(unittest.TestCase):
+    """Test Wan frame constraint (frames % 8 == 1)"""
+
+    def test_valid_frame_count_unchanged(self):
+        """Frame counts satisfying frames % 8 == 1 should be unchanged"""
+        valid_counts = [1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81]
+        for count in valid_counts:
+            with self.subTest(frames=count):
+                result = Wan.adjust_video_frames(count)
+                self.assertEqual(result, count)
+                self.assertEqual(result % 8, 1)
+
+    def test_invalid_frame_count_rounds_down(self):
+        """Invalid frame counts should round down to nearest valid value"""
+        test_cases = [
+            (119, 113),  # 119 -> 113
+            (50, 49),  # 50 -> 49
+            (100, 97),  # 100 -> 97
+        ]
+        for input_frames, expected_frames in test_cases:
+            with self.subTest(input_frames=input_frames):
+                result = Wan.adjust_video_frames(input_frames)
+                self.assertEqual(result, expected_frames)
+                self.assertEqual(result % 8, 1)
+
+    def test_adjustment_idempotent(self):
+        """Applying adjustment twice should give same result"""
+        for frames in [50, 119, 100]:
+            adjusted_once = Wan.adjust_video_frames(frames)
+            adjusted_twice = Wan.adjust_video_frames(adjusted_once)
+            self.assertEqual(adjusted_once, adjusted_twice)
+
+
+class TestLTXVideoFrameAdjustment(unittest.TestCase):
+    """Test LTXVideo frame constraint (frames % 8 == 1)"""
+
+    def test_valid_frame_count_unchanged(self):
+        """Frame counts satisfying frames % 8 == 1 should be unchanged"""
+        valid_counts = [1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121]
+        for count in valid_counts:
+            with self.subTest(frames=count):
+                result = LTXVideo.adjust_video_frames(count)
+                self.assertEqual(result, count)
+                self.assertEqual(result % 8, 1)
+
+    def test_invalid_frame_count_rounds_down(self):
+        """Invalid frame counts should round down to nearest valid value"""
+        test_cases = [
+            (119, 113),  # 119 -> 113
+            (50, 49),  # 50 -> 49
+            (100, 97),  # 100 -> 97
+        ]
+        for input_frames, expected_frames in test_cases:
+            with self.subTest(input_frames=input_frames):
+                result = LTXVideo.adjust_video_frames(input_frames)
+                self.assertEqual(result, expected_frames)
+                self.assertEqual(result % 8, 1)
+
+    def test_adjustment_idempotent(self):
+        """Applying adjustment twice should give same result"""
+        for frames in [50, 119, 100]:
+            adjusted_once = LTXVideo.adjust_video_frames(frames)
+            adjusted_twice = LTXVideo.adjust_video_frames(adjusted_once)
+            self.assertEqual(adjusted_once, adjusted_twice)
+
+
+class TestSanaVideoFrameAdjustment(unittest.TestCase):
+    """Test SanaVideo frame constraint (frames % 8 == 1)"""
+
+    def test_valid_frame_count_unchanged(self):
+        """Frame counts satisfying frames % 8 == 1 should be unchanged"""
+        valid_counts = [1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81]
+        for count in valid_counts:
+            with self.subTest(frames=count):
+                result = SanaVideo.adjust_video_frames(count)
+                self.assertEqual(result, count)
+                self.assertEqual(result % 8, 1)
+
+    def test_invalid_frame_count_rounds_down(self):
+        """Invalid frame counts should round down to nearest valid value"""
+        test_cases = [
+            (119, 113),  # 119 -> 113
+            (50, 49),  # 50 -> 49
+            (100, 97),  # 100 -> 97
+        ]
+        for input_frames, expected_frames in test_cases:
+            with self.subTest(input_frames=input_frames):
+                result = SanaVideo.adjust_video_frames(input_frames)
+                self.assertEqual(result, expected_frames)
+                self.assertEqual(result % 8, 1)
+
+    def test_adjustment_idempotent(self):
+        """Applying adjustment twice should give same result"""
+        for frames in [50, 119, 100]:
+            adjusted_once = SanaVideo.adjust_video_frames(frames)
+            adjusted_twice = SanaVideo.adjust_video_frames(adjusted_once)
+            self.assertEqual(adjusted_once, adjusted_twice)
+
+
+class TestLongCatVideoFrameAdjustment(unittest.TestCase):
+    """Test LongCatVideo frame constraint (frames % 8 == 1)"""
+
+    def test_valid_frame_count_unchanged(self):
+        """Frame counts satisfying frames % 8 == 1 should be unchanged"""
+        valid_counts = [1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81]
+        for count in valid_counts:
+            with self.subTest(frames=count):
+                result = LongCatVideo.adjust_video_frames(count)
+                self.assertEqual(result, count)
+                self.assertEqual(result % 8, 1)
+
+    def test_invalid_frame_count_rounds_down(self):
+        """Invalid frame counts should round down to nearest valid value"""
+        test_cases = [
+            (119, 113),  # 119 -> 113
+            (50, 49),  # 50 -> 49
+            (100, 97),  # 100 -> 97
+        ]
+        for input_frames, expected_frames in test_cases:
+            with self.subTest(input_frames=input_frames):
+                result = LongCatVideo.adjust_video_frames(input_frames)
+                self.assertEqual(result, expected_frames)
+                self.assertEqual(result % 8, 1)
+
+    def test_adjustment_idempotent(self):
+        """Applying adjustment twice should give same result"""
+        for frames in [50, 119, 100]:
+            adjusted_once = LongCatVideo.adjust_video_frames(frames)
+            adjusted_twice = LongCatVideo.adjust_video_frames(adjusted_once)
+            self.assertEqual(adjusted_once, adjusted_twice)
 
 
 class TestAdjustVideoFramesForModel(unittest.TestCase):
