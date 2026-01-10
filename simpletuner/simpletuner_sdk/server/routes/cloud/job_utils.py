@@ -111,7 +111,7 @@ async def get_cost_estimate(
     summary = await store.get_metrics_summary(days=90)
     avg_duration = summary.get("avg_job_duration_seconds")
 
-    cost_per_hour = get_default_hardware_cost_per_hour(store)
+    cost_per_hour = await get_default_hardware_cost_per_hour(store)
 
     if avg_duration is None:
         return CostEstimateResponse(
