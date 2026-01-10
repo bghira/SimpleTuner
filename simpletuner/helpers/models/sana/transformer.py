@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor2_0, SanaLinearAttnProcessor2_0
 from diffusers.models.embeddings import PatchEmbed, PixArtAlphaTextProjection
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -314,6 +315,14 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     _supports_gradient_checkpointing = True
     _no_split_modules = ["SanaTransformerBlock", "PatchEmbed"]
     _skip_layerwise_casting_patterns = ["patch_embed", "norm"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_attention_mask": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     def __init__(
         self,

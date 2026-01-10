@@ -41,6 +41,7 @@ from simpletuner.helpers.data_backend.factory import (
     run_distillation_cache_generation,
 )
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
@@ -5064,6 +5065,9 @@ class Trainer:
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
+        # Context-parallel batch synchronization: ensures all ranks in a CP group
+        # receive the same batch data before it's split along the sequence dimension
+        cp_batch_synchronizer = ContextParallelBatchSynchronizer(self.accelerator)
         num_epochs_to_track = int(math.ceil(self.config.num_train_epochs)) + 1
         if self.config.ignore_final_epochs:
             num_epochs_to_track += 1000000
@@ -5113,8 +5117,11 @@ class Trainer:
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
+            # With CP enabled, only the CP-local leader prefetches; batches are broadcast via CP sync.
             iterator_args = [train_backends]
-            if self.config.dataloader_prefetch:
+            prefetch_on_rank = not cp_batch_synchronizer.is_cp_enabled or cp_batch_synchronizer.is_cp_leader
+            should_prefetch = self.config.dataloader_prefetch and prefetch_on_rank
+            if should_prefetch:
                 iterator_args = []
                 if self.bf is not None:
                     self.bf.stop_fetching()
@@ -5132,7 +5139,12 @@ class Trainer:
                 checkpoint_saved_this_step = False
                 self._exit_on_signal()
                 step += 1
-                prepared_batch = self.prepare_batch(iterator_fn(step, *iterator_args))
+                # Fetch the batch with CP-aware sampling. When context parallelism is
+                # enabled, only the CP leader samples; non-leaders receive via broadcast.
+                # This ensures all ranks in a CP group receive the same batch before the
+                # model's _cp_plan splits it along the sequence dimension.
+                raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
+                prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
                     self.extra_lr_scheduler_kwargs["step"] = self.state["global_step"]

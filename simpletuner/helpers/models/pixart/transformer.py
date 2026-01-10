@@ -17,6 +17,7 @@ import numpy as np
 import torch
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import BasicTransformerBlock
 from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor, FusedAttnProcessor2_0
 from diffusers.models.embeddings import PatchEmbed, PixArtAlphaTextProjection
@@ -93,6 +94,14 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
     _supports_gradient_checkpointing = True
     _no_split_modules = ["BasicTransformerBlock", "PatchEmbed"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm", "adaln_single"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_attention_mask": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
