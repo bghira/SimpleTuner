@@ -788,6 +788,7 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
             mock_dist.broadcast_object_list = MagicMock(side_effect=lambda batch_list, **kwargs: None)
             result = synchronizer.fetch_batch(mock_iterator, 10)
             mock_iterator.assert_called_once_with(10)
+            self.assertEqual(result, {"data": [1, 2, 3]})
 
     def test_fetch_batch_cp_non_leader_skips_iterator(self):
         """Test fetch_batch on non-CP-leader skips the iterator."""

@@ -18,7 +18,7 @@ The synchronization addresses two key issues:
 import logging
 import numbers
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -98,7 +98,7 @@ def get_cp_info(accelerator) -> Tuple[bool, Optional[Any], int, int]:
                         pass
 
         logger.warning(
-            f"Could not find CP dimension in mesh (dims: {mesh_dim_names}). " "Batch synchronization will be skipped."
+            f"Could not find CP dimension in mesh (dims: {mesh_dim_names}). Batch synchronization will be skipped."
         )
         return False, None, 0, 1
 
@@ -174,7 +174,7 @@ class ContextParallelBatchSynchronizer:
 
             cp_enabled, cp_group, cp_rank, cp_size = self._cp_info
             if cp_enabled:
-                logger.info(f"Context parallel batch sync initialized: " f"cp_rank={cp_rank}, cp_size={cp_size}")
+                logger.info(f"Context parallel batch sync initialized: cp_rank={cp_rank}, cp_size={cp_size}")
 
     @property
     def is_cp_enabled(self) -> bool:

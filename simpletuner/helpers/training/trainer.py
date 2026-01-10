@@ -5017,10 +5017,10 @@ class Trainer:
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
-            # When context parallelism is enabled, only CP leaders should prefetch.
-            # Non-leaders skip sampling entirely and receive batches via broadcast.
+            # With CP enabled, only the CP-local leader prefetches; batches are broadcast via CP sync.
             iterator_args = [train_backends]
-            should_prefetch = self.config.dataloader_prefetch and cp_batch_synchronizer.is_cp_leader
+            prefetch_on_rank = not cp_batch_synchronizer.is_cp_enabled or cp_batch_synchronizer.is_cp_leader
+            should_prefetch = self.config.dataloader_prefetch and prefetch_on_rank
             if should_prefetch:
                 iterator_args = []
                 if self.bf is not None:
