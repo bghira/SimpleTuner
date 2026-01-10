@@ -868,6 +868,19 @@ class TestTrainer(unittest.TestCase):
             self.fail("Expected excerpt to be populated")
         self.assertIn("CUDA out of memory", excerpt)
 
+    def test_accelerate_failure_summary_highlights_signal_exit(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        lines = [
+            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
+        ]
+
+        summary, excerpt = trainer_module._summarize_accelerate_failure(-9, lines)
+
+        self.assertIn("Accelerate launch exited with status -9", summary)
+        self.assertTrue("SIGKILL" in summary or "signal 9" in summary)
+        self.assertIsNotNone(excerpt)
+
     def test_launch_with_accelerate_fallback_imports(self):
         from simpletuner.helpers.training import trainer as trainer_module
 

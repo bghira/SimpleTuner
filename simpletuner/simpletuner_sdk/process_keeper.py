@@ -654,6 +654,26 @@ logger.info("Subprocess exiting")
 
             time.sleep(interval)
 
+    @staticmethod
+    def _format_signal_message(signal_num: int, signal_name: Optional[str] = None) -> str:
+        if signal_name is None:
+            try:
+                signal_name = signal.Signals(signal_num).name
+            except ValueError:
+                signal_name = None
+
+        sigkill_value = getattr(signal, "SIGKILL", None)
+        if signal_name == "SIGKILL" or (sigkill_value is not None and signal_num == sigkill_value):
+            return "Training subprocess was killed by SIGKILL (likely out of system memory or critical system condition)."
+        if signal_name:
+            return f"Training subprocess was killed by {signal_name} (signal {signal_num})."
+        return f"Training subprocess was killed by signal {signal_num}."
+
+    def _format_signal_exit_message(self, exit_code: Optional[int]) -> Optional[str]:
+        if exit_code is None or exit_code >= 0:
+            return None
+        return self._format_signal_message(-exit_code)
+
     def _emit_fallback_error_if_needed(self) -> None:
         if self._relayed_failure:
             return
@@ -664,7 +684,7 @@ logger.info("Subprocess exiting")
 
         synthesized = self._extract_error_from_logs(exit_code)
         if synthesized is None:
-            message = f"Training failed with exit code {exit_code}."
+            message = self._format_signal_exit_message(exit_code) or f"Training failed with exit code {exit_code}."
             synthesized = {"message": message, "exit_code": exit_code, "source": "process"}
         else:
             synthesized.setdefault("exit_code", exit_code)
@@ -699,6 +719,7 @@ logger.info("Subprocess exiting")
         tail_lines = [line.rstrip("\n") for line in lines[-200:]]
         meaningful_lines = [line.strip() for line in tail_lines if line.strip()]
 
+        signal_message = self._format_signal_exit_message(exit_code)
         preferred_message: Optional[str] = None
         for line in reversed(tail_lines):
             lowered = line.lower().strip()
@@ -712,12 +733,15 @@ logger.info("Subprocess exiting")
                 match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", line)
                 if match:
                     signal_name = match.group(1)
-                    signal_num = match.group(2)
-                    preferred_message = f"Training subprocess was killed by {signal_name} (signal {signal_num})."
+                    signal_num = int(match.group(2))
+                    preferred_message = self._format_signal_message(signal_num, signal_name)
                     break
             if "nccl" in lowered and "warning" in lowered:
                 # Skip NCCL warnings as final result unless nothing better is found
                 preferred_message = preferred_message or line.strip()
+
+        if not preferred_message and signal_message:
+            preferred_message = signal_message
 
         if not preferred_message and meaningful_lines:
             preferred_message = meaningful_lines[-1]
