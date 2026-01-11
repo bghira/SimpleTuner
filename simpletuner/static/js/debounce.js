@@ -15,6 +15,7 @@
      */
     function debounce(func, wait, immediate) {
         var timeout;
+        var pendingResolvers = [];
 
         return function debounced() {
             var context = this;
@@ -22,20 +23,30 @@
 
             var later = function() {
                 timeout = null;
-                if (!immediate) func.apply(context, args);
+                var result;
+                if (!immediate) {
+                    result = func.apply(context, args);
+                }
+                // Resolve all pending promises with the result
+                var resolvers = pendingResolvers;
+                pendingResolvers = [];
+                resolvers.forEach(function(resolve) { resolve(result); });
             };
 
             var callNow = immediate && !timeout;
             clearTimeout(timeout);
             timeout = setTimeout(later, wait);
 
-            if (callNow) func.apply(context, args);
+            var result;
+            if (callNow) {
+                result = func.apply(context, args);
+                // Resolve immediately for immediate mode
+                return Promise.resolve(result);
+            }
 
-            // Return a promise for async operations
+            // Return a promise that resolves when the debounced call executes
             return new Promise(function(resolve) {
-                setTimeout(function() {
-                    resolve(func.apply(context, args));
-                }, wait);
+                pendingResolvers.push(resolve);
             });
         };
     }
@@ -136,18 +147,33 @@
                 // Add loading state
                 element.classList.add('debouncing');
 
+                // Suppress dirty tracking during debounced HTMX validation
+                // These are validation requests, not new user input
+                var trainerStore = window.Alpine && window.Alpine.store ? window.Alpine.store('trainer') : null;
+                var wasSuppressed = trainerStore && trainerStore._suppressDirtyTracking;
+                if (trainerStore && !wasSuppressed) {
+                    trainerStore._suppressDirtyTracking = true;
+                }
+
                 // If element has HTMX attributes, trigger HTMX
                 if (window.htmx && element.hasAttribute('hx-trigger')) {
                     htmx.trigger(element, eventType);
                 }
 
-                // Custom event for other handlers
+                // Custom event for other handlers - use non-bubbling to avoid form handlers
                 var customEvent = new CustomEvent('debounced-' + eventType, {
                     detail: { originalEvent: event },
-                    bubbles: true,
+                    bubbles: false,  // Don't bubble to form handlers
                     cancelable: true
                 });
                 element.dispatchEvent(customEvent);
+
+                // Restore dirty tracking after a microtask
+                if (trainerStore && !wasSuppressed) {
+                    Promise.resolve().then(function() {
+                        trainerStore._suppressDirtyTracking = false;
+                    });
+                }
 
                 // Remove loading state
                 setTimeout(function() {
