@@ -68,7 +68,10 @@
                                         <div class="col" x-show="wizardRequiresUpload">
                                             <div class="text-muted small mb-1">Upload</div>
                                             <div class="small fw-medium">
-                                                <span x-text="preSubmitModal.dataUploadPreview?.total_files"></span> files
+                                                <span x-text="preSubmitModal.dataUploadPreview?.total_files || 0"></span> files
+                                            </div>
+                                            <div class="small text-muted">
+                                                <span x-text="formatBytes((preSubmitModal.dataUploadPreview?.total_size_mb || 0) * 1024 * 1024)"></span>
                                             </div>
                                         </div>
                                     </div>
@@ -84,7 +87,7 @@
                                                @change.stop>
                                         <label class="form-check-label" for="quickDataConsent">
                                             I confirm uploading <span x-text="preSubmitModal.dataUploadPreview?.total_files || 0"></span> files
-                                            (<span x-text="preSubmitModal.dataUploadPreview?.total_size_mb || 0"></span> MB)
+                                            (<span x-text="formatBytes((preSubmitModal.dataUploadPreview?.total_size_mb || 0) * 1024 * 1024)"></span>)
                                         </label>
                                     </div>
                                 </template>
@@ -178,7 +181,7 @@
                                         <h4 class="mb-1">Data Upload Required</h4>
                                         <p class="text-muted mb-0">
                                             <span x-text="preSubmitModal.dataUploadPreview?.total_files || 0"></span> files
-                                            (<span x-text="preSubmitModal.dataUploadPreview?.total_size_mb || 0"></span> MB)
+                                            (<span x-text="formatBytes((preSubmitModal.dataUploadPreview?.total_size_mb || 0) * 1024 * 1024)"></span>)
                                             will be uploaded
                                         </p>
                                     </div>
@@ -192,6 +195,7 @@
                                                         <div class="flex-grow-1 min-width-0">
                                                             <code class="text-info d-block text-truncate" style="font-size: 0.85rem;" x-text="ds.id"></code>
                                                             <small class="text-muted text-truncate d-block" x-text="ds.instance_data_dir"></small>
+                                                            <small class="text-muted d-block" x-text="formatBytes((ds.total_size_mb || 0) * 1024 * 1024)"></small>
                                                         </div>
                                                         <span class="badge bg-secondary ms-2" x-text="ds.file_count + ' files'"></span>
                                                     </div>
@@ -256,6 +260,7 @@
                                                             <div class="text-info">
                                                                 <i class="fas fa-check me-1"></i>
                                                                 <span x-text="preSubmitModal.dataUploadPreview?.total_files || 0"></span> files
+                                                                <div class="small text-muted mt-1" x-text="formatBytes((preSubmitModal.dataUploadPreview?.total_size_mb || 0) * 1024 * 1024)"></div>
                                                             </div>
                                                         </template>
                                                         <template x-if="!wizardRequiresUpload">

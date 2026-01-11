@@ -408,9 +408,13 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
-                    trainerStore.formDirty = true;
-                    trainerStore._skipNextClean = true;
+                    // Use markFormDirty to respect _suppressDirtyTracking
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    } else if (!trainerStore._suppressDirtyTracking) {
+                        trainerStore.formDirty = true;
+                        trainerStore._skipNextClean = true;
+                    }
                 }
 
                 // Update DOM element value (no events - they interfere with dirty tracking)
@@ -583,7 +587,12 @@ if (!window.hardwareHeroCTA) {
             watchTrainerStore() {
                 let attempts = 0;
                 const maxAttempts = 50;
+                let timeoutId = null;
+                let stopped = false;
+
                 const checkStore = () => {
+                    if (stopped) return;
+
                     const store = window.Alpine?.store?.('trainer');
                     const config = store?.activeEnvironmentConfig;
 
@@ -594,11 +603,17 @@ if (!window.hardwareHeroCTA) {
 
                     attempts++;
                     if (attempts < maxAttempts) {
-                        setTimeout(checkStore, 100);
+                        timeoutId = setTimeout(checkStore, 100);
                     }
                 };
 
-                setTimeout(checkStore, 100);
+                // Register cleanup before starting the timeout
+                this._cleanupFns.push(() => {
+                    stopped = true;
+                    if (timeoutId) clearTimeout(timeoutId);
+                });
+
+                timeoutId = setTimeout(checkStore, 100);
             },
 
             destroy() {
@@ -766,9 +781,13 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
-                    trainerStore.formDirty = true;
-                    trainerStore._skipNextClean = true;
+                    // Use markFormDirty to respect _suppressDirtyTracking
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    } else if (!trainerStore._suppressDirtyTracking) {
+                        trainerStore.formDirty = true;
+                        trainerStore._skipNextClean = true;
+                    }
                 }
 
                 // Update DOM element value (no events - they interfere with dirty tracking)
@@ -916,7 +935,12 @@ if (!window.hardwareHeroCTA) {
             watchTrainerStore() {
                 let attempts = 0;
                 const maxAttempts = 50;
+                let timeoutId = null;
+                let stopped = false;
+
                 const checkStore = () => {
+                    if (stopped) return;
+
                     const store = window.Alpine?.store?.('trainer');
                     const config = store?.activeEnvironmentConfig;
 
@@ -927,11 +951,17 @@ if (!window.hardwareHeroCTA) {
 
                     attempts++;
                     if (attempts < maxAttempts) {
-                        setTimeout(checkStore, 100);
+                        timeoutId = setTimeout(checkStore, 100);
                     }
                 };
 
-                setTimeout(checkStore, 100);
+                // Register cleanup before starting the timeout
+                this._cleanupFns.push(() => {
+                    stopped = true;
+                    if (timeoutId) clearTimeout(timeoutId);
+                });
+
+                timeoutId = setTimeout(checkStore, 100);
             },
 
             destroy() {
@@ -1067,9 +1097,13 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
-                    trainerStore.formDirty = true;
-                    trainerStore._skipNextClean = true;
+                    // Use markFormDirty to respect _suppressDirtyTracking
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    } else if (!trainerStore._suppressDirtyTracking) {
+                        trainerStore.formDirty = true;
+                        trainerStore._skipNextClean = true;
+                    }
                 }
 
                 // Update DOM element value (no events - they interfere with dirty tracking)
@@ -1224,7 +1258,12 @@ if (!window.hardwareHeroCTA) {
             watchTrainerStore() {
                 let attempts = 0;
                 const maxAttempts = 50;
+                let timeoutId = null;
+                let stopped = false;
+
                 const checkStore = () => {
+                    if (stopped) return;
+
                     const store = window.Alpine?.store?.('trainer');
                     const config = store?.activeEnvironmentConfig;
 
@@ -1235,11 +1274,17 @@ if (!window.hardwareHeroCTA) {
 
                     attempts++;
                     if (attempts < maxAttempts) {
-                        setTimeout(checkStore, 100);
+                        timeoutId = setTimeout(checkStore, 100);
                     }
                 };
 
-                setTimeout(checkStore, 100);
+                // Register cleanup before starting the timeout
+                this._cleanupFns.push(() => {
+                    stopped = true;
+                    if (timeoutId) clearTimeout(timeoutId);
+                });
+
+                timeoutId = setTimeout(checkStore, 100);
             },
 
             destroy() {
@@ -1407,9 +1452,13 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
-                    // Directly set formDirty and _skipNextClean to prevent checkFormDirty from resetting it
-                    trainerStore.formDirty = true;
-                    trainerStore._skipNextClean = true;
+                    // Use markFormDirty to respect _suppressDirtyTracking
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    } else if (!trainerStore._suppressDirtyTracking) {
+                        trainerStore.formDirty = true;
+                        trainerStore._skipNextClean = true;
+                    }
                 }
 
                 // Update DOM element value (no events - they interfere with dirty tracking)

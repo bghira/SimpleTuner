@@ -5097,27 +5097,39 @@ function trainerComponent() {
                         this.markFormClean();
                         window.showToast('Configuration saved', 'success');
 
-                        const feedbackTarget = document.getElementById('htmx-save-feedback');
-                        if (feedbackTarget) {
-                            feedbackTarget.innerHTML = responseText || '<div class="text-success">Configuration saved</div>';
-                            feedbackTarget.classList.remove('visually-hidden');
-                            if (!feedbackTarget.dataset.persist) {
-                                setTimeout(() => {
-                                    feedbackTarget.classList.add('visually-hidden');
-                                }, 3500);
-                            }
-                        }
-
                         // Dispatch event for other components (e.g., publishing tab)
                         window.dispatchEvent(new CustomEvent('config-saved'));
 
                         try {
+                            // Suppress dirty tracking during post-save refresh to prevent form being marked dirty
+                            this._suppressDirtyTracking = true;
                             await this.fetchActiveEnvironmentConfig();
                             if (this.showConfigJsonModal) {
                                 this.resetConfigJsonDraft();
                             }
+                            // CRITICAL: Wait for Alpine's reactive DOM updates to complete before
+                            // updating baseline and clearing suppression. Without this, Alpine may
+                            // update form inputs AFTER we clear _suppressDirtyTracking, causing
+                            // input/change events to flip formDirty back to true.
+                            await new Promise(resolve => {
+                                this.$nextTick(() => {
+                                    // Double nextTick to ensure all reactive effects have settled
+                                    this.$nextTick(() => {
+                                        requestAnimationFrame(() => {
+                                            resolve();
+                                        });
+                                    });
+                                });
+                            });
+                            // Update baseline to match refreshed values so checkFormDirty() sees no changes
+                            this.updateBaselineFormData();
+                            // Ensure form is still clean after refresh
+                            this.formDirty = false;
+                            this._skipNextClean = false;
                         } catch (refreshError) {
                             console.error('Failed to refresh configuration after save:', refreshError);
+                        } finally {
+                            this._suppressDirtyTracking = false;
                         }
                     } else {
                         let detail = null;
@@ -5521,9 +5533,20 @@ function trainerComponent() {
     .dashboard-wrapper {
         position: relative;
     }
+    /* All these elements must use fixed positioning to prevent flex layout shifts when visible */
+    #save-config-indicator,
+    #htmx-save-feedback {
+        position: fixed !important;
+        top: 1rem;
+        right: 1rem;
+        z-index: 1055;
+    }
+    #htmx-save-feedback {
+        top: 3rem; /* Offset below save-config-indicator */
+    }
     .save-config-loading-banner {
         display: none;
-        position: absolute;
+        position: fixed !important; /* Must be fixed, not relative/absolute - prevents flex layout shift */
         top: 1rem;
         right: 1rem;
         z-index: 1055;

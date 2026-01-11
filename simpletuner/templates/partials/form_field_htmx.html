@@ -1254,14 +1254,8 @@ window.handleFieldValidation = window.handleFieldValidation || function(event, e
         }
     }
 
-    if (window.Alpine && Alpine.store('trainer')) {
-        const trainerStore = Alpine.store('trainer');
-        if (typeof trainerStore.markFormDirty === 'function') {
-            trainerStore.markFormDirty();
-        } else {
-            trainerStore.formDirty = true;
-            trainerStore._skipNextClean = true;
-        }
-    }
+    // NOTE: Do NOT mark form dirty here. The original input/change event already
+    // marked the form dirty via handleFieldInput. Validation responses arriving
+    // after save would incorrectly flip formDirty back to true.
 };
 </script>

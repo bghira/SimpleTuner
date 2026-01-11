@@ -247,7 +247,7 @@ window.cloudSubmissionMethods = {
             this.uploadProgress.eventSource.close();
         }
 
-        const eventSource = new EventSource(`/api/cloud/upload/progress/${uploadId}`);
+        const eventSource = new EventSource(`/api/webhooks/upload/progress/${uploadId}`);
         this.uploadProgress.eventSource = eventSource;
 
         eventSource.onmessage = (event) => {
