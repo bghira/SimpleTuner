@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from .storage.base import get_default_config_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,7 +117,7 @@ class AuditStore:
         if self._initialized:
             return
 
-        self._db_path = db_path or Path.home() / ".simpletuner" / "audit.db"
+        self._db_path = db_path or get_default_config_dir() / "audit.db"
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
 
