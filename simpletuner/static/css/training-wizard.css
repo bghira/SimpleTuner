@@ -92,113 +92,123 @@
 }
 
 /* Wizard Progress Indicator */
-.wizard-progress {
+.training-wizard-modal .wizard-progress {
     display: flex;
-    justify-content: space-between;
-    padding: 1.5rem 2rem 1rem;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 1rem 1.5rem 0.75rem;
     border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    background: rgba(0, 0, 0, 0.2);
-    overflow-x: hidden;
+    background: rgba(0, 0, 0, 0.15);
+    overflow-x: auto;
     flex-shrink: 0;
-    gap: 0.5rem;
+    gap: 0;
 }
 
-.wizard-step {
+.training-wizard-modal .wizard-step {
     display: flex;
     flex-direction: column;
     align-items: center;
-    flex: 1 1 0;
-    min-width: 0;
-    max-width: 120px;
+    flex: 0 0 auto;
+    padding: 0 0.4rem;
+    min-width: 70px;
     position: relative;
-    opacity: 0.4;
-    transition: opacity 0.3s;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+    background: transparent;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    color: inherit;
 }
 
-.wizard-step.active {
+.training-wizard-modal .wizard-step.active {
     opacity: 1;
+    background: transparent;
 }
 
-.wizard-step.completed {
-    opacity: 0.7;
+.training-wizard-modal .wizard-step.completed {
+    opacity: 0.6;
+    background: transparent;
 }
 
-.wizard-step.skipped {
-    opacity: 0.3;
+.training-wizard-modal .wizard-step.skipped {
+    opacity: 0.25;
 }
 
-.wizard-step.skipped .step-label {
+.training-wizard-modal .wizard-step.skipped .step-label {
     text-decoration: line-through;
 }
 
-/* Progress connectors */
-.wizard-step:not(:last-child)::after {
+/* Progress connectors - thin line at vertical center of step number */
+.training-wizard-modal .wizard-step:not(:last-child)::after {
     content: '';
     position: absolute;
-    top: 18px;
-    left: calc(50% + 18px);
-    right: calc(-50% + 18px);
-    height: 2px;
-    background: rgba(148, 163, 184, 0.2);
+    top: 10px;
+    left: calc(50% + 12px);
+    right: calc(-50% + 12px);
+    height: 1px;
+    background: rgba(148, 163, 184, 0.25);
     z-index: 0;
 }
 
-.wizard-step.completed:not(:last-child)::after {
-    background: linear-gradient(90deg, #3b82f6 0%, #2563eb 100%);
+.training-wizard-modal .wizard-step.completed:not(:last-child)::after {
+    background: #3b82f6;
 }
 
-.step-number {
-    width: 36px;
-    height: 36px;
+.training-wizard-modal .step-number {
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
-    background: rgba(148, 163, 184, 0.1);
-    border: 2px solid rgba(148, 163, 184, 0.3);
+    background: transparent;
+    border: 2px solid rgba(148, 163, 184, 0.4);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
-    color: #cbd5e1;
+    font-weight: 500;
+    font-size: 0.65rem;
+    color: #94a3b8;
     margin-bottom: 0.5rem;
     position: relative;
     z-index: 1;
+    transition: all 0.2s;
 }
 
-.wizard-step.active .step-number {
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+.training-wizard-modal .wizard-step.active .step-number {
+    background: #3b82f6;
     border-color: #3b82f6;
     color: white;
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
 }
 
-.wizard-step.completed .step-number {
-    background: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
-    border-color: #15803d;
+.training-wizard-modal .wizard-step.completed .step-number {
+    background: transparent;
+    border-color: #3b82f6;
     color: transparent;
-    box-shadow: 0 0 18px rgba(34, 197, 94, 0.45);
 }
 
-.wizard-step.completed .step-number::before {
+.training-wizard-modal .wizard-step.completed .step-number::before {
     content: '✓';
     position: absolute;
-    color: #f0fdf4;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    color: #3b82f6;
+    font-size: 0.6rem;
+    font-weight: 600;
 }
 
-.step-label {
-    font-size: 0.75rem;
-    color: #94a3b8;
+.training-wizard-modal .step-label {
+    font-size: 0.65rem;
+    color: #64748b;
     text-align: center;
-    white-space: normal;
-    word-break: break-word;
+    white-space: nowrap;
     line-height: 1.2;
-    width: 100%;
+    letter-spacing: -0.01em;
 }
 
-.wizard-step.active .step-label {
-    color: #f8fafc;
+.training-wizard-modal .wizard-step.active .step-label {
+    color: #e2e8f0;
     font-weight: 500;
+}
+
+.training-wizard-modal .wizard-step.completed .step-label {
+    color: #94a3b8;
 }
 
 /* Wizard Content */
@@ -433,23 +443,33 @@
         gap: 0.5rem;
     }
 
-    .wizard-progress {
-        overflow-x: scroll;
-        padding: 0.75rem 1rem;
+    .training-wizard-modal .wizard-progress {
+        overflow-x: auto;
+        padding: 0.5rem 0.75rem;
+        justify-content: flex-start;
     }
 
-    .wizard-step {
+    .training-wizard-modal .wizard-step {
+        padding: 0 0.6rem;
         min-width: 50px;
     }
 
-    .step-number {
-        width: 28px;
-        height: 28px;
-        font-size: 0.75rem;
+    .training-wizard-modal .wizard-step:not(:last-child)::after {
+        top: 8px;
+        left: calc(50% + 10px);
+        right: calc(-50% + 10px);
     }
 
-    .step-label {
-        font-size: 0.6rem;
+    .training-wizard-modal .step-number {
+        width: 16px;
+        height: 16px;
+        font-size: 0.55rem;
+        border-width: 1.5px;
+        margin-bottom: 0.35rem;
+    }
+
+    .training-wizard-modal .step-label {
+        font-size: 0.5rem;
     }
 
     /* Compact wizard option cards for mobile */
@@ -599,18 +619,30 @@
         padding: 0.6rem;
     }
 
-    .wizard-progress {
-        padding: 0.5rem;
+    .training-wizard-modal .wizard-progress {
+        padding: 0.35rem 0.5rem;
     }
 
-    .step-number {
-        width: 24px;
-        height: 24px;
-        font-size: 0.65rem;
+    .training-wizard-modal .wizard-step {
+        padding: 0 0.4rem;
+        min-width: 28px;
+    }
+
+    .training-wizard-modal .wizard-step:not(:last-child)::after {
+        top: 7px;
+        left: calc(50% + 9px);
+        right: calc(-50% + 9px);
+    }
+
+    .training-wizard-modal .step-number {
+        width: 14px;
+        height: 14px;
+        font-size: 0.5rem;
+        border-width: 1.5px;
         margin-bottom: 0.25rem;
     }
 
-    .step-label {
+    .training-wizard-modal .step-label {
         display: none;
     }
 }

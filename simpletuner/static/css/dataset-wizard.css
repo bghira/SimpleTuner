@@ -2,85 +2,113 @@
 
 .dataset-wizard-modal .wizard-progress {
     display: flex;
-    justify-content: space-between;
-    padding: 1.5rem 2rem 1rem;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 1rem 1.5rem 0.75rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(0, 0, 0, 0.2);
+    background: rgba(0, 0, 0, 0.15);
+    overflow-x: auto;
+    gap: 0;
 }
 
 .dataset-wizard-modal .wizard-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    flex: 1;
-    position: relative;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    flex: 0 0 auto !important;
+    padding: 0 0.4rem !important;
+    min-width: 70px !important;
+    position: relative !important;
     cursor: pointer;
-    opacity: 0.5;
-    transition: opacity 0.3s;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+    background: transparent !important;
+    width: auto !important;
+    height: auto !important;
+    border-radius: 0 !important;
+    color: inherit !important;
 }
 
 .dataset-wizard-modal .wizard-step.active {
     opacity: 1;
+    background: transparent !important;
 }
 
 .dataset-wizard-modal .wizard-step.completed {
-    opacity: 0.8;
+    opacity: 0.6;
+    background: transparent !important;
 }
 
 .dataset-wizard-modal .wizard-step:not(:last-child)::after {
     content: '';
     position: absolute;
-    top: 18px;
-    left: 50%;
-    width: 100%;
-    height: 2px;
-    background: rgba(255, 255, 255, 0.15);
+    top: 10px;
+    left: calc(50% + 12px);
+    right: calc(-50% + 12px);
+    height: 1px;
+    background: rgba(255, 255, 255, 0.2);
     z-index: 0;
 }
 
 .dataset-wizard-modal .wizard-step.completed:not(:last-child)::after {
-    background: rgba(56, 189, 248, 0.5);
+    background: #38bdf8;
 }
 
 .dataset-wizard-modal .step-number {
-    width: 36px;
-    height: 36px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
-    border: 2px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.3);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
-    font-size: 0.9rem;
+    font-weight: 500;
+    font-size: 0.65rem;
+    color: rgba(255, 255, 255, 0.5);
     margin-bottom: 0.5rem;
     position: relative;
     z-index: 1;
-    transition: all 0.3s;
+    transition: all 0.2s;
 }
 
 .dataset-wizard-modal .wizard-step.active .step-number {
-    background: rgba(56, 189, 248, 0.2);
+    background: #38bdf8;
     border-color: #38bdf8;
-    color: #38bdf8;
-    box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+    color: white;
 }
 
 .dataset-wizard-modal .wizard-step.completed .step-number {
-    background: rgba(34, 197, 94, 0.2);
-    border-color: #22c55e;
-    color: #22c55e;
+    background: transparent;
+    border-color: #38bdf8;
+    color: transparent;
+}
+
+.dataset-wizard-modal .wizard-step.completed .step-number::before {
+    content: '✓';
+    position: absolute;
+    color: #38bdf8;
+    font-size: 0.6rem;
+    font-weight: 600;
 }
 
 .dataset-wizard-modal .step-label {
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     text-align: center;
-    font-weight: 500;
+    font-weight: 400;
+    white-space: nowrap;
+    line-height: 1.2;
+    color: rgba(255, 255, 255, 0.4);
+    letter-spacing: -0.01em;
 }
 
 .dataset-wizard-modal .wizard-step.active .step-label {
-    color: #38bdf8;
-    font-weight: 600;
+    color: #e2e8f0;
+    font-weight: 500;
+}
+
+.dataset-wizard-modal .wizard-step.completed .step-label {
+    color: rgba(255, 255, 255, 0.5);
 }
 
 .dataset-wizard-modal .wizard-step-content {
@@ -812,11 +840,15 @@ textarea.resizable-path::-webkit-scrollbar {
         top: 1.75rem; /* Below header */
         left: 0;
         right: 0;
-        padding: 0.4rem 0.5rem;
-        gap: 0.15rem;
+        padding: 0.35rem 0.5rem;
         background: #1c1f2e;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         z-index: 100000;
+        justify-content: center;
+    }
+
+    .dataset-wizard-modal .wizard-step {
+        padding: 0 0.5rem;
     }
 
     .dataset-wizard-modal .step-label {
@@ -824,14 +856,17 @@ textarea.resizable-path::-webkit-scrollbar {
     }
 
     .dataset-wizard-modal .step-number {
-        width: 22px;
-        height: 22px;
-        font-size: 0.65rem;
+        width: 16px;
+        height: 16px;
+        font-size: 0.55rem;
+        border-width: 1.5px;
         margin-bottom: 0;
     }
 
     .dataset-wizard-modal .wizard-step:not(:last-child)::after {
-        top: 11px;
+        top: 8px;
+        left: calc(50% + 10px);
+        right: calc(-50% + 10px);
     }
 
     .dataset-wizard-modal .wizard-step-content {
