@@ -11,7 +11,10 @@ window.adminWorkerMethods = {
             const response = await fetch('/api/admin/workers');
             if (response.ok) {
                 const data = await response.json();
+                const now = Date.now();
                 this.workers = data.workers || [];
+                this.workerUptimeLoadedAt = now;
+                this.workerUptimeTick = now;
                 this.updateWorkerStats();
             } else {
                 console.error('Failed to load workers:', response.statusText);
@@ -55,6 +58,34 @@ window.adminWorkerMethods = {
         if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
         if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
         return Math.floor(seconds / 86400) + 'd ago';
+    },
+
+    formatDurationClock(totalSeconds) {
+        const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : null;
+        if (seconds === null) {
+            return '--:--:--';
+        }
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        const timePart = [
+            String(hours).padStart(2, '0'),
+            String(minutes).padStart(2, '0'),
+            String(secs).padStart(2, '0'),
+        ].join(':');
+        return days > 0 ? `${days}d ${timePart}` : timePart;
+    },
+
+    formatWorkerUptime(worker) {
+        if (!worker || !worker.connected || !Number.isFinite(worker.uptime_seconds)) {
+            return '--';
+        }
+        let deltaSeconds = 0;
+        if (Number.isFinite(this.workerUptimeLoadedAt) && Number.isFinite(this.workerUptimeTick)) {
+            deltaSeconds = (this.workerUptimeTick - this.workerUptimeLoadedAt) / 1000;
+        }
+        return this.formatDurationClock(worker.uptime_seconds + deltaSeconds);
     },
 
     parseWorkerLabels(str) {
@@ -218,6 +249,23 @@ window.adminWorkerMethods = {
         }
     },
 
+    startWorkerUptimeTicker() {
+        if (this.workerUptimeInterval) {
+            return;
+        }
+        this.workerUptimeTick = Date.now();
+        this.workerUptimeInterval = setInterval(() => {
+            this.workerUptimeTick = Date.now();
+        }, 1000);
+    },
+
+    stopWorkerUptimeTicker() {
+        if (this.workerUptimeInterval) {
+            clearInterval(this.workerUptimeInterval);
+            this.workerUptimeInterval = null;
+        }
+    },
+
     startWorkerAutoRefresh() {
         // Auto-refresh workers every 30 seconds when on the workers tab
         if (this.workerRefreshInterval) {
@@ -262,14 +310,19 @@ window.workersPageComponent = function() {
 
         // Auto-refresh
         workerRefreshInterval: null,
+        workerUptimeTick: Date.now(),
+        workerUptimeLoadedAt: null,
+        workerUptimeInterval: null,
 
         async init() {
             await this.loadWorkers();
             this.startWorkerAutoRefresh();
+            this.startWorkerUptimeTicker();
         },
 
         destroy() {
             this.stopWorkerAutoRefresh();
+            this.stopWorkerUptimeTicker();
         },
 
         // Include all worker methods

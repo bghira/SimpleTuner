@@ -293,6 +293,51 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_config_json_modal_reflects_blank_fields", scenario)
 
 
+class EventDockUptimeTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test connection uptime tooltip updates."""
+
+    MAX_BROWSERS = 1
+
+    def test_connection_uptime_tooltip_updates(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) {"
+                "  store.connectionStatus = 'connected';"
+                "  store.serverUptimeSeconds = 5;"
+                "  store.serverUptimeCapturedAt = Date.now();"
+                "  store.serverUptimeTick = Date.now();"
+                "}"
+            )
+
+            def get_tooltip_text(active_driver):
+                return active_driver.execute_script(
+                    "const el = document.querySelector('.connection-uptime-tooltip');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+
+            WebDriverWait(driver, 5).until(lambda d: "Server uptime:" in get_tooltip_text(d))
+            initial_text = get_tooltip_text(driver)
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store && store.serverUptimeCapturedAt) {"
+                "  store.serverUptimeTick = store.serverUptimeCapturedAt + 3000;"
+                "}"
+            )
+
+            WebDriverWait(driver, 5).until(lambda d: get_tooltip_text(d) != initial_text)
+
+        self.for_each_browser("test_connection_uptime_tooltip_updates", scenario)
+
+
 class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test form dirty state transitions across Easy Mode and full form tabs."""
 
@@ -377,6 +422,56 @@ class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
             wait_for_save_state(True)
 
         self.for_each_browser("test_save_button_dirty_state", scenario)
+
+
+class TrainingEpochsStepsValidationTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test cross-field validation for epochs and max steps stays in sync."""
+
+    MAX_BROWSERS = 1
+
+    def test_epochs_steps_cross_validation(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            training_tab = TrainingConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            training_tab.set_max_train_steps(2000)
+            training_tab.set_num_epochs(1)
+
+            def feedback_text(active_driver):
+                return active_driver.execute_script(
+                    "const el = document.getElementById('field-feedback-max_train_steps');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: "cannot both be set" in feedback_text(d))
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                    "return btn ? btn.disabled : null;"
+                )
+            )
+
+            training_tab.set_num_epochs(0)
+
+            WebDriverWait(driver, 10).until(lambda d: feedback_text(d) == "")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                    "return btn ? !btn.disabled : null;"
+                )
+            )
+
+        self.for_each_browser("test_epochs_steps_cross_validation", scenario)
 
 
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
@@ -1409,6 +1504,68 @@ class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(dirty_state, "formDirty should be true after main form change")
 
         self.for_each_browser("test_main_form_still_enables_save", scenario)
+
+
+class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test that Easy Mode optimizer reflects the full form selection."""
+
+    MAX_BROWSERS = 1
+
+    def test_easy_mode_optimizer_syncs_from_full_form(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]') !== null;"
+                )
+            )
+
+            def get_optimizer_values(active_driver):
+                return active_driver.execute_script(
+                    "const ez = document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]');"
+                    "const full = document.getElementById('optimizer');"
+                    "return { ez: ez ? ez.value : null, full: full ? full.value : null };"
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["full"])
+
+            WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["ez"] == get_optimizer_values(d)["full"])
+
+            new_value = driver.execute_script(
+                """
+                const fullSelect = document.getElementById('optimizer');
+                if (!fullSelect || !fullSelect.options || fullSelect.options.length === 0) {
+                    return null;
+                }
+                const options = Array.from(fullSelect.options);
+                const current = fullSelect.value;
+                const next = options.find(opt => opt.value && opt.value !== current) || options[0];
+                fullSelect.value = next.value;
+                fullSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                fullSelect.dispatchEvent(new Event('input', { bubbles: true }));
+                return next.value;
+                """
+            )
+            self.assertTrue(new_value, "Expected to find optimizer options in full form.")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const ez = document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]');"
+                    "return ez ? ez.value : null;"
+                )
+                == new_value
+            )
+
+        self.for_each_browser("test_easy_mode_optimizer_syncs_from_full_form", scenario)
 
 
 if __name__ == "__main__":

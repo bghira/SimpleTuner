@@ -446,6 +446,7 @@ function trainerComponent() {
                 window.clearInterval(this._systemStatusTimer);
                 this._systemStatusTimer = null;
             }
+            this.stopServerUptimeTicker();
             if (this._visibilityChangeHandler) {
                 document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
                 this._visibilityChangeHandler = null;
@@ -485,6 +486,7 @@ function trainerComponent() {
             this._setupBeforeUnloadHandler();
 
             this.refreshSystemStatus();
+            this.startServerUptimeTicker();
             this._systemStatusTimer = window.setInterval(() => {
                 if (this.isDocumentVisible()) {
                     this.refreshSystemStatus();
@@ -625,7 +627,7 @@ function trainerComponent() {
 
          // Form and training state
          formData: {},
-         validationErrors: {},
+        validationErrors: {},
          isTraining: false,
          showTrainingProgress: false,
         trainingProgress: {},
@@ -700,6 +702,9 @@ function trainerComponent() {
         originalFormData: {},
         formValueStore: {},
         changedFieldNames: new Set(),
+        get hasValidationErrors() {
+            return this.validationErrors && Object.keys(this.validationErrors).length > 0;
+        },
 
          // Config save dialog state
          showConfigSaveDialog: false,
@@ -2994,7 +2999,11 @@ function trainerComponent() {
         systemStatus: null,
         systemStatusLoading: false,
         systemStatusError: null,
+        serverUptimeSeconds: null,
+        serverUptimeCapturedAt: null,
+        serverUptimeTick: Date.now(),
         _systemStatusTimer: null,
+        _serverUptimeTimer: null,
         _beforeUnloadHandler: null,
         _visibilityChangeHandler: null,
         async refreshSystemStatus() {
@@ -3008,8 +3017,13 @@ function trainerComponent() {
                     throw new Error(`Request failed with status ${response.status}`);
                 }
                 const payload = await response.json();
-                this.systemStatus = this.normalizeSystemStatus(payload);
+                const normalized = this.normalizeSystemStatus(payload);
+                this.systemStatus = normalized;
                 this.systemStatusError = null;
+                if (normalized && Number.isFinite(normalized.uptime_seconds)) {
+                    this.serverUptimeSeconds = normalized.uptime_seconds;
+                    this.serverUptimeCapturedAt = Date.now();
+                }
             } catch (error) {
                 console.error('Failed to load system status:', error);
                 if (!this.systemStatus) {
@@ -3028,6 +3042,10 @@ function trainerComponent() {
             const memoryValue =
                 typeof data.memory_percent === 'number' && Number.isFinite(data.memory_percent)
                     ? Number(data.memory_percent)
+                    : null;
+            const uptimeValue =
+                typeof data.uptime_seconds === 'number' && Number.isFinite(data.uptime_seconds)
+                    ? Number(data.uptime_seconds)
                     : null;
             const gpus = Array.isArray(data.gpus)
                 ? data.gpus.map((gpu, index) => {
@@ -3078,6 +3096,7 @@ function trainerComponent() {
                 gpus,
                 deepspeed_offload: offload,
                 timestamp: typeof data.timestamp === 'number' && Number.isFinite(data.timestamp) ? data.timestamp : null,
+                uptime_seconds: uptimeValue,
             };
         },
         formatBytes(bytes, precision = 1) {
@@ -3100,6 +3119,78 @@ function trainerComponent() {
                 typeof document.visibilityState === 'undefined' ||
                 document.visibilityState === 'visible'
             );
+        },
+        startServerUptimeTicker() {
+            if (this._serverUptimeTimer) {
+                return;
+            }
+            this.serverUptimeTick = Date.now();
+            this._serverUptimeTimer = window.setInterval(() => {
+                this.serverUptimeTick = Date.now();
+            }, 1000);
+        },
+        stopServerUptimeTicker() {
+            if (this._serverUptimeTimer) {
+                window.clearInterval(this._serverUptimeTimer);
+                this._serverUptimeTimer = null;
+            }
+        },
+        formatDurationClock(seconds) {
+            const totalSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : null;
+            if (totalSeconds === null) {
+                return '--:--:--';
+            }
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const secs = totalSeconds % 60;
+            const timePart = [
+                String(hours).padStart(2, '0'),
+                String(minutes).padStart(2, '0'),
+                String(secs).padStart(2, '0'),
+            ].join(':');
+            if (days > 0) {
+                return `${days}d ${timePart}`;
+            }
+            return timePart;
+        },
+        get connectionStatusLabel() {
+            if (this.connectionStatus === 'connected') {
+                return 'Connected';
+            }
+            if (this.connectionStatus === 'disconnected') {
+                return 'Disconnected';
+            }
+            if (this.connectionStatus === 'reconnecting') {
+                return 'Reconnecting';
+            }
+            return this.connectionStatus || 'Unknown';
+        },
+        get connectionUptimeSeconds() {
+            if (this.connectionStatus !== 'connected') {
+                return null;
+            }
+            if (!Number.isFinite(this.serverUptimeSeconds) || !Number.isFinite(this.serverUptimeCapturedAt)) {
+                return null;
+            }
+            const deltaSeconds = (this.serverUptimeTick - this.serverUptimeCapturedAt) / 1000;
+            if (!Number.isFinite(deltaSeconds)) {
+                return this.serverUptimeSeconds;
+            }
+            return this.serverUptimeSeconds + deltaSeconds;
+        },
+        get connectionUptimeLabel() {
+            const uptimeSeconds = this.connectionUptimeSeconds;
+            if (!Number.isFinite(uptimeSeconds)) {
+                return '';
+            }
+            return `Server uptime: ${this.formatDurationClock(uptimeSeconds)}`;
+        },
+        get connectionStatusTitle() {
+            if (this.connectionStatus === 'connected' && this.connectionUptimeLabel) {
+                return null;
+            }
+            return this.connectionMessage || null;
         },
         get systemStatusItems() {
             if (!this.systemStatus) {
@@ -4237,6 +4328,7 @@ function trainerComponent() {
             this.captureFormValues();
             // Store current form data as original
             this.updateBaselineFormData();
+            window.dispatchEvent(new CustomEvent('trainer-form-values-applied'));
         },
 
         // Update the baseline form data without clearing dirty state
@@ -4463,6 +4555,8 @@ function trainerComponent() {
                     });
                 }
             });
+
+            window.dispatchEvent(new CustomEvent('trainer-form-values-applied'));
         },
 
         handleFieldInput(event) {
@@ -4872,11 +4966,21 @@ function trainerComponent() {
             const resolve = this.configSaveDialogResolve;
             this.configSaveDialogResolve = null;
 
+            // Include Easy Mode modified fields as forceFields so config values override stale DOM
+            const easyModeFields = this._easyModeModifiedFields
+                ? Array.from(this._easyModeModifiedFields)
+                : [];
+
             // Call the actual save
             this.doSaveConfig({
                 createBackup: this.createConfigBackupOption,
-                preserveDefaults: this.preserveDefaultsOption
+                preserveDefaults: this.preserveDefaultsOption,
+                forceFields: easyModeFields
             }).then(() => {
+                // Clear the tracked fields after successful save
+                if (this._easyModeModifiedFields) {
+                    this._easyModeModifiedFields.clear();
+                }
                 if (resolve) resolve();
             });
         },
@@ -6662,8 +6766,8 @@ function trainerComponent() {
 
                     <button type="button"
                             class="trainer-action-btn btn btn-outline-secondary"
-                            :class="formDirty ? 'is-active' : ''"
-                            :disabled="!formDirty"
+                            :class="formDirty && !$store.trainer.hasValidationErrors ? 'is-active' : ''"
+                            :disabled="!formDirty || $store.trainer.hasValidationErrors"
                             @click="saveConfig()"
                             aria-label="Save configuration">
                         <i class="fas fa-save"></i>
@@ -6972,16 +7076,20 @@ function trainerComponent() {
                 <div class="event-dock-title">
                     <i class="fas fa-terminal"></i>
                     <span>Training Events</span>
-                    <span class="badge ms-2"
+                    <span class="badge ms-2 connection-status-badge"
                           :class="{
                               'bg-success': connectionStatus === 'connected',
                               'bg-danger': connectionStatus === 'disconnected',
                               'bg-warning text-dark': connectionStatus === 'reconnecting',
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
-                          :title="connectionMessage || ''"
-                          :aria-label="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"
-                          x-text="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"></span>
+                          :title="connectionStatusTitle"
+                          :aria-label="connectionStatusLabel">
+                        <span x-text="connectionStatusLabel"></span>
+                        <span class="connection-uptime-tooltip"
+                              x-show="connectionUptimeLabel"
+                              x-text="connectionUptimeLabel"></span>
+                    </span>
                 </div>
                 <div class="event-dock-sysstat">
                     <template x-if="hasSystemStatus">

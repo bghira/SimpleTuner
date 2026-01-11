@@ -43,6 +43,7 @@ class Worker:
     labels: Dict[str, str] = field(default_factory=dict)
     current_job_id: Optional[str] = None
     last_heartbeat: Optional[datetime] = None
+    connected_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -63,6 +64,7 @@ class Worker:
             "labels": self.labels,
             "current_job_id": self.current_job_id,
             "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            "connected_at": self.connected_at.isoformat() if self.connected_at else None,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -73,6 +75,14 @@ class Worker:
         if data.get("last_heartbeat"):
             try:
                 last_heartbeat = datetime.fromisoformat(data["last_heartbeat"].replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                # Invalid timestamp format; leave as None
+                pass
+
+        connected_at = None
+        if data.get("connected_at"):
+            try:
+                connected_at = datetime.fromisoformat(data["connected_at"].replace("Z", "+00:00"))
             except (ValueError, TypeError):
                 # Invalid timestamp format; leave as None
                 pass
@@ -97,5 +107,6 @@ class Worker:
             labels=data.get("labels", {}),
             current_job_id=data.get("current_job_id"),
             last_heartbeat=last_heartbeat,
+            connected_at=connected_at,
             created_at=created_at,
         )

@@ -1254,6 +1254,39 @@ window.handleFieldValidation = window.handleFieldValidation || function(event, e
         }
     }
 
+    const trainerStore = window.Alpine && window.Alpine.store ? window.Alpine.store('trainer') : null;
+    if (trainerStore && element) {
+        const fieldKey = element.name || element.id;
+        if (fieldKey) {
+            const nextErrors = { ...(trainerStore.validationErrors || {}) };
+            if (responseText.length > 0) {
+                nextErrors[fieldKey] = responseText;
+            } else {
+                delete nextErrors[fieldKey];
+            }
+            trainerStore.validationErrors = nextErrors;
+        }
+    }
+
+    const relatedFieldMap = {
+        num_train_epochs: 'max_train_steps',
+        max_train_steps: 'num_train_epochs',
+    };
+
+    if (element && element.id && relatedFieldMap[element.id]) {
+        const relatedState = window.__relatedFieldValidation || (window.__relatedFieldValidation = {});
+        if (relatedState[element.id]) {
+            relatedState[element.id] = false;
+        } else {
+            const relatedId = relatedFieldMap[element.id];
+            const relatedEl = document.getElementById(relatedId);
+            if (relatedEl && window.htmx && typeof window.htmx.trigger === 'function') {
+                relatedState[relatedId] = true;
+                window.htmx.trigger(relatedEl, 'change');
+            }
+        }
+    }
+
     // NOTE: Do NOT mark form dirty here. The original input/change event already
     // marked the form dirty via handleFieldInput. Validation responses arriving
     // after save would incorrectly flip formDirty back to true.

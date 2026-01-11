@@ -773,7 +773,7 @@ if (!window.hardwareHeroCTA) {
             updateFormField(fieldName, value) {
                 const trainerStore = window.Alpine?.store?.('trainer');
 
-                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
+                // Update config and mark dirty
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -781,6 +781,14 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
+
+                    // Track this field as modified by Easy Mode so save uses config value, not stale DOM
+                    if (!trainerStore._easyModeModifiedFields) {
+                        trainerStore._easyModeModifiedFields = new Set();
+                    }
+                    trainerStore._easyModeModifiedFields.add(fieldName);
+                    trainerStore._easyModeModifiedFields.add(canonicalKey);
+
                     // Use markFormDirty to respect _suppressDirtyTracking
                     if (typeof trainerStore.markFormDirty === 'function') {
                         trainerStore.markFormDirty();
@@ -868,29 +876,33 @@ if (!window.hardwareHeroCTA) {
             loading: true,
             error: null,
 
+            // All synced fields start as null so syncFromForm triggers real changes.
+            // Without this, if config value equals the default, Alpine won't detect a
+            // change and x-model bindings won't update the form inputs.
+
             // Training duration
-            num_train_epochs: 1,
+            num_train_epochs: null,
             max_train_steps: null,
 
             // Checkpointing
-            checkpoint_step_interval: 500,
+            checkpoint_step_interval: null,
             checkpoint_epoch_interval: null,
-            checkpoints_total_limit: 5,
+            checkpoints_total_limit: null,
 
             // Learning rate
-            learning_rate: 4e-7,
-            lr_scheduler: 'constant_with_warmup',
-            lr_warmup_steps: 0,
-            lr_end: 4e-7,
+            learning_rate: null,
+            lr_scheduler: null,
+            lr_warmup_steps: null,
+            lr_end: null,
 
             // Optimizer
-            optimizer: 'adamw_bf16',
+            optimizer: null,
             optimizerChoices: [],
-            max_grad_norm: 2.0,
+            max_grad_norm: null,
 
             // Flow schedule
-            flow_schedule_auto_shift: false,
-            flow_schedule_shift: 3.0,
+            flow_schedule_auto_shift: null,
+            flow_schedule_shift: null,
 
             hints: { ez_mode: true },
             _cleanupFns: [],
@@ -923,8 +935,11 @@ if (!window.hardwareHeroCTA) {
                     this.hints.ez_mode = stored.ez_mode !== false;
                 } catch (e) { }
 
-                await this.loadOptimizerChoices();
-
+                await this.$nextTick();
+                this.syncOptimizerChoicesFromForm();
+                // Wait for Alpine's x-for to render dropdown options before syncing values.
+                // Without this, x-model can't select the correct option because options don't exist yet.
+                await this.$nextTick();
                 this.syncFromForm();
                 this.setupFormWatchers();
                 this.watchEnvironmentChanges();
@@ -976,6 +991,11 @@ if (!window.hardwareHeroCTA) {
                 document.addEventListener('environment-loaded', handler);
                 document.addEventListener('environment-switched', handler);
 
+                const formValuesHandler = () => {
+                    this.syncFromForm();
+                };
+                document.addEventListener('trainer-form-values-applied', formValuesHandler);
+
                 const htmxHandler = (evt) => {
                     if (evt.detail?.target?.id === 'training-tab-content') {
                         setTimeout(() => this.syncFromForm(), 100);
@@ -986,23 +1006,46 @@ if (!window.hardwareHeroCTA) {
                 this._cleanupFns.push(() => {
                     document.removeEventListener('environment-loaded', handler);
                     document.removeEventListener('environment-switched', handler);
+                    document.removeEventListener('trainer-form-values-applied', formValuesHandler);
                     document.body.removeEventListener('htmx:afterSettle', htmxHandler);
                 });
             },
 
-            async loadOptimizerChoices() {
-                try {
-                    const response = await fetch('/api/fields/field/optimizer');
-                    if (response.ok) {
-                        const data = await response.json();
-                        this.optimizerChoices = data.choices || [];
-                    }
-                } catch (err) {
-                    console.error('[TRAINING EZ MODE] Failed to load optimizer choices:', err);
+            syncOptimizerChoicesFromForm() {
+                const select = document.getElementById('optimizer');
+                if (!select) {
+                    return;
+                }
+
+                const choices = Array.from(select.options)
+                    .filter(option => option.value !== '')
+                    .map(option => ({
+                        value: option.value,
+                        label: option.textContent.trim() || option.value
+                    }));
+
+                const same =
+                    choices.length === this.optimizerChoices.length &&
+                    choices.every((choice, index) => {
+                        const current = this.optimizerChoices[index];
+                        return current && current.value === choice.value && current.label === choice.label;
+                    });
+
+                if (!same) {
+                    this.optimizerChoices = choices;
                 }
             },
 
             syncFromForm() {
+                // Sync optimizer choices from Full form DOM (options come from server)
+                this.syncOptimizerChoicesFromForm();
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                const config = trainerStore?.activeEnvironmentConfig || null;
+                if (!config) {
+                    return; // No config yet, will be called again by watchTrainerStore
+                }
+
                 const fields = [
                     'num_train_epochs', 'max_train_steps',
                     'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
@@ -1010,46 +1053,39 @@ if (!window.hardwareHeroCTA) {
                     'optimizer', 'max_grad_norm',
                     'flow_schedule_auto_shift', 'flow_schedule_shift'
                 ];
+                const numericFields = new Set([
+                    'num_train_epochs', 'max_train_steps',
+                    'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
+                    'learning_rate', 'lr_warmup_steps', 'lr_end',
+                    'max_grad_norm', 'flow_schedule_shift'
+                ]);
 
-                // Track which fields were set from config
-                const setFromConfig = new Set();
-
-                const trainerStore = window.Alpine?.store?.('trainer');
-                if (trainerStore?.activeEnvironmentConfig) {
-                    const config = trainerStore.activeEnvironmentConfig;
-                    for (const fieldName of fields) {
-                        const prefixedKey = `--${fieldName}`;
-                        const value = config[prefixedKey] ?? config[fieldName];
-                        if (value !== undefined && value !== null) {
-                            setFromConfig.add(fieldName);
-                            if (typeof value === 'boolean') {
-                                this[fieldName] = value;
-                            } else if (typeof value === 'number') {
-                                this[fieldName] = value;
-                            } else if (typeof value === 'string') {
-                                if (value === 'true' || value === 'false') {
-                                    this[fieldName] = value === 'true';
-                                } else {
-                                    this[fieldName] = value;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Only read from DOM for fields not already set from config
+                // Read all values from activeEnvironmentConfig (single source of truth)
                 for (const fieldName of fields) {
-                    if (setFromConfig.has(fieldName)) continue;
-                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
-                    if (el) {
-                        if (el.type === 'checkbox') {
-                            this[fieldName] = el.checked;
-                        } else if (el.type === 'number' || el.type === 'range') {
-                            const val = parseFloat(el.value);
-                            this[fieldName] = isNaN(val) ? null : val;
+                    const prefixedKey = `--${fieldName}`;
+                    let value = config[prefixedKey] ?? config[fieldName];
+
+                    if (value === undefined || value === null) {
+                        continue;
+                    }
+
+                    // Convert to appropriate type
+                    if (typeof value === 'boolean') {
+                        this[fieldName] = value;
+                    } else if (value === 'true' || value === 'false') {
+                        this[fieldName] = value === 'true';
+                    } else if (Array.isArray(value)) {
+                        // Checkbox arrays from formValueStore
+                        this[fieldName] = value.length > 0 && value.includes('true');
+                    } else if (numericFields.has(fieldName)) {
+                        if (value === '') {
+                            this[fieldName] = null;
                         } else {
-                            this[fieldName] = el.value || '';
+                            const num = Number(value);
+                            this[fieldName] = Number.isFinite(num) ? num : null;
                         }
+                    } else {
+                        this[fieldName] = value;
                     }
                 }
             },
@@ -1089,7 +1125,7 @@ if (!window.hardwareHeroCTA) {
             updateFormField(fieldName, value) {
                 const trainerStore = window.Alpine?.store?.('trainer');
 
-                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
+                // Update config and mark dirty
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -1097,6 +1133,14 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
+
+                    // Track this field as modified by Easy Mode so save uses config value, not stale DOM
+                    if (!trainerStore._easyModeModifiedFields) {
+                        trainerStore._easyModeModifiedFields = new Set();
+                    }
+                    trainerStore._easyModeModifiedFields.add(fieldName);
+                    trainerStore._easyModeModifiedFields.add(canonicalKey);
+
                     // Use markFormDirty to respect _suppressDirtyTracking
                     if (typeof trainerStore.markFormDirty === 'function') {
                         trainerStore.markFormDirty();
@@ -1114,9 +1158,30 @@ if (!window.hardwareHeroCTA) {
                 }
             },
 
-            // Field change handlers
-            onNumEpochsChange(value) { const v = parseInt(value) || 1; this.num_train_epochs = v; this.updateFormField('num_train_epochs', v); },
-            onMaxStepsChange(value) { const v = value ? parseInt(value) : null; this.max_train_steps = v; this.updateFormField('max_train_steps', v); },
+            // Field change handlers with mutual exclusivity enforcement
+            onNumEpochsChange(value) {
+                const parsed = parseInt(value, 10);
+                const v = Number.isFinite(parsed) ? parsed : 0;
+                this.num_train_epochs = v;
+                this.updateFormField('num_train_epochs', v);
+                // Mutual exclusivity: clear max_train_steps if epochs > 0
+                if (v > 0 && this.max_train_steps && this.max_train_steps > 0) {
+                    this.max_train_steps = 0;
+                    this.updateFormField('max_train_steps', 0);
+                    window.showToast?.('Max training steps cleared (epochs takes precedence)', 'info');
+                }
+            },
+            onMaxStepsChange(value) {
+                const v = value ? parseInt(value) : 0;
+                this.max_train_steps = v;
+                this.updateFormField('max_train_steps', v);
+                // Mutual exclusivity: clear num_train_epochs if steps > 0
+                if (v > 0 && this.num_train_epochs && this.num_train_epochs > 0) {
+                    this.num_train_epochs = 0;
+                    this.updateFormField('num_train_epochs', 0);
+                    window.showToast?.('Number of epochs cleared (steps takes precedence)', 'info');
+                }
+            },
             onCheckpointStepIntervalChange(value) { const v = parseInt(value) || 500; this.checkpoint_step_interval = v; this.updateFormField('checkpoint_step_interval', v); },
             onCheckpointEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.checkpoint_epoch_interval = v; this.updateFormField('checkpoint_epoch_interval', v); },
             onCheckpointsTotalLimitChange(value) { const v = parseInt(value) || 5; this.checkpoints_total_limit = v; this.updateFormField('checkpoints_total_limit', v); },
@@ -1444,7 +1509,7 @@ if (!window.hardwareHeroCTA) {
             updateFormField(fieldName, value) {
                 const trainerStore = window.Alpine?.store?.('trainer');
 
-                // Update config and mark dirty (directly set formDirty to bypass _suppressDirtyTracking)
+                // Update config and mark dirty
                 if (trainerStore) {
                     const canonicalKey = `--${fieldName}`;
                     if (typeof trainerStore.updateConfigValue === 'function') {
@@ -1452,6 +1517,14 @@ if (!window.hardwareHeroCTA) {
                     } else if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                     }
+
+                    // Track this field as modified by Easy Mode so save uses config value, not stale DOM
+                    if (!trainerStore._easyModeModifiedFields) {
+                        trainerStore._easyModeModifiedFields = new Set();
+                    }
+                    trainerStore._easyModeModifiedFields.add(fieldName);
+                    trainerStore._easyModeModifiedFields.add(canonicalKey);
+
                     // Use markFormDirty to respect _suppressDirtyTracking
                     if (typeof trainerStore.markFormDirty === 'function') {
                         trainerStore.markFormDirty();
@@ -2042,19 +2115,25 @@ if (!window.hardwareHeroCTA) {
                         <p class="ez-step-description">
                             Choose how long to train. You can specify either epochs (passes through your dataset) or a fixed number of steps. For small datasets (under 100 images), 1-3 epochs is typical. For larger datasets, you might use fewer epochs or set a step limit.
                         </p>
+                        <div class="alert alert-info py-2 mb-3" role="alert">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <small><strong>Note:</strong> Epochs and steps are mutually exclusive. Setting one will clear the other.</small>
+                        </div>
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label">Number of Epochs</label>
                                 <input type="number" class="form-control"
                                        x-model.number="num_train_epochs"
+                                       :class="{ 'border-primary': num_train_epochs > 0 && (!max_train_steps || max_train_steps === 0) }"
                                        @input.stop="onNumEpochsChange($event.target.value)"
-                                       min="1" max="1000">
+                                       min="0" max="1000">
                                 <div class="form-text">One epoch = one complete pass through all your training images. More epochs let the model see your data more times, but too many causes <strong>overfitting</strong>—the model memorizes instead of learning. Start with 1-3 for LoRA, 5-10 for full fine-tuning.</div>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label">Max Training Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="max_train_steps"
+                                       :class="{ 'border-primary': max_train_steps > 0 && (!num_train_epochs || num_train_epochs === 0) }"
                                        @input.stop="onMaxStepsChange($event.target.value)"
                                        min="0"
                                        placeholder="Leave empty to use epochs">
@@ -2222,7 +2301,7 @@ if (!window.hardwareHeroCTA) {
                             <div class="col-md-6">
                                 <div class="form-check form-switch mb-2">
                                     <input type="checkbox" class="form-check-input" id="ez_flow_auto_shift"
-                                           x-model="flow_schedule_auto_shift"
+                                           :checked="flow_schedule_auto_shift"
                                            @change.stop="onFlowAutoShiftChange($event.target.checked)">
                                     <label class="form-check-label" for="ez_flow_auto_shift">
                                         <strong>Auto Shift Schedule</strong>
@@ -2233,7 +2312,7 @@ if (!window.hardwareHeroCTA) {
                             <div class="col-md-6" x-show="!flow_schedule_auto_shift">
                                 <label class="form-label">Schedule Shift Value</label>
                                 <input type="number" class="form-control"
-                                       x-model.number="flow_schedule_shift"
+                                       :value="flow_schedule_shift"
                                        @input.stop="onFlowShiftChange($event.target.value)"
                                        step="0.1" min="0">
                                 <div class="form-text">
