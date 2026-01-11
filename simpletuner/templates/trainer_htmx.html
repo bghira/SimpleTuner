@@ -627,7 +627,7 @@ function trainerComponent() {
 
          // Form and training state
          formData: {},
-         validationErrors: {},
+        validationErrors: {},
          isTraining: false,
          showTrainingProgress: false,
         trainingProgress: {},
@@ -702,6 +702,9 @@ function trainerComponent() {
         originalFormData: {},
         formValueStore: {},
         changedFieldNames: new Set(),
+        get hasValidationErrors() {
+            return this.validationErrors && Object.keys(this.validationErrors).length > 0;
+        },
 
          // Config save dialog state
          showConfigSaveDialog: false,
@@ -3185,9 +3188,9 @@ function trainerComponent() {
         },
         get connectionStatusTitle() {
             if (this.connectionStatus === 'connected' && this.connectionUptimeLabel) {
-                return '';
+                return null;
             }
-            return this.connectionMessage || '';
+            return this.connectionMessage || null;
         },
         get systemStatusItems() {
             if (!this.systemStatus) {
@@ -6750,8 +6753,8 @@ function trainerComponent() {
 
                     <button type="button"
                             class="trainer-action-btn btn btn-outline-secondary"
-                            :class="formDirty ? 'is-active' : ''"
-                            :disabled="!formDirty"
+                            :class="formDirty && !$store.trainer.hasValidationErrors ? 'is-active' : ''"
+                            :disabled="!formDirty || $store.trainer.hasValidationErrors"
                             @click="saveConfig()"
                             aria-label="Save configuration">
                         <i class="fas fa-save"></i>

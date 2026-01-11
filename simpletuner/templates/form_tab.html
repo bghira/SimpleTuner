@@ -1010,29 +1010,56 @@ if (!window.hardwareHeroCTA) {
                     'optimizer', 'max_grad_norm',
                     'flow_schedule_auto_shift', 'flow_schedule_shift'
                 ];
+                const numericFields = new Set([
+                    'num_train_epochs', 'max_train_steps',
+                    'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
+                    'learning_rate', 'lr_warmup_steps', 'lr_end',
+                    'max_grad_norm', 'flow_schedule_shift'
+                ]);
+
+                const applyValue = (fieldName, value) => {
+                    if (value === undefined || value === null) {
+                        return false;
+                    }
+                    if (value === 'true' || value === 'false') {
+                        this[fieldName] = value === 'true';
+                        return true;
+                    }
+                    if (numericFields.has(fieldName)) {
+                        if (value === '') {
+                            this[fieldName] = null;
+                            return true;
+                        }
+                        const num = Number(value);
+                        this[fieldName] = Number.isFinite(num) ? num : null;
+                        return true;
+                    }
+                    this[fieldName] = value;
+                    return true;
+                };
 
                 // Track which fields were set from config
                 const setFromConfig = new Set();
 
                 const trainerStore = window.Alpine?.store?.('trainer');
-                if (trainerStore?.activeEnvironmentConfig) {
-                    const config = trainerStore.activeEnvironmentConfig;
-                    for (const fieldName of fields) {
+                const config = trainerStore?.activeEnvironmentConfig || null;
+                const formValueStore = trainerStore?.formValueStore || null;
+                for (const fieldName of fields) {
+                    if (formValueStore) {
+                        const prefixedKey = `--${fieldName}`;
+                        const entry = formValueStore[prefixedKey] || formValueStore[fieldName];
+                        if (entry && Object.prototype.hasOwnProperty.call(entry, 'value')) {
+                            if (applyValue(fieldName, entry.value)) {
+                                setFromConfig.add(fieldName);
+                                continue;
+                            }
+                        }
+                    }
+                    if (config) {
                         const prefixedKey = `--${fieldName}`;
                         const value = config[prefixedKey] ?? config[fieldName];
-                        if (value !== undefined && value !== null) {
+                        if (applyValue(fieldName, value)) {
                             setFromConfig.add(fieldName);
-                            if (typeof value === 'boolean') {
-                                this[fieldName] = value;
-                            } else if (typeof value === 'number') {
-                                this[fieldName] = value;
-                            } else if (typeof value === 'string') {
-                                if (value === 'true' || value === 'false') {
-                                    this[fieldName] = value === 'true';
-                                } else {
-                                    this[fieldName] = value;
-                                }
-                            }
                         }
                     }
                 }
@@ -1115,7 +1142,7 @@ if (!window.hardwareHeroCTA) {
             },
 
             // Field change handlers
-            onNumEpochsChange(value) { const v = parseInt(value) || 1; this.num_train_epochs = v; this.updateFormField('num_train_epochs', v); },
+            onNumEpochsChange(value) { const parsed = parseInt(value, 10); const v = Number.isFinite(parsed) ? parsed : 0; this.num_train_epochs = v; this.updateFormField('num_train_epochs', v); },
             onMaxStepsChange(value) { const v = value ? parseInt(value) : null; this.max_train_steps = v; this.updateFormField('max_train_steps', v); },
             onCheckpointStepIntervalChange(value) { const v = parseInt(value) || 500; this.checkpoint_step_interval = v; this.updateFormField('checkpoint_step_interval', v); },
             onCheckpointEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.checkpoint_epoch_interval = v; this.updateFormField('checkpoint_epoch_interval', v); },
@@ -2048,7 +2075,7 @@ if (!window.hardwareHeroCTA) {
                                 <input type="number" class="form-control"
                                        x-model.number="num_train_epochs"
                                        @input.stop="onNumEpochsChange($event.target.value)"
-                                       min="1" max="1000">
+                                       min="0" max="1000">
                                 <div class="form-text">One epoch = one complete pass through all your training images. More epochs let the model see your data more times, but too many causes <strong>overfitting</strong>—the model memorizes instead of learning. Start with 1-3 for LoRA, 5-10 for full fine-tuning.</div>
                             </div>
                             <div class="col-md-6">

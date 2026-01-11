@@ -424,6 +424,56 @@ class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_save_button_dirty_state", scenario)
 
 
+class TrainingEpochsStepsValidationTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test cross-field validation for epochs and max steps stays in sync."""
+
+    MAX_BROWSERS = 1
+
+    def test_epochs_steps_cross_validation(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            training_tab = TrainingConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            training_tab.set_max_train_steps(2000)
+            training_tab.set_num_epochs(1)
+
+            def feedback_text(active_driver):
+                return active_driver.execute_script(
+                    "const el = document.getElementById('field-feedback-max_train_steps');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: "cannot both be set" in feedback_text(d))
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                    "return btn ? btn.disabled : null;"
+                )
+            )
+
+            training_tab.set_num_epochs(0)
+
+            WebDriverWait(driver, 10).until(lambda d: feedback_text(d) == "")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                    "return btn ? !btn.disabled : null;"
+                )
+            )
+
+        self.for_each_browser("test_epochs_steps_cross_validation", scenario)
+
+
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test configuring and starting training."""
 

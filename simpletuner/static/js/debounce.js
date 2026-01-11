@@ -147,29 +147,42 @@
                 // Add loading state
                 element.classList.add('debouncing');
 
-                // Suppress dirty tracking during debounced HTMX validation
-                // These are validation requests, not new user input
+                // Suppress dirty tracking during debounced HTMX validation requests
                 var trainerStore = window.Alpine && window.Alpine.store ? window.Alpine.store('trainer') : null;
                 var wasSuppressed = trainerStore && trainerStore._suppressDirtyTracking;
-                if (trainerStore && !wasSuppressed) {
+                var hasHtmx = window.htmx
+                    && element.hasAttribute('hx-trigger')
+                    && (
+                        element.hasAttribute('hx-post')
+                        || element.hasAttribute('hx-get')
+                        || element.hasAttribute('hx-put')
+                        || element.hasAttribute('hx-patch')
+                        || element.hasAttribute('hx-delete')
+                    );
+                var htmxEventType = eventType;
+                if (hasHtmx) {
+                    var trigger = (element.getAttribute('hx-trigger') || '').split(',')[0].trim();
+                    if (trigger) {
+                        var triggerEvent = trigger.split(/\s+/)[0];
+                        if (triggerEvent) {
+                            htmxEventType = triggerEvent;
+                        }
+                    }
+                }
+
+                if (hasHtmx && trainerStore && !wasSuppressed) {
                     trainerStore._suppressDirtyTracking = true;
+                    var restoreHandler = function() {
+                        trainerStore._suppressDirtyTracking = false;
+                    };
+                    element.addEventListener('htmx:afterRequest', restoreHandler, { once: true });
+                    element.addEventListener('htmx:sendError', restoreHandler, { once: true });
+                    element.addEventListener('htmx:responseError', restoreHandler, { once: true });
                 }
 
                 // If element has HTMX attributes, trigger HTMX
-                var hasHtmx = window.htmx && element.hasAttribute('hx-trigger');
                 if (hasHtmx) {
-                    // Restore dirty tracking after HTMX request completes
-                    if (trainerStore && !wasSuppressed) {
-                        var restoreHandler = function() {
-                            element.removeEventListener('htmx:afterSettle', restoreHandler);
-                            trainerStore._suppressDirtyTracking = false;
-                        };
-                        element.addEventListener('htmx:afterSettle', restoreHandler, { once: true });
-                    }
-                    htmx.trigger(element, eventType);
-                } else if (trainerStore && !wasSuppressed) {
-                    // No HTMX request, restore immediately
-                    trainerStore._suppressDirtyTracking = false;
+                    htmx.trigger(element, htmxEventType);
                 }
 
                 // Custom event for other handlers - use non-bubbling to avoid form handlers
