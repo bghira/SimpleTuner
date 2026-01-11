@@ -458,6 +458,37 @@ class TestReplicateUploadBackend(unittest.IsolatedAsyncioTestCase):
         finally:
             os.unlink(temp_path)
 
+    async def test_upload_rejects_oversized_archive(self):
+        """Upload should reject archives larger than the Replicate limit."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.cloud_upload_service import ReplicateUploadBackend
+
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
+            f.write(b"0123456789")
+            temp_path = f.name
+
+        try:
+            with patch.object(ReplicateUploadBackend, "_token", "test-token"):
+                backend = ReplicateUploadBackend()
+                with patch.object(ReplicateUploadBackend, "MAX_UPLOAD_BYTES", 1):
+                    with self.assertRaises(ValueError) as ctx:
+                        await backend.upload_archive(temp_path)
+                    self.assertIn("upload limit", str(ctx.exception))
+        finally:
+            os.unlink(temp_path)
+
+
+class TestCloudUploadServiceUploadLimit(unittest.TestCase):
+    """Tests for CloudUploadService upload limits."""
+
+    def test_estimated_size_blocks_oversized_archive(self):
+        """Estimated dataset size should enforce the upload limit."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.cloud_upload_service import CloudUploadService
+
+        with self.assertRaises(ValueError) as ctx:
+            CloudUploadService._raise_if_exceeds_upload_limit(total_bytes=2, max_upload_bytes=1)
+
+        self.assertIn("upload limit", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

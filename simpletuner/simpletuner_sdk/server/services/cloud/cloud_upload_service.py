@@ -430,13 +430,7 @@ class CloudUploadService:
         total_files = len(files_to_add)
         logger.info("Found %d files (%s) to package", total_files, self._format_bytes(total_bytes))
 
-        max_upload_bytes = getattr(self._backend, "MAX_UPLOAD_BYTES", None)
-        if max_upload_bytes and total_bytes > max_upload_bytes:
-            size_mib = total_bytes / (1024 * 1024)
-            limit_mib = max_upload_bytes / (1024 * 1024)
-            raise ValueError(
-                f"Estimated dataset size {size_mib:.1f} MiB exceeds Replicate's {limit_mib:.0f} MiB upload limit"
-            )
+        self._raise_if_exceeds_upload_limit(total_bytes, getattr(self._backend, "MAX_UPLOAD_BYTES", None))
 
         if progress_callback:
             progress_callback(0, total_files)
@@ -523,6 +517,16 @@ class CloudUploadService:
                 return f"{num_bytes:.1f} {unit}"
             num_bytes /= 1024
         return f"{num_bytes:.1f} TB"
+
+    @staticmethod
+    def _raise_if_exceeds_upload_limit(total_bytes: int, max_upload_bytes: Optional[int]) -> None:
+        """Raise if the estimated dataset size exceeds the upload limit."""
+        if max_upload_bytes and total_bytes > max_upload_bytes:
+            size_mib = total_bytes / (1024 * 1024)
+            limit_mib = max_upload_bytes / (1024 * 1024)
+            raise ValueError(
+                f"Estimated dataset size {size_mib:.1f} MiB exceeds Replicate's {limit_mib:.0f} MiB upload limit"
+            )
 
     def estimate_upload_size(self, dataloader_config: List[Dict[str, Any]]) -> int:
         """
