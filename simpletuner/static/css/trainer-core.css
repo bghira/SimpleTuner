@@ -172,6 +172,9 @@
     background: var(--glass-bg);
     border-bottom: 1px solid var(--glass-border);
     border-radius: 12px 12px 0 0;
+    position: relative;
+    overflow: visible;
+    z-index: 1;
 }
 
 .event-dock-title {
@@ -190,6 +193,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
+    z-index: 2;
 }
 
 .connection-status-badge .connection-uptime-tooltip {
@@ -208,7 +212,7 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s ease, transform 0.15s ease;
-    z-index: 20;
+    z-index: calc(var(--z-event-dock) + 5);
     box-shadow: 0 8px 20px rgba(2, 6, 23, 0.35);
 }
 
