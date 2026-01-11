@@ -1072,6 +1072,27 @@ class MetadataBackend:
             width, height = image.size
         elif image_metadata is not None:
             width, height = image_metadata["original_size"]
+            num_frames = image_metadata.get("num_frames") if isinstance(image_metadata, dict) else None
+            if num_frames is not None and self.dataset_type is DatasetType.VIDEO:
+                try:
+                    num_frames_val = int(num_frames)
+                except (TypeError, ValueError):
+                    num_frames_val = None
+                if num_frames_val is not None:
+                    if self.minimum_num_frames is not None and num_frames_val < self.minimum_num_frames:
+                        logger.debug(
+                            "Video has %s frames, which is less than the minimum required %s.",
+                            num_frames_val,
+                            self.minimum_num_frames,
+                        )
+                        return False
+                    if self.maximum_num_frames is not None and num_frames_val > self.maximum_num_frames:
+                        logger.debug(
+                            "Video has %s frames, which is more than the maximum configured %s.",
+                            num_frames_val,
+                            self.maximum_num_frames,
+                        )
+                        return False
         else:
             raise ValueError(
                 f"meets_resolution_requirements expects an image_path"
