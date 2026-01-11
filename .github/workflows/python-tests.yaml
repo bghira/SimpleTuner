@@ -4,9 +4,15 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "simpletuner/**"
+      - "tests/**"
   pull_request:
     branches:
       - main
+    paths:
+      - "simpletuner/**"
+      - "tests/**"
 
 jobs:
   python-tests:
