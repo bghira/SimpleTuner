@@ -293,6 +293,51 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_config_json_modal_reflects_blank_fields", scenario)
 
 
+class EventDockUptimeTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test connection uptime tooltip updates."""
+
+    MAX_BROWSERS = 1
+
+    def test_connection_uptime_tooltip_updates(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) {"
+                "  store.connectionStatus = 'connected';"
+                "  store.serverUptimeSeconds = 5;"
+                "  store.serverUptimeCapturedAt = Date.now();"
+                "  store.serverUptimeTick = Date.now();"
+                "}"
+            )
+
+            def get_tooltip_text(active_driver):
+                return active_driver.execute_script(
+                    "const el = document.querySelector('.connection-uptime-tooltip');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+
+            WebDriverWait(driver, 5).until(lambda d: "Server uptime:" in get_tooltip_text(d))
+            initial_text = get_tooltip_text(driver)
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store && store.serverUptimeCapturedAt) {"
+                "  store.serverUptimeTick = store.serverUptimeCapturedAt + 3000;"
+                "}"
+            )
+
+            WebDriverWait(driver, 5).until(lambda d: get_tooltip_text(d) != initial_text)
+
+        self.for_each_browser("test_connection_uptime_tooltip_updates", scenario)
+
+
 class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test form dirty state transitions across Easy Mode and full form tabs."""
 

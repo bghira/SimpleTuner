@@ -19,7 +19,7 @@ from .cloud.storage.base import BaseSQLiteStore, get_default_db_path
 logger = logging.getLogger(__name__)
 
 # Schema version for this repository
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class WorkerRepository(BaseSQLiteStore):
@@ -52,6 +52,7 @@ class WorkerRepository(BaseSQLiteStore):
                     labels TEXT,
                     current_job_id TEXT,
                     last_heartbeat TEXT,
+                    connected_at TEXT,
                     created_at TEXT NOT NULL
                 )
             """
@@ -104,7 +105,10 @@ class WorkerRepository(BaseSQLiteStore):
     def _run_migrations(self, cursor, from_version: int, to_version: int) -> None:
         """Run schema migrations."""
         logger.info("Running worker schema migrations from v%d to v%d", from_version, to_version)
-        # No migrations yet (initial version is v1)
+        if from_version < 2 <= to_version:
+            columns = {row["name"] for row in cursor.execute("PRAGMA table_info(workers)").fetchall()}
+            if "connected_at" not in columns:
+                cursor.execute("ALTER TABLE workers ADD COLUMN connected_at TEXT")
 
     async def create_worker(self, worker: Worker) -> Worker:
         """Create a new worker.
@@ -128,7 +132,7 @@ class WorkerRepository(BaseSQLiteStore):
                     """
                     INSERT INTO workers (
                         worker_id, name, worker_type, status, token_hash, user_id,
-                        gpu_info, provider, labels, current_job_id, last_heartbeat, created_at
+                        gpu_info, provider, labels, current_job_id, last_heartbeat, connected_at, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
@@ -143,6 +147,7 @@ class WorkerRepository(BaseSQLiteStore):
                         json.dumps(worker.labels) if worker.labels else None,
                         worker.current_job_id,
                         worker.last_heartbeat.isoformat() if worker.last_heartbeat else None,
+                        worker.connected_at.isoformat() if worker.connected_at else None,
                         worker.created_at.isoformat(),
                     ),
                 )
@@ -277,6 +282,9 @@ class WorkerRepository(BaseSQLiteStore):
                         set_clauses.append(f"{key} = ?")
                         values.append(json.dumps(value))
                     elif key == "last_heartbeat" and isinstance(value, datetime):
+                        set_clauses.append(f"{key} = ?")
+                        values.append(value.isoformat())
+                    elif key == "connected_at" and isinstance(value, datetime):
                         set_clauses.append(f"{key} = ?")
                         values.append(value.isoformat())
                     elif key == "status" and isinstance(value, WorkerStatus):
@@ -449,6 +457,14 @@ class WorkerRepository(BaseSQLiteStore):
                 # Invalid timestamp format; leave as None
                 pass
 
+        connected_at = None
+        if row["connected_at"]:
+            try:
+                connected_at = datetime.fromisoformat(row["connected_at"].replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                # Invalid timestamp format; leave as None
+                pass
+
         created_at = datetime.now(timezone.utc)
         if row["created_at"]:
             try:
@@ -469,6 +485,7 @@ class WorkerRepository(BaseSQLiteStore):
             labels=labels,
             current_job_id=row["current_job_id"],
             last_heartbeat=last_heartbeat,
+            connected_at=connected_at,
             created_at=created_at,
         )
 

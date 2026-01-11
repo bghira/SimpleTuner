@@ -150,7 +150,7 @@
     box-shadow: var(--shadow-event-dock);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
     transition: height 0.2s ease;
     pointer-events: auto;
 }
@@ -171,6 +171,7 @@
     padding: var(--spacing-md) var(--spacing-lg);
     background: var(--glass-bg);
     border-bottom: 1px solid var(--glass-border);
+    border-radius: 12px 12px 0 0;
 }
 
 .event-dock-title {
@@ -182,6 +183,38 @@
 
 .event-dock-title i {
     color: var(--accent-blue);
+}
+
+.connection-status-badge {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.connection-status-badge .connection-uptime-tooltip {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 0.35rem);
+    transform: translate(-50%, 4px);
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.35rem;
+    background: var(--event-dock-bg);
+    border: 1px solid var(--event-dock-border);
+    color: var(--text-primary);
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    z-index: 20;
+    box-shadow: 0 8px 20px rgba(2, 6, 23, 0.35);
+}
+
+.connection-status-badge:hover .connection-uptime-tooltip {
+    opacity: 1;
+    transform: translate(-50%, 0);
 }
 
 .event-dock-sysstat {
