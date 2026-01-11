@@ -1019,7 +1019,6 @@ class MetadataBackend:
         # Adjust video frame count to satisfy model constraints
         if image_metadata and "num_frames" in image_metadata:
             from simpletuner.helpers.models import ModelRegistry
-            from simpletuner.helpers.training.state_tracker import StateTracker
 
             model_family = StateTracker.get_model_family()
             model_class = None
