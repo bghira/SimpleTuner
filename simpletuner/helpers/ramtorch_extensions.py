@@ -18,6 +18,58 @@ import torch.nn.functional as F
 _DEVICE_STATE = {}
 
 
+# thanks to Nerogar for fast stochastic pytorch implementation
+# https://github.com/pytorch/pytorch/issues/120376#issuecomment-1974828905
+def to_stochastic(
+    tensor: torch.Tensor,
+    target_dtype: torch.dtype,
+    device: torch.device | str = None,
+    non_blocking: bool = False,
+) -> torch.Tensor:
+    """
+    Apply stochastic rounding for float32 → bfloat16 conversions.
+
+    Stochastic rounding randomly rounds up or down based on the fractional
+    part of the number, which eliminates systematic rounding bias and
+    improves training stability especially for gradient updates.
+
+    Args:
+        tensor: Input tensor to convert
+        target_dtype: Target dtype for conversion
+        device: Target device (optional)
+        non_blocking: Whether to use non-blocking transfer
+
+    Returns:
+        Tensor converted to target_dtype, using stochastic rounding if
+        converting from float32 to bfloat16, otherwise standard rounding.
+    """
+    if tensor is None:
+        return None
+
+    # Only use stochastic rounding for float32 → bfloat16 downcasts
+    if tensor.dtype == torch.float32 and target_dtype == torch.bfloat16:
+        with torch.no_grad():
+            # create a random 16 bit integer
+            result = torch.randint_like(
+                tensor,
+                dtype=torch.int32,
+                low=0,
+                high=(1 << 16),
+            )
+
+            # add the random number to the lower 16 bit of the mantissa
+            result.add_(tensor.view(dtype=torch.int32))
+
+            # mask off the lower 16 bit of the mantissa
+            result.bitwise_and_(-65536)  # -65536 = FFFF0000 as a signed int32
+
+            # Convert the randomized float32 to bfloat16 (truncating the lower bits)
+            return result.view(dtype=torch.float32).to(dtype=torch.bfloat16, device=device, non_blocking=non_blocking)
+
+    # Standard deterministic rounding for all other cases
+    return tensor.to(dtype=target_dtype, device=device, non_blocking=non_blocking)
+
+
 def _get_device_state(device):
     """Get or initialize per-device state for async transfers."""
     if isinstance(device, str):
@@ -99,6 +151,11 @@ class CPUBouncingEmbedding(nn.Module):
             weight_gpu = self.weight.to(self.device, non_blocking=True)
 
         torch.cuda.current_stream().wait_stream(transfer_stream)
+
+        # Apply stochastic rounding when autocast is enabled
+        if torch.is_autocast_enabled():
+            autocast_dtype = torch.get_autocast_gpu_dtype()
+            weight_gpu = to_stochastic(weight_gpu, autocast_dtype, device=self.device)
 
         return F.embedding(
             input_ids,
@@ -197,6 +254,13 @@ class CPUBouncingConv2d(nn.Module):
             bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
 
         torch.cuda.current_stream().wait_stream(transfer_stream)
+
+        # Apply stochastic rounding when autocast is enabled
+        if torch.is_autocast_enabled():
+            autocast_dtype = torch.get_autocast_gpu_dtype()
+            weight_gpu = to_stochastic(weight_gpu, autocast_dtype, device=self.device)
+            if bias_gpu is not None:
+                bias_gpu = to_stochastic(bias_gpu, autocast_dtype, device=self.device)
 
         if self.padding_mode != "zeros":
             return F.conv2d(
@@ -298,6 +362,13 @@ class CPUBouncingConv3d(nn.Module):
 
         torch.cuda.current_stream().wait_stream(transfer_stream)
 
+        # Apply stochastic rounding when autocast is enabled
+        if torch.is_autocast_enabled():
+            autocast_dtype = torch.get_autocast_gpu_dtype()
+            weight_gpu = to_stochastic(weight_gpu, autocast_dtype, device=self.device)
+            if bias_gpu is not None:
+                bias_gpu = to_stochastic(bias_gpu, autocast_dtype, device=self.device)
+
         return F.conv3d(x, weight_gpu, bias_gpu, self.stride, self.padding, self.dilation, self.groups)
 
 
@@ -376,6 +447,13 @@ class CPUBouncingLayerNorm(nn.Module):
             bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
 
         torch.cuda.current_stream().wait_stream(transfer_stream)
+
+        # Apply stochastic rounding when autocast is enabled
+        if torch.is_autocast_enabled():
+            autocast_dtype = torch.get_autocast_gpu_dtype()
+            weight_gpu = to_stochastic(weight_gpu, autocast_dtype, device=self.device)
+            if bias_gpu is not None:
+                bias_gpu = to_stochastic(bias_gpu, autocast_dtype, device=self.device)
 
         return F.layer_norm(x, self.normalized_shape, weight_gpu, bias_gpu, self.eps)
 
@@ -464,6 +542,13 @@ class CPUBouncingRMSNorm(nn.Module):
             bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
 
         torch.cuda.current_stream().wait_stream(transfer_stream)
+
+        # Apply stochastic rounding when autocast is enabled
+        if torch.is_autocast_enabled():
+            autocast_dtype = torch.get_autocast_gpu_dtype()
+            weight_gpu = to_stochastic(weight_gpu, autocast_dtype, device=self.device)
+            if bias_gpu is not None:
+                bias_gpu = to_stochastic(bias_gpu, autocast_dtype, device=self.device)
 
         if self.use_weight_addition:
             output = output * (1.0 + weight_gpu.float())
