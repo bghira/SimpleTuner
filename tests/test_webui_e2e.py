@@ -1529,6 +1529,17 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
 
+            def get_optimizer_values(active_driver):
+                return active_driver.execute_script(
+                    "const ez = document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]');"
+                    "const full = document.getElementById('optimizer');"
+                    "return { ez: ez ? ez.value : null, full: full ? full.value : null };"
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["full"])
+
+            WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["ez"] == get_optimizer_values(d)["full"])
+
             new_value = driver.execute_script(
                 """
                 const fullSelect = document.getElementById('optimizer');

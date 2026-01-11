@@ -4328,6 +4328,7 @@ function trainerComponent() {
             this.captureFormValues();
             // Store current form data as original
             this.updateBaselineFormData();
+            window.dispatchEvent(new CustomEvent('trainer-form-values-applied'));
         },
 
         // Update the baseline form data without clearing dirty state
@@ -4554,6 +4555,8 @@ function trainerComponent() {
                     });
                 }
             });
+
+            window.dispatchEvent(new CustomEvent('trainer-form-values-applied'));
         },
 
         handleFieldInput(event) {
@@ -4963,11 +4966,21 @@ function trainerComponent() {
             const resolve = this.configSaveDialogResolve;
             this.configSaveDialogResolve = null;
 
+            // Include Easy Mode modified fields as forceFields so config values override stale DOM
+            const easyModeFields = this._easyModeModifiedFields
+                ? Array.from(this._easyModeModifiedFields)
+                : [];
+
             // Call the actual save
             this.doSaveConfig({
                 createBackup: this.createConfigBackupOption,
-                preserveDefaults: this.preserveDefaultsOption
+                preserveDefaults: this.preserveDefaultsOption,
+                forceFields: easyModeFields
             }).then(() => {
+                // Clear the tracked fields after successful save
+                if (this._easyModeModifiedFields) {
+                    this._easyModeModifiedFields.clear();
+                }
                 if (resolve) resolve();
             });
         },
