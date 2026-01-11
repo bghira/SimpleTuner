@@ -1506,5 +1506,56 @@ class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_main_form_still_enables_save", scenario)
 
 
+class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test that Easy Mode optimizer reflects the full form selection."""
+
+    MAX_BROWSERS = 1
+
+    def test_easy_mode_optimizer_syncs_from_full_form(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]') !== null;"
+                )
+            )
+
+            new_value = driver.execute_script(
+                """
+                const fullSelect = document.getElementById('optimizer');
+                if (!fullSelect || !fullSelect.options || fullSelect.options.length === 0) {
+                    return null;
+                }
+                const options = Array.from(fullSelect.options);
+                const current = fullSelect.value;
+                const next = options.find(opt => opt.value && opt.value !== current) || options[0];
+                fullSelect.value = next.value;
+                fullSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                fullSelect.dispatchEvent(new Event('input', { bubbles: true }));
+                return next.value;
+                """
+            )
+            self.assertTrue(new_value, "Expected to find optimizer options in full form.")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const ez = document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]');"
+                    "return ez ? ez.value : null;"
+                )
+                == new_value
+            )
+
+        self.for_each_browser("test_easy_mode_optimizer_syncs_from_full_form", scenario)
+
+
 if __name__ == "__main__":
     unittest.main()
