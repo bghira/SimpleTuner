@@ -56,6 +56,7 @@ class HubManager:
     def _create_repo(self):
         if not self.config.push_to_hub:
             return
+        os.environ["HF_ENDPOINT"] = "https://huggingface.co"
         self._repo_id = create_repo(
             repo_id=self.repo_id,
             exist_ok=True,
