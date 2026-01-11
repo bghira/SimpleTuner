@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from cog import BasePredictor, Input, Path, Secret
 
+os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+os.environ["HUGGINGFACE_HUB_ENDPOINT"] = "https://huggingface.co"
+
 
 class Predictor(BasePredictor):
     def setup(self) -> None:

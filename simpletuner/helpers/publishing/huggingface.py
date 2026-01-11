@@ -2,9 +2,6 @@ import logging
 import os
 from pathlib import Path
 
-os.environ["HF_ENDPOINT"] = "https://huggingface.co"
-os.environ["HUGGINGFACE_HUB_ENDPOINT"] = "https://huggingface.co"
-
 from huggingface_hub import HfApi
 
 from simpletuner.helpers.publishing.metadata import save_model_card, save_training_config
@@ -31,7 +28,7 @@ class HubManager:
         raw_repo_id = repo_id or self.config.hub_model_id or self.config.tracker_project_name
         self.repo_id = self._normalize_repo_id(raw_repo_id)
         self.hub_token = self._load_hub_token()
-        self._hub_api = HfApi(endpoint="https://huggingface.co")
+        self._hub_api = HfApi()
         self.data_backends = StateTracker.get_data_backends(_types=["image", "video", "audio"])
         self._create_repo()
         self.validation_prompts = None
