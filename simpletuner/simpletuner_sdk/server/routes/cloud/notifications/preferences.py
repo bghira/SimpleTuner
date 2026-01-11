@@ -194,7 +194,7 @@ async def skip_notifications() -> None:
 
     store = get_job_store()
     # Mark as "configured" so the hero CTA doesn't show again
-    await store.update_provider_config(
+    await store.save_provider_config(
         "notifications",
         {"configured": True, "skipped": True},
     )

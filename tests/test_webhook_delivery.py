@@ -567,7 +567,7 @@ class TestWebhookConnectionTest(unittest.IsolatedAsyncioTestCase):
             success, error, latency = await channel.test_connection(config)
 
         self.assertFalse(success)
-        self.assertEqual(error, "HTTP 404")
+        self.assertEqual(error, "Webhook responded with HTTP 404")
         self.assertIsNotNone(latency)
 
     async def test_connection_test_no_url(self):

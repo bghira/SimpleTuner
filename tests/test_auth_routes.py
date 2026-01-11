@@ -10,6 +10,7 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,7 +28,11 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
         self.config_dir = Path(self.temp_dir)
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -35,6 +40,8 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         # Patch the _get_store function in auth routes to use our temp db
         self._store_patcher = patch(
@@ -53,6 +60,7 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
         self._store_patcher.stop()
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -60,6 +68,14 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_concurrent_first_admin_creation_prevented(self) -> None:
@@ -1498,7 +1514,12 @@ class TestSessionExpiredAuditEvent(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        # Redirect config dir to temp for AuditStore isolation
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1506,6 +1527,8 @@ class TestSessionExpiredAuditEvent(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         self.store = UserStore(self.db_path)
 
@@ -1514,6 +1537,7 @@ class TestSessionExpiredAuditEvent(unittest.IsolatedAsyncioTestCase):
         import shutil
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1521,6 +1545,14 @@ class TestSessionExpiredAuditEvent(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_expired_session_detection(self) -> None:
@@ -1582,7 +1614,11 @@ class TestAPIKeyUsedAuditEvent(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1590,6 +1626,8 @@ class TestAPIKeyUsedAuditEvent(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         self.store = UserStore(self.db_path)
 
@@ -1598,6 +1636,7 @@ class TestAPIKeyUsedAuditEvent(unittest.IsolatedAsyncioTestCase):
         import shutil
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1605,6 +1644,14 @@ class TestAPIKeyUsedAuditEvent(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_api_key_used_audit_logged(self) -> None:
@@ -1652,7 +1699,12 @@ class TestUserUpdateAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        # Redirect config dir to temp for AuditStore isolation
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1660,6 +1712,8 @@ class TestUserUpdateAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         self._store_patcher = patch(
             "simpletuner.simpletuner_sdk.server.routes.users._get_store",
@@ -1676,6 +1730,7 @@ class TestUserUpdateAuditEvents(unittest.IsolatedAsyncioTestCase):
         self._store_patcher.stop()
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1683,6 +1738,15 @@ class TestUserUpdateAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        # Restore original config dir
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_user_updated_audit_logged(self) -> None:
@@ -1860,7 +1924,11 @@ class TestAPIKeyAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1868,6 +1936,8 @@ class TestAPIKeyAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         self._store_patcher = patch(
             "simpletuner.simpletuner_sdk.server.routes.auth._get_store",
@@ -1884,6 +1954,7 @@ class TestAPIKeyAuditEvents(unittest.IsolatedAsyncioTestCase):
         self._store_patcher.stop()
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1891,6 +1962,14 @@ class TestAPIKeyAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_api_key_created_audit_logged(self) -> None:
@@ -1971,7 +2050,11 @@ class TestCredentialAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -1979,6 +2062,8 @@ class TestCredentialAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         self._store_patcher = patch(
             "simpletuner.simpletuner_sdk.server.routes.users._get_store",
@@ -1995,6 +2080,7 @@ class TestCredentialAuditEvents(unittest.IsolatedAsyncioTestCase):
         self._store_patcher.stop()
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -2002,6 +2088,14 @@ class TestCredentialAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_credential_created_audit_logged(self) -> None:
@@ -2118,7 +2212,11 @@ class TestJobAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = Path(self.temp_dir) / "test_users.db"
 
+        self._previous_config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        os.environ["SIMPLETUNER_CONFIG_DIR"] = self.temp_dir
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -2126,6 +2224,8 @@ class TestJobAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
 
         self.store = UserStore(self.db_path)
 
@@ -2134,6 +2234,7 @@ class TestJobAuditEvents(unittest.IsolatedAsyncioTestCase):
         import shutil
 
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud import audit
         from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
         from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
@@ -2141,6 +2242,14 @@ class TestJobAuditEvents(unittest.IsolatedAsyncioTestCase):
         UserStore.reset_instance()
         BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
+        audit._audit_store = None
+        audit.AuditStore.reset()
+
+        if self._previous_config_dir is not None:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = self._previous_config_dir
+        else:
+            os.environ.pop("SIMPLETUNER_CONFIG_DIR", None)
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     async def test_job_submitted_audit_logged(self) -> None:

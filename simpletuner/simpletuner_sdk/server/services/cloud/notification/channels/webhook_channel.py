@@ -244,7 +244,7 @@ class WebhookChannel(BaseNotificationChannel):
             if response.is_success:
                 return True, None, latency
             else:
-                return False, f"HTTP {response.status_code}", latency
+                return False, f"Webhook responded with HTTP {response.status_code}", latency
 
         except Exception as exc:
             latency = (time.monotonic() - start_time) * 1000

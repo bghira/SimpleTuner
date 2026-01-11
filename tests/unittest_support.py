@@ -70,6 +70,16 @@ class APITestEnvironmentMixin:
         self._previous_tqdm_disable = os.environ.get("TQDM_DISABLE")
         os.environ["TQDM_DISABLE"] = "1"
 
+        # Reset AuditStore singleton AFTER setting SIMPLETUNER_CONFIG_DIR
+        # so next access creates fresh instance using temp path
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud import audit
+
+            audit._audit_store = None
+            audit.AuditStore.reset()
+        except (ImportError, AttributeError):
+            pass
+
         self._api_state_guard = _APIStateGuard(self.tmp_path / "api_state.json")
         self._api_state_guard.__enter__()
 
@@ -221,6 +231,15 @@ class APITestEnvironmentMixin:
             metrics_store._metrics_store = None
             idempotency_store._idempotency_store = None
             reservation_store._reservation_store = None
+        except (ImportError, AttributeError):
+            pass
+
+        # Reset the tamper-evident AuditStore singleton (different from storage/audit_store)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud import audit
+
+            audit._audit_store = None
+            audit.AuditStore.reset()
         except (ImportError, AttributeError):
             pass
 

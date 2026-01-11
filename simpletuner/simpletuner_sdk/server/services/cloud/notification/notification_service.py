@@ -51,6 +51,8 @@ class NotificationService:
         self._response_handlers: List[ResponseHandlerProtocol] = []
         self._initialized = False
         self._lock = asyncio.Lock()
+        # Register channel classes immediately (sync operation)
+        self._register_channel_classes()
 
     async def initialize(self) -> None:
         """Load channels and start response handlers.
@@ -64,9 +66,6 @@ class NotificationService:
         async with self._lock:
             if self._initialized:
                 return
-
-            # Register channel implementations
-            self._register_channel_classes()
 
             # Load existing channels
             channels = await self._store.list_channels(enabled_only=True)
