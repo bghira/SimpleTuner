@@ -5131,20 +5131,6 @@ function trainerComponent() {
                         } finally {
                             this._suppressDirtyTracking = false;
                         }
-
-                        // After save, let everything settle then establish clean state.
-                        // Whatever form state exists after settling IS the clean state -
-                        // we just saved, so all current values should be considered "clean".
-                        setTimeout(() => {
-                            this._suppressDirtyTracking = true;
-                            this.updateBaselineFormData();
-                            this.formDirty = false;
-                            this._skipNextClean = false;
-                            // Brief suppression window to let any trailing events drain
-                            setTimeout(() => {
-                                this._suppressDirtyTracking = false;
-                            }, 100);
-                        }, 500);
                     } else {
                         let detail = null;
                         try {

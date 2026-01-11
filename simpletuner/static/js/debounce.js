@@ -156,8 +156,20 @@
                 }
 
                 // If element has HTMX attributes, trigger HTMX
-                if (window.htmx && element.hasAttribute('hx-trigger')) {
+                var hasHtmx = window.htmx && element.hasAttribute('hx-trigger');
+                if (hasHtmx) {
+                    // Restore dirty tracking after HTMX request completes
+                    if (trainerStore && !wasSuppressed) {
+                        var restoreHandler = function() {
+                            element.removeEventListener('htmx:afterSettle', restoreHandler);
+                            trainerStore._suppressDirtyTracking = false;
+                        };
+                        element.addEventListener('htmx:afterSettle', restoreHandler, { once: true });
+                    }
                     htmx.trigger(element, eventType);
+                } else if (trainerStore && !wasSuppressed) {
+                    // No HTMX request, restore immediately
+                    trainerStore._suppressDirtyTracking = false;
                 }
 
                 // Custom event for other handlers - use non-bubbling to avoid form handlers
@@ -167,13 +179,6 @@
                     cancelable: true
                 });
                 element.dispatchEvent(customEvent);
-
-                // Restore dirty tracking after a microtask
-                if (trainerStore && !wasSuppressed) {
-                    Promise.resolve().then(function() {
-                        trainerStore._suppressDirtyTracking = false;
-                    });
-                }
 
                 // Remove loading state
                 setTimeout(function() {

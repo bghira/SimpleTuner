@@ -138,11 +138,6 @@ if (!window.hardwareHeroCTA) {
                 this.watchEnvironmentChanges();
                 this.watchTrainerStore();
                 this.loading = false;
-
-                // Register cleanup for when component is destroyed (e.g., tab switch)
-                if (this.$cleanup) {
-                    this.$cleanup(() => this.destroy());
-                }
             },
 
             watchTrainerStore() {
@@ -587,11 +582,6 @@ if (!window.hardwareHeroCTA) {
                 this.watchEnvironmentChanges();
                 this.watchTrainerStore();
                 this.loading = false;
-
-                // Register cleanup for when component is destroyed (e.g., tab switch)
-                if (this.$cleanup) {
-                    this.$cleanup(() => this.destroy());
-                }
             },
 
             watchTrainerStore() {
@@ -617,13 +607,13 @@ if (!window.hardwareHeroCTA) {
                     }
                 };
 
-                timeoutId = setTimeout(checkStore, 100);
-
-                // Register cleanup to stop polling
+                // Register cleanup before starting the timeout
                 this._cleanupFns.push(() => {
                     stopped = true;
                     if (timeoutId) clearTimeout(timeoutId);
                 });
+
+                timeoutId = setTimeout(checkStore, 100);
             },
 
             destroy() {
@@ -940,11 +930,6 @@ if (!window.hardwareHeroCTA) {
                 this.watchEnvironmentChanges();
                 this.watchTrainerStore();
                 this.loading = false;
-
-                // Register cleanup for when component is destroyed (e.g., tab switch)
-                if (this.$cleanup) {
-                    this.$cleanup(() => this.destroy());
-                }
             },
 
             watchTrainerStore() {
@@ -970,13 +955,13 @@ if (!window.hardwareHeroCTA) {
                     }
                 };
 
-                timeoutId = setTimeout(checkStore, 100);
-
-                // Register cleanup to stop polling
+                // Register cleanup before starting the timeout
                 this._cleanupFns.push(() => {
                     stopped = true;
                     if (timeoutId) clearTimeout(timeoutId);
                 });
+
+                timeoutId = setTimeout(checkStore, 100);
             },
 
             destroy() {
@@ -1268,11 +1253,6 @@ if (!window.hardwareHeroCTA) {
                 this.watchEnvironmentChanges();
                 this.watchTrainerStore();
                 this.loading = false;
-
-                // Register cleanup for when component is destroyed (e.g., tab switch)
-                if (this.$cleanup) {
-                    this.$cleanup(() => this.destroy());
-                }
             },
 
             watchTrainerStore() {
@@ -1298,13 +1278,13 @@ if (!window.hardwareHeroCTA) {
                     }
                 };
 
-                timeoutId = setTimeout(checkStore, 100);
-
-                // Register cleanup to stop polling
+                // Register cleanup before starting the timeout
                 this._cleanupFns.push(() => {
                     stopped = true;
                     if (timeoutId) clearTimeout(timeoutId);
                 });
+
+                timeoutId = setTimeout(checkStore, 100);
             },
 
             destroy() {
