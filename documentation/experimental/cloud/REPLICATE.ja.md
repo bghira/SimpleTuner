@@ -25,6 +25,8 @@ Replicate は ML モデルを実行するクラウドプラットフォームで
 | 学習済みモデル | HuggingFace Hub、S3、ローカル | ユーザー管理 |
 | ジョブログ | Replicate サーバ | 30 日 |
 
+**アップロード制限:** Replicate のファイルアップロード API は 100 MiB までのアーカイブに対応します。SimpleTuner はパッケージ済みアーカイブがこの上限を超える場合、送信をブロックします。
+
 <details>
 <summary>データ経路の詳細</summary>
 

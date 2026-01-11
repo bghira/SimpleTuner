@@ -25,6 +25,8 @@ Replicate es una plataforma en la nube para ejecutar modelos de ML. SimpleTuner 
 | Modelo entrenado | HuggingFace Hub, S3 o local | Bajo tu control |
 | Logs del trabajo | Servidores de Replicate | 30 días |
 
+**Límite de carga:** La API de carga de archivos de Replicate acepta archivos de hasta 100 MiB. SimpleTuner bloquea los envíos cuando el archivo empaquetado supera este límite.
+
 <details>
 <summary>Detalles de la ruta de datos</summary>
 

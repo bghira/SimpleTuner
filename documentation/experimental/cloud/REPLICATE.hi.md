@@ -25,6 +25,8 @@ Replicate ML models चलाने के लिए एक cloud प्ले�
 | Trained model | HuggingFace Hub, S3, या local | आपके नियंत्रण में |
 | Job logs | Replicate servers | 30 days |
 
+**Upload limit:** Replicate की file upload API 100 MiB तक के archive स्वीकार करती है। SimpleTuner जब packaged archive इस सीमा से बड़ा हो, तो submission को block करता है।
+
 <details>
 <summary>Data path details</summary>
 

@@ -21,6 +21,7 @@ def _job_to_queue_entry(job: UnifiedJob) -> QueueEntry:
     # Map job status to queue status
     status_map = {
         CloudJobStatus.PENDING.value: QueueStatus.PENDING,
+        CloudJobStatus.UPLOADING.value: QueueStatus.PENDING,
         CloudJobStatus.QUEUED.value: QueueStatus.PENDING,  # queued -> pending
         CloudJobStatus.RUNNING.value: QueueStatus.RUNNING,
         CloudJobStatus.COMPLETED.value: QueueStatus.COMPLETED,
@@ -143,6 +144,24 @@ class JobRepoQueueAdapter:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).isoformat()
+
+        existing = await self._job_repo.get(job_id)
+        if existing:
+            updates: Dict[str, Any] = {
+                "priority": priority.value,
+                "priority_override": priority_override,
+                "queued_at": existing.queued_at or now,
+                "requires_approval": requires_approval,
+                "estimated_cost": estimated_cost,
+                "team_id": team_id,
+                "org_id": org_id,
+                "num_processes": num_processes,
+            }
+            if existing.status in (CloudJobStatus.PENDING.value, CloudJobStatus.UPLOADING.value):
+                updates["status"] = CloudJobStatus.QUEUED.value
+            await self._job_repo.update(job_id, updates)
+            refreshed = await self._job_repo.get(job_id)
+            return _job_to_queue_entry(refreshed or existing)
 
         job = UnifiedJob(
             job_id=job_id,

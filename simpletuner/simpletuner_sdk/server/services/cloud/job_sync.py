@@ -35,16 +35,20 @@ async def sync_replicate_jobs(store: "AsyncJobStore") -> tuple[int, int]:
         for cloud_job in cloud_jobs:
             existing = await store.get_job(cloud_job.job_id)
             if existing is None:
+                existing = await store.find_job_by_external_id(cloud_job.job_id, provider="replicate")
+
+            if existing is None:
                 unified = UnifiedJob.from_cloud_job(cloud_job)
                 await store.add_job(unified)
                 new_count += 1
             else:
                 await store.update_job(
-                    cloud_job.job_id,
+                    existing.job_id,
                     {
                         "status": cloud_job.status.value,
                         "cost_usd": cloud_job.cost_usd,
                         "completed_at": cloud_job.completed_at,
+                        "metadata": {"prediction_id": cloud_job.job_id},
                     },
                 )
                 updated_count += 1
@@ -67,6 +71,9 @@ def _get_external_job_id(job: "UnifiedJob") -> str | None:
     prediction_id = job.metadata.get("prediction_id")
     if prediction_id:
         return prediction_id
+
+    if job.status == CloudJobStatus.UPLOADING.value:
+        return None
 
     # For properly submitted jobs, job_id IS the Replicate prediction ID
     # Replicate prediction IDs are short alphanumeric strings (e.g., "abc123xyz")

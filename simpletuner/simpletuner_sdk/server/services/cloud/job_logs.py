@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from .base import JobType
+from .external_ids import get_external_job_id
 from .factory import ProviderFactory
 
 if TYPE_CHECKING:
@@ -98,7 +99,10 @@ async def _fetch_cloud_logs(job: "UnifiedJob") -> str:
     """Fetch logs from cloud provider."""
     try:
         client = ProviderFactory.get_provider(job.provider)
-        return await client.get_job_logs(job.job_id)
+        external_id = get_external_job_id(job)
+        if not external_id:
+            return "(Job has not reached the provider yet)"
+        return await client.get_job_logs(external_id)
     except ValueError:
         return f"(Unknown provider: {job.provider})"
     except Exception as exc:
@@ -180,7 +184,10 @@ async def get_inline_progress(job: "UnifiedJob") -> InlineProgress:
     if job.job_type == JobType.CLOUD and job.provider:
         try:
             client = ProviderFactory.get_provider(job.provider)
-            logs = await client.get_job_logs(job.job_id)
+            external_id = get_external_job_id(job)
+            if not external_id:
+                return result
+            logs = await client.get_job_logs(external_id)
             if logs:
                 lines = logs.strip().split("\n")
                 if lines:

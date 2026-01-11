@@ -188,6 +188,26 @@ class AsyncJobStore:
         """Get a job by ID."""
         return await self._jobs.get(job_id)
 
+    async def find_job_by_external_id(
+        self,
+        external_id: str,
+        provider: Optional[str] = None,
+    ) -> Optional[UnifiedJob]:
+        """Find a job whose metadata references the external provider ID."""
+        if not external_id:
+            return None
+
+        limit = 200
+        offset = 0
+        while True:
+            jobs = await self.list_jobs(limit=limit, offset=offset, provider=provider)
+            if not jobs:
+                return None
+            for job in jobs:
+                if job.metadata.get("prediction_id") == external_id:
+                    return job
+            offset += limit
+
     async def get_job_by_upload_token(self, upload_token: str) -> Optional[UnifiedJob]:
         """Get a job by upload token."""
         return await self._jobs.get_by_upload_token(upload_token)

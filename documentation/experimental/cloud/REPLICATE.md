@@ -25,6 +25,8 @@ Replicate is a cloud platform for running ML models. SimpleTuner uses Replicate'
 | Trained model | HuggingFace Hub, S3, or local | Your control |
 | Job logs | Replicate servers | 30 days |
 
+**Upload limit:** Replicate's file upload API accepts archives up to 100 MiB. SimpleTuner blocks submissions when the packaged archive exceeds this limit.
+
 <details>
 <summary>Data path details</summary>
 

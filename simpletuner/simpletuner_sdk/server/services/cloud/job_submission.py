@@ -13,11 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from .base import UnifiedJob
+from .base import CloudJobStatus, JobType, UnifiedJob
 from .factory import ProviderFactory
 
 if TYPE_CHECKING:
     from .async_job_store import AsyncJobStore
+    from .base import CloudJobInfo
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +115,27 @@ class JobSubmissionService:
         # Build snapshot metadata
         snapshot_metadata = await self._build_snapshot_metadata(ctx)
 
-        # Handle data upload if needed
+        # Prepare upload job entry if local data is present
         upload_id = ctx.upload_id or str(uuid.uuid4())
-        upload_result = await self._handle_data_upload(ctx, upload_id, progress_callback)
+        ctx.upload_id = upload_id
+        upload_job_id: Optional[str] = None
+        from .cloud_upload_service import CloudUploadService
+
+        upload_service = CloudUploadService()
+        if upload_service.has_local_data(ctx.dataloader_config):
+            upload_job_id = upload_id
+            await self._create_upload_job(ctx, upload_job_id, snapshot_metadata)
+
+        # Handle data upload if needed
+        upload_result = await self._handle_data_upload(ctx, upload_id, progress_callback, upload_job_id)
         if upload_result.error:
             return SubmissionResult(success=False, error=upload_result.error)
         data_url = upload_result.data_url
         data_uploaded = upload_result.uploaded
+        if upload_job_id:
+            cancelled_job = await self.store.get_job(upload_job_id)
+            if cancelled_job and cancelled_job.status == CloudJobStatus.CANCELLED.value:
+                return SubmissionResult(success=False, error="Job cancelled during upload")
 
         # Prepare config for submission
         config = dict(ctx.config)
@@ -157,30 +172,45 @@ class JobSubmissionService:
             if circuit:
                 await circuit.record_failure(provider_exc)
             logger.error("Failed to submit job to %s: %s", ctx.provider, provider_exc, exc_info=True)
+            if upload_job_id:
+                await self._mark_upload_job_failed(upload_job_id, str(provider_exc))
             return SubmissionResult(success=False, error=str(provider_exc))
 
-        # Build unified job and store it
-        unified_job = UnifiedJob.from_cloud_job(cloud_job)
-        unified_job.config_name = ctx.config_name
+        job_id_for_tracking = cloud_job.job_id
+        if upload_job_id:
+            job_id_for_tracking = upload_job_id
+            await self._update_upload_job_from_provider(
+                upload_job_id,
+                cloud_job,
+                ctx,
+                snapshot_metadata,
+                local_output_url,
+                hub_model_id,
+                upload_token,
+            )
+        else:
+            # Build unified job and store it
+            unified_job = UnifiedJob.from_cloud_job(cloud_job)
+            unified_job.config_name = ctx.config_name
 
-        if ctx.user_id:
-            unified_job.user_id = ctx.user_id
-        if upload_token:
-            unified_job.upload_token = upload_token
-        if local_output_url:
-            unified_job.output_url = local_output_url
-        elif hub_model_id:
-            unified_job.output_url = f"https://huggingface.co/{hub_model_id}"
-        if snapshot_metadata:
-            unified_job.metadata["snapshot"] = snapshot_metadata
-        if ctx.tracker_run_name:
-            unified_job.metadata["tracker_run_name"] = ctx.tracker_run_name
+            if ctx.user_id:
+                unified_job.user_id = ctx.user_id
+            if upload_token:
+                unified_job.upload_token = upload_token
+            if local_output_url:
+                unified_job.output_url = local_output_url
+            elif hub_model_id:
+                unified_job.output_url = f"https://huggingface.co/{hub_model_id}"
+            if snapshot_metadata:
+                unified_job.metadata["snapshot"] = snapshot_metadata
+            if ctx.tracker_run_name:
+                unified_job.metadata["tracker_run_name"] = ctx.tracker_run_name
 
-        await self.store.add_job(unified_job)
+            await self.store.add_job(unified_job)
 
         # Enqueue the job for processing
         await self._enqueue_job(
-            job_id=cloud_job.job_id,
+            job_id=job_id_for_tracking,
             user_id=ctx.user_id,
             provider=ctx.provider,
             config_name=ctx.config_name,
@@ -190,7 +220,7 @@ class JobSubmissionService:
 
         return SubmissionResult(
             success=True,
-            job_id=cloud_job.job_id,
+            job_id=job_id_for_tracking,
             status=cloud_job.status.value,
             data_uploaded=data_uploaded,
             quota_warnings=ctx.quota_warnings,
@@ -201,6 +231,7 @@ class JobSubmissionService:
         ctx: SubmissionContext,
         upload_id: str,
         progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
+        upload_job_id: Optional[str] = None,
     ) -> _UploadResult:
         """Handle local data packaging and upload if needed.
 
@@ -246,7 +277,84 @@ class JobSubmissionService:
             self.store.update_upload_progress(
                 upload_id=upload_id, stage="error", current=0, total=100, error=str(upload_exc)
             )
+            if upload_job_id:
+                await self._mark_upload_job_failed(upload_job_id, str(upload_exc))
             return _UploadResult(uploaded=False, error=f"Failed to upload data: {upload_exc}")
+
+    async def _create_upload_job(
+        self,
+        ctx: SubmissionContext,
+        job_id: str,
+        snapshot_metadata: Dict[str, Any],
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        metadata: Dict[str, Any] = {"upload_id": job_id}
+        if snapshot_metadata:
+            metadata["snapshot"] = snapshot_metadata
+        if ctx.tracker_run_name:
+            metadata["tracker_run_name"] = ctx.tracker_run_name
+
+        job = UnifiedJob(
+            job_id=job_id,
+            job_type=JobType.CLOUD,
+            provider=ctx.provider,
+            status=CloudJobStatus.UPLOADING.value,
+            config_name=ctx.config_name,
+            created_at=now,
+            user_id=ctx.user_id,
+            metadata=metadata,
+        )
+        await self.store.add_job(job)
+
+    async def _update_upload_job_from_provider(
+        self,
+        job_id: str,
+        cloud_job: CloudJobInfo,
+        ctx: SubmissionContext,
+        snapshot_metadata: Dict[str, Any],
+        local_output_url: Optional[str],
+        hub_model_id: Optional[str],
+        upload_token: Optional[str],
+    ) -> None:
+        metadata = dict(cloud_job.metadata or {})
+        metadata.setdefault("prediction_id", cloud_job.job_id)
+        if snapshot_metadata:
+            metadata["snapshot"] = snapshot_metadata
+        if ctx.tracker_run_name:
+            metadata["tracker_run_name"] = ctx.tracker_run_name
+        if ctx.upload_id:
+            metadata["upload_id"] = ctx.upload_id
+
+        updates: Dict[str, Any] = {
+            "status": cloud_job.status.value,
+            "provider": cloud_job.provider,
+            "config_name": ctx.config_name,
+            "started_at": cloud_job.started_at,
+            "completed_at": cloud_job.completed_at,
+            "cost_usd": cloud_job.cost_usd,
+            "hardware_type": cloud_job.hardware_type,
+            "error_message": cloud_job.error_message,
+            "metadata": metadata,
+        }
+        if upload_token:
+            updates["upload_token"] = upload_token
+        if local_output_url:
+            updates["output_url"] = local_output_url
+        elif hub_model_id:
+            updates["output_url"] = f"https://huggingface.co/{hub_model_id}"
+
+        await self.store.update_job(job_id, updates)
+
+    async def _mark_upload_job_failed(self, job_id: str, error: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        await self.store.update_job(
+            job_id,
+            {
+                "status": CloudJobStatus.FAILED.value,
+                "error_message": error,
+                "completed_at": now,
+            },
+        )
 
     async def _enqueue_job(
         self,

@@ -29,6 +29,8 @@ Com seu provedor configurado:
 4. Clique em **Train in Cloud**
 5. Revise o resumo de upload e clique em **Submit**
 
+**Limite de upload (Replicate):** Arquivos empacotados devem ter 100 MiB ou menos. Uploads maiores sao bloqueados antes do envio.
+
 ## Recebendo modelos treinados
 
 Depois que o treinamento termina, seu modelo precisa de um destino. Configure um antes do seu primeiro job.
