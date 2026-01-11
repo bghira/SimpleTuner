@@ -1249,7 +1249,7 @@
 }
 
 /* Discovery overrides specific spacing */
-#dataloaderSection .dataset-subgroup-title:contains("Discovery Overrides") {
+#dataloaderSection .dataset-subgroup-title.discovery-overrides-title {
     margin-bottom: var(--spacing-xl);
 }
 
