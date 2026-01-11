@@ -1528,11 +1528,6 @@
         line-height: 1.3;
     }
 
-    #datasets-tab-content #current-env-badge {
-        font-size: 0.65rem;
-        padding: 0.15rem 0.35rem;
-    }
-
     /* Mode switcher - compact buttons */
     .mode-switcher {
         margin-bottom: 0.75rem;

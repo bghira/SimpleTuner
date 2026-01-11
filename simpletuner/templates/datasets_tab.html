@@ -263,7 +263,6 @@
                            id="filterByEnvironment">
                     <label class="form-check-label small" for="filterByEnvironment">
                         Only show configs from<br>current environment
-                        <span class="badge bg-info text-dark" id="current-env-badge">none</span>
                     </label>
                 </div>
             </div>
@@ -288,9 +287,8 @@
             // Note: ID uses underscores, not hyphens
             const selector = document.getElementById('datasets_page_data_backend_config');
             const dropdown = document.querySelector('[data-field-id="datasets_page_data_backend_config"]');
-            const badge = document.getElementById('current-env-badge');
 
-            console.log('initDatasetPageSelector called (attempt ' + (retryCount + 1) + ')', { selector, dropdown, badge });
+            console.log('initDatasetPageSelector called (attempt ' + (retryCount + 1) + ')', { selector, dropdown });
 
             if (!dropdown) {
                 if (retryCount < maxRetries) {
@@ -322,15 +320,6 @@
                 return;
             }
             dropdown.dataset.initialized = 'true';
-
-            // Function to sync the environment badge with the trainer store
-            function syncEnvironmentBadge() {
-                const trainerStore = Alpine.store('trainer');
-                if (trainerStore && badge) {
-                    const env = trainerStore.selectedEnvironment || '';
-                    badge.textContent = env || 'none';
-                }
-            }
 
             // Function to sync the dropdown value from the trainer store's configValues
             function syncDropdownFromStore() {
@@ -401,8 +390,6 @@
                 }
             }
 
-            // Initial sync
-            syncEnvironmentBadge();
             // Delay the dropdown sync to ensure store is populated
             setTimeout(syncDropdownFromStore, 100);
 
@@ -411,8 +398,7 @@
                 Alpine.effect(() => {
                     const trainerStore = Alpine.store('trainer');
                     if (trainerStore) {
-                        syncEnvironmentBadge();
-                        // Also sync dropdown when configValues or activeEnvironmentConfig changes
+                        // Sync dropdown when configValues or activeEnvironmentConfig changes
                         const _ = trainerStore.configValues;
                         const __ = trainerStore.activeEnvironmentConfig;
                         syncDropdownFromStore();
