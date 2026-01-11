@@ -807,7 +807,7 @@ class TestWorkerRepository(unittest.TestCase):
             cursor.execute("SELECT version FROM schema_version LIMIT 1")
             version = cursor.fetchone()
             self.assertIsNotNone(version)
-            self.assertEqual(version["version"], 1)
+            self.assertEqual(version["version"], 2)
         finally:
             conn.close()
 
