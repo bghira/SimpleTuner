@@ -1158,9 +1158,30 @@ if (!window.hardwareHeroCTA) {
                 }
             },
 
-            // Field change handlers
-            onNumEpochsChange(value) { const parsed = parseInt(value, 10); const v = Number.isFinite(parsed) ? parsed : 0; this.num_train_epochs = v; this.updateFormField('num_train_epochs', v); },
-            onMaxStepsChange(value) { const v = value ? parseInt(value) : null; this.max_train_steps = v; this.updateFormField('max_train_steps', v); },
+            // Field change handlers with mutual exclusivity enforcement
+            onNumEpochsChange(value) {
+                const parsed = parseInt(value, 10);
+                const v = Number.isFinite(parsed) ? parsed : 0;
+                this.num_train_epochs = v;
+                this.updateFormField('num_train_epochs', v);
+                // Mutual exclusivity: clear max_train_steps if epochs > 0
+                if (v > 0 && this.max_train_steps && this.max_train_steps > 0) {
+                    this.max_train_steps = 0;
+                    this.updateFormField('max_train_steps', 0);
+                    window.showToast?.('Max training steps cleared (epochs takes precedence)', 'info');
+                }
+            },
+            onMaxStepsChange(value) {
+                const v = value ? parseInt(value) : 0;
+                this.max_train_steps = v;
+                this.updateFormField('max_train_steps', v);
+                // Mutual exclusivity: clear num_train_epochs if steps > 0
+                if (v > 0 && this.num_train_epochs && this.num_train_epochs > 0) {
+                    this.num_train_epochs = 0;
+                    this.updateFormField('num_train_epochs', 0);
+                    window.showToast?.('Number of epochs cleared (steps takes precedence)', 'info');
+                }
+            },
             onCheckpointStepIntervalChange(value) { const v = parseInt(value) || 500; this.checkpoint_step_interval = v; this.updateFormField('checkpoint_step_interval', v); },
             onCheckpointEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.checkpoint_epoch_interval = v; this.updateFormField('checkpoint_epoch_interval', v); },
             onCheckpointsTotalLimitChange(value) { const v = parseInt(value) || 5; this.checkpoints_total_limit = v; this.updateFormField('checkpoints_total_limit', v); },
@@ -2094,11 +2115,16 @@ if (!window.hardwareHeroCTA) {
                         <p class="ez-step-description">
                             Choose how long to train. You can specify either epochs (passes through your dataset) or a fixed number of steps. For small datasets (under 100 images), 1-3 epochs is typical. For larger datasets, you might use fewer epochs or set a step limit.
                         </p>
+                        <div class="alert alert-info py-2 mb-3" role="alert">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <small><strong>Note:</strong> Epochs and steps are mutually exclusive. Setting one will clear the other.</small>
+                        </div>
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label">Number of Epochs</label>
                                 <input type="number" class="form-control"
                                        x-model.number="num_train_epochs"
+                                       :class="{ 'border-primary': num_train_epochs > 0 && (!max_train_steps || max_train_steps === 0) }"
                                        @input.stop="onNumEpochsChange($event.target.value)"
                                        min="0" max="1000">
                                 <div class="form-text">One epoch = one complete pass through all your training images. More epochs let the model see your data more times, but too many causes <strong>overfitting</strong>—the model memorizes instead of learning. Start with 1-3 for LoRA, 5-10 for full fine-tuning.</div>
@@ -2107,6 +2133,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Max Training Steps</label>
                                 <input type="number" class="form-control"
                                        x-model.number="max_train_steps"
+                                       :class="{ 'border-primary': max_train_steps > 0 && (!num_train_epochs || num_train_epochs === 0) }"
                                        @input.stop="onMaxStepsChange($event.target.value)"
                                        min="0"
                                        placeholder="Leave empty to use epochs">
