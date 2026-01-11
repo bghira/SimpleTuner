@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from simpletuner.helpers.configuration.cli_utils import normalize_lr_scheduler_value
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_mapping
 from simpletuner.helpers.training.trainer import run_trainer_job
@@ -776,6 +777,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
                 config_dict.setdefault(arg_name, fallback)
 
     complete_config = ConfigsService.coerce_config_values_by_field(complete_config)
+    _normalize_lr_scheduler_config(complete_config, config_dict)
 
     # Drop optional string fields that were explicitly cleared
     for optional_key in ("--cache_dir_vae", "cache_dir_vae"):
@@ -958,6 +960,25 @@ def _coerce_int(value: Any) -> int:
         raise ValueError from exc
 
 
+def _normalize_lr_scheduler_config(complete_config: Dict[str, Any], config_dict: Optional[Dict[str, Any]] = None) -> None:
+    if not isinstance(complete_config, dict):
+        return
+
+    scheduler = complete_config.get("--lr_scheduler", complete_config.get("lr_scheduler"))
+    warmup_steps = complete_config.get("--lr_warmup_steps", complete_config.get("lr_warmup_steps"))
+    normalized = normalize_lr_scheduler_value(scheduler, warmup_steps)
+
+    if normalized == scheduler or normalized is None:
+        return
+
+    for target in (complete_config, config_dict):
+        if not isinstance(target, dict):
+            continue
+        for key in ("--lr_scheduler", "lr_scheduler"):
+            if key in target:
+                target[key] = normalized
+
+
 def validate_training_config(
     store: ConfigStore,
     complete_config: Dict[str, Any],
@@ -973,6 +994,7 @@ def validate_training_config(
     warnings = list(validation.warnings) if validation.warnings else []
     suggestions = list(validation.suggestions) if validation.suggestions else []
 
+    _normalize_lr_scheduler_config(complete_config, config_dict)
     source = config_dict or complete_config
 
     num_epochs = source.get("--num_train_epochs", complete_config.get("--num_train_epochs", 0))
@@ -990,15 +1012,9 @@ def validate_training_config(
     except ValueError:
         errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
 
-    lr_scheduler = source.get("--lr_scheduler", complete_config.get("--lr_scheduler", ""))
     warmup_raw = source.get("--lr_warmup_steps", complete_config.get("--lr_warmup_steps", 0))
     try:
-        warmup_val = _coerce_int(warmup_raw)
-        if lr_scheduler == "constant" and warmup_val > 0:
-            errors.append(
-                "Warmup steps are not supported with the 'constant' learning rate scheduler. "
-                "Use 'constant_with_warmup' or set warmup steps to 0."
-            )
+        _coerce_int(warmup_raw)
     except ValueError:
         errors.append("Warmup steps must be a whole number.")
 
