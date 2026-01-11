@@ -2302,7 +2302,7 @@ if (!window.hardwareHeroCTA) {
                                 <div class="form-check form-switch mb-2">
                                     <input type="checkbox" class="form-check-input" id="ez_flow_auto_shift"
                                            :checked="flow_schedule_auto_shift"
-                                           @change="flow_schedule_auto_shift = $event.target.checked; onFlowAutoShiftChange($event.target.checked)">
+                                           @change.stop="onFlowAutoShiftChange($event.target.checked)">
                                     <label class="form-check-label" for="ez_flow_auto_shift">
                                         <strong>Auto Shift Schedule</strong>
                                     </label>
@@ -2313,7 +2313,7 @@ if (!window.hardwareHeroCTA) {
                                 <label class="form-label">Schedule Shift Value</label>
                                 <input type="number" class="form-control"
                                        :value="flow_schedule_shift"
-                                       @input="flow_schedule_shift = parseFloat($event.target.value) || 0; onFlowShiftChange($event.target.value)"
+                                       @input.stop="onFlowShiftChange($event.target.value)"
                                        step="0.1" min="0">
                                 <div class="form-text">
                                     <strong>Higher values (3-5):</strong> Focus on composition and large-scale structure.<br>
