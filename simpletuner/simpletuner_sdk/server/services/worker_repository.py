@@ -133,7 +133,7 @@ class WorkerRepository(BaseSQLiteStore):
                     INSERT INTO workers (
                         worker_id, name, worker_type, status, token_hash, user_id,
                         gpu_info, provider, labels, current_job_id, last_heartbeat, connected_at, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         worker.worker_id,
