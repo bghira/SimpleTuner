@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -18,6 +19,7 @@ from ...services.cloud import CloudJobStatus, JobType, UnifiedJob
 from ...services.cloud.auth import get_optional_user
 from ...services.cloud.auth.models import User
 from ...services.cloud.commands import CommandContext, SubmitJobCommand
+from ...services.cloud.external_ids import get_external_job_id
 from ...services.cloud.factory import ProviderFactory
 from ...services.cloud.job_logs import fetch_job_logs
 from ...services.cloud.job_logs import get_inline_progress as get_job_inline_progress
@@ -203,8 +205,22 @@ async def cancel_job(
 
     if job.job_type == JobType.CLOUD and job.provider:
         try:
+            external_id = get_external_job_id(job)
+            if not external_id:
+                # Upload-only jobs have not reached the provider yet.
+                now = datetime.now(timezone.utc).isoformat()
+                await store.update_job(
+                    job_id,
+                    {
+                        "status": CloudJobStatus.CANCELLED.value,
+                        "completed_at": now,
+                        "error_message": "Cancelled during upload",
+                    },
+                )
+                return {"success": True, "job_id": job_id, "status": CloudJobStatus.CANCELLED.value}
+
             client = ProviderFactory.get_provider(job.provider)
-            success = await client.cancel_job(job_id)
+            success = await client.cancel_job(external_id)
             if not success:
                 raise ProviderError(job.provider, f"Failed to cancel job {job_id}")
         except ValueError:

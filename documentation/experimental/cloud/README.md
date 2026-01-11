@@ -29,6 +29,8 @@ When you submit a cloud job:
 3. **Training runs** - The model may have to download before your samples are trained on cloud GPUs
 4. **Data is deleted** - After training, uploaded data is removed from the provider servers and your model is delivered
 
+**Upload limit (Replicate):** Packaged archives must be 100 MiB or smaller. Larger uploads are blocked before submission.
+
 **Security notes:**
 - Your API token never leaves your machine
 - Sensitive files (.env, .git, credentials) are automatically excluded

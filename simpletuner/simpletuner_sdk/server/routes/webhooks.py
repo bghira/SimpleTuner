@@ -228,17 +228,25 @@ async def replicate_webhook(request: Request, _user: User = Depends(get_current_
     if new_status in CloudJobStatus.terminal_values():
         updates["completed_at"] = datetime.now(timezone.utc).isoformat()
 
+    target_job_id = job_id
     if updates:
         success = await store.update_job(job_id, updates)
+        if not success:
+            matched = await store.find_job_by_external_id(job_id, provider="replicate")
+            if matched:
+                target_job_id = matched.job_id
+                success = await store.update_job(target_job_id, updates)
         if not success:
             logger.debug("Job %s not found in store, webhook ignored", job_id)
 
     # Emit admin events for terminal states
     if new_status == CloudJobStatus.COMPLETED.value:
-        emit_cloud_event("cloud.job.completed", job_id, f"Cloud job completed: {job_id[:12]}", severity="success")
+        emit_cloud_event(
+            "cloud.job.completed", target_job_id, f"Cloud job completed: {target_job_id[:12]}", severity="success"
+        )
     elif new_status == CloudJobStatus.FAILED.value:
         error_msg = updates.get("error_message", "Unknown error")
-        emit_cloud_event("cloud.job.failed", job_id, f"Cloud job failed: {error_msg}", severity="error")
+        emit_cloud_event("cloud.job.failed", target_job_id, f"Cloud job failed: {error_msg}", severity="error")
 
     # Forward to SSE for live updates
     try:
@@ -247,11 +255,12 @@ async def replicate_webhook(request: Request, _user: User = Depends(get_current_
         sse_manager = get_sse_manager()
         cloud_event = {
             "type": "cloud_job_update",
-            "job_id": job_id,
+            "job_id": target_job_id,
             "event_type": event_type,
             "status": new_status,
             "updates": updates,
             "payload": {k: v for k, v in raw_payload.items() if k not in ("logs",)},
+            "external_job_id": job_id,
         }
         asyncio.create_task(sse_manager.broadcast(cloud_event, event_type="cloud_job_update"))
     except Exception as exc:

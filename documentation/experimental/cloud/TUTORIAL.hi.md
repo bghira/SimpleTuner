@@ -29,6 +29,8 @@ Provider कॉन्फ़िगर होने के बाद:
 4. **Train in Cloud** क्लिक करें
 5. Upload summary समीक्षा करें और **Submit** क्लिक करें
 
+**Upload limit (Replicate):** Packaged archive 100 MiB या उससे कम होना चाहिए। इससे बड़े uploads submission से पहले block हो जाते हैं।
+
 ## प्रशिक्षित मॉडल प्राप्त करना
 
 Training पूरी होने के बाद, मॉडल को किसी destination की जरूरत होती है। अपनी पहली job से पहले इनमें से एक कॉन्फ़िगर करें।

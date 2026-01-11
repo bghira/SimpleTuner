@@ -25,6 +25,8 @@ Replicate 是用于运行机器学习模型的云平台。SimpleTuner 使用 Rep
 | 训练模型 | HuggingFace Hub、S3 或本地 | 由你控制 |
 | 任务日志 | Replicate 服务器 | 30 天 |
 
+**上传限制：** Replicate 的文件上传 API 仅支持最多 100 MiB 的归档文件。SimpleTuner 会在打包归档超过该限制时阻止提交。
+
 <details>
 <summary>数据路径细节</summary>
 

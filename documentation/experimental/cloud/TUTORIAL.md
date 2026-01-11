@@ -29,6 +29,8 @@ With your provider configured:
 4. Click **Train in Cloud**
 5. Review the upload summary and click **Submit**
 
+**Upload limit (Replicate):** Packaged archives must be 100 MiB or smaller. Larger uploads are blocked before submission.
+
 ## Receiving Trained Models
 
 After training completes, your model needs a destination. Configure one of these before your first job.

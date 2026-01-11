@@ -29,6 +29,8 @@ Cloud training उपयोग करने से पहले ये तीन
 3. **Training चलता है** - cloud GPUs पर आपके samples ट्रेन होने से पहले मॉडल को डाउनलोड करना पड़ सकता है
 4. **डेटा हटाया जाता है** - training के बाद अपलोड किया गया डेटा provider servers से हट जाता है और आपका मॉडल deliver किया जाता है
 
+**Upload limit (Replicate):** Packaged archive 100 MiB या उससे कम होना चाहिए। इससे बड़े uploads submission से पहले block हो जाते हैं।
+
 **Security notes:**
 - आपका API token कभी आपकी मशीन से बाहर नहीं जाता
 - Sensitive files (.env, .git, credentials) स्वतः exclude हो जाती हैं

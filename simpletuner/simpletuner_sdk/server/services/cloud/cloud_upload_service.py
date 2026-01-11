@@ -141,6 +141,7 @@ class ReplicateUploadBackend(CloudUploadBackend):
     """Upload backend using Replicate's file upload API."""
 
     REPLICATE_API_BASE = "https://api.replicate.com/v1"
+    MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
     def __init__(self):
         self._secrets = get_secrets_manager()
@@ -177,6 +178,10 @@ class ReplicateUploadBackend(CloudUploadBackend):
 
             file_path = Path(local_path)
             total_size = file_path.stat().st_size
+            if total_size > self.MAX_UPLOAD_BYTES:
+                size_mib = total_size / (1024 * 1024)
+                limit_mib = self.MAX_UPLOAD_BYTES / (1024 * 1024)
+                raise ValueError(f"Archive size {size_mib:.1f} MiB exceeds Replicate's {limit_mib:.0f} MiB upload limit")
 
             # Notify start
             if progress_callback:
@@ -289,6 +294,11 @@ class CloudUploadService:
         try:
             # Get archive size for upload progress
             archive_size = Path(archive_path).stat().st_size
+            max_upload_bytes = getattr(self._backend, "MAX_UPLOAD_BYTES", None)
+            if max_upload_bytes and archive_size > max_upload_bytes:
+                size_mib = archive_size / (1024 * 1024)
+                limit_mib = max_upload_bytes / (1024 * 1024)
+                raise ValueError(f"Archive size {size_mib:.1f} MiB exceeds Replicate's {limit_mib:.0f} MiB upload limit")
             archive_size_str = self._format_bytes(archive_size)
 
             if detailed_progress_callback:
@@ -419,6 +429,14 @@ class CloudUploadService:
 
         total_files = len(files_to_add)
         logger.info("Found %d files (%s) to package", total_files, self._format_bytes(total_bytes))
+
+        max_upload_bytes = getattr(self._backend, "MAX_UPLOAD_BYTES", None)
+        if max_upload_bytes and total_bytes > max_upload_bytes:
+            size_mib = total_bytes / (1024 * 1024)
+            limit_mib = max_upload_bytes / (1024 * 1024)
+            raise ValueError(
+                f"Estimated dataset size {size_mib:.1f} MiB exceeds Replicate's {limit_mib:.0f} MiB upload limit"
+            )
 
         if progress_callback:
             progress_callback(0, total_files)

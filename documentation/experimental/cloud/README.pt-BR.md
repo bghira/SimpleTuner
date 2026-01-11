@@ -29,6 +29,8 @@ Quando voce envia um job na nuvem:
 3. **Treinamento roda** - o modelo pode precisar ser baixado antes das amostras serem treinadas nas GPUs da nuvem
 4. **Dados sao apagados** - apos o treino, os dados enviados sao removidos dos servidores do provedor e seu modelo e entregue
 
+**Limite de upload (Replicate):** Arquivos empacotados devem ter 100 MiB ou menos. Uploads maiores sao bloqueados antes do envio.
+
 **Notas de seguranca:**
 - Seu token de API nunca sai da sua maquina
 - Arquivos sensiveis (.env, .git, credenciais) sao excluidos automaticamente

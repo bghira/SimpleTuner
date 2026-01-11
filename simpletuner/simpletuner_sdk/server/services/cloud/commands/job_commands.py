@@ -408,15 +408,18 @@ class SubmitJobCommand(Command[SubmitJobData]):
             return False
 
         try:
+            from datetime import datetime, timezone
+
             from ..base import CloudJobStatus
+            from ..external_ids import get_external_job_id
             from ..factory import ProviderFactory
 
             job = await ctx.job_store.get_job(self._created_job_id)
             if job and job.provider:
-                client = ProviderFactory.get_provider(job.provider)
-                await client.cancel_job(self._created_job_id)
-
-            from datetime import datetime, timezone
+                external_id = get_external_job_id(job)
+                if external_id:
+                    client = ProviderFactory.get_provider(job.provider)
+                    await client.cancel_job(external_id)
 
             await ctx.job_store.update_job(
                 self._created_job_id,
@@ -495,7 +498,10 @@ class CancelJobCommand(Command[CancelJobData]):
 
     async def execute(self, ctx: CommandContext) -> CommandResult[CancelJobData]:
         """Execute job cancellation."""
+        from datetime import datetime, timezone
+
         from ..base import CloudJobStatus, JobType
+        from ..external_ids import get_external_job_id
         from ..factory import ProviderFactory
 
         job = await ctx.job_store.get_job(self.job_id)
@@ -504,8 +510,27 @@ class CancelJobCommand(Command[CancelJobData]):
         # Cancel with provider
         if job.job_type == JobType.CLOUD and job.provider:
             try:
+                external_id = get_external_job_id(job)
+                if not external_id:
+                    await ctx.job_store.update_job(
+                        self.job_id,
+                        {
+                            "status": CloudJobStatus.CANCELLED.value,
+                            "completed_at": datetime.now(timezone.utc).isoformat(),
+                            "error_message": "Cancelled during upload",
+                        },
+                    )
+                    return CommandResult(
+                        success=True,
+                        data=CancelJobData(
+                            job_id=self.job_id,
+                            previous_status=self._previous_status,
+                            new_status=CloudJobStatus.CANCELLED.value,
+                        ),
+                    )
+
                 client = ProviderFactory.get_provider(job.provider)
-                success = await client.cancel_job(self.job_id)
+                success = await client.cancel_job(external_id)
                 if not success:
                     return CommandResult(
                         success=False,
