@@ -5,7 +5,7 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.75);
+    background: var(--modal-backdrop);
     z-index: 9999;
     cursor: pointer;
     display: flex;
@@ -17,9 +17,9 @@
 .deepspeed-builder-modal {
     width: 90vw;
     max-width: 900px;
-    background: rgba(15, 23, 42, 0.98);
+    background: var(--modal-surface);
     border-radius: 16px;
-    border: 1px solid rgba(148, 163, 184, 0.2);
+    border: 1px solid var(--modal-border);
     box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
     max-height: 90vh;
     display: flex;
@@ -31,15 +31,15 @@
 }
 
 .deepspeed-builder-modal .modal-header {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    border-bottom: 1px solid var(--modal-border);
     padding: 1.5rem 2rem;
     flex-shrink: 0;
-    background: rgba(30, 41, 59, 0.6);
+    background: var(--modal-header-bg);
     border-radius: 16px 16px 0 0;
 }
 
 .deepspeed-builder-modal .modal-title {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-size: 1.25rem;
     font-weight: 600;
     margin-bottom: 0.25rem;
@@ -49,75 +49,75 @@
     flex: 1;
     overflow-y: auto;
     padding: 0 2rem 1.5rem;
-    background: rgba(15, 23, 42, 0.98);
+    background: var(--modal-surface);
 }
 
 .deepspeed-builder-modal .modal-footer {
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    border-top: 1px solid var(--modal-border);
     padding: 1.5rem 2rem;
     display: flex;
     gap: 0.75rem;
     flex-shrink: 0;
-    background: rgba(30, 41, 59, 0.6);
+    background: var(--modal-header-bg);
     border-radius: 0 0 16px 16px;
 }
 
 .deepspeed-builder-modal h5 {
     margin-bottom: 0;
-    color: #f8fafc;
+    color: var(--text-bright);
 }
 
 .deepspeed-builder-modal p {
-    color: #cbd5e1;
+    color: var(--text-body);
     margin-bottom: 0;
 }
 
 /* Wizard-style form controls */
 .deepspeed-builder-modal .form-control,
 .deepspeed-builder-modal .form-select {
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    color: #f8fafc;
+    background: var(--dark-surface-60);
+    border: 1px solid var(--slate-border-hover);
+    color: var(--text-bright);
     border-radius: 8px;
 }
 
 .deepspeed-builder-modal .form-control:focus,
 .deepspeed-builder-modal .form-select:focus {
-    background: rgba(15, 23, 42, 0.8);
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    color: #f8fafc;
+    background: var(--dark-surface-80);
+    border-color: var(--blue-500);
+    box-shadow: 0 0 0 3px var(--blue-bg);
+    color: var(--text-bright);
 }
 
 .deepspeed-builder-modal .form-control::placeholder,
 .deepspeed-builder-modal .form-select::placeholder {
-    color: #64748b;
+    color: var(--text-muted);
 }
 
 .deepspeed-builder-modal .form-text {
-    color: #94a3b8;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     margin-top: 0.5rem;
 }
 
 /* Wizard-style cards and sections */
 .deepspeed-builder-section {
-    background: rgba(30, 41, 59, 0.4);
+    background: var(--slate-800-40);
     border-radius: 12px;
     padding: 1.5rem;
     margin-bottom: 1.5rem;
 }
 
 .deepspeed-builder-section h6 {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-weight: 600;
     margin-bottom: 0.75rem;
 }
 
 /* Wizard-style option cards */
 .deepspeed-option-card {
-    background: rgba(30, 41, 59, 0.6);
-    border: 2px solid rgba(148, 163, 184, 0.2);
+    background: var(--modal-header-bg);
+    border: 2px solid var(--modal-border);
     border-radius: 12px;
     padding: 1.5rem;
     cursor: pointer;
@@ -127,15 +127,15 @@
 }
 
 .deepspeed-option-card:hover {
-    background: rgba(30, 41, 59, 0.8);
-    border-color: rgba(148, 163, 184, 0.4);
+    background: var(--slate-800-80);
+    border-color: var(--slate-border-strong);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
 .deepspeed-option-card.selected {
     background: rgba(59, 130, 246, 0.15);
-    border-color: #3b82f6;
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    border-color: var(--blue-500);
+    box-shadow: 0 0 20px var(--blue-bg-30);
 }
 
 .deepspeed-option-card.selected::before {
@@ -145,7 +145,7 @@
     right: 0.75rem;
     width: 24px;
     height: 24px;
-    background: #3b82f6;
+    background: var(--blue-500);
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -156,7 +156,7 @@
 }
 
 .deepspeed-option-card h6 {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-weight: 600;
     margin-bottom: 0.5rem;
 }
@@ -168,7 +168,7 @@
 }
 
 .deepspeed-option-card .text-muted {
-    color: #94a3b8 !important;
+    color: var(--text-secondary) !important;
 }
 
 .deepspeed-builder-modal .btn-mode {
@@ -200,9 +200,9 @@
     width: 100%;
     margin-bottom: 0.75rem;
     font-weight: 600;
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    background: var(--blue-gradient);
     border: none;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 2px 8px var(--blue-bg-30);
     transition: all 0.2s;
     border-radius: 8px;
     padding: 0.75rem 1.5rem;
@@ -210,7 +210,7 @@
 }
 
 .deepspeed-launch-btn:hover {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: var(--blue-gradient-hover);
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
@@ -231,9 +231,9 @@ body.builder-modal-open {
 .deepspeed-builder-modal .form-control,
 .deepspeed-builder-modal .form-select,
 .deepspeed-builder-modal textarea {
-    background: rgba(15, 23, 42, 0.6) !important;
-    border: 1px solid rgba(148, 163, 184, 0.3) !important;
-    color: #f8fafc !important;
+    background: var(--dark-surface-60) !important;
+    border: 1px solid var(--slate-border-hover) !important;
+    color: var(--text-bright) !important;
     border-radius: 8px;
     padding: 0.5rem 0.75rem !important;
     font-size: 0.875rem !important;
@@ -243,21 +243,21 @@ body.builder-modal-open {
 .deepspeed-builder-modal .form-control:focus,
 .deepspeed-builder-modal .form-select:focus,
 .deepspeed-builder-modal textarea:focus {
-    background: rgba(15, 23, 42, 0.8) !important;
-    border-color: #3b82f6 !important;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
-    color: #f8fafc !important;
+    background: var(--dark-surface-80) !important;
+    border-color: var(--blue-500) !important;
+    box-shadow: 0 0 0 3px var(--blue-bg) !important;
+    color: var(--text-bright) !important;
     outline: none;
 }
 
 .deepspeed-builder-modal .form-control::placeholder,
 .deepspeed-builder-modal .form-select::placeholder,
 .deepspeed-builder-modal textarea::placeholder {
-    color: #64748b !important;
+    color: var(--text-muted) !important;
 }
 
 .deepspeed-builder-modal .form-text {
-    color: #94a3b8 !important;
+    color: var(--text-secondary) !important;
     font-size: 0.8125rem !important;
     margin-top: 0.5rem;
 }
@@ -285,8 +285,8 @@ body.builder-modal-open {
 }
 
 .deepspeed-builder-modal .form-check-input:checked {
-    background: #3b82f6 !important;
-    border-color: #3b82f6 !important;
+    background: var(--blue-500) !important;
+    border-color: var(--blue-500) !important;
 }
 
 .deepspeed-builder-modal .form-check-label {
@@ -294,7 +294,7 @@ body.builder-modal-open {
     cursor: pointer;
     font-size: 0.875rem !important;
     line-height: 1.125rem !important;
-    color: #cbd5e1 !important;
+    color: var(--text-body) !important;
     font-weight: 500 !important;
 }
 
@@ -309,21 +309,21 @@ body.builder-modal-open {
 
 .deepspeed-builder-modal optgroup {
     background: rgba(30, 41, 59, 0.9) !important;
-    color: #94a3b8 !important;
+    color: var(--text-secondary) !important;
     font-weight: 600 !important;
     font-size: 0.8125rem !important;
 }
 
 .deepspeed-builder-modal optgroup option {
-    background: rgba(15, 23, 42, 0.6) !important;
-    color: #f8fafc !important;
+    background: var(--dark-surface-60) !important;
+    color: var(--text-bright) !important;
     font-weight: normal !important;
     padding-left: 1rem !important;
 }
 
 /* Section dividers/headers */
 .deepspeed-builder-section {
-    background: rgba(30, 41, 59, 0.4) !important;
+    background: var(--slate-800-40) !important;
     border-radius: 12px !important;
     padding: 1.5rem !important;
     margin-bottom: 1.5rem !important;
@@ -338,11 +338,11 @@ body.builder-modal-open {
     left: 1.5rem;
     right: 1.5rem;
     height: 2px;
-    background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.3) 50%, transparent 100%) !important;
+    background: linear-gradient(90deg, transparent 0%, var(--blue-bg-30) 50%, transparent 100%) !important;
 }
 
 .deepspeed-builder-section h6 {
-    color: #f8fafc !important;
+    color: var(--text-bright) !important;
     font-weight: 600 !important;
     margin-bottom: 0.75rem !important;
     margin-top: 0.5rem !important;
@@ -362,26 +362,26 @@ body.builder-modal-open {
 }
 
 .deepspeed-builder-modal .btn-primary {
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    background: var(--blue-gradient) !important;
     color: white !important;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+    box-shadow: 0 2px 8px var(--blue-bg-30) !important;
 }
 
 .deepspeed-builder-modal .btn-primary:hover {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+    background: var(--blue-gradient-hover) !important;
     transform: translateY(-1px) !important;
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
 }
 
 .deepspeed-builder-modal .btn-secondary {
-    background: rgba(148, 163, 184, 0.2) !important;
-    color: #f8fafc !important;
-    border: 1px solid rgba(148, 163, 184, 0.3) !important;
+    background: var(--modal-border) !important;
+    color: var(--text-bright) !important;
+    border: 1px solid var(--slate-border-hover) !important;
 }
 
 .deepspeed-builder-modal .btn-secondary:hover {
-    background: rgba(148, 163, 184, 0.3) !important;
-    border-color: rgba(148, 163, 184, 0.4) !important;
+    background: var(--slate-border-hover) !important;
+    border-color: var(--slate-border-strong) !important;
 }
 
 /* Enhanced alert styling */
@@ -393,20 +393,20 @@ body.builder-modal-open {
 }
 
 .deepspeed-builder-modal .alert-info {
-    background: rgba(59, 130, 246, 0.1) !important;
-    color: #cbd5e1 !important;
-    border: 1px solid rgba(59, 130, 246, 0.2) !important;
+    background: var(--blue-bg) !important;
+    color: var(--text-body) !important;
+    border: 1px solid var(--blue-bg-20) !important;
 }
 
 .deepspeed-builder-modal .alert-success {
     background: rgba(34, 197, 94, 0.1) !important;
-    color: #cbd5e1 !important;
+    color: var(--text-body) !important;
     border: 1px solid rgba(34, 197, 94, 0.2) !important;
 }
 
 .deepspeed-builder-modal .alert-warning {
     background: rgba(245, 158, 11, 0.1) !important;
-    color: #cbd5e1 !important;
+    color: var(--text-body) !important;
     border: 1px solid rgba(245, 158, 11, 0.2) !important;
 }
 
@@ -418,8 +418,8 @@ body.builder-modal-open {
 }
 
 .deepspeed-builder-modal .form-check-input[type="radio"]:checked {
-    background: #3b82f6 !important;
-    border-color: #3b82f6 !important;
+    background: var(--blue-500) !important;
+    border-color: var(--blue-500) !important;
 }
 
 .deepspeed-builder-modal .form-check-input[type="radio"]::after {

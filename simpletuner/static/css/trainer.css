@@ -41,7 +41,7 @@ body {
     border: 1px solid var(--glass-border);
     border-radius: 12px;
     padding: 2rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--shadow-md);
 }
 
 .login-header {
@@ -186,7 +186,7 @@ body {
     margin-top: auto;
     margin-bottom: var(--spacing-lg);
     padding-top: var(--spacing-lg);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--white-08);
 }
 
 .nav-section-bottom .nav-section-title {
@@ -421,7 +421,7 @@ body {
 .form-control:hover,
 .form-select:hover {
     background: var(--card-bg) !important;
-    border-color: rgba(255, 255, 255, 0.15) !important;
+    border-color: var(--white-15) !important;
 }
 
 /* Fix white-on-white dropdown issue: browsers insert white backgrounds on
@@ -470,7 +470,7 @@ body {
     width: 0;
     height: 0;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--white-10);
     transform: translate(-50%, -50%);
     transition: width 0.6s, height 0.6s;
 }
@@ -497,7 +497,7 @@ body {
 
 .btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 8px 24px var(--black-30);
 }
 
 /* Event display - Enhanced */
@@ -523,7 +523,7 @@ body {
     overflow-y: auto;
     padding: var(--spacing-lg);
     border-radius: var(--radius-md-lg);
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--black-30);
     margin-top: var(--spacing-lg);
     font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
     font-size: var(--typography-font-size-sm);
@@ -537,19 +537,19 @@ body {
 
 .event-list::-webkit-scrollbar-track,
 .sidebar-nav::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--white-02);
     border-radius: var(--radius-xs);
 }
 
 .event-list::-webkit-scrollbar-thumb,
 .sidebar-nav::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--white-10);
     border-radius: var(--radius-xs);
 }
 
 .event-list::-webkit-scrollbar-thumb:hover,
 .sidebar-nav::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--white-15);
 }
 
 /* Event items - Enhanced */
@@ -564,7 +564,7 @@ body {
 }
 
 .event-item:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--white-02);
 }
 
 .event-item-error {
@@ -598,7 +598,7 @@ body {
 }
 
 .event-item-default {
-    background-color: rgba(255, 255, 255, 0.03);
+    background-color: var(--white-03);
     border-left-color: var(--glass-border);
     color: var(--text-secondary);
 }
@@ -655,8 +655,8 @@ body {
     font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
     font-size: var(--typography-font-size-sm);
     line-height: 1.6;
-    background: rgba(0, 0, 0, 0.3) !important;
-    border-color: rgba(255, 255, 255, 0.05) !important;
+    background: var(--black-30) !important;
+    border-color: var(--white-05) !important;
 }
 
 /* Mobile sidebar toggle - in topbar */
@@ -686,7 +686,7 @@ body {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--black-50);
     backdrop-filter: blur(2px);
     z-index: 1050; /* Above event dock (1030) but below sidebar (1060) */
 }
@@ -1141,7 +1141,7 @@ body {
         background: var(--panel-bg);
         border: 1px solid var(--glass-border);
         border-radius: 0.375rem;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 4px 12px var(--black-30);
     }
 
     .env-mobile-toolbar .dropdown-menu.show {
@@ -1607,7 +1607,7 @@ body {
 }
 
 .stat-card:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 24px var(--black-20);
 }
 
 .stat-value {
@@ -1677,8 +1677,8 @@ body {
     margin-right: var(--spacing-sm) !important;
     float: none !important;
     position: relative !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    background: var(--white-03) !important;
+    border: 1px solid var(--white-20) !important;
     cursor: pointer;
 }
 
@@ -1948,12 +1948,12 @@ optgroup option {
 
 .config-selector__menu .dropdown-item:hover,
 .config-selector__menu .dropdown-item:focus {
-    color: #f8fafc;
+    color: var(--text-bright);
     background: rgba(59, 130, 246, 0.18);
 }
 
 .config-selector__menu .dropdown-item.active {
-    color: #f8fafc;
+    color: var(--text-bright);
     background: rgba(59, 130, 246, 0.35);
 }
 
@@ -2234,7 +2234,6 @@ optgroup option {
 .form-section.prompt-management-disabled .prompt-overlay-content i {
     font-size: 1.5rem;
 }
-}
 
 /* Cloud Queue Panel Styles */
 .cloud-queue-panel {
@@ -2256,18 +2255,18 @@ optgroup option {
 .queue-stat-value {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #e2e8f0;
+    color: var(--text-heading);
 }
 
 .queue-stat-label {
     font-size: 0.7rem;
-    color: #64748b;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.02em;
 }
 
 .queue-controls {
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--black-20);
     border-radius: 0.375rem;
     padding: 0.75rem;
 }
@@ -2279,7 +2278,7 @@ optgroup option {
 }
 
 .queue-job-item {
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--black-20);
     border-radius: 0.375rem;
     padding: 0.5rem 0.75rem;
 }
@@ -2290,12 +2289,12 @@ optgroup option {
 
 .queue-position {
     font-weight: 600;
-    color: #60a5fa;
+    color: var(--blue-400);
     margin-right: 0.5rem;
 }
 
 .queue-job-name {
-    color: #e2e8f0;
+    color: var(--text-heading);
     font-size: 0.875rem;
 }
 
@@ -2333,20 +2332,20 @@ optgroup option {
 .empty-state-icon i {
     display: inline-block;
     padding: 1rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--white-05);
     border-radius: 50%;
 }
 .job-search-bar {
     padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border-subtle);
     background: rgba(0, 0, 0, 0.1);
 }
 .job-search-bar .form-control {
-    color: #e2e8f0;
+    color: var(--text-heading);
     font-size: 0.8rem;
 }
 .job-search-bar .form-control::placeholder {
-    color: #64748b;
+    color: var(--text-muted);
 }
 .job-search-bar .form-control:focus {
     box-shadow: none;
@@ -2367,13 +2366,13 @@ optgroup option {
     justify-content: center;
     font-size: 0.75rem;
     font-weight: 600;
-    background: rgba(255, 255, 255, 0.1);
-    color: #94a3b8;
+    background: var(--white-10);
+    color: var(--text-secondary);
     transition: all 0.2s ease;
 }
 
 .wizard-step.active {
-    background: #818cf8;
+    background: var(--indigo-400);
     color: white;
 }
 
@@ -2385,7 +2384,7 @@ optgroup option {
 .wizard-step-line {
     width: 20px;
     height: 2px;
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--white-15);
 }
 
 .wizard-icon {
@@ -2395,7 +2394,7 @@ optgroup option {
     width: 64px;
     height: 64px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--white-05);
 }
 
 .wizard-panel {
@@ -2463,10 +2462,10 @@ optgroup option {
     align-items: center;
     justify-content: center;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--white-10);
 }
-.job-type-cloud { color: #60a5fa; }
-.job-type-local { color: #a78bfa; }
+.job-type-cloud { color: var(--blue-400); }
+.job-type-local { color: var(--violet-400); }
 
 /* Status badge improvements - WCAG AA compliant colors */
 .status-badge {
@@ -2520,14 +2519,14 @@ optgroup option {
 
 /* Focus styles for keyboard navigation */
 .job-list-item:focus {
-    outline: 2px solid #818cf8;
+    outline: 2px solid var(--indigo-400);
     outline-offset: -2px;
 }
 .job-list-item:focus:not(:focus-visible) {
     outline: none;
 }
 .job-list-item:focus-visible {
-    outline: 2px solid #818cf8;
+    outline: 2px solid var(--indigo-400);
     outline-offset: -2px;
 }
 
@@ -2554,7 +2553,7 @@ optgroup option {
 }
 
 .inline-progress-bar .progress {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--white-10);
     border-radius: 2px;
 }
 

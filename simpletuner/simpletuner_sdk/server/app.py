@@ -717,6 +717,7 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.prompt_libraries import router as prompt_libraries_router
     from .routes.publishing import router as publishing_router
     from .routes.system import router as system_router
+    from .routes.themes import router as themes_router
     from .routes.training import router as training_router
     from .routes.validation import router as validation_router
     from .routes.version import router as version_router
@@ -743,6 +744,7 @@ def _add_trainer_routes(app: FastAPI):
         git_router,
         system_router,
         version_router,
+        themes_router,
     ):
         _include_router_if_present(router)
 

@@ -391,17 +391,17 @@ class TabService:
         self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Provide context data for UI settings tab."""
+        from .theme_service import ThemeService
+
         store = WebUIStateStore()
         bundle = store.get_defaults_bundle()
+        theme_service = ThemeService.get_instance()
 
         context["ui_settings"] = {
             "defaults": bundle["resolved"],
             "raw_defaults": bundle["raw"],
             "fallbacks": bundle["fallbacks"],
-            "themes": [
-                {"value": "dark", "label": "Dark", "description": "Classic SimpleTuner palette"},
-                {"value": "tron", "label": "Tron Prototype", "description": "Experimental neon styling"},
-            ],
+            "themes": theme_service.list_for_ui(),
             "event_interval_options": [3, 5, 10, 15, 30, 60],
         }
         return context

@@ -12,7 +12,7 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.75);
+    background: var(--modal-backdrop);
     z-index: 9999;
     cursor: pointer;
     /* Prevent scroll bleed to background on mobile */
@@ -26,16 +26,16 @@
     width: 100%;
     margin-bottom: 0.75rem;
     font-weight: 600;
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    background: var(--blue-gradient);
     border: none;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 2px 8px var(--blue-bg-30);
     transition: all 0.2s;
 }
 
 .wizard-launch-btn:hover {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: var(--blue-gradient-hover);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    box-shadow: 0 4px 12px var(--blue-bg-30);
 }
 
 .wizard-launch-btn:active {
@@ -46,10 +46,10 @@
 .training-wizard-modal {
     width: 90vw;
     max-width: 900px;
-    background: rgba(15, 23, 42, 0.98);
+    background: var(--modal-surface);
     border-radius: 16px;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--modal-border);
+    box-shadow: var(--shadow-lg);
     max-height: 90vh;
     display: flex;
     flex-direction: column;
@@ -58,13 +58,13 @@
 }
 
 .training-wizard-modal .modal-header {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    border-bottom: 1px solid var(--modal-border);
     padding: 1.5rem 2rem;
     flex-shrink: 0;
 }
 
 .training-wizard-modal .modal-title {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-size: 1.25rem;
     font-weight: 600;
 }
@@ -80,7 +80,7 @@
 }
 
 .training-wizard-modal .modal-footer {
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    border-top: 1px solid var(--modal-border);
     padding: 1.5rem 2rem;
     display: flex;
     gap: 0.75rem;
@@ -97,8 +97,8 @@
     justify-content: center;
     align-items: flex-start;
     padding: 1rem 1.5rem 0.75rem;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    background: rgba(0, 0, 0, 0.15);
+    border-bottom: 1px solid var(--slate-border-subtle);
+    background: var(--black-15);
     overflow-x: auto;
     flex-shrink: 0;
     gap: 0;
@@ -147,12 +147,12 @@
     left: calc(50% + 12px);
     right: calc(-50% + 12px);
     height: 1px;
-    background: rgba(148, 163, 184, 0.25);
+    background: var(--slate-border);
     z-index: 0;
 }
 
 .training-wizard-modal .wizard-step.completed:not(:last-child)::after {
-    background: #3b82f6;
+    background: var(--blue-500);
 }
 
 .training-wizard-modal .step-number {
@@ -160,13 +160,13 @@
     height: 20px;
     border-radius: 50%;
     background: transparent;
-    border: 2px solid rgba(148, 163, 184, 0.4);
+    border: 2px solid var(--slate-border-hover);
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 500;
     font-size: 0.65rem;
-    color: #94a3b8;
+    color: var(--text-secondary);
     margin-bottom: 0.5rem;
     position: relative;
     z-index: 1;
@@ -174,28 +174,28 @@
 }
 
 .training-wizard-modal .wizard-step.active .step-number {
-    background: #3b82f6;
-    border-color: #3b82f6;
-    color: white;
+    background: var(--blue-500);
+    border-color: var(--blue-500);
+    color: var(--text-primary);
 }
 
 .training-wizard-modal .wizard-step.completed .step-number {
     background: transparent;
-    border-color: #3b82f6;
+    border-color: var(--blue-500);
     color: transparent;
 }
 
 .training-wizard-modal .wizard-step.completed .step-number::before {
     content: '✓';
     position: absolute;
-    color: #3b82f6;
+    color: var(--blue-500);
     font-size: 0.6rem;
     font-weight: 600;
 }
 
 .training-wizard-modal .step-label {
     font-size: 0.65rem;
-    color: #64748b;
+    color: var(--text-muted);
     text-align: center;
     white-space: nowrap;
     line-height: 1.2;
@@ -203,12 +203,12 @@
 }
 
 .training-wizard-modal .wizard-step.active .step-label {
-    color: #e2e8f0;
+    color: var(--text-heading);
     font-weight: 500;
 }
 
 .training-wizard-modal .wizard-step.completed .step-label {
-    color: #94a3b8;
+    color: var(--text-secondary);
 }
 
 /* Wizard Content */
@@ -218,14 +218,14 @@
 }
 
 .wizard-question {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-size: 1.25rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
 }
 
 .wizard-question-small {
-    color: #e2e8f0;
+    color: var(--text-heading);
     font-size: 1rem;
     font-weight: 500;
     margin-bottom: 1rem;
@@ -245,8 +245,8 @@
 }
 
 .wizard-option-card {
-    background: rgba(30, 41, 59, 0.6);
-    border: 2px solid rgba(148, 163, 184, 0.2);
+    background: var(--slate-800-60);
+    border: 2px solid var(--modal-border);
     border-radius: 12px;
     padding: 1.5rem;
     cursor: pointer;
@@ -255,15 +255,15 @@
 }
 
 .wizard-option-card:hover {
-    background: rgba(30, 41, 59, 0.8);
-    border-color: rgba(148, 163, 184, 0.4);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    background: var(--slate-800-80);
+    border-color: var(--slate-border-hover);
+    box-shadow: 0 4px 8px var(--black-20);
 }
 
 .wizard-option-card.selected {
-    background: rgba(59, 130, 246, 0.15);
-    border-color: #3b82f6;
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    background: var(--blue-bg-15);
+    border-color: var(--blue-500);
+    box-shadow: 0 0 20px var(--blue-bg-30);
 }
 
 .wizard-option-card.selected::before {
@@ -273,18 +273,18 @@
     right: 0.75rem;
     width: 24px;
     height: 24px;
-    background: #3b82f6;
+    background: var(--blue-500);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--text-primary);
     font-weight: bold;
     font-size: 0.875rem;
 }
 
 .wizard-option-card h6 {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-weight: 600;
     margin-bottom: 0.5rem;
 }
@@ -296,12 +296,12 @@
 }
 
 .wizard-option-card .text-muted {
-    color: #94a3b8 !important;
+    color: var(--text-secondary) !important;
 }
 
 /* Wizard Input Group */
 .wizard-input-group {
-    background: rgba(30, 41, 59, 0.4);
+    background: var(--slate-800-40);
     border-radius: 12px;
     padding: 1.5rem;
     margin-top: 1rem;
@@ -309,60 +309,60 @@
 
 .wizard-input-group label {
     display: block;
-    color: #e2e8f0;
+    color: var(--text-heading);
     font-weight: 500;
     margin-bottom: 0.75rem;
 }
 
 .wizard-input-group .form-control,
 .wizard-step-content .form-control {
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    color: #f8fafc;
+    background: var(--dark-surface-60);
+    border: 1px solid var(--slate-border-hover);
+    color: var(--text-bright);
 }
 
 .wizard-input-group .form-control:focus,
 .wizard-step-content .form-control:focus {
-    background: rgba(15, 23, 42, 0.8);
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    color: #f8fafc;
+    background: var(--dark-surface-80);
+    border-color: var(--blue-500);
+    box-shadow: 0 0 0 3px var(--blue-bg);
+    color: var(--text-bright);
 }
 
 .wizard-input-group .form-control::placeholder,
 .wizard-step-content .form-control::placeholder {
-    color: #64748b;
+    color: var(--text-muted);
 }
 
 .wizard-input-group .form-text {
-    color: #94a3b8;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     margin-top: 0.5rem;
 }
 
 .wizard-input-group .form-text a {
-    color: #3b82f6;
+    color: var(--blue-500);
     text-decoration: underline;
     cursor: pointer;
 }
 
 .wizard-input-group .form-text a:hover {
-    color: #60a5fa;
+    color: var(--blue-400);
 }
 
 /* Help Text */
 .wizard-help-text {
-    background: rgba(59, 130, 246, 0.1);
-    border-left: 3px solid #3b82f6;
+    background: var(--blue-bg);
+    border-left: 3px solid var(--blue-500);
     padding: 1rem;
     margin-top: 1.5rem;
     border-radius: 6px;
-    color: #cbd5e1;
+    color: var(--text-body);
 }
 
 /* Review Summary */
 .review-summary {
-    background: rgba(30, 41, 59, 0.4);
+    background: var(--slate-800-40);
     border-radius: 12px;
     padding: 1.5rem;
 }
@@ -371,7 +371,7 @@
     display: flex;
     align-items: center;
     padding: 0.75rem 0;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    border-bottom: 1px solid var(--slate-border-subtle);
 }
 
 .review-item:last-child {
@@ -380,18 +380,18 @@
 
 .review-item label {
     flex: 0 0 150px;
-    color: #94a3b8;
+    color: var(--text-secondary);
     font-weight: 500;
     margin: 0;
 }
 
 .review-item span {
     flex: 1;
-    color: #f8fafc;
+    color: var(--text-bright);
 }
 
 .review-item .btn-link {
-    color: #3b82f6;
+    color: var(--blue-500);
     text-decoration: none;
     font-size: 0.875rem;
     padding: 0.25rem 0.5rem;
@@ -399,25 +399,25 @@
 
 .review-item .btn-link:hover {
     text-decoration: underline;
-    color: #60a5fa;
+    color: var(--blue-400);
 }
 
 /* Alert Styling in Wizard */
 .wizard-step-content .alert {
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    color: #e2e8f0;
+    background: var(--blue-bg);
+    border: 1px solid var(--blue-border);
+    color: var(--text-heading);
 }
 
 .wizard-step-content .alert-info {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
+    background: var(--blue-bg);
+    border-color: var(--blue-border);
 }
 
 .wizard-step-content .alert-success {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.3);
-    color: #e2e8f0;
+    background: var(--green-bg);
+    border-color: var(--green-border);
+    color: var(--text-heading);
 }
 
 /* Responsive */
@@ -649,11 +649,11 @@
 
 /* Dark theme text colors */
 .wizard-step-content .text-muted {
-    color: #94a3b8 !important;
+    color: var(--text-secondary) !important;
 }
 
 .wizard-step-content p {
-    color: #cbd5e1;
+    color: var(--text-body);
 }
 
 /* Ensure form elements are visible */
@@ -672,20 +672,20 @@
 }
 
 .memory-preset-card {
-    background: rgba(30, 41, 59, 0.4);
-    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: var(--slate-800-40);
+    border: 1px solid var(--modal-border);
     border-radius: 8px;
     padding: 1rem 1.25rem;
     transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
 }
 
 .memory-preset-card:hover {
-    background: rgba(30, 41, 59, 0.6);
-    border-color: rgba(148, 163, 184, 0.3);
+    background: var(--slate-800-60);
+    border-color: var(--slate-border-hover);
 }
 
 .memory-preset-card h6 {
-    color: #f8fafc;
+    color: var(--text-bright);
     font-weight: 500;
     margin: 0;
 }
@@ -697,49 +697,49 @@
 }
 
 .memory-tabs .nav-tabs {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    border-bottom: 1px solid var(--modal-border);
 }
 
 .memory-tabs .nav-link {
-    color: #94a3b8;
+    color: var(--text-secondary);
     border: none;
     padding: 0.75rem 1.5rem;
     background: transparent;
 }
 
 .memory-tabs .nav-link:hover {
-    color: #e2e8f0;
+    color: var(--text-heading);
     border: none;
 }
 
 .memory-tabs .nav-link.active {
-    color: #f8fafc;
+    color: var(--text-bright);
     background: transparent;
     border: none;
-    border-bottom: 2px solid #3b82f6;
+    border-bottom: 2px solid var(--blue-500);
 }
 
 /* Badge styles for tradeoffs */
 .bg-success-subtle {
-    background-color: rgba(34, 197, 94, 0.2) !important;
+    background-color: var(--green-bg-20) !important;
 }
 
 .text-success-emphasis {
-    color: #4ade80 !important;
+    color: var(--green-400) !important;
 }
 
 .bg-warning-subtle {
-    background-color: rgba(234, 179, 8, 0.2) !important;
+    background-color: var(--amber-bg) !important;
 }
 
 .text-warning-emphasis {
-    color: #facc15 !important;
+    color: var(--amber-400) !important;
 }
 
 .bg-info-subtle {
-    background-color: rgba(59, 130, 246, 0.2) !important;
+    background-color: var(--blue-bg-20) !important;
 }
 
 .text-info-emphasis {
-    color: #60a5fa !important;
+    color: var(--blue-400) !important;
 }

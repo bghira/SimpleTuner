@@ -344,8 +344,11 @@ class WebUIStateStore:
         defaults = WebUIDefaults(**data)
 
         # Normalise theme selection
+        from .theme_service import ThemeService
+
         theme = (defaults.theme or "dark").lower().strip()
-        defaults.theme = theme if theme in {"dark", "tron"} else "dark"
+        theme_service = ThemeService.get_instance()
+        defaults.theme = theme if theme_service.is_valid_theme(theme) else "dark"
 
         # Ensure polling interval is a positive integer
         try:

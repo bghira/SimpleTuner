@@ -386,7 +386,7 @@
 <body data-theme="{{ webui_theme|default('dark') }}">
     <script>
         (function() {
-            const THEME_CLASSES = ['dark-theme', 'tron-theme'];
+            const BUILTIN_THEMES = ['dark', 'tron'];
 
             window.applyTheme = function(theme) {
                 const themeName = (theme || 'dark').toLowerCase();
@@ -395,17 +395,29 @@
                     return;
                 }
 
+                // Remove existing custom theme CSS
+                document.querySelectorAll('link[data-theme-css]').forEach(el => el.remove());
+
                 body.dataset.theme = themeName;
                 document.documentElement.setAttribute('data-theme', themeName);
 
-                THEME_CLASSES.forEach(cls => body.classList.remove(cls));
+                // Remove all theme classes, then add appropriate ones
+                body.classList.remove('dark-theme', 'tron-theme');
 
                 if (themeName === 'tron') {
                     body.classList.add('tron-theme');
                 }
 
-                if (!body.classList.contains('dark-theme')) {
-                    body.classList.add('dark-theme');
+                // Always ensure dark-theme base is present
+                body.classList.add('dark-theme');
+
+                // Load custom theme CSS if not builtin
+                if (!BUILTIN_THEMES.includes(themeName)) {
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = '/api/themes/' + themeName + '/theme.css?v=' + (window.CACHE_TIMESTAMP || Date.now());
+                    link.dataset.themeCss = themeName;
+                    document.head.appendChild(link);
                 }
 
                 document.documentElement.style.backgroundColor = '#0a0a0a';
