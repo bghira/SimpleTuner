@@ -101,8 +101,10 @@ class WorkerListItem(BaseModel):
     labels: Dict[str, str]
     current_job_id: Optional[str]
     last_heartbeat: Optional[str]
+    connected_at: Optional[str]
     created_at: str
     connected: bool
+    uptime_seconds: Optional[float] = None
 
 
 class WorkerListResponse(BaseModel):
@@ -253,6 +255,8 @@ async def register_worker(
         request.persistent,
     )
 
+    now = datetime.now(timezone.utc)
+
     # Determine worker type
     worker_type = "persistent" if request.persistent else "ephemeral"
 
@@ -263,7 +267,8 @@ async def register_worker(
         "status": "idle",
         "worker_type": worker_type.upper(),
         "labels": request.labels,
-        "last_heartbeat": datetime.now(timezone.utc),
+        "last_heartbeat": now,
+        "connected_at": now,
     }
 
     if request.provider:
@@ -406,10 +411,13 @@ async def worker_heartbeat(
     worker_repo = get_worker_repository()
 
     # Update worker with heartbeat info
+    now = datetime.now(timezone.utc)
     updates = {
         "status": request.status,
-        "last_heartbeat": datetime.now(timezone.utc),
+        "last_heartbeat": now,
     }
+    if worker.connected_at is None:
+        updates["connected_at"] = now
 
     if request.current_job_id:
         updates["current_job_id"] = request.current_job_id
@@ -578,7 +586,12 @@ async def list_workers(
 
     # Convert to response format
     worker_items = []
+    now = datetime.now(timezone.utc)
     for worker in workers:
+        connected = is_worker_connected(worker.worker_id)
+        uptime_seconds = None
+        if connected and worker.connected_at:
+            uptime_seconds = round((now - worker.connected_at).total_seconds(), 1)
         worker_items.append(
             WorkerListItem(
                 worker_id=worker.worker_id,
@@ -590,8 +603,10 @@ async def list_workers(
                 labels=worker.labels,
                 current_job_id=worker.current_job_id,
                 last_heartbeat=worker.last_heartbeat.isoformat() if worker.last_heartbeat else None,
+                connected_at=worker.connected_at.isoformat() if worker.connected_at else None,
                 created_at=worker.created_at.isoformat(),
-                connected=is_worker_connected(worker.worker_id),
+                connected=connected,
+                uptime_seconds=uptime_seconds,
             )
         )
 

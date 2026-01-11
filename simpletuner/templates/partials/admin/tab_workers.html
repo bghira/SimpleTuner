@@ -77,6 +77,7 @@
                     <th>GPU</th>
                     <th class="d-none d-md-table-cell">Type</th>
                     <th class="d-none d-lg-table-cell">Current Job</th>
+                    <th class="d-none d-lg-table-cell">Uptime</th>
                     <th class="d-none d-lg-table-cell">Last Seen</th>
                     <th style="width: 150px;">Actions</th>
                 </tr>
@@ -84,14 +85,14 @@
             <tbody>
                 <template x-if="workersLoading">
                     <tr>
-                        <td colspan="7" class="text-center py-4">
+                        <td colspan="8" class="text-center py-4">
                             <i class="fas fa-spinner fa-spin me-2"></i>Loading workers...
                         </td>
                     </tr>
                 </template>
                 <template x-if="!workersLoading && workers.length === 0">
                     <tr>
-                        <td colspan="7" class="text-center py-4 text-muted">
+                        <td colspan="8" class="text-center py-4 text-muted">
                             <i class="fas fa-server me-2"></i>No workers registered. Add a worker to get started.
                         </td>
                     </tr>
@@ -124,6 +125,9 @@
                             <template x-if="!worker.current_job_id">
                                 <span class="text-muted">-</span>
                             </template>
+                        </td>
+                        <td class="d-none d-lg-table-cell text-muted small">
+                            <span x-text="formatWorkerUptime(worker)"></span>
                         </td>
                         <td class="d-none d-lg-table-cell text-muted small">
                             <span x-text="formatWorkerTimeAgo(worker.last_heartbeat)"></span>

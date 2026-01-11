@@ -61,6 +61,9 @@ describe('adminWorkerMethods', () => {
             deletingWorker: null,
             deleteWorkerOpen: false,
             workerRefreshInterval: null,
+            workerUptimeTick: Date.now(),
+            workerUptimeLoadedAt: null,
+            workerUptimeInterval: null,
             activeTab: 'workers',
         };
 
@@ -76,6 +79,9 @@ describe('adminWorkerMethods', () => {
         // Clean up any intervals
         if (context.workerRefreshInterval) {
             clearInterval(context.workerRefreshInterval);
+        }
+        if (context.workerUptimeInterval) {
+            clearInterval(context.workerUptimeInterval);
         }
     });
 

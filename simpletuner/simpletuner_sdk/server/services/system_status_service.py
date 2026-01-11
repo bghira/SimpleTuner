@@ -39,6 +39,7 @@ class SystemStatusService:
 
     def __init__(self) -> None:
         self._offload_cache: Dict[str, Any] = {}
+        self._start_time = time.time()
 
     def get_status(self, include_gpu_allocation: bool = False) -> Dict[str, Any]:
         """Collect system metrics for the API response.
@@ -50,6 +51,7 @@ class SystemStatusService:
         inventory = detect_gpu_inventory()
         status = {
             "timestamp": time.time(),
+            "uptime_seconds": round(time.time() - self._start_time, 1),
             "load_avg_5min": self._get_load_average_5min(),
             "memory_percent": self._get_memory_percent(),
             "gpus": self._get_gpu_utilisation(),

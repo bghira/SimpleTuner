@@ -434,6 +434,9 @@ window.adminPanelComponent = function() {
         deleteWorkerOpen: false,
         deletingWorker: null,
         workerRefreshInterval: null,
+        workerUptimeTick: Date.now(),
+        workerUptimeLoadedAt: null,
+        workerUptimeInterval: null,
     };
 
     // Core methods that orchestrate initialization
@@ -561,9 +564,11 @@ window.adminPanelComponent = function() {
             if (tabName === 'workers') {
                 this.loadWorkers();
                 this.startWorkerAutoRefresh();
+                this.startWorkerUptimeTicker();
             } else {
                 // Stop auto-refresh when leaving workers tab
                 this.stopWorkerAutoRefresh();
+                this.stopWorkerUptimeTicker();
             }
         },
 
