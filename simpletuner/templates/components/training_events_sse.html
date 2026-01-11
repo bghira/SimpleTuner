@@ -1597,6 +1597,21 @@
             trackListener('callback:' + category, callbackHandler);
         });
 
+        // Auth event handler for session invalidation
+        var authHandler = function(data) {
+            console.log('[SSE] Auth event received:', data);
+            if (data && data.type === 'session_invalidated') {
+                var reason = data.reason || 'session_expired';
+                var message = reason === 'user_deleted'
+                    ? 'Your account has been deleted. Please contact an administrator.'
+                    : 'Your session has expired. Please log in again.';
+                if (window.handleSessionExpired) {
+                    window.handleSessionExpired(message);
+                }
+            }
+        };
+        trackListener('auth', authHandler);
+
     managerRegistered = true;
     return true;
     }
@@ -1626,6 +1641,25 @@
                     console.error('Failed to parse callback event', error);
                 }
             });
+        });
+
+        // Auth event listener for session invalidation
+        source.addEventListener('auth', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[SSE] Auth event received:', data);
+                if (data && data.type === 'session_invalidated') {
+                    var reason = data.reason || 'session_expired';
+                    var message = reason === 'user_deleted'
+                        ? 'Your account has been deleted. Please contact an administrator.'
+                        : 'Your session has expired. Please log in again.';
+                    if (window.handleSessionExpired) {
+                        window.handleSessionExpired(message);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to parse auth event', error);
+            }
         });
 
         managerRegistered = true;

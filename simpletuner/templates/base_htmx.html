@@ -476,7 +476,15 @@
         // Global error handler
         document.body.addEventListener('htmx:responseError', function(evt) {
             console.error('HTMX Error:', evt.detail);
-            showToast('Network error occurred', 'error');
+            const status = evt.detail.xhr?.status;
+            if (status === 401) {
+                // Session expired or not authenticated
+                window.handleSessionExpired?.('Your session has expired. Please log in again.');
+            } else if (status === 403) {
+                showToast('Permission denied', 'error');
+            } else {
+                showToast('Network error occurred', 'error');
+            }
         });
 
         // Global success handler

@@ -293,8 +293,35 @@ document.addEventListener('alpine:init', () => {
                 );
             }
             return this.shouldShowApp;
+        },
+        handleSessionExpired(message) {
+            // Only handle if auth is in use and user was logged in
+            if (!this.authStatus.inUse) return;
+
+            // Clear current user to show login form
+            this.currentUser = null;
+            this.loaded = false;
+
+            // Show message to user
+            if (window.showToast) {
+                window.showToast(message || 'Your session has expired. Please log in again.', 'warning', 5000);
+            }
+
+            // Reset login form
+            this.loginForm.error = null;
+            this.loginForm.username = '';
+            this.loginForm.password = '';
+            this.loginForm.submitting = false;
         }
     });
+
+    // Global handler for session expiration (called from HTMX error handler and SSE)
+    window.handleSessionExpired = function(message) {
+        const store = Alpine.store('cloudAuth');
+        if (store) {
+            store.handleSessionExpired(message);
+        }
+    };
 });
 
 /**
