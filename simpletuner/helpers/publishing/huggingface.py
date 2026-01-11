@@ -25,7 +25,8 @@ class HubManager:
     def __init__(self, config, model, repo_id: str = None):
         self.config = config
         self.model = model
-        self.repo_id = repo_id or self.config.hub_model_id or self.config.tracker_project_name
+        raw_repo_id = repo_id or self.config.hub_model_id or self.config.tracker_project_name
+        self.repo_id = self._normalize_repo_id(raw_repo_id)
         self.hub_token = self._load_hub_token()
         self.data_backends = StateTracker.get_data_backends(_types=["image", "video", "audio"])
         self._create_repo()
@@ -33,17 +34,36 @@ class HubManager:
         self.validation_shortnames = None
         self.collected_data_backend_str = None
 
+    @staticmethod
+    def _normalize_repo_id(repo_id: str | None) -> str | None:
+        if not repo_id:
+            return repo_id
+
+        from urllib.parse import urlparse
+
+        cleaned = repo_id.strip()
+        parsed = urlparse(cleaned)
+        if parsed.scheme and parsed.netloc:
+            cleaned = parsed.path
+
+        cleaned = cleaned.split("?", 1)[0].split("#", 1)[0].lstrip("/")
+        if "huggingface.co/" in cleaned:
+            cleaned = cleaned.split("huggingface.co/", 1)[1]
+        if cleaned.startswith("huggingface.co"):
+            cleaned = cleaned[len("huggingface.co") :].lstrip("/")
+        return cleaned
+
     def _create_repo(self):
         if not self.config.push_to_hub:
             return
         self._repo_id = create_repo(
-            repo_id=self.config.hub_model_id or self.config.tracker_project_name,
+            repo_id=self.repo_id,
             exist_ok=True,
             private=self.config.model_card_private,
         ).repo_id
 
     def _repo_url(self, subpath: str | None = None) -> str:
-        repo_id = getattr(self, "_repo_id", None) or self.config.hub_model_id or self.config.tracker_project_name
+        repo_id = getattr(self, "_repo_id", None) or self.repo_id
         if not repo_id:
             return ""
         base = f"https://huggingface.co/{repo_id}"
