@@ -472,4 +472,11 @@
   --white-10: var(--colors-white-10);
   --white-15: var(--colors-white-15);
   --white-20: var(--colors-white-20);
+
+  /* Theme asset URLs - override via theme CSS */
+  --asset-logo: none;
+  --asset-favicon: none;
+  --asset-sidebar-bg: none;
+  --asset-header-bg: none;
+  --asset-card-pattern: none;
 }

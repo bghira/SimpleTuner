@@ -388,6 +388,61 @@
         (function() {
             const BUILTIN_THEMES = ['dark', 'tron'];
 
+            // Cache for loaded theme manifests
+            const themeManifestCache = {};
+
+            /**
+             * Load theme manifest and apply assets (sounds, images)
+             */
+            function loadThemeAssets(themeName) {
+                // Builtin themes use default assets
+                if (BUILTIN_THEMES.includes(themeName)) {
+                    if (window.SoundManager) {
+                        window.SoundManager.resetToDefaults();
+                    }
+                    return;
+                }
+
+                // Check cache first
+                if (themeManifestCache[themeName]) {
+                    applyManifestAssets(themeName, themeManifestCache[themeName]);
+                    return;
+                }
+
+                // Fetch theme manifest
+                fetch('/api/themes/' + themeName + '/manifest')
+                    .then(function(response) {
+                        if (!response.ok) {
+                            throw new Error('Failed to load theme manifest');
+                        }
+                        return response.json();
+                    })
+                    .then(function(manifest) {
+                        themeManifestCache[themeName] = manifest;
+                        applyManifestAssets(themeName, manifest);
+                    })
+                    .catch(function(err) {
+                        console.debug('Theme manifest not available:', err.message);
+                        // Fall back to default sounds
+                        if (window.SoundManager) {
+                            window.SoundManager.resetToDefaults();
+                        }
+                    });
+            }
+
+            /**
+             * Apply assets from a loaded theme manifest
+             */
+            function applyManifestAssets(themeName, manifest) {
+                // Apply theme sounds
+                if (window.SoundManager && manifest.assets) {
+                    window.SoundManager.applyThemeSounds(themeName, manifest);
+                }
+
+                // Future: Apply theme images via CSS custom properties
+                // This would update --asset-* variables
+            }
+
             window.applyTheme = function(theme) {
                 const themeName = (theme || 'dark').toLowerCase();
                 const body = document.body;
@@ -419,6 +474,9 @@
                     link.dataset.themeCss = themeName;
                     document.head.appendChild(link);
                 }
+
+                // Load theme assets (sounds, images)
+                loadThemeAssets(themeName);
 
                 document.documentElement.style.backgroundColor = '#0a0a0a';
                 document.body.style.backgroundColor = '#0a0a0a';

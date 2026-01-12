@@ -1,18 +1,26 @@
 /**
  * UI Sound effects module using freedesktop sound theme.
  * Provides audio feedback for notifications and UI events.
+ * Supports theme-based sound overrides.
  */
 
 const SoundManager = (function() {
     'use strict';
 
-    const SOUND_FILES = {
+    // Default sound files (built-in)
+    const DEFAULT_SOUND_FILES = {
         success: '/api/sounds/completion-success.oga',
         error: '/api/sounds/dialog-error.oga',
         warning: '/api/sounds/dialog-warning.oga',
         info: '/api/sounds/dialog-information.oga',
-        retroHover: '/api/sounds/retro-hover.wav',
+        hover: '/api/sounds/retro-hover.wav',
     };
+
+    // Active sound files (may be overridden by theme)
+    let activeSoundFiles = { ...DEFAULT_SOUND_FILES };
+
+    // Current theme ID for cache busting
+    let currentThemeId = 'dark';
 
     let settings = {
         enabled: true,
@@ -66,14 +74,71 @@ const SoundManager = (function() {
     }
 
     function preloadSounds() {
-        Object.entries(SOUND_FILES).forEach(([type, src]) => {
-            if (!audioCache[type]) {
+        // Clear old cache
+        Object.keys(audioCache).forEach(key => delete audioCache[key]);
+
+        // Preload active sounds
+        Object.entries(activeSoundFiles).forEach(([type, src]) => {
+            if (src && !audioCache[type]) {
                 const audio = new Audio();
                 audio.preload = 'auto';
                 audio.src = src;
                 audioCache[type] = audio;
             }
         });
+    }
+
+    /**
+     * Apply theme sound overrides from a theme manifest.
+     * Called by applyTheme() when switching themes.
+     *
+     * @param {string} themeId - The theme identifier
+     * @param {Object} manifest - Theme manifest with assets.sounds mapping
+     */
+    function applyThemeSounds(themeId, manifest) {
+        currentThemeId = themeId;
+
+        // Reset to defaults first
+        activeSoundFiles = { ...DEFAULT_SOUND_FILES };
+
+        // Apply theme overrides if available
+        if (manifest && manifest.assets && manifest.assets.sounds) {
+            const themeSounds = manifest.assets.sounds;
+
+            // Map theme sound names to our internal sound types
+            // Theme can provide: success, error, warning, info, hover, notification
+            Object.entries(themeSounds).forEach(([soundName, soundUrl]) => {
+                // Normalize sound name
+                const normalizedName = soundName.toLowerCase().replace(/-/g, '');
+
+                // Map common variations to our internal names
+                if (normalizedName === 'success' || normalizedName === 'complete') {
+                    activeSoundFiles.success = soundUrl;
+                } else if (normalizedName === 'error' || normalizedName === 'fail') {
+                    activeSoundFiles.error = soundUrl;
+                } else if (normalizedName === 'warning' || normalizedName === 'warn') {
+                    activeSoundFiles.warning = soundUrl;
+                } else if (normalizedName === 'info' || normalizedName === 'notification') {
+                    activeSoundFiles.info = soundUrl;
+                } else if (normalizedName === 'hover' || normalizedName === 'retrohover') {
+                    activeSoundFiles.hover = soundUrl;
+                }
+            });
+        }
+
+        // Preload the new sounds
+        preloadSounds();
+
+        console.debug('SoundManager: Applied theme sounds for', themeId);
+    }
+
+    /**
+     * Reset sounds to defaults (used when switching to builtin themes).
+     */
+    function resetToDefaults() {
+        currentThemeId = 'dark';
+        activeSoundFiles = { ...DEFAULT_SOUND_FILES };
+        preloadSounds();
     }
 
     function isCategoryEnabled(type) {
@@ -100,7 +165,7 @@ const SoundManager = (function() {
             return;
         }
 
-        const src = SOUND_FILES[type];
+        const src = activeSoundFiles[type];
         if (!src) {
             return;
         }
@@ -155,7 +220,7 @@ const SoundManager = (function() {
     }
 
     function testSound(type) {
-        const src = SOUND_FILES[type || 'info'];
+        const src = activeSoundFiles[type || 'info'];
         if (!src) {
             return;
         }
@@ -175,7 +240,7 @@ const SoundManager = (function() {
             return;
         }
         try {
-            const audio = new Audio(SOUND_FILES.retroHover);
+            const audio = new Audio(activeSoundFiles.hover);
             audio.volume = settings.volume * 0.6; // slightly quieter for hover
             audio.play().catch(() => {});
         } catch (err) {
@@ -224,6 +289,21 @@ const SoundManager = (function() {
         }
     }
 
+    /**
+     * Get the current active sound file URLs.
+     * Useful for debugging or displaying in UI.
+     */
+    function getActiveSounds() {
+        return { ...activeSoundFiles };
+    }
+
+    /**
+     * Get the current theme ID.
+     */
+    function getCurrentTheme() {
+        return currentThemeId;
+    }
+
     return {
         init,
         updateSettings,
@@ -239,6 +319,11 @@ const SoundManager = (function() {
         setRetroHoverEnabled,
         getSettings,
         testSound,
+        // Theme sound support
+        applyThemeSounds,
+        resetToDefaults,
+        getActiveSounds,
+        getCurrentTheme,
     };
 })();
 

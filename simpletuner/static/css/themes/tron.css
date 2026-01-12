@@ -1,0 +1,154 @@
+/* Tron Theme - Neon cyan/blue styling */
+/* Applied when data-theme="tron" is set on html or body */
+
+html[data-theme="tron"],
+body[data-theme="tron"],
+:root[data-theme="tron"] {
+  /* Primary palette - cyan/teal focus */
+  --colors-primary-purple: #00d4ff;
+  --colors-primary-gradient: linear-gradient(135deg, #00d4ff 0%, #0891b2 100%);
+  --colors-secondary-gradient: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
+
+  /* Accent colors - neon variants */
+  --colors-accent-pink: #f472b6;
+  --colors-accent-blue: #00d4ff;
+  --colors-accent-cyan: #22d3ee;
+  --colors-purple: #a78bfa;
+  --colors-purple-muted: #c4b5fd;
+
+  /* Blue scale - shifted to cyan */
+  --colors-blue-700: #0e7490;
+  --colors-blue-600: #0891b2;
+  --colors-blue-500: #06b6d4;
+  --colors-blue-400: #22d3ee;
+  --colors-blue-bg: rgba(6, 182, 212, 0.1);
+  --colors-blue-bg-15: rgba(6, 182, 212, 0.15);
+  --colors-blue-bg-20: rgba(6, 182, 212, 0.2);
+  --colors-blue-bg-25: rgba(6, 182, 212, 0.25);
+  --colors-blue-bg-30: rgba(6, 182, 212, 0.3);
+  --colors-blue-border: rgba(6, 182, 212, 0.3);
+  --colors-blue-border-hover: rgba(6, 182, 212, 0.5);
+  --colors-blue-gradient: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+  --colors-blue-gradient-hover: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+
+  /* Indigo scale - shifted to cyan-blue */
+  --colors-indigo-500: #0ea5e9;
+  --colors-indigo-400: #38bdf8;
+  --colors-indigo-300: #7dd3fc;
+  --colors-indigo-200: #bae6fd;
+  --colors-indigo-bg: rgba(14, 165, 233, 0.1);
+  --colors-indigo-bg-hover: rgba(14, 165, 233, 0.15);
+  --colors-indigo-bg-active: rgba(14, 165, 233, 0.2);
+  --colors-indigo-border: rgba(14, 165, 233, 0.3);
+
+  /* Violet scale - keep purple but brighter */
+  --colors-violet-700: #7c3aed;
+  --colors-violet-600: #8b5cf6;
+  --colors-violet-500: #a78bfa;
+  --colors-violet-400: #c4b5fd;
+  --colors-violet-gradient: linear-gradient(135deg, #8b5cf6 0%, #06b6d4 100%);
+  --colors-violet-gradient-alt: linear-gradient(135deg, #a78bfa 0%, #22d3ee 100%);
+
+  /* Darker, more contrasty surfaces */
+  --colors-dark-bg: #030712;
+  --colors-dark-sidebar: #0a0f1a;
+  --colors-dark-surface: #111827;
+  --colors-card-bg: rgba(6, 182, 212, 0.03);
+  --colors-card-bg-elevated: rgba(6, 182, 212, 0.05);
+  --colors-card-bg-hover: rgba(6, 182, 212, 0.08);
+  --colors-sidebar-bg-hover: rgba(6, 182, 212, 0.05);
+
+  /* Glass with cyan tint */
+  --colors-glass-bg: rgba(6, 182, 212, 0.03);
+  --colors-glass-border: rgba(6, 182, 212, 0.12);
+  --colors-glass-hover: rgba(6, 182, 212, 0.1);
+  --colors-focus-ring: rgba(6, 182, 212, 0.2);
+
+  /* Surface panels with subtle cyan */
+  --colors-surface-panel: rgba(6, 24, 36, 0.95);
+  --colors-surface-panel-border: rgba(6, 182, 212, 0.15);
+  --colors-surface-field: rgba(3, 12, 18, 0.9);
+  --colors-surface-field-border: rgba(6, 182, 212, 0.2);
+
+  /* Borders with cyan tint */
+  --colors-border-soft: rgba(6, 182, 212, 0.12);
+  --colors-border-subtle: rgba(6, 182, 212, 0.06);
+  --colors-border-strong: rgba(6, 182, 212, 0.25);
+
+  /* Slate with cyan undertone */
+  --colors-slate-800: rgba(8, 28, 42, 1);
+  --colors-slate-800-15: rgba(8, 28, 42, 0.15);
+  --colors-slate-800-20: rgba(8, 28, 42, 0.2);
+  --colors-slate-800-30: rgba(8, 28, 42, 0.3);
+  --colors-slate-800-40: rgba(8, 28, 42, 0.4);
+  --colors-slate-800-50: rgba(8, 28, 42, 0.5);
+  --colors-slate-800-60: rgba(8, 28, 42, 0.6);
+  --colors-slate-800-70: rgba(8, 28, 42, 0.7);
+  --colors-slate-800-80: rgba(8, 28, 42, 0.8);
+  --colors-slate-800-95: rgba(8, 28, 42, 0.95);
+  --colors-slate-border: rgba(6, 182, 212, 0.12);
+  --colors-slate-border-hover: rgba(6, 182, 212, 0.25);
+  --colors-slate-border-subtle: rgba(6, 182, 212, 0.08);
+  --colors-slate-border-strong: rgba(6, 182, 212, 0.35);
+
+  /* Modal with deeper contrast */
+  --colors-modal-backdrop: rgba(0, 0, 0, 0.85);
+  --colors-modal-surface: rgba(3, 12, 18, 0.98);
+  --colors-modal-header-bg: rgba(8, 28, 42, 0.8);
+  --colors-modal-border: rgba(6, 182, 212, 0.2);
+
+  /* Text - slightly cyan tinted whites */
+  --colors-text-primary: #f0fdff;
+  --colors-text-secondary: #a5f3fc;
+  --colors-text-muted: #67e8f9;
+  --colors-text-tertiary: rgba(165, 243, 252, 0.75);
+  --colors-text-soft: rgba(165, 243, 252, 0.4);
+  --colors-text-light: #ecfeff;
+  --colors-text-bright: #f0fdff;
+  --colors-text-heading: #cffafe;
+  --colors-text-body: #a5f3fc;
+
+  /* Semantic colors - brighter, more neon */
+  --colors-semantic-success: #34d399;
+  --colors-semantic-success-bg: rgba(52, 211, 153, 0.15);
+  --colors-success-bright: #6ee7b7;
+  --colors-semantic-error: #f87171;
+  --colors-semantic-error-bg: rgba(248, 113, 113, 0.15);
+  --colors-semantic-warning: #fbbf24;
+  --colors-semantic-warning-bg: rgba(251, 191, 36, 0.15);
+  --colors-semantic-info: #22d3ee;
+  --colors-semantic-info-bg: rgba(34, 211, 238, 0.15);
+
+  /* Tab indicators - cyan primary */
+  --colors-tab-basic-bg: rgba(6, 182, 212, 0.1);
+  --colors-tab-basic-indicator: #06b6d4;
+  --colors-tab-model-bg: rgba(168, 139, 250, 0.1);
+  --colors-tab-model-indicator: #a78bfa;
+  --colors-tab-training-bg: rgba(244, 114, 182, 0.1);
+  --colors-tab-training-indicator: #f472b6;
+  --colors-tab-advanced-bg: rgba(251, 191, 36, 0.1);
+  --colors-tab-advanced-indicator: #fbbf24;
+  --colors-tab-validation-bg: rgba(52, 211, 153, 0.1);
+  --colors-tab-validation-indicator: #34d399;
+
+  /* Shadows with cyan glow */
+  --shadow-panel-hover: 0 20px 50px rgba(6, 182, 212, 0.15);
+
+  /* Legacy aliases update */
+  --accent-purple: var(--colors-primary-purple);
+  --primary-gradient: var(--colors-primary-gradient);
+  --blue-500: var(--colors-blue-500);
+  --blue-400: var(--colors-blue-400);
+  --blue-bg: var(--colors-blue-bg);
+  --blue-gradient: var(--colors-blue-gradient);
+  --text-primary: var(--colors-text-primary);
+  --text-secondary: var(--colors-text-secondary);
+  --text-muted: var(--colors-text-muted);
+  --text-bright: var(--colors-text-bright);
+  --text-body: var(--colors-text-body);
+  --slate-border: var(--colors-slate-border);
+  --slate-border-hover: var(--colors-slate-border-hover);
+  --modal-backdrop: var(--colors-modal-backdrop);
+  --modal-surface: var(--colors-modal-surface);
+  --modal-border: var(--colors-modal-border);
+}
