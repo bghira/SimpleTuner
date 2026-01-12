@@ -182,12 +182,11 @@ class TrainingServiceTests(unittest.TestCase):
 
     def test_validate_training_config_flags_constant_warmup(self) -> None:
         store = DummyStore(DummyValidation())
-        result = training_service.validate_training_config(
-            store,
-            {"--lr_scheduler": "constant", "--lr_warmup_steps": 12},
-        )
+        config = {"--lr_scheduler": "constant", "--lr_warmup_steps": 12}
+        result = training_service.validate_training_config(store, config)
 
-        self.assertTrue(any("Warmup steps" in error for error in result.errors))
+        self.assertFalse(any("Warmup steps" in error for error in result.errors))
+        self.assertEqual(config.get("--lr_scheduler"), "constant_with_warmup")
 
     def test_validate_training_config_checks_prompt_library_path(self) -> None:
         store = DummyStore(DummyValidation())

@@ -994,20 +994,6 @@ def validate_training_config(
     warnings = list(validation.warnings) if validation.warnings else []
     suggestions = list(validation.suggestions) if validation.suggestions else []
 
-    raw_scheduler = None
-    raw_warmup_steps = None
-    if isinstance(config_dict, dict):
-        raw_scheduler = config_dict.get("--lr_scheduler")
-        if raw_scheduler in (None, ""):
-            raw_scheduler = config_dict.get("lr_scheduler")
-        raw_warmup_steps = config_dict.get("--lr_warmup_steps")
-        if raw_warmup_steps in (None, ""):
-            raw_warmup_steps = config_dict.get("lr_warmup_steps")
-    if raw_scheduler in (None, ""):
-        raw_scheduler = complete_config.get("--lr_scheduler", complete_config.get("lr_scheduler"))
-    if raw_warmup_steps in (None, ""):
-        raw_warmup_steps = complete_config.get("--lr_warmup_steps", complete_config.get("lr_warmup_steps"))
-
     _normalize_lr_scheduler_config(complete_config, config_dict)
     source = config_dict or complete_config
 
@@ -1026,17 +1012,11 @@ def validate_training_config(
     except ValueError:
         errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
 
-    warmup_raw = raw_warmup_steps
-    if warmup_raw is None:
-        warmup_raw = source.get("--lr_warmup_steps", complete_config.get("--lr_warmup_steps", 0))
+    warmup_raw = source.get("--lr_warmup_steps", complete_config.get("--lr_warmup_steps", 0))
     try:
-        warmup_value = _coerce_int(warmup_raw)
+        _coerce_int(warmup_raw)
     except ValueError:
         errors.append("Warmup steps must be a whole number.")
-    else:
-        scheduler_value = str(raw_scheduler or "").strip().lower()
-        if scheduler_value == "constant" and warmup_value > 0:
-            errors.append("Warmup steps require lr_scheduler=constant_with_warmup.")
 
     def _read_required(key: str) -> Any:
         alias = key.lstrip("-")
