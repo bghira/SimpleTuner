@@ -491,6 +491,17 @@ if (!window.uiSettingsTabComponent) {
                     window.applyTheme(theme);
                 }
             },
+            async refreshThemes() {
+                try {
+                    const response = await fetch('/api/themes/refresh', { method: 'POST' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.themeOptions = data.themes || [];
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh themes:', error);
+                }
+            },
             toggleEventStream() {
                 this.settings.event_stream_enabled = !this.settings.event_stream_enabled;
                 this.markDirty();
@@ -744,7 +755,15 @@ if (!window.uiSettingsTabComponent) {
                                 <h6 class="mb-1">Theme</h6>
                                 <p class="text-muted small mb-0">Switch between available UI themes. Changes apply instantly.</p>
                             </div>
-                            <span class="badge bg-secondary" x-text="settings.theme.toUpperCase()"></span>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        @click="refreshThemes()"
+                                        title="Refresh theme list">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <span class="badge bg-secondary" x-text="settings.theme.toUpperCase()"></span>
+                            </div>
                         </div>
                         <div class="row g-3">
                             <template x-for="option in themeOptions" :key="option.value">
@@ -754,12 +773,23 @@ if (!window.uiSettingsTabComponent) {
                                             :class="{ 'active': settings.theme === option.value }"
                                             @click="selectTheme(option.value)">
                                         <div class="theme-tile-body">
-                                            <div class="theme-title">
-                                                <i class="fas fa-circle me-2"
-                                                   :class="settings.theme === option.value ? 'text-success' : 'text-muted'"></i>
-                                                <span x-text="option.label"></span>
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div class="theme-title">
+                                                    <i class="fas fa-circle me-2"
+                                                       :class="settings.theme === option.value ? 'text-success' : 'text-muted'"></i>
+                                                    <span x-text="option.label"></span>
+                                                </div>
+                                                <span class="badge"
+                                                      :class="{
+                                                          'bg-secondary': option.source === 'builtin',
+                                                          'bg-info': option.source === 'pip',
+                                                          'bg-success': option.source === 'local'
+                                                      }"
+                                                      x-text="option.source === 'builtin' ? 'Built-in' :
+                                                              option.source === 'pip' ? 'Package' : 'Local'"
+                                                      style="font-size: 0.65rem;"></span>
                                             </div>
-                                            <p class="text-muted small mb-0" x-text="option.description || ''"></p>
+                                            <p class="text-muted small mb-0 mt-1" x-text="option.description || ''"></p>
                                         </div>
                                     </button>
                                 </div>

@@ -448,8 +448,11 @@ async def update_defaults(payload: DefaultsUpdate, _user: User = Depends(get_cur
         if payload.active_config is not None:
             defaults.active_config = payload.active_config
         if payload.theme is not None:
+            from ..services.theme_service import ThemeService
+
             theme = payload.theme.strip().lower()
-            defaults.theme = theme if theme in {"dark", "tron"} else "dark"
+            theme_service = ThemeService.get_instance()
+            defaults.theme = theme if theme_service.is_valid_theme(theme) else "dark"
         if payload.event_polling_interval is not None:
             try:
                 interval = int(payload.event_polling_interval)
