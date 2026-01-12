@@ -6,10 +6,11 @@ SimpleTuner WebUI 支持自定义主题，可以更改颜色、添加背景图�
 
 ## 内置主题
 
-SimpleTuner 包含两个内置主题：
+SimpleTuner 包含三个内置主题：
 
 - **Dark** - 默认深色主题，带有紫色强调色
 - **Tron** - 实验性霓虹青色主题
+- **Light** - Windows 98 风格米色主题
 
 ## 安装主题
 

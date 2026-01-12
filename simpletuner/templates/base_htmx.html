@@ -386,7 +386,7 @@
 <body data-theme="{{ webui_theme|default('dark') }}">
     <script>
         (function() {
-            const BUILTIN_THEMES = ['dark', 'tron'];
+            const BUILTIN_THEMES = ['dark', 'tron', 'light'];
 
             // Cache for loaded theme manifests
             const themeManifestCache = {};
@@ -457,14 +457,18 @@
                 document.documentElement.setAttribute('data-theme', themeName);
 
                 // Remove all theme classes, then add appropriate ones
-                body.classList.remove('dark-theme', 'tron-theme');
+                body.classList.remove('dark-theme', 'tron-theme', 'light-theme');
 
                 if (themeName === 'tron') {
                     body.classList.add('tron-theme');
+                } else if (themeName === 'light') {
+                    body.classList.add('light-theme');
                 }
 
-                // Always ensure dark-theme base is present
-                body.classList.add('dark-theme');
+                // Add dark-theme base for all themes except light
+                if (themeName !== 'light') {
+                    body.classList.add('dark-theme');
+                }
 
                 // Load custom theme CSS if not builtin
                 if (!BUILTIN_THEMES.includes(themeName)) {
