@@ -6,7 +6,7 @@
   "hub_model_id": "simpletuner-example-acestep-peft-lora",
   "learning_rate": 0.00005,
   "lora_rank": 128,
-  "lr_scheduler": "cosine_with_warmup",
+  "lr_scheduler": "cosine",
   "lr_warmup_steps": 50,
   "max_grad_norm": 1.0,
   "max_train_steps": 200,
