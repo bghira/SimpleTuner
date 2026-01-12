@@ -475,18 +475,53 @@ body[data-theme="light"] [class*="wizard"] h3 {
 }
 
 /* Training wizard Next button */
-body[data-theme="light"] .wizard-next-btn,
-body[data-theme="light"] .btn-primary,
-body[data-theme="light"] .btn-success {
-  background: #000080;
+body[data-theme="light"] .wizard-next-btn {
+  background: #000080 !important;
   color: #ffffff !important;
   border: none;
   box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
 }
 
-body[data-theme="light"] .btn-primary:hover,
+/* Base btn-primary - blue with white text */
+body[data-theme="light"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .btn-primary:hover {
+  background: #0000a0 !important;
+  color: #ffffff !important;
+}
+
+/* Base btn-success - green with white text */
+body[data-theme="light"] .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
 body[data-theme="light"] .btn-success:hover {
-  background: #0000a0;
+  background: #00a000 !important;
+  color: #ffffff !important;
+}
+
+/* Base btn-danger - red with white text */
+body[data-theme="light"] .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+body[data-theme="light"] .btn-danger:hover {
+  background: #a00000 !important;
+  color: #ffffff !important;
 }
 
 /* Wizard nav bar button - light blue background */
@@ -896,4 +931,1648 @@ body[data-theme="light"] #memory-presets-modal [class*="preset"] p {
 body[data-theme="light"] #memory-presets-modal .form-text,
 body[data-theme="light"] .memory-presets-modal .form-text {
   color: #404040 !important;
+}
+
+/* Cloud page - Win98 style */
+body[data-theme="light"] .cloud-page,
+body[data-theme="light"] [class*="cloud-"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .cloud-card,
+body[data-theme="light"] .cloud-card-body {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .cloud-card-body .text-truncate,
+body[data-theme="light"] .cloud-card .text-truncate {
+  color: #800000 !important;
+}
+
+body[data-theme="light"] .cloud-card-body *,
+body[data-theme="light"] .cloud-card * {
+  color: #000000;
+}
+
+/* Cloud nav tabs */
+body[data-theme="light"] .cloud-page .nav-item,
+body[data-theme="light"] .cloud-page .nav-link,
+body[data-theme="light"] [class*="cloud"] .nav-item,
+body[data-theme="light"] [class*="cloud"] .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .cloud-page .nav-link.active,
+body[data-theme="light"] [class*="cloud"] .nav-link.active {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* Provider name */
+body[data-theme="light"] .provider-name,
+body[data-theme="light"] [class*="provider-name"] {
+  color: #000000 !important;
+}
+
+/* Cloud submit button */
+body[data-theme="light"] .cloud-submit-btn,
+body[data-theme="light"] [class*="cloud-submit"],
+body[data-theme="light"] .cloud-page .btn-primary,
+body[data-theme="light"] .cloud-page .btn-success {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .cloud-submit-btn:hover,
+body[data-theme="light"] .cloud-page .btn-primary:hover {
+  background: #0000a0 !important;
+}
+
+/* Cloud page buttons */
+body[data-theme="light"] .cloud-page .btn,
+body[data-theme="light"] .cloud-page button,
+body[data-theme="light"] .cloud-card .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .cloud-page .btn:hover,
+body[data-theme="light"] .cloud-card .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+/* Cloud page inputs */
+body[data-theme="light"] .cloud-page input,
+body[data-theme="light"] .cloud-page select,
+body[data-theme="light"] .cloud-page textarea,
+body[data-theme="light"] .cloud-card input,
+body[data-theme="light"] .cloud-card select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Cloud page labels and text */
+body[data-theme="light"] .cloud-page label,
+body[data-theme="light"] .cloud-page .form-label,
+body[data-theme="light"] .cloud-card label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .cloud-page .form-text,
+body[data-theme="light"] .cloud-card .form-text {
+  color: #404040 !important;
+}
+
+/* Cloud page headers */
+body[data-theme="light"] .cloud-page h1,
+body[data-theme="light"] .cloud-page h2,
+body[data-theme="light"] .cloud-page h3,
+body[data-theme="light"] .cloud-page h4,
+body[data-theme="light"] .cloud-card h1,
+body[data-theme="light"] .cloud-card h2,
+body[data-theme="light"] .cloud-card h3 {
+  color: #000080 !important;
+}
+
+/* Job Queue page - Win98 style */
+body[data-theme="light"] .job-queue,
+body[data-theme="light"] .jobs-page,
+body[data-theme="light"] [class*="job-queue"],
+body[data-theme="light"] [class*="jobs-"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .job-card,
+body[data-theme="light"] .job-item,
+body[data-theme="light"] .queue-item,
+body[data-theme="light"] [class*="job-card"],
+body[data-theme="light"] [class*="queue-item"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .job-card *,
+body[data-theme="light"] .job-item *,
+body[data-theme="light"] .queue-item *,
+body[data-theme="light"] [class*="job-card"] *,
+body[data-theme="light"] [class*="queue-item"] * {
+  color: #000000;
+}
+
+/* Job status badges */
+body[data-theme="light"] .job-status,
+body[data-theme="light"] [class*="job-status"],
+body[data-theme="light"] .badge {
+  border-radius: 0 !important;
+  border: 1px solid #808080;
+}
+
+body[data-theme="light"] .job-status.running,
+body[data-theme="light"] .badge-running,
+body[data-theme="light"] .badge.bg-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .job-status.queued,
+body[data-theme="light"] .badge-queued,
+body[data-theme="light"] .badge.bg-warning {
+  background: #808000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .job-status.completed,
+body[data-theme="light"] .badge-completed,
+body[data-theme="light"] .badge.bg-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .job-status.failed,
+body[data-theme="light"] .badge-failed,
+body[data-theme="light"] .badge.bg-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .badge.bg-secondary,
+body[data-theme="light"] .badge.bg-info {
+  background: #008080 !important;
+  color: #ffffff !important;
+}
+
+/* Job queue buttons */
+body[data-theme="light"] .job-queue .btn,
+body[data-theme="light"] .jobs-page .btn,
+body[data-theme="light"] .job-card .btn,
+body[data-theme="light"] [class*="job-"] .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .job-queue .btn:hover,
+body[data-theme="light"] .jobs-page .btn:hover,
+body[data-theme="light"] .job-card .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .job-queue .btn-primary,
+body[data-theme="light"] .jobs-page .btn-primary,
+body[data-theme="light"] .job-card .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .job-queue .btn-danger,
+body[data-theme="light"] .jobs-page .btn-danger,
+body[data-theme="light"] .job-card .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+body[data-theme="light"] .job-queue .btn-success,
+body[data-theme="light"] .jobs-page .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+/* Job queue table */
+body[data-theme="light"] .job-queue table,
+body[data-theme="light"] .jobs-page table,
+body[data-theme="light"] .job-table {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .job-queue th,
+body[data-theme="light"] .jobs-page th,
+body[data-theme="light"] .job-table th {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  font-weight: bold;
+}
+
+body[data-theme="light"] .job-queue td,
+body[data-theme="light"] .jobs-page td,
+body[data-theme="light"] .job-table td {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+}
+
+/* Job queue headers */
+body[data-theme="light"] .job-queue h1,
+body[data-theme="light"] .job-queue h2,
+body[data-theme="light"] .job-queue h3,
+body[data-theme="light"] .jobs-page h1,
+body[data-theme="light"] .jobs-page h2,
+body[data-theme="light"] .jobs-page h3 {
+  color: #000080 !important;
+}
+
+/* Job queue labels and text */
+body[data-theme="light"] .job-queue label,
+body[data-theme="light"] .job-queue .form-label,
+body[data-theme="light"] .jobs-page label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .job-queue .form-text,
+body[data-theme="light"] .job-queue .text-muted,
+body[data-theme="light"] .jobs-page .form-text,
+body[data-theme="light"] .jobs-page .text-muted {
+  color: #404040 !important;
+}
+
+/* Job queue inputs */
+body[data-theme="light"] .job-queue input,
+body[data-theme="light"] .job-queue select,
+body[data-theme="light"] .jobs-page input,
+body[data-theme="light"] .jobs-page select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Job progress bars */
+body[data-theme="light"] .job-queue .progress,
+body[data-theme="light"] .jobs-page .progress,
+body[data-theme="light"] .job-card .progress {
+  background: #ffffff !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff;
+}
+
+body[data-theme="light"] .job-queue .progress-bar,
+body[data-theme="light"] .jobs-page .progress-bar,
+body[data-theme="light"] .job-card .progress-bar {
+  background: #000080 !important;
+}
+
+/* Environment page - Win98 style */
+body[data-theme="light"] .environment-page,
+body[data-theme="light"] .environments,
+body[data-theme="light"] [class*="environment"] {
+  color: #000000;
+}
+
+/* New button - green */
+body[data-theme="light"] .environment-page .btn-new,
+body[data-theme="light"] .environments .btn-new,
+body[data-theme="light"] .btn-new-env,
+body[data-theme="light"] .new-environment-btn,
+body[data-theme="light"] #new-environment-btn,
+body[data-theme="light"] .btn-new {
+  background: #008000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] .environment-page .btn-new:hover,
+body[data-theme="light"] .btn-new:hover {
+  background: #00a000 !important;
+}
+
+/* Import button - blue */
+body[data-theme="light"] .environment-page .btn-import,
+body[data-theme="light"] .environments .btn-import,
+body[data-theme="light"] .import-environment-btn,
+body[data-theme="light"] #import-environment-btn,
+body[data-theme="light"] .btn-import {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .environment-page .btn-import:hover,
+body[data-theme="light"] .btn-import:hover {
+  background: #0000a0 !important;
+}
+
+/* Delete button - red */
+body[data-theme="light"] .environment-page .btn-delete,
+body[data-theme="light"] .environments .btn-delete,
+body[data-theme="light"] .delete-environment-btn,
+body[data-theme="light"] #delete-environment-btn,
+body[data-theme="light"] .btn-delete {
+  background: #800000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+body[data-theme="light"] .environment-page .btn-delete:hover,
+body[data-theme="light"] .btn-delete:hover {
+  background: #a00000 !important;
+}
+
+/* Environment cards */
+body[data-theme="light"] .environment-card,
+body[data-theme="light"] .env-card,
+body[data-theme="light"] [class*="environment-card"],
+body[data-theme="light"] [class*="env-card"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .environment-card *,
+body[data-theme="light"] .env-card *,
+body[data-theme="light"] [class*="environment-card"] *,
+body[data-theme="light"] [class*="env-card"] * {
+  color: #000000;
+}
+
+/* Notifications page - Win98 style */
+body[data-theme="light"] .notifications-page,
+body[data-theme="light"] .notifications,
+body[data-theme="light"] [class*="notification"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .notification-card,
+body[data-theme="light"] .notification-item,
+body[data-theme="light"] [class*="notification-card"],
+body[data-theme="light"] [class*="notification-item"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .notification-card *,
+body[data-theme="light"] .notification-item *,
+body[data-theme="light"] [class*="notification-card"] *,
+body[data-theme="light"] [class*="notification-item"] * {
+  color: #000000;
+}
+
+/* Notification headers */
+body[data-theme="light"] .notifications-page h1,
+body[data-theme="light"] .notifications-page h2,
+body[data-theme="light"] .notifications-page h3,
+body[data-theme="light"] .notifications h1,
+body[data-theme="light"] .notifications h2,
+body[data-theme="light"] .notifications h3 {
+  color: #000080 !important;
+}
+
+/* Notification form elements */
+body[data-theme="light"] .notifications-page input,
+body[data-theme="light"] .notifications-page select,
+body[data-theme="light"] .notifications-page textarea,
+body[data-theme="light"] .notifications input,
+body[data-theme="light"] .notifications select,
+body[data-theme="light"] .notifications textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Notification labels */
+body[data-theme="light"] .notifications-page label,
+body[data-theme="light"] .notifications-page .form-label,
+body[data-theme="light"] .notifications label,
+body[data-theme="light"] .notifications .form-label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .notifications-page .form-text,
+body[data-theme="light"] .notifications-page .text-muted,
+body[data-theme="light"] .notifications .form-text,
+body[data-theme="light"] .notifications .text-muted {
+  color: #404040 !important;
+}
+
+/* Notification buttons */
+body[data-theme="light"] .notifications-page .btn,
+body[data-theme="light"] .notifications .btn,
+body[data-theme="light"] .notification-card .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .notifications-page .btn:hover,
+body[data-theme="light"] .notifications .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .notifications-page .btn-primary,
+body[data-theme="light"] .notifications .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .notifications-page .btn-success,
+body[data-theme="light"] .notifications .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] .notifications-page .btn-danger,
+body[data-theme="light"] .notifications .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+/* Notification tabs/nav */
+body[data-theme="light"] .notifications-page .nav-item,
+body[data-theme="light"] .notifications-page .nav-link,
+body[data-theme="light"] .notifications .nav-item,
+body[data-theme="light"] .notifications .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .notifications-page .nav-link.active,
+body[data-theme="light"] .notifications .nav-link.active {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* Notification provider cards */
+body[data-theme="light"] .provider-card,
+body[data-theme="light"] [class*="provider-card"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] .provider-card *,
+body[data-theme="light"] [class*="provider-card"] * {
+  color: #000000;
+}
+
+/* Notification toggles/switches */
+body[data-theme="light"] .notifications-page .form-check-input,
+body[data-theme="light"] .notifications .form-check-input,
+body[data-theme="light"] .notification-toggle {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+/* Notification status indicators */
+body[data-theme="light"] .notification-status.connected,
+body[data-theme="light"] .status-connected {
+  color: #008000 !important;
+}
+
+body[data-theme="light"] .notification-status.disconnected,
+body[data-theme="light"] .status-disconnected {
+  color: #800000 !important;
+}
+
+body[data-theme="light"] .notification-status.pending,
+body[data-theme="light"] .status-pending {
+  color: #808000 !important;
+}
+
+/* Notifications page - force all elements */
+body[data-theme="light"] #notifications-tab,
+body[data-theme="light"] [id*="notification"],
+body[data-theme="light"] [class*="notification"] {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #notifications-tab *,
+body[data-theme="light"] [id*="notification"] *,
+body[data-theme="light"] [class*="notification"] * {
+  border-radius: 0 !important;
+}
+
+/* Notification page cards and panels */
+body[data-theme="light"] #notifications-tab .card,
+body[data-theme="light"] #notifications-tab .panel,
+body[data-theme="light"] [id*="notification"] .card,
+body[data-theme="light"] [class*="notification"] .card {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #notifications-tab .card *,
+body[data-theme="light"] [id*="notification"] .card * {
+  color: #000000 !important;
+}
+
+/* Notification channel cards */
+body[data-theme="light"] .channel-card,
+body[data-theme="light"] [class*="channel-card"],
+body[data-theme="light"] .webhook-card,
+body[data-theme="light"] [class*="webhook"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .channel-card *,
+body[data-theme="light"] [class*="channel-card"] *,
+body[data-theme="light"] .webhook-card *,
+body[data-theme="light"] [class*="webhook"] * {
+  color: #000000 !important;
+  border-radius: 0 !important;
+}
+
+/* Notification settings sections */
+body[data-theme="light"] .notification-settings,
+body[data-theme="light"] [class*="notification-settings"],
+body[data-theme="light"] .settings-section,
+body[data-theme="light"] .config-section {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+/* Notification page all buttons */
+body[data-theme="light"] #notifications-tab .btn,
+body[data-theme="light"] [id*="notification"] .btn,
+body[data-theme="light"] [class*="notification"] .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] #notifications-tab .btn-primary,
+body[data-theme="light"] [id*="notification"] .btn-primary,
+body[data-theme="light"] [class*="notification"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #notifications-tab .btn-success,
+body[data-theme="light"] [id*="notification"] .btn-success,
+body[data-theme="light"] [class*="notification"] .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #notifications-tab .btn-danger,
+body[data-theme="light"] [id*="notification"] .btn-danger,
+body[data-theme="light"] [class*="notification"] .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+}
+
+/* Notification inputs */
+body[data-theme="light"] #notifications-tab input,
+body[data-theme="light"] #notifications-tab select,
+body[data-theme="light"] #notifications-tab textarea,
+body[data-theme="light"] [id*="notification"] input,
+body[data-theme="light"] [id*="notification"] select,
+body[data-theme="light"] [id*="notification"] textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Notification badges */
+body[data-theme="light"] #notifications-tab .badge,
+body[data-theme="light"] [id*="notification"] .badge,
+body[data-theme="light"] [class*="notification"] .badge {
+  border-radius: 0 !important;
+  border: 1px solid #808080;
+}
+
+/* Notification list items */
+body[data-theme="light"] .notification-list-item,
+body[data-theme="light"] [class*="notification-list"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+/* Notification accordions/collapsibles */
+body[data-theme="light"] #notifications-tab .accordion,
+body[data-theme="light"] #notifications-tab .accordion-item,
+body[data-theme="light"] #notifications-tab .accordion-header,
+body[data-theme="light"] #notifications-tab .accordion-button,
+body[data-theme="light"] #notifications-tab .accordion-body,
+body[data-theme="light"] [id*="notification"] .accordion-item,
+body[data-theme="light"] [id*="notification"] .accordion-button {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] #notifications-tab .accordion-button:not(.collapsed) {
+  background: #c8c4bc !important;
+  color: #000000 !important;
+}
+
+/* Metrics page - Win98 style */
+body[data-theme="light"] .metrics-page,
+body[data-theme="light"] .metrics,
+body[data-theme="light"] [class*="metrics"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .metrics-card,
+body[data-theme="light"] .metric-card,
+body[data-theme="light"] [class*="metrics-card"],
+body[data-theme="light"] [class*="metric-card"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .metrics-card *,
+body[data-theme="light"] .metric-card *,
+body[data-theme="light"] [class*="metrics-card"] *,
+body[data-theme="light"] [class*="metric-card"] * {
+  color: #000000;
+}
+
+/* Metrics headers */
+body[data-theme="light"] .metrics-page h1,
+body[data-theme="light"] .metrics-page h2,
+body[data-theme="light"] .metrics-page h3,
+body[data-theme="light"] .metrics h1,
+body[data-theme="light"] .metrics h2,
+body[data-theme="light"] .metrics h3 {
+  color: #000080 !important;
+}
+
+/* Metrics values */
+body[data-theme="light"] .metric-value,
+body[data-theme="light"] .metrics-value,
+body[data-theme="light"] [class*="metric-value"] {
+  color: #000080 !important;
+  font-weight: bold;
+}
+
+/* Metrics labels */
+body[data-theme="light"] .metric-label,
+body[data-theme="light"] .metrics-label,
+body[data-theme="light"] [class*="metric-label"] {
+  color: #000000 !important;
+}
+
+/* Metrics charts/graphs container */
+body[data-theme="light"] .chart-container,
+body[data-theme="light"] .metrics-chart,
+body[data-theme="light"] [class*="chart"] {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff;
+}
+
+/* Metrics buttons */
+body[data-theme="light"] .metrics-page .btn,
+body[data-theme="light"] .metrics .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .metrics-page .btn-primary,
+body[data-theme="light"] .metrics .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}
+
+/* Metrics nav/tabs */
+body[data-theme="light"] .metrics-page .nav-link,
+body[data-theme="light"] .metrics .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .metrics-page .nav-link.active,
+body[data-theme="light"] .metrics .nav-link.active {
+  background: #ffffff !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* Metrics table */
+body[data-theme="light"] .metrics-page table,
+body[data-theme="light"] .metrics table {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .metrics-page th,
+body[data-theme="light"] .metrics th {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .metrics-page td,
+body[data-theme="light"] .metrics td {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+}
+
+/* Metrics form elements */
+body[data-theme="light"] .metrics-page input,
+body[data-theme="light"] .metrics-page select,
+body[data-theme="light"] .metrics input,
+body[data-theme="light"] .metrics select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* DeepSpeed Builder Modal - Win98 style */
+body[data-theme="light"] #deepspeed-modal,
+body[data-theme="light"] .deepspeed-modal,
+body[data-theme="light"] #deepspeed-builder-modal,
+body[data-theme="light"] .deepspeed-builder-modal,
+body[data-theme="light"] [id*="deepspeed"] {
+  color: #000000;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-content,
+body[data-theme="light"] .deepspeed-modal .modal-content,
+body[data-theme="light"] #deepspeed-builder-modal .modal-content,
+body[data-theme="light"] [id*="deepspeed"] .modal-content {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-header,
+body[data-theme="light"] .deepspeed-modal .modal-header,
+body[data-theme="light"] #deepspeed-builder-modal .modal-header,
+body[data-theme="light"] [id*="deepspeed"] .modal-header {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%) !important;
+  border-radius: 0 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-header *,
+body[data-theme="light"] .deepspeed-modal .modal-header *,
+body[data-theme="light"] #deepspeed-builder-modal .modal-header *,
+body[data-theme="light"] [id*="deepspeed"] .modal-header * {
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-body,
+body[data-theme="light"] .deepspeed-modal .modal-body,
+body[data-theme="light"] #deepspeed-builder-modal .modal-body,
+body[data-theme="light"] [id*="deepspeed"] .modal-body {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-body *,
+body[data-theme="light"] .deepspeed-modal .modal-body *,
+body[data-theme="light"] #deepspeed-builder-modal .modal-body *,
+body[data-theme="light"] [id*="deepspeed"] .modal-body * {
+  color: #000000;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-footer,
+body[data-theme="light"] .deepspeed-modal .modal-footer,
+body[data-theme="light"] #deepspeed-builder-modal .modal-footer,
+body[data-theme="light"] [id*="deepspeed"] .modal-footer {
+  background: #d4d0c8 !important;
+  border-top: 1px solid #808080 !important;
+}
+
+/* DeepSpeed buttons */
+body[data-theme="light"] #deepspeed-modal .btn,
+body[data-theme="light"] .deepspeed-modal .btn,
+body[data-theme="light"] #deepspeed-builder-modal .btn,
+body[data-theme="light"] [id*="deepspeed"] .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn:hover,
+body[data-theme="light"] .deepspeed-modal .btn:hover,
+body[data-theme="light"] [id*="deepspeed"] .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn-primary,
+body[data-theme="light"] .deepspeed-modal .btn-primary,
+body[data-theme="light"] #deepspeed-builder-modal .btn-primary,
+body[data-theme="light"] [id*="deepspeed"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn-success,
+body[data-theme="light"] .deepspeed-modal .btn-success,
+body[data-theme="light"] [id*="deepspeed"] .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn-danger,
+body[data-theme="light"] .deepspeed-modal .btn-danger,
+body[data-theme="light"] [id*="deepspeed"] .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+/* DeepSpeed form elements */
+body[data-theme="light"] #deepspeed-modal input,
+body[data-theme="light"] #deepspeed-modal select,
+body[data-theme="light"] #deepspeed-modal textarea,
+body[data-theme="light"] .deepspeed-modal input,
+body[data-theme="light"] .deepspeed-modal select,
+body[data-theme="light"] [id*="deepspeed"] input,
+body[data-theme="light"] [id*="deepspeed"] select,
+body[data-theme="light"] [id*="deepspeed"] textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* DeepSpeed labels */
+body[data-theme="light"] #deepspeed-modal label,
+body[data-theme="light"] #deepspeed-modal .form-label,
+body[data-theme="light"] .deepspeed-modal label,
+body[data-theme="light"] [id*="deepspeed"] label,
+body[data-theme="light"] [id*="deepspeed"] .form-label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .form-text,
+body[data-theme="light"] .deepspeed-modal .form-text,
+body[data-theme="light"] [id*="deepspeed"] .form-text {
+  color: #404040 !important;
+}
+
+/* DeepSpeed cards/sections */
+body[data-theme="light"] #deepspeed-modal .card,
+body[data-theme="light"] .deepspeed-modal .card,
+body[data-theme="light"] [id*="deepspeed"] .card,
+body[data-theme="light"] .deepspeed-section,
+body[data-theme="light"] [class*="deepspeed-section"] {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+/* DeepSpeed nav/tabs */
+body[data-theme="light"] #deepspeed-modal .nav-link,
+body[data-theme="light"] .deepspeed-modal .nav-link,
+body[data-theme="light"] [id*="deepspeed"] .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .nav-link.active,
+body[data-theme="light"] .deepspeed-modal .nav-link.active,
+body[data-theme="light"] [id*="deepspeed"] .nav-link.active {
+  background: #ffffff !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* DeepSpeed close button */
+body[data-theme="light"] #deepspeed-modal .btn-close,
+body[data-theme="light"] .deepspeed-modal .btn-close,
+body[data-theme="light"] [id*="deepspeed"] .btn-close {
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+/* ============================
+   TRAINING WIZARD - WIN98 STYLE
+   ============================ */
+
+/* Wizard modal - square corners, Win98 window style */
+body[data-theme="light"] .training-wizard-modal {
+  background: #d4d0c8 !important;
+  border: 2px solid #000000 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, 3px 3px 0 rgba(0,0,0,0.3) !important;
+}
+
+/* Wizard header - Win98 title bar style */
+body[data-theme="light"] .training-wizard-modal .modal-header {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%) !important;
+  border-bottom: none !important;
+  border-radius: 0 !important;
+  padding: 3px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .modal-title {
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  text-shadow: none !important;
+}
+
+/* Close button - Win98 X button */
+body[data-theme="light"] .training-wizard-modal .btn-close {
+  background: #d4d0c8 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf !important;
+  width: 16px !important;
+  height: 14px !important;
+  padding: 0 !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-close:hover {
+  background: #e0dcd4 !important;
+}
+
+/* Progress indicator - Win98 wizard style */
+body[data-theme="light"] .training-wizard-modal .wizard-progress {
+  background: #d4d0c8 !important;
+  border-bottom: 1px solid #808080 !important;
+  padding: 8px 12px !important;
+  gap: 2px !important;
+}
+
+/* Step items - Win98 boxed numbers */
+body[data-theme="light"] .training-wizard-modal .wizard-step {
+  background: transparent !important;
+  border-radius: 0 !important;
+  opacity: 1 !important;
+  min-width: 60px !important;
+  padding: 0 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.active {
+  opacity: 1 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed {
+  opacity: 0.8 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.skipped {
+  opacity: 0.5 !important;
+}
+
+/* Step number - Win98 square badge style */
+body[data-theme="light"] .training-wizard-modal .step-number {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 0 !important;
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040 !important;
+  color: #000000 !important;
+  font-size: 10px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.active .step-number {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border-color: #000040 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed .step-number {
+  background: #008000 !important;
+  color: transparent !important;
+  border-color: #004000 !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed .step-number::before {
+  color: #ffffff !important;
+  font-size: 10px !important;
+}
+
+/* Step label */
+body[data-theme="light"] .training-wizard-modal .step-label {
+  color: #000000 !important;
+  font-size: 9px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.active .step-label {
+  color: #000080 !important;
+  font-weight: bold !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed .step-label {
+  color: #404040 !important;
+}
+
+/* Progress connector lines */
+body[data-theme="light"] .training-wizard-modal .wizard-step:not(:last-child)::after {
+  background: #808080 !important;
+  height: 2px !important;
+  top: 9px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed:not(:last-child)::after {
+  background: #008000 !important;
+}
+
+/* Modal body */
+body[data-theme="light"] .training-wizard-modal .modal-body {
+  background: #d4d0c8 !important;
+  border-radius: 0 !important;
+  padding: 12px 16px 16px !important;
+}
+
+/* Modal footer - Win98 button area */
+body[data-theme="light"] .training-wizard-modal .modal-footer {
+  background: #d4d0c8 !important;
+  border-top: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  gap: 6px !important;
+}
+
+/* Wizard content area */
+body[data-theme="light"] .training-wizard-modal .wizard-step-content {
+  min-height: 300px !important;
+  padding: 12px 0 !important;
+}
+
+/* Questions and headings */
+body[data-theme="light"] .training-wizard-modal .wizard-question {
+  color: #000000 !important;
+  font-size: 14px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-question-small {
+  color: #000000 !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Text */
+body[data-theme="light"] .training-wizard-modal .text-muted {
+  color: #404040 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal p {
+  color: #000000 !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  font-size: 11px !important;
+}
+
+/* Option cards - Win98 3D panel style */
+body[data-theme="light"] .training-wizard-modal .wizard-options {
+  gap: 8px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040 !important;
+  padding: 10px !important;
+  cursor: pointer !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card:hover {
+  background: #f0f0f0 !important;
+  border-color: #000080 !important;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card.selected {
+  background: #e8e8ff !important;
+  border: 2px solid #000080 !important;
+  box-shadow: inset 1px 1px 0 #c0c0ff, inset -1px -1px 0 #000060 !important;
+}
+
+/* Selected checkmark */
+body[data-theme="light"] .training-wizard-modal .wizard-option-card.selected::before {
+  background: #008000 !important;
+  border-radius: 0 !important;
+  width: 16px !important;
+  height: 16px !important;
+  font-size: 10px !important;
+  top: 4px !important;
+  right: 4px !important;
+}
+
+/* Option card text */
+body[data-theme="light"] .training-wizard-modal .wizard-option-card h6 {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  margin-bottom: 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card .text-muted.small,
+body[data-theme="light"] .training-wizard-modal .wizard-option-card p.small {
+  color: #404040 !important;
+  font-size: 10px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Input groups - Win98 group box style */
+body[data-theme="light"] .training-wizard-modal .wizard-input-group {
+  background: #d4d0c8 !important;
+  border: 2px groove #ffffff !important;
+  border-radius: 0 !important;
+  padding: 12px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-input-group label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Form controls - Win98 sunken style */
+body[data-theme="light"] .training-wizard-modal .form-control,
+body[data-theme="light"] .training-wizard-modal .form-select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8 !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  font-size: 11px !important;
+  padding: 4px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-control:focus,
+body[data-theme="light"] .training-wizard-modal .form-select:focus {
+  outline: 1px dotted #000000 !important;
+  outline-offset: -2px !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8 !important;
+}
+
+/* Form labels */
+body[data-theme="light"] .training-wizard-modal .form-label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Form text/help */
+body[data-theme="light"] .training-wizard-modal .form-text {
+  color: #404040 !important;
+  font-size: 10px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-text a {
+  color: #000080 !important;
+}
+
+/* Buttons - Win98 3D beveled style, smaller */
+body[data-theme="light"] .training-wizard-modal .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  font-size: 11px !important;
+  padding: 4px 12px !important;
+  min-height: auto !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn:active {
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #808080, inset -2px -2px 0 #dfdfdf !important;
+}
+
+/* Primary buttons - Navy blue */
+body[data-theme="light"] .training-wizard-modal .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-primary:hover {
+  background: #0000a0 !important;
+}
+
+/* Success buttons - Green */
+body[data-theme="light"] .training-wizard-modal .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-success:hover {
+  background: #00a000 !important;
+}
+
+/* Outline secondary buttons */
+body[data-theme="light"] .training-wizard-modal .btn-outline-secondary {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-outline-secondary.active {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset 1px 1px 0 #000040, inset -1px -1px 0 #4040c0, inset 2px 2px 0 #000060, inset -2px -2px 0 #6060d0 !important;
+}
+
+/* Link buttons */
+body[data-theme="light"] .training-wizard-modal .btn-link {
+  background: transparent !important;
+  color: #000080 !important;
+  box-shadow: none !important;
+  text-decoration: underline !important;
+  padding: 2px 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-link:hover {
+  color: #0000c0 !important;
+}
+
+/* Button groups */
+body[data-theme="light"] .training-wizard-modal .btn-group {
+  gap: 0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-group .btn {
+  margin: 0 !important;
+}
+
+/* Button check inputs (radio style) */
+body[data-theme="light"] .training-wizard-modal .btn-check + .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-check:checked + .btn {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset 1px 1px 0 #000040, inset -1px -1px 0 #4040c0, inset 2px 2px 0 #000060, inset -2px -2px 0 #6060d0 !important;
+}
+
+/* Alerts - Win98 message box style */
+body[data-theme="light"] .training-wizard-modal .alert {
+  background: #ffffc0 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  padding: 8px 10px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-warning {
+  background: #ffffc0 !important;
+  border-color: #808000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-info {
+  background: #e0e0ff !important;
+  border-color: #000080 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-success {
+  background: #c0ffc0 !important;
+  border-color: #008000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-secondary {
+  background: #e0e0e0 !important;
+  border-color: #808080 !important;
+}
+
+/* Help text box */
+body[data-theme="light"] .training-wizard-modal .wizard-help-text {
+  background: #e0e0ff !important;
+  border-left: 3px solid #000080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+  font-size: 11px !important;
+  padding: 8px 10px !important;
+}
+
+/* Review summary */
+body[data-theme="light"] .training-wizard-modal .review-summary {
+  background: #ffffff !important;
+  border: 2px groove #ffffff !important;
+  border-radius: 0 !important;
+  padding: 10px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .review-item {
+  border-bottom: 1px solid #d4d0c8 !important;
+  padding: 6px 0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .review-item label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .review-item span {
+  color: #000000 !important;
+  font-size: 11px !important;
+}
+
+/* Memory tabs */
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-tabs {
+  border-bottom: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-bottom: none !important;
+  border-radius: 0 !important;
+  padding: 4px 12px !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  margin-bottom: -1px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-link.active {
+  background: #ffffff !important;
+  border-bottom: 1px solid #ffffff !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-link:hover {
+  background: #e0dcd4 !important;
+}
+
+/* Memory strategy rows */
+body[data-theme="light"] .training-wizard-modal .memory-strategy-row {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  padding: 8px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .strategy-label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+}
+
+/* Preset badges */
+body[data-theme="light"] .training-wizard-modal .preset-tradeoffs .badge {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  font-size: 9px !important;
+  font-weight: normal !important;
+  padding: 2px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .bg-success-subtle {
+  background: #c0ffc0 !important;
+  color: #004000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .bg-warning-subtle {
+  background: #ffffc0 !important;
+  color: #404000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .bg-info-subtle {
+  background: #c0c0ff !important;
+  color: #000040 !important;
+}
+
+/* Checkboxes in wizard */
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="checkbox"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 13px !important;
+  height: 13px !important;
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  margin-top: 2px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="checkbox"]:checked {
+  background: #ffffff !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="checkbox"]:checked::before {
+  content: "✓" !important;
+  display: block !important;
+  color: #000000 !important;
+  font-size: 10px !important;
+  font-weight: bold !important;
+  line-height: 11px !important;
+  text-align: center !important;
+}
+
+/* Radio buttons in wizard */
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 13px !important;
+  height: 13px !important;
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 50% !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  margin-top: 2px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"]:checked::before {
+  content: "" !important;
+  display: block !important;
+  width: 7px !important;
+  height: 7px !important;
+  background: #000000 !important;
+  border-radius: 50% !important;
+  margin: 2px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Form range/slider - Win98 style */
+body[data-theme="light"] .training-wizard-modal .form-range {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 100% !important;
+  height: 20px !important;
+  background: transparent !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-range::-webkit-slider-track {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  height: 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-range::-webkit-slider-thumb {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff !important;
+  width: 11px !important;
+  height: 21px !important;
+  border-radius: 0 !important;
+  margin-top: -9px !important;
+}
+
+/* Spinner */
+body[data-theme="light"] .training-wizard-modal .spinner-border {
+  border-color: #000080 !important;
+  border-right-color: transparent !important;
+}
+
+/* Pre/code blocks */
+body[data-theme="light"] .training-wizard-modal pre {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  font-family: "Courier New", monospace !important;
+  font-size: 10px !important;
+  padding: 8px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal code {
+  background: #e0e0e0 !important;
+  color: #000080 !important;
+  font-family: "Courier New", monospace !important;
+  padding: 1px 3px !important;
+}
+
+/* Border/divider overrides */
+body[data-theme="light"] .training-wizard-modal .border {
+  border-color: #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .rounded {
+  border-radius: 0 !important;
+}
+
+/* Additional Win98 polish - remove ALL rounded corners */
+body[data-theme="light"] .training-wizard-modal *,
+body[data-theme="light"] .training-wizard-modal *::before,
+body[data-theme="light"] .training-wizard-modal *::after {
+  border-radius: 0 !important;
+}
+
+/* Exception for radio buttons which should stay round */
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"],
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"]::before {
+  border-radius: 50% !important;
+}
+
+/* Row/column gaps */
+body[data-theme="light"] .training-wizard-modal .row.g-3 {
+  --bs-gutter-x: 12px !important;
+  --bs-gutter-y: 12px !important;
+}
+
+/* Badge styling */
+body[data-theme="light"] .training-wizard-modal .badge {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  font-size: 10px !important;
+  font-weight: normal !important;
+  padding: 2px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .badge.bg-secondary {
+  background: #808080 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .badge.bg-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
 }
