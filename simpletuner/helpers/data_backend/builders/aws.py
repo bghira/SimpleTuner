@@ -50,9 +50,13 @@ class AwsBackendBuilder(BaseBackendBuilder):
 
     def _validate_aws_config(self, config: BaseBackendConfig) -> None:
 
+        aws_region_name = getattr(config, "aws_region_name", None)
+        if aws_region_name in (None, ""):
+            aws_region_name = "auto"
+            setattr(config, "aws_region_name", aws_region_name)
+
         required_values = {
             "aws_bucket_name": getattr(config, "aws_bucket_name", None),
-            "aws_region_name": getattr(config, "aws_region_name", None),
             "aws_endpoint_url": getattr(config, "aws_endpoint_url", None),
             "aws_access_key_id": getattr(config, "aws_access_key_id", None),
             "aws_secret_access_key": getattr(config, "aws_secret_access_key", None),
