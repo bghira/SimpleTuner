@@ -6,10 +6,11 @@ La WebUI de SimpleTuner soporta temas personalizados que pueden cambiar colores,
 
 ## Temas Integrados
 
-SimpleTuner incluye dos temas integrados:
+SimpleTuner incluye tres temas integrados:
 
 - **Dark** - El tema oscuro predeterminado con acentos púrpura
 - **Tron** - Un tema experimental en cian neón
+- **Light** - Un tema beige inspirado en Windows 98
 
 ## Instalación de Temas
 

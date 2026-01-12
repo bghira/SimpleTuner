@@ -10,8 +10,11 @@ from unittest.mock import MagicMock, patch
 
 from simpletuner.simpletuner_sdk.server import ServerMode
 from simpletuner.simpletuner_sdk.server.services.theme_service import (
+    ALLOWED_IMAGE_EXTENSIONS,
+    ALLOWED_SOUND_EXTENSIONS,
     EntryPointThemeSource,
     LocalFolderThemeSource,
+    ThemeAssets,
     ThemeMetadata,
     ThemeService,
 )
@@ -348,6 +351,295 @@ class ThemeRoutesTestCase(APITestCase, unittest.TestCase):
                     # The theme might not be discoverable due to patching issues
                     # Just verify the endpoint works
                     self.assertIn(response.status_code, [200, 404])
+
+
+class ThemeAssetsTestCase(unittest.TestCase):
+    """Tests for ThemeAssets dataclass."""
+
+    def test_theme_assets_empty_by_default(self) -> None:
+        """ThemeAssets should have empty dicts by default."""
+        assets = ThemeAssets()
+        self.assertEqual(assets.images, {})
+        self.assertEqual(assets.sounds, {})
+
+    def test_theme_assets_with_values(self) -> None:
+        """ThemeAssets should store provided values."""
+        assets = ThemeAssets(
+            images={"logo": "assets/logo.png"},
+            sounds={"success": "assets/success.wav"},
+        )
+        self.assertEqual(assets.images, {"logo": "assets/logo.png"})
+        self.assertEqual(assets.sounds, {"success": "assets/success.wav"})
+
+    def test_theme_assets_to_dict(self) -> None:
+        """to_dict() should return a proper dictionary."""
+        assets = ThemeAssets(
+            images={"logo": "assets/logo.png"},
+            sounds={"hover": "assets/hover.wav"},
+        )
+        result = assets.to_dict()
+        self.assertEqual(
+            result,
+            {
+                "images": {"logo": "assets/logo.png"},
+                "sounds": {"hover": "assets/hover.wav"},
+            },
+        )
+
+
+class ThemeAssetSecurityTestCase(unittest.TestCase):
+    """Tests for theme asset security validation."""
+
+    def setUp(self) -> None:
+        ThemeService._instance = None
+        self.service = ThemeService()
+
+    def test_validate_asset_name_valid(self) -> None:
+        """validate_asset_name() should accept valid names."""
+        self.assertTrue(self.service.validate_asset_name("logo"))
+        self.assertTrue(self.service.validate_asset_name("my-logo"))
+        self.assertTrue(self.service.validate_asset_name("logo_v2"))
+        self.assertTrue(self.service.validate_asset_name("Logo123"))
+
+    def test_validate_asset_name_rejects_empty(self) -> None:
+        """validate_asset_name() should reject empty names."""
+        self.assertFalse(self.service.validate_asset_name(""))
+
+    def test_validate_asset_name_rejects_path_traversal(self) -> None:
+        """validate_asset_name() should reject path traversal attempts."""
+        self.assertFalse(self.service.validate_asset_name("../secret"))
+        self.assertFalse(self.service.validate_asset_name("foo/bar"))
+        self.assertFalse(self.service.validate_asset_name("foo\\bar"))
+
+    def test_validate_asset_name_rejects_special_chars(self) -> None:
+        """validate_asset_name() should reject special characters."""
+        self.assertFalse(self.service.validate_asset_name("logo.png"))
+        self.assertFalse(self.service.validate_asset_name("logo file"))
+        self.assertFalse(self.service.validate_asset_name("logo@2x"))
+        self.assertFalse(self.service.validate_asset_name("logo!"))
+
+    def test_get_asset_path_rejects_invalid_type(self) -> None:
+        """get_asset_path() should reject invalid asset types."""
+        result = self.service.get_asset_path("dark", "scripts", "malicious")
+        self.assertIsNone(result)
+
+    def test_get_asset_path_rejects_builtin_themes(self) -> None:
+        """get_asset_path() should return None for builtin themes."""
+        result = self.service.get_asset_path("dark", "images", "logo")
+        self.assertIsNone(result)
+
+    def test_get_asset_path_rejects_undeclared_assets(self) -> None:
+        """get_asset_path() should reject assets not in manifest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            themes_dir = Path(tmpdir) / "themes"
+            themes_dir.mkdir()
+            theme_dir = themes_dir / "test-theme"
+            theme_dir.mkdir()
+
+            # Create theme with no assets declared
+            manifest = {"id": "test-theme", "name": "Test"}
+            (theme_dir / "theme.json").write_text(json.dumps(manifest))
+            (theme_dir / "theme.css").write_text(":root {}")
+
+            # Create an asset file that exists but isn't declared
+            assets_dir = theme_dir / "assets" / "images"
+            assets_dir.mkdir(parents=True)
+            (assets_dir / "secret.png").write_text("fake image data")
+
+            source = LocalFolderThemeSource(themes_dir=themes_dir)
+            themes = source.discover()
+            self.service._cache = {**self.service.BUILTIN_THEMES, **themes}
+
+            # Should reject because asset not declared in manifest
+            result = self.service.get_asset_path("test-theme", "images", "secret")
+            self.assertIsNone(result)
+
+    def test_get_asset_path_rejects_path_traversal_in_manifest(self) -> None:
+        """get_asset_path() should reject path traversal in manifest paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            themes_dir = Path(tmpdir) / "themes"
+            themes_dir.mkdir()
+            theme_dir = themes_dir / "evil-theme"
+            theme_dir.mkdir()
+
+            # Create theme with path traversal in asset declaration
+            manifest = {
+                "id": "evil-theme",
+                "name": "Evil Theme",
+                "assets": {"images": {"logo": "../../../etc/passwd"}},  # Path traversal attempt
+            }
+            (theme_dir / "theme.json").write_text(json.dumps(manifest))
+            (theme_dir / "theme.css").write_text(":root {}")
+
+            source = LocalFolderThemeSource(themes_dir=themes_dir)
+            themes = source.discover()
+            self.service._cache = {**self.service.BUILTIN_THEMES, **themes}
+
+            # Should reject because of path traversal
+            result = self.service.get_asset_path("evil-theme", "images", "logo")
+            self.assertIsNone(result)
+
+    def test_get_asset_path_rejects_wrong_extension(self) -> None:
+        """get_asset_path() should reject files with wrong extension."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            themes_dir = Path(tmpdir) / "themes"
+            themes_dir.mkdir()
+            theme_dir = themes_dir / "test-theme"
+            theme_dir.mkdir()
+
+            manifest = {
+                "id": "test-theme",
+                "name": "Test",
+                "assets": {"images": {"script": "assets/script.js"}},  # Wrong extension
+            }
+            (theme_dir / "theme.json").write_text(json.dumps(manifest))
+            (theme_dir / "theme.css").write_text(":root {}")
+
+            assets_dir = theme_dir / "assets"
+            assets_dir.mkdir()
+            (assets_dir / "script.js").write_text("alert('hacked')")
+
+            source = LocalFolderThemeSource(themes_dir=themes_dir)
+            themes = source.discover()
+            self.service._cache = {**self.service.BUILTIN_THEMES, **themes}
+
+            # Should reject because .js is not an allowed image extension
+            result = self.service.get_asset_path("test-theme", "images", "script")
+            self.assertIsNone(result)
+
+    def test_get_asset_path_success(self) -> None:
+        """get_asset_path() should return path for valid assets."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            themes_dir = Path(tmpdir) / "themes"
+            themes_dir.mkdir()
+            theme_dir = themes_dir / "valid-theme"
+            theme_dir.mkdir()
+
+            manifest = {
+                "id": "valid-theme",
+                "name": "Valid Theme",
+                "assets": {"images": {"logo": "assets/images/logo.png"}, "sounds": {"success": "assets/sounds/success.wav"}},
+            }
+            (theme_dir / "theme.json").write_text(json.dumps(manifest))
+            (theme_dir / "theme.css").write_text(":root {}")
+
+            # Create valid assets
+            images_dir = theme_dir / "assets" / "images"
+            images_dir.mkdir(parents=True)
+            (images_dir / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+            sounds_dir = theme_dir / "assets" / "sounds"
+            sounds_dir.mkdir(parents=True)
+            (sounds_dir / "success.wav").write_bytes(b"RIFF")
+
+            source = LocalFolderThemeSource(themes_dir=themes_dir)
+            themes = source.discover()
+            self.service._cache = {**self.service.BUILTIN_THEMES, **themes}
+
+            # Should return valid paths
+            img_path = self.service.get_asset_path("valid-theme", "images", "logo")
+            self.assertIsNotNone(img_path)
+            self.assertTrue(img_path.exists())
+            self.assertEqual(img_path.name, "logo.png")
+
+            sound_path = self.service.get_asset_path("valid-theme", "sounds", "success")
+            self.assertIsNotNone(sound_path)
+            self.assertTrue(sound_path.exists())
+            self.assertEqual(sound_path.name, "success.wav")
+
+
+class ThemeManifestTestCase(unittest.TestCase):
+    """Tests for theme manifest with assets."""
+
+    def setUp(self) -> None:
+        ThemeService._instance = None
+        self.service = ThemeService()
+
+    def test_get_theme_manifest_builtin(self) -> None:
+        """get_theme_manifest() should return manifest for builtin themes."""
+        manifest = self.service.get_theme_manifest("dark")
+        self.assertIsNotNone(manifest)
+        self.assertEqual(manifest["id"], "dark")
+        self.assertEqual(manifest["source"], "builtin")
+        self.assertEqual(manifest["assets"], {"images": {}, "sounds": {}})
+
+    def test_get_theme_manifest_with_assets(self) -> None:
+        """get_theme_manifest() should include asset URLs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            themes_dir = Path(tmpdir) / "themes"
+            themes_dir.mkdir()
+            theme_dir = themes_dir / "asset-theme"
+            theme_dir.mkdir()
+
+            manifest = {
+                "id": "asset-theme",
+                "name": "Asset Theme",
+                "assets": {"images": {"logo": "assets/logo.png"}, "sounds": {"success": "assets/success.wav"}},
+            }
+            (theme_dir / "theme.json").write_text(json.dumps(manifest))
+            (theme_dir / "theme.css").write_text(":root {}")
+
+            source = LocalFolderThemeSource(themes_dir=themes_dir)
+            themes = source.discover()
+            self.service._cache = {**self.service.BUILTIN_THEMES, **themes}
+
+            result = self.service.get_theme_manifest("asset-theme")
+            self.assertIsNotNone(result)
+            self.assertEqual(result["id"], "asset-theme")
+            self.assertIn("assets", result)
+            self.assertEqual(result["assets"]["images"]["logo"], "/api/themes/asset-theme/assets/images/logo")
+            self.assertEqual(result["assets"]["sounds"]["success"], "/api/themes/asset-theme/assets/sounds/success")
+
+
+class ThemeAssetRoutesTestCase(APITestCase, unittest.TestCase):
+    """Tests for theme asset API routes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        ThemeService._instance = None
+
+    def test_get_theme_manifest_endpoint(self) -> None:
+        """GET /api/themes/{id}/manifest should return theme manifest."""
+        with self.client_session(ServerMode.TRAINER) as client:
+            response = client.get("/api/themes/dark/manifest")
+
+        self.assertEqual(response.status_code, 200)
+        manifest = response.json()
+        self.assertEqual(manifest["id"], "dark")
+        self.assertIn("assets", manifest)
+
+    def test_get_theme_manifest_unknown_returns_404(self) -> None:
+        """GET /api/themes/{id}/manifest should return 404 for unknown themes."""
+        with self.client_session(ServerMode.TRAINER) as client:
+            response = client.get("/api/themes/nonexistent/manifest")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_theme_image_builtin_returns_404(self) -> None:
+        """GET /api/themes/{id}/assets/images/{name} should return 404 for builtin themes."""
+        with self.client_session(ServerMode.TRAINER) as client:
+            response = client.get("/api/themes/dark/assets/images/logo")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_theme_sound_builtin_returns_404(self) -> None:
+        """GET /api/themes/{id}/assets/sounds/{name} should return 404 for builtin themes."""
+        with self.client_session(ServerMode.TRAINER) as client:
+            response = client.get("/api/themes/dark/assets/sounds/success")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_list_theme_assets_endpoint(self) -> None:
+        """GET /api/themes/{id}/assets should list theme assets."""
+        with self.client_session(ServerMode.TRAINER) as client:
+            response = client.get("/api/themes/dark/assets")
+
+        self.assertEqual(response.status_code, 200)
+        assets = response.json()
+        self.assertIn("images", assets)
+        self.assertIn("sounds", assets)
+        self.assertIsInstance(assets["images"], list)
+        self.assertIsInstance(assets["sounds"], list)
 
 
 if __name__ == "__main__":

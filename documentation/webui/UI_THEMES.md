@@ -6,10 +6,11 @@ SimpleTuner WebUI supports custom themes that can change colors, add background 
 
 ## Built-in Themes
 
-SimpleTuner includes two built-in themes:
+SimpleTuner includes three built-in themes:
 
 - **Dark** - The default dark theme with purple accents
 - **Tron** - An experimental neon cyan theme
+- **Light** - A Windows 98 inspired beige theme
 
 ## Installing Themes
 

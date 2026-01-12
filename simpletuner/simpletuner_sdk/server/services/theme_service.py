@@ -1,7 +1,7 @@
 """Theme discovery and management service.
 
 Discovers themes from:
-1. Built-in themes (dark, tron)
+1. Built-in themes (dark, tron, light)
 2. Pip-installed packages with 'simpletuner.themes' entry points
 3. Local themes in ~/.simpletuner/themes/
 """
@@ -187,6 +187,14 @@ class ThemeService:
             id="tron",
             name="Tron",
             description="Experimental neon styling",
+            author="SimpleTuner",
+            css_path=None,
+            source="builtin",
+        ),
+        "light": ThemeMetadata(
+            id="light",
+            name="Light",
+            description="Windows 98 inspired beige",
             author="SimpleTuner",
             css_path=None,
             source="builtin",
