@@ -15,7 +15,7 @@ import torch
 from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
-from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import should_log
@@ -581,6 +581,18 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 skip_next = False
                 continue
 
+            if arg.startswith(("--lr_scheduler=", "--lr-scheduler=")):
+                prefix, value = arg.split("=", 1)
+                normalized_value = normalize_lr_scheduler_value(value)
+                normalized_args.append(f"{prefix}={normalized_value}")
+                continue
+
+            if arg in ("--lr_scheduler", "--lr-scheduler") and idx + 1 < len(raw_args):
+                normalized_args.append(arg)
+                normalized_args.append(normalize_lr_scheduler_value(raw_args[idx + 1]))
+                skip_next = True
+                continue
+
             if arg.startswith(("--model_family=", "--model-family=")):
                 prefix, value = arg.split("=", 1)
                 normalized_args.append(f"{prefix}={_normalize_model_family(value)}")
@@ -628,6 +640,14 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args is None:
         return None
+
+    if hasattr(args, "lr_scheduler"):
+        normalized_lr_scheduler = normalize_lr_scheduler_value(
+            getattr(args, "lr_scheduler", None),
+            getattr(args, "lr_warmup_steps", None),
+        )
+        if normalized_lr_scheduler != getattr(args, "lr_scheduler", None):
+            args.lr_scheduler = normalized_lr_scheduler
 
     if args.controlnet_custom_config is not None and type(args.controlnet_custom_config) is str:
         if args.controlnet_custom_config.startswith("{"):

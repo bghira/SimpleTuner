@@ -43,6 +43,28 @@ def _is_falsey(value: object) -> bool:
 _LEGACY_ARG_HANDLERS: dict[str, Callable[[object, list[str], dict[str, object]], bool]] = {}
 
 
+def normalize_lr_scheduler_value(value: object, warmup_steps: object | None = None) -> object:
+    if not isinstance(value, str):
+        return value
+
+    normalized = value.strip().lower()
+    alias_map = {
+        "cosine_with_warmup": "cosine",
+    }
+    if normalized in alias_map:
+        return alias_map[normalized]
+
+    if warmup_steps is not None:
+        try:
+            warmup_value = int(warmup_steps)
+        except (TypeError, ValueError):
+            warmup_value = 0
+        if normalized == "constant" and warmup_value > 0:
+            return "constant_with_warmup"
+
+    return value
+
+
 def _legacy_handler(name: str):
     def _decorator(func: Callable[[object, list[str], dict[str, object]], bool]):
         _LEGACY_ARG_HANDLERS[name] = func
