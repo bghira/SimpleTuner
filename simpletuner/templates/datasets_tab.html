@@ -1,8 +1,9 @@
 <!-- templates/datasets_tab.html - Datasets configuration tab content -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-datasets">
-<script>document.getElementById('css-form-sections-datasets').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 <link rel="stylesheet" href="/static/css/dataset-wizard.css" id="css-dataset-wizard">
-<script>document.getElementById('css-dataset-wizard').href = '/static/css/dataset-wizard.css?t=' + Date.now();</script>
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-datasets">
 
 <style>
 /* Dataset dropdown styling for datasets page - matches basic tab */
@@ -92,7 +93,91 @@
 </style>
 
 <div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
-     x-data="datasetWizardComponent()" x-init="init()">
+     x-data="{
+         ...datasetWizardComponent(),
+         ...window.HintMixin.createMultiHint({
+             useApi: false,
+             storageKey: 'st_datasets_hints',
+             hintKeys: ['hero']
+         }),
+         showHeroCTA() { return this.hints.hero; },
+         dismissHeroCTA() { this.dismissHint('hero'); },
+         restoreHeroCTA() { this.showHint('hero'); },
+         launchWizardFromHero() {
+             this.dismissHeroCTA();
+             this.$nextTick(() => this.openWizard());
+         }
+     }"
+     x-init="loadHints(); init()">
+
+    <!-- Hero CTA - Introduction to datasets -->
+    {% call hero_cta(
+        theme='cyan',
+        icon_class='fa-database',
+        icon_shape='rounded',
+        title='Dataset Configuration',
+        description='Configure the training data that SimpleTuner will use. If you started from an example configuration, you already have a demo dataset — use the wizard to replace it with your own images.',
+        features=[
+            {'icon': 'fa-images', 'color': 'text-info', 'label': 'Image & Video'},
+            {'icon': 'fa-comment-alt', 'color': 'text-warning', 'label': 'Captions'},
+            {'icon': 'fa-crop-alt', 'color': 'text-success', 'label': 'Cropping & Resolution'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Launch Dataset Wizard', 'icon': 'fa-magic', 'action': 'launchWizardFromHero()'},
+        cta_secondary={'label': 'Dismiss', 'icon': 'fa-times', 'action': 'dismissHeroCTA()'},
+        tip_text='The wizard walks you through adding local folders, cloud storage, or HuggingFace datasets with proper caption and resolution settings.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-images text-info me-2"></i>Dataset Types</h6>
+                    <p class="small text-muted mb-0">
+                        Train on images, videos, or audio. Each dataset needs a corresponding
+                        <strong>text embeds</strong> cache for caption processing.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-comment-alt text-warning me-2"></i>Caption Strategies</h6>
+                    <p class="small text-muted mb-0">
+                        Use <strong>textfile</strong> (image.txt next to image.png), <strong>filename</strong>,
+                        or a fixed <strong>instance prompt</strong> for all images.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-crop-alt text-success me-2"></i>Resolution & Cropping</h6>
+                    <p class="small text-muted mb-0">
+                        Set target resolution (e.g., 1024px), minimum sizes to exclude tiny images,
+                        and crop styles (center, random, face-aware).
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="row g-3 mt-1">
+            <div class="col-12">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-book-open text-primary me-2"></i>Need Help?</h6>
+                    <p class="small text-muted mb-0">
+                        This section can be overwhelming! We recommend opening the
+                        <a href="{{ docs_url('DATALOADER.md') }}" target="_blank" rel="noopener">
+                            Dataloader Documentation <i class="fas fa-external-link-alt fa-xs"></i>
+                        </a>
+                        in another window while exploring this page. If you get stuck, join our Discord community — the invite link is in the
+                        <a href="https://github.com/bghira/SimpleTuner#readme" target="_blank" rel="noopener">
+                            project README <i class="fas fa-external-link-alt fa-xs"></i></a>.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <div x-show="!showHeroCTA()" x-cloak>
     <!-- Main Card -->
     <div class="card mb-4">
         <div class="card-header">
@@ -102,6 +187,12 @@
                     <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
                 </div>
                 <div class="btn-group" role="group" style="position: relative; z-index: 10;">
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @click="restoreHeroCTA()"
+                            title="Show introduction">
+                        <i class="fas fa-question-circle me-1"></i> Help
+                    </button>
                     <button type="button"
                             class="btn btn-primary"
                             @click.prevent="openNewConfigModal()"
@@ -172,7 +263,6 @@
                            id="filterByEnvironment">
                     <label class="form-check-label small" for="filterByEnvironment">
                         Only show configs from<br>current environment
-                        <span class="badge bg-info text-dark" id="current-env-badge">none</span>
                     </label>
                 </div>
             </div>
@@ -197,9 +287,8 @@
             // Note: ID uses underscores, not hyphens
             const selector = document.getElementById('datasets_page_data_backend_config');
             const dropdown = document.querySelector('[data-field-id="datasets_page_data_backend_config"]');
-            const badge = document.getElementById('current-env-badge');
 
-            console.log('initDatasetPageSelector called (attempt ' + (retryCount + 1) + ')', { selector, dropdown, badge });
+            console.log('initDatasetPageSelector called (attempt ' + (retryCount + 1) + ')', { selector, dropdown });
 
             if (!dropdown) {
                 if (retryCount < maxRetries) {
@@ -231,15 +320,6 @@
                 return;
             }
             dropdown.dataset.initialized = 'true';
-
-            // Function to sync the environment badge with the trainer store
-            function syncEnvironmentBadge() {
-                const trainerStore = Alpine.store('trainer');
-                if (trainerStore && badge) {
-                    const env = trainerStore.selectedEnvironment || '';
-                    badge.textContent = env || 'none';
-                }
-            }
 
             // Function to sync the dropdown value from the trainer store's configValues
             function syncDropdownFromStore() {
@@ -310,8 +390,6 @@
                 }
             }
 
-            // Initial sync
-            syncEnvironmentBadge();
             // Delay the dropdown sync to ensure store is populated
             setTimeout(syncDropdownFromStore, 100);
 
@@ -320,8 +398,7 @@
                 Alpine.effect(() => {
                     const trainerStore = Alpine.store('trainer');
                     if (trainerStore) {
-                        syncEnvironmentBadge();
-                        // Also sync dropdown when configValues or activeEnvironmentConfig changes
+                        // Sync dropdown when configValues or activeEnvironmentConfig changes
                         const _ = trainerStore.configValues;
                         const __ = trainerStore.activeEnvironmentConfig;
                         syncDropdownFromStore();
@@ -577,4 +654,7 @@
             </div>
         </div>
     </div>
+
+    </div>
+    <!-- End datasets hero content wrapper -->
 </div>

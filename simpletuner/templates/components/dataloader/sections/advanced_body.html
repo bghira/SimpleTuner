@@ -5,7 +5,7 @@
         <h6 class="modal-section-title">Embed Dataset Links</h6>
         <div class="row g-2">
             <div class="col-md-6">
-                <label class="form-label small">Text Embeds Dataset <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#text_embeds" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Text Embeds Dataset <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#text_embeds') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.text_embeds"
                         @change="markAsUnsaved()">
@@ -16,7 +16,7 @@
                 </select>
             </div>
             <div class="col-md-6">
-                <label class="form-label small">Image Embeds Dataset <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#image_embeds" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Image Embeds Dataset <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#image_embeds') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.image_embeds"
                         @change="markAsUnsaved()">
@@ -28,7 +28,7 @@
             </div>
             <!-- Conditioning Image Embeds (for I2V models) -->
             <div class="col-md-6" x-show="requiresConditioningImageEmbeds && ['image', 'video', 'conditioning'].includes(editingDataset.dataset_type)">
-                <label class="form-label small">Conditioning Image Embeds <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#conditioning_image_embeds" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Conditioning Image Embeds <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#conditioning_image_embeds') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset.conditioning_image_embeds"
                         @change="markAsUnsaved()">
@@ -40,7 +40,7 @@
                 <div class="form-text small">For I2V models (Wan 2.1/2.2, Qwen Edit)</div>
             </div>
             <div class="col-md-6" x-show="editingDataset.conditioning_image_embeds && requiresConditioningImageEmbeds">
-                <label class="form-label small">Conditioning Embed Cache Dir <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#cache_dir_conditioning_image_embeds" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Conditioning Embed Cache Dir <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#cache_dir_conditioning_image_embeds') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model.lazy="editingDataset.cache_dir_conditioning_image_embeds"
@@ -62,7 +62,7 @@
                            x-model="editingDataset.preserve_data_backend_cache"
                            @change="markAsUnsaved()">
                     <label class="form-check-label small" :for="'preserve-cache-' + editingDataset.id">
-                        Preserve backend cache <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#preserve_data_backend_cache" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                        Preserve backend cache <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#preserve_data_backend_cache') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
                     </label>
                 </div>
                 <div class="form-text small text-muted ps-4">
@@ -82,7 +82,7 @@
                    x-model="editingDataset.vae_cache_clear_each_epoch"
                    @change="markAsUnsaved()">
             <label class="form-check-label small" :for="'vae-cache-clear-' + editingDataset.id">
-                Clear VAE cache each epoch <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#vae_cache_clear_each_epoch" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                Clear VAE cache each epoch <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#vae_cache_clear_each_epoch') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
             </label>
         </div>
         <div class="form-text small text-muted ps-4">
@@ -92,7 +92,7 @@
 
     <!-- Skip File Discovery -->
     <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type) && matchesParamFilter('skip', 'discovery', 'scan', 'vae', 'text', 'metadata', 'aspect')">
-        <h6 class="modal-section-title">Skip File Discovery <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#skip_file_discovery" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></h6>
+        <h6 class="modal-section-title">Skip File Discovery <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#skip_file_discovery') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></h6>
         <div class="row g-2">
             <template x-for="option in skipDiscoveryOptions()" :key="option.value">
                 <div class="col-md-6 mb-2">

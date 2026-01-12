@@ -62,6 +62,10 @@ class ModelsService:
         category_order = {"image": 0, "video": 1, "audio": 2, "other": 3}
 
         for family_name, model_cls in ModelRegistry.model_families().items():
+            # Skip entries that aren't actual classes
+            if not isinstance(model_cls, type):
+                continue
+
             # Check if model is enabled in wizard (default to True if not specified)
             enabled = getattr(model_cls, "ENABLED_IN_WIZARD", True)
             if not enabled:
@@ -70,11 +74,14 @@ class ModelsService:
             # Get model metadata
             display_name = getattr(model_cls, "NAME", family_name)
             description = getattr(model_cls, "MODEL_DESCRIPTION", "")
-            if issubclass(model_cls, AudioModelFoundation):
-                category = "audio"
-            elif issubclass(model_cls, VideoModelFoundation):
-                category = "video"
-            else:
+            try:
+                if issubclass(model_cls, AudioModelFoundation):
+                    category = "audio"
+                elif issubclass(model_cls, VideoModelFoundation):
+                    category = "video"
+                else:
+                    category = "image"
+            except TypeError:
                 category = "image"
 
             wizard_models.append(
@@ -160,8 +167,8 @@ class ModelsService:
             "has_controlnet_pipeline": any(
                 pt in pipeline_types for pt in {PipelineTypes.CONTROLNET.value, PipelineTypes.CONTROL.value}
             ),
-            "is_video_model": issubclass(model_cls, VideoModelFoundation),
-            "is_audio_model": issubclass(model_cls, AudioModelFoundation),
+            "is_video_model": isinstance(model_cls, type) and issubclass(model_cls, VideoModelFoundation),
+            "is_audio_model": isinstance(model_cls, type) and issubclass(model_cls, AudioModelFoundation),
         }
 
         # Check if model supports lyrics by examining caption_field_preferences

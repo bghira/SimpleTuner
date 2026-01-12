@@ -1,0 +1,482 @@
+<!-- partials/admin_external_auth.html - External Authentication Provider Configuration -->
+<div class="admin-external-auth" x-data="externalAuthComponent()">
+    <div class="card-section">
+        <div class="section-header d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0">
+                <i class="fas fa-key me-2"></i>External Authentication Providers
+            </h6>
+            <button class="btn btn-sm btn-outline-primary"
+                    @click="showProviderModal()"
+                    :disabled="loading">
+                <i class="fas fa-plus me-1"></i>Add Provider
+            </button>
+        </div>
+
+        <!-- Loading State -->
+        <div class="text-center py-4" x-show="loading">
+            <div class="spinner-border spinner-border-sm text-primary"></div>
+            <p class="small text-muted mt-2 mb-0">Loading providers...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div class="text-center py-4" x-show="!loading && providers.length === 0">
+            <div class="empty-icon mb-3">
+                <i class="fas fa-plug"></i>
+            </div>
+            <p class="text-muted mb-2">No external auth providers configured</p>
+            <p class="small text-muted mb-3">
+                Configure LDAP or OIDC providers to allow users to authenticate with external identity systems.
+            </p>
+            <div class="d-flex gap-2 justify-content-center">
+                <button class="btn btn-sm btn-outline-primary" @click="showProviderModal('oidc')">
+                    <i class="fas fa-openid me-1"></i>Add OIDC
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" @click="showProviderModal('ldap')">
+                    <i class="fas fa-sitemap me-1"></i>Add LDAP
+                </button>
+            </div>
+        </div>
+
+        <!-- Provider List -->
+        <div class="provider-list" x-show="!loading && providers.length > 0">
+            <template x-for="provider in providers" :key="provider.name">
+                <div class="provider-item" :class="{ 'disabled': !provider.enabled }">
+                    <div class="provider-icon">
+                        <i :class="provider.type === 'oidc' ? 'fas fa-openid' : 'fas fa-sitemap'"></i>
+                    </div>
+                    <div class="provider-info">
+                        <div class="provider-name" x-text="provider.name"></div>
+                        <div class="provider-meta">
+                            <span class="badge" :class="provider.type === 'oidc' ? 'bg-info' : 'bg-secondary'"
+                                  x-text="(provider.type || '').toUpperCase()"></span>
+                            <span class="badge" :class="provider.enabled ? 'bg-success' : 'bg-warning'"
+                                  x-text="provider.enabled ? 'Enabled' : 'Disabled'"></span>
+                            <span class="text-muted small ms-2" x-show="provider.auto_create_users">
+                                <i class="fas fa-user-plus me-1"></i>Auto-create users
+                            </span>
+                        </div>
+                    </div>
+                    <div class="provider-actions">
+                        <button class="btn btn-sm btn-outline-info"
+                                @click="testProvider(provider.name)"
+                                :disabled="testingProvider === provider.name"
+                                title="Test connection">
+                            <i class="fas" :class="testingProvider === provider.name ? 'fa-spinner fa-spin' : 'fa-vial'"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                @click="editProvider(provider)"
+                                title="Edit">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm"
+                                :class="provider.enabled ? 'btn-outline-warning' : 'btn-outline-success'"
+                                @click="toggleProvider(provider)"
+                                :title="provider.enabled ? 'Disable' : 'Enable'">
+                            <i class="fas" :class="provider.enabled ? 'fa-pause' : 'fa-play'"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger"
+                                @click="confirmDeleteProvider(provider)"
+                                title="Delete">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Provider Configuration Modal -->
+    <div class="modal fade" id="externalAuthProviderModal" tabindex="-1" x-ref="providerModal">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas me-2" :class="editingProvider ? 'fa-edit' : 'fa-plus'"></i>
+                        <span x-text="editingProvider ? 'Edit Provider' : 'Add Authentication Provider'"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Provider Type Selection (only for new) -->
+                    <div class="mb-4" x-show="!editingProvider">
+                        <label class="form-label">Provider Type</label>
+                        <div class="provider-type-options">
+                            <button class="provider-type-btn" :class="{ 'active': providerForm.provider_type === 'oidc' }"
+                                    @click="providerForm.provider_type = 'oidc'">
+                                <i class="fas fa-openid"></i>
+                                <span>OIDC / OAuth 2.0</span>
+                                <small class="text-muted">Azure AD, Okta, Auth0, Google, etc.</small>
+                            </button>
+                            <button class="provider-type-btn" :class="{ 'active': providerForm.provider_type === 'ldap' }"
+                                    @click="providerForm.provider_type = 'ldap'">
+                                <i class="fas fa-sitemap"></i>
+                                <span>LDAP / Active Directory</span>
+                                <small class="text-muted">Corporate directories</small>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Common Settings -->
+                    <div class="mb-3">
+                        <label class="form-label">Provider Name</label>
+                        <input type="text" class="form-control" x-model="providerForm.name"
+                               placeholder="e.g., corporate-sso, company-ldap"
+                               :disabled="editingProvider">
+                        <small class="form-text text-muted">Unique identifier for this provider</small>
+                    </div>
+
+                    <!-- OIDC Settings -->
+                    <template x-if="providerForm.provider_type === 'oidc'">
+                        <div class="oidc-settings">
+                            <h6 class="mb-3"><i class="fas fa-cog me-2"></i>OIDC Configuration</h6>
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <label class="form-label">Discovery URL (Well-Known)</label>
+                                    <input type="url" class="form-control" x-model="providerForm.config.discovery_url"
+                                           placeholder="https://login.microsoftonline.com/{tenant}/.well-known/openid-configuration">
+                                    <small class="form-text text-muted">
+                                        If provided, client will auto-configure from discovery document
+                                    </small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Authorization URL</label>
+                                    <input type="url" class="form-control" x-model="providerForm.config.authorization_url"
+                                           placeholder="https://provider.com/authorize"
+                                           :disabled="providerForm.config.discovery_url">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Token URL</label>
+                                    <input type="url" class="form-control" x-model="providerForm.config.token_url"
+                                           placeholder="https://provider.com/oauth/token"
+                                           :disabled="providerForm.config.discovery_url">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Client ID</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.client_id"
+                                           placeholder="your-client-id">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Client Secret</label>
+                                    <input type="password" class="form-control" x-model="providerForm.config.client_secret"
+                                           :placeholder="editingProvider ? '(unchanged)' : 'your-client-secret'">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Scopes</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.scopes"
+                                           placeholder="openid email profile">
+                                    <small class="form-text text-muted">Space-separated list of OAuth scopes</small>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Redirect URI</label>
+                                    <input type="text" class="form-control bg-secondary text-light" readonly
+                                           :value="window.location.origin + '/api/auth/external/oidc/' + (providerForm.name || '{provider}') + '/callback'">
+                                    <small class="form-text text-muted">Configure this in your IdP's allowed redirect URIs</small>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- LDAP Settings -->
+                    <template x-if="providerForm.provider_type === 'ldap'">
+                        <div class="ldap-settings">
+                            <h6 class="mb-3"><i class="fas fa-cog me-2"></i>LDAP Configuration</h6>
+                            <div class="row g-3">
+                                <div class="col-md-8">
+                                    <label class="form-label">Server URL</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.server_url"
+                                           placeholder="ldap://ldap.company.com:389">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Protocol</label>
+                                    <select class="form-select" x-model="providerForm.config.use_ssl">
+                                        <option :value="false">LDAP (389)</option>
+                                        <option :value="true">LDAPS (636)</option>
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Base DN</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.base_dn"
+                                           placeholder="dc=company,dc=com">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Bind DN (Admin)</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.bind_dn"
+                                           placeholder="cn=admin,dc=company,dc=com">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Bind Password</label>
+                                    <input type="password" class="form-control" x-model="providerForm.config.bind_password"
+                                           :placeholder="editingProvider ? '(unchanged)' : 'admin password'">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">User Search Filter</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.user_search_filter"
+                                           placeholder="(uid={username})">
+                                    <small class="form-text text-muted">
+                                        Use {username} as placeholder. E.g., (sAMAccountName={username}) for AD
+                                    </small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Username Attribute</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.username_attr"
+                                           placeholder="uid">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Email Attribute</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.email_attr"
+                                           placeholder="mail">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Group Search Base (optional)</label>
+                                    <input type="text" class="form-control" x-model="providerForm.config.group_search_base"
+                                           placeholder="ou=groups,dc=company,dc=com">
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <hr class="my-4">
+
+                    <!-- User Creation Settings -->
+                    <h6 class="mb-3"><i class="fas fa-users me-2"></i>User Settings</h6>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <div class="form-check form-switch">
+                                <input type="checkbox" class="form-check-input" id="autoCreateUsers"
+                                       x-model="providerForm.auto_create_users">
+                                <label class="form-check-label" for="autoCreateUsers">
+                                    Auto-create users on first login
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-12" x-show="providerForm.auto_create_users">
+                            <label class="form-label">Default Access Level</label>
+                            <select class="form-select" x-model="providerForm.default_levels[0]">
+                                <option value="viewer">Viewer</option>
+                                <option value="researcher">Researcher</option>
+                                <option value="lead">Lead</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- LDAP Group to Level Mapping -->
+                    <template x-if="providerForm.provider_type === 'ldap'">
+                        <div class="level-mapping-section mt-4">
+                            <h6 class="mb-3">
+                                <i class="fas fa-layer-group me-2"></i>Group to Level Mapping
+                                <small class="text-muted ms-2">(optional)</small>
+                            </h6>
+                            <p class="small text-muted mb-3">
+                                Map LDAP groups to access levels. Users will receive the level of their first matching group.
+                            </p>
+
+                            <!-- Existing mappings -->
+                            <div class="mb-3" x-show="Object.keys(providerForm.level_mapping || {}).length > 0">
+                                <div class="mapping-list">
+                                    <template x-for="(level, groupDn) in providerForm.level_mapping" :key="groupDn">
+                                        <div class="mapping-item d-flex align-items-center gap-2 mb-2 p-2 bg-dark rounded">
+                                            <div class="flex-grow-1">
+                                                <code class="small text-break" x-text="groupDn"></code>
+                                                <span class="mx-2">→</span>
+                                                <span class="badge bg-primary" x-text="level"></span>
+                                            </div>
+                                            <button class="btn btn-sm btn-outline-danger" @click="removeLevelMapping(groupDn)" title="Remove">
+                                                <i class="fas fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Add new mapping -->
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-6">
+                                    <label class="form-label small">Group DN</label>
+                                    <input type="text" class="form-control form-control-sm" x-model="newMappingGroup"
+                                           placeholder="cn=ml-admins,ou=groups,dc=company,dc=com">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Level</label>
+                                    <select class="form-select form-select-sm" x-model="newMappingLevel">
+                                        <option value="viewer">Viewer</option>
+                                        <option value="researcher">Researcher</option>
+                                        <option value="lead">Lead</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <button class="btn btn-sm btn-outline-primary w-100" @click="addLevelMapping()"
+                                            :disabled="!newMappingGroup.trim()">
+                                        <i class="fas fa-plus"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Enable Toggle -->
+                    <div class="form-check form-switch mt-4">
+                        <input type="checkbox" class="form-check-input" id="providerEnabled"
+                               x-model="providerForm.enabled">
+                        <label class="form-check-label" for="providerEnabled">Enable this provider</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="saveProvider()" :disabled="saving">
+                        <span x-show="saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        <span x-text="editingProvider ? 'Save Changes' : 'Add Provider'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal fade" id="deleteProviderModal" tabindex="-1" x-ref="deleteModal">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-trash me-2"></i>Delete Provider</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete <strong x-text="deletingProvider?.name"></strong>?</p>
+                    <p class="small text-warning mb-0">Users who authenticated via this provider will need to use another method.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" @click="deleteProvider()" :disabled="deleting">
+                        <span x-show="deleting"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.admin-external-auth .provider-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.admin-external-auth .provider-item {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
+    gap: 0.75rem;
+    transition: background-color 0.15s;
+}
+
+.admin-external-auth .provider-item:hover {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.admin-external-auth .provider-item.disabled {
+    opacity: 0.6;
+}
+
+.admin-external-auth .provider-icon {
+    width: 40px;
+    height: 40px;
+    background: rgba(99, 102, 241, 0.15);
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #818cf8;
+    font-size: 1.1rem;
+}
+
+.admin-external-auth .provider-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.admin-external-auth .provider-name {
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.admin-external-auth .provider-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.admin-external-auth .provider-meta .badge {
+    font-size: 0.65rem;
+}
+
+.admin-external-auth .provider-actions {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.admin-external-auth .provider-actions .btn {
+    padding: 0.25rem 0.5rem;
+}
+
+.admin-external-auth .empty-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    color: #64748b;
+}
+
+.admin-external-auth .provider-type-options {
+    display: flex;
+    gap: 1rem;
+}
+
+.admin-external-auth .provider-type-btn {
+    flex: 1;
+    padding: 1.5rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid transparent;
+    border-radius: 0.5rem;
+    color: #e2e8f0;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    text-align: center;
+    transition: all 0.15s;
+}
+
+.admin-external-auth .provider-type-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.admin-external-auth .provider-type-btn.active {
+    border-color: #818cf8;
+    background: rgba(129, 140, 248, 0.15);
+}
+
+.admin-external-auth .provider-type-btn i {
+    font-size: 1.75rem;
+}
+
+.admin-external-auth .provider-type-btn small {
+    font-size: 0.7rem;
+}
+
+@media (max-width: 767.98px) {
+    .admin-external-auth .provider-type-options {
+        flex-direction: column;
+    }
+}
+</style>

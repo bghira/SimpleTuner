@@ -1,0 +1,2578 @@
+/* Light Theme - Windows 98/SE inspired beige styling */
+/* Applied when data-theme="light" is set on html or body */
+
+html[data-theme="light"],
+body[data-theme="light"],
+:root[data-theme="light"] {
+  /* Primary palette - classic Windows blue */
+  --colors-primary-purple: #000080;
+  --colors-primary-gradient: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  --colors-secondary-gradient: linear-gradient(90deg, #008080 0%, #00a0a0 100%);
+
+  /* Accent colors - Windows 98 teal and navy */
+  --colors-accent-pink: #800080;
+  --colors-accent-blue: #000080;
+  --colors-accent-cyan: #008080;
+  --colors-purple: #800080;
+  --colors-purple-muted: #a080a0;
+
+  /* Blue scale - Windows navy blue */
+  --colors-blue-700: #000060;
+  --colors-blue-600: #000080;
+  --colors-blue-500: #0000a0;
+  --colors-blue-400: #0000c0;
+  --colors-blue-bg: rgba(0, 0, 128, 0.08);
+  --colors-blue-bg-15: rgba(0, 0, 128, 0.12);
+  --colors-blue-bg-20: rgba(0, 0, 128, 0.15);
+  --colors-blue-bg-25: rgba(0, 0, 128, 0.2);
+  --colors-blue-bg-30: rgba(0, 0, 128, 0.25);
+  --colors-blue-border: rgba(0, 0, 128, 0.3);
+  --colors-blue-border-hover: rgba(0, 0, 128, 0.5);
+  --colors-blue-gradient: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  --colors-blue-gradient-hover: linear-gradient(90deg, #000060 0%, #0060a0 100%);
+
+  /* Indigo scale - shifted to navy */
+  --colors-indigo-500: #000080;
+  --colors-indigo-400: #0000a0;
+  --colors-indigo-300: #3030c0;
+  --colors-indigo-200: #6060d0;
+  --colors-indigo-bg: rgba(0, 0, 128, 0.08);
+  --colors-indigo-bg-hover: rgba(0, 0, 128, 0.12);
+  --colors-indigo-bg-active: rgba(0, 0, 128, 0.18);
+  --colors-indigo-border: rgba(0, 0, 128, 0.25);
+
+  /* Violet scale - Windows purple */
+  --colors-violet-700: #600060;
+  --colors-violet-600: #800080;
+  --colors-violet-500: #a000a0;
+  --colors-violet-400: #c060c0;
+  --colors-violet-gradient: linear-gradient(135deg, #800080 0%, #000080 100%);
+  --colors-violet-gradient-alt: linear-gradient(135deg, #a000a0 0%, #0000a0 100%);
+
+  /* Windows 98 beige/gray surfaces */
+  --colors-dark-bg: #c0c0c0;
+  --colors-dark-sidebar: #d4d0c8;
+  --colors-dark-surface: #dfdbd3;
+  --colors-card-bg: #d8d4cc;
+  --colors-card-bg-elevated: #dfdbd3;
+  --colors-card-bg-hover: #e8e4dc;
+  --colors-sidebar-bg-hover: rgba(0, 0, 128, 0.08);
+
+  /* Glass effects - solid for Win98 look */
+  --colors-glass-bg: #d4d0c8;
+  --colors-glass-border: #808080;
+  --colors-glass-hover: rgba(0, 0, 128, 0.1);
+  --colors-focus-ring: rgba(0, 0, 128, 0.3);
+
+  /* Surface panels - beige tones */
+  --colors-surface-panel: #d8d4cc;
+  --colors-surface-panel-border: #808080;
+  --colors-surface-field: #ffffff;
+  --colors-surface-field-border: #7f9db9;
+
+  /* Borders - 3D beveled style hints */
+  --colors-border-soft: #aca899;
+  --colors-border-subtle: #d4d0c8;
+  --colors-border-strong: #808080;
+
+  /* Slate surface scale - beige variants */
+  --colors-slate-800: #d4d0c8;
+  --colors-slate-800-15: rgba(212, 208, 200, 0.15);
+  --colors-slate-800-20: rgba(212, 208, 200, 0.2);
+  --colors-slate-800-30: rgba(212, 208, 200, 0.3);
+  --colors-slate-800-40: rgba(212, 208, 200, 0.4);
+  --colors-slate-800-50: rgba(212, 208, 200, 0.5);
+  --colors-slate-800-60: rgba(212, 208, 200, 0.6);
+  --colors-slate-800-70: rgba(212, 208, 200, 0.7);
+  --colors-slate-800-80: rgba(212, 208, 200, 0.8);
+  --colors-slate-800-95: rgba(212, 208, 200, 0.95);
+  --colors-slate-border: #808080;
+  --colors-slate-border-hover: #000080;
+  --colors-slate-border-subtle: #aca899;
+  --colors-slate-border-strong: #404040;
+
+  /* Modal - Win98 dialog style */
+  --colors-modal-backdrop: rgba(0, 0, 0, 0.5);
+  --colors-modal-surface: #d4d0c8;
+  --colors-modal-header-bg: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  --colors-modal-border: #808080;
+
+  /* Text - black on beige */
+  --colors-text-primary: #000000;
+  --colors-text-secondary: #404040;
+  --colors-text-muted: #606060;
+  --colors-text-tertiary: rgba(0, 0, 0, 0.75);
+  --colors-text-soft: rgba(0, 0, 0, 0.5);
+  --colors-text-light: #202020;
+  --colors-text-bright: #000000;
+  --colors-text-heading: #000000;
+  --colors-text-body: #202020;
+
+  /* Semantic colors - Windows 98 style */
+  --colors-semantic-success: #008000;
+  --colors-semantic-success-bg: rgba(0, 128, 0, 0.12);
+  --colors-success-bright: #00a000;
+  --colors-semantic-error: #c00000;
+  --colors-semantic-error-bg: rgba(192, 0, 0, 0.12);
+  --colors-semantic-warning: #808000;
+  --colors-semantic-warning-bg: rgba(128, 128, 0, 0.12);
+  --colors-semantic-info: #000080;
+  --colors-semantic-info-bg: rgba(0, 0, 128, 0.12);
+
+  /* Tab indicators - Windows colors */
+  --colors-tab-basic-bg: rgba(0, 0, 128, 0.1);
+  --colors-tab-basic-indicator: #000080;
+  --colors-tab-model-bg: rgba(128, 0, 128, 0.1);
+  --colors-tab-model-indicator: #800080;
+  --colors-tab-training-bg: rgba(0, 128, 128, 0.1);
+  --colors-tab-training-indicator: #008080;
+  --colors-tab-advanced-bg: rgba(128, 128, 0, 0.1);
+  --colors-tab-advanced-indicator: #808000;
+  --colors-tab-validation-bg: rgba(0, 128, 0, 0.1);
+  --colors-tab-validation-indicator: #008000;
+
+  /* Status + toast */
+  --colors-status-connected-bg: rgba(0, 128, 0, 0.9);
+  --colors-status-disconnected-bg: rgba(192, 0, 0, 0.9);
+  --colors-status-reconnecting-bg: rgba(128, 128, 0, 0.9);
+  --colors-toast-bg: #ffffcc;
+  --colors-toast-border: #808080;
+  --colors-toast-success: #008000;
+  --colors-toast-error: #c00000;
+  --colors-toast-warning: #808000;
+  --colors-toast-info: #000080;
+
+  /* Overlays & loaders */
+  --colors-overlay-backdrop: rgba(0, 0, 0, 0.4);
+  --colors-overlay-section-light: rgba(255, 255, 255, 0.9);
+  --colors-overlay-section-dark: rgba(0, 0, 0, 0.6);
+  --colors-spinner-track: #d4d0c8;
+  --colors-spinner-head: #000080;
+  --colors-skeleton-base: #d4d0c8;
+  --colors-skeleton-highlight: #ece9d8;
+
+  /* Dataset badges */
+  --colors-dataset-type-image-bg: rgba(0, 0, 128, 0.15);
+  --colors-dataset-type-image-text: #000080;
+  --colors-dataset-type-video-bg: rgba(128, 0, 128, 0.15);
+  --colors-dataset-type-video-text: #800080;
+  --colors-dataset-type-text-embeds-bg: rgba(0, 128, 0, 0.15);
+  --colors-dataset-type-text-embeds-text: #008000;
+  --colors-dataset-type-image-embeds-bg: rgba(128, 128, 0, 0.15);
+  --colors-dataset-type-image-embeds-text: #808000;
+  --colors-dataset-type-conditioning-bg: rgba(0, 128, 128, 0.15);
+  --colors-dataset-type-conditioning-text: #008080;
+
+  /* Shadows - subtle for flat Win98 look */
+  --shadow-sm: 1px 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-md: 2px 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 3px 3px 6px rgba(0, 0, 0, 0.25);
+  --shadow-xl: 4px 4px 8px rgba(0, 0, 0, 0.3);
+  --shadow-card: 1px 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-dropdown: 2px 2px 4px rgba(0, 0, 0, 0.25);
+  --shadow-event-dock: 0 -2px 4px rgba(0, 0, 0, 0.15);
+  --shadow-modal: 3px 3px 6px rgba(0, 0, 0, 0.3);
+  --shadow-sidebar: 1px 0 3px rgba(0, 0, 0, 0.2);
+  --shadow-tooltip: 1px 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-training-pill: 1px 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-panel: 2px 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-panel-hover: 2px 2px 6px rgba(0, 0, 128, 0.15);
+
+  /* Additional overrides */
+  --colors-violet-bg: rgba(128, 0, 128, 0.1);
+  --colors-violet-bg-15: rgba(128, 0, 128, 0.15);
+  --colors-violet-bg-20: rgba(128, 0, 128, 0.2);
+  --colors-violet-bg-25: rgba(128, 0, 128, 0.25);
+  --colors-violet-bg-30: rgba(128, 0, 128, 0.3);
+  --colors-violet-border: rgba(128, 0, 128, 0.3);
+  --colors-violet-border-hover: rgba(128, 0, 128, 0.5);
+  --colors-violet-border-active: rgba(128, 0, 128, 0.6);
+
+  --colors-violet-400-bg: rgba(192, 96, 192, 0.1);
+  --colors-violet-400-bg-20: rgba(192, 96, 192, 0.2);
+  --colors-violet-400-bg-30: rgba(192, 96, 192, 0.3);
+  --colors-violet-400-bg-40: rgba(192, 96, 192, 0.4);
+  --colors-violet-400-border: rgba(192, 96, 192, 0.3);
+  --colors-violet-400-border-hover: rgba(192, 96, 192, 0.5);
+
+  --colors-green-500: #008000;
+  --colors-green-400: #00a000;
+  --colors-green-bg: rgba(0, 128, 0, 0.1);
+  --colors-green-bg-20: rgba(0, 128, 0, 0.2);
+  --colors-green-border: rgba(0, 128, 0, 0.3);
+
+  /* Dark surface variants - now light */
+  --colors-dark-surface-95: rgba(212, 208, 200, 0.95);
+  --colors-dark-surface-98: rgba(212, 208, 200, 0.98);
+  --colors-dark-surface-60: rgba(212, 208, 200, 0.6);
+  --colors-dark-surface-80: rgba(212, 208, 200, 0.8);
+
+  /* Black overlays - lighter for light theme */
+  --colors-black-15: rgba(0, 0, 0, 0.08);
+  --colors-black-20: rgba(0, 0, 0, 0.12);
+  --colors-black-30: rgba(0, 0, 0, 0.18);
+  --colors-black-50: rgba(0, 0, 0, 0.35);
+  --colors-black-75: rgba(0, 0, 0, 0.55);
+
+  /* White overlays - darker for light theme */
+  --colors-white-02: rgba(255, 255, 255, 0.4);
+  --colors-white-03: rgba(255, 255, 255, 0.5);
+  --colors-white-05: rgba(255, 255, 255, 0.6);
+  --colors-white-08: rgba(255, 255, 255, 0.7);
+  --colors-white-10: rgba(255, 255, 255, 0.75);
+  --colors-white-15: rgba(255, 255, 255, 0.8);
+  --colors-white-20: rgba(255, 255, 255, 0.85);
+
+  /* Event dock / onboarding - beige style */
+  --colors-event-dock-bg: #ccc8c0;
+  --colors-event-dock-border: #808080;
+  --colors-event-list-bg: #c8c4bc;
+  --colors-onboarding-overlay: rgba(192, 192, 192, 0.95);
+  --colors-onboarding-modal: #d4d0c8;
+
+  /* Legacy aliases update */
+  --accent-purple: var(--colors-primary-purple);
+  --primary-gradient: var(--colors-primary-gradient);
+  --blue-500: var(--colors-blue-500);
+  --blue-400: var(--colors-blue-400);
+  --blue-bg: var(--colors-blue-bg);
+  --blue-gradient: var(--colors-blue-gradient);
+  --text-primary: var(--colors-text-primary);
+  --text-secondary: var(--colors-text-secondary);
+  --text-muted: var(--colors-text-muted);
+  --text-bright: var(--colors-text-bright);
+  --text-body: var(--colors-text-body);
+  --slate-border: var(--colors-slate-border);
+  --slate-border-hover: var(--colors-slate-border-hover);
+  --modal-backdrop: var(--colors-modal-backdrop);
+  --modal-surface: var(--colors-modal-surface);
+  --modal-border: var(--colors-modal-border);
+}
+
+/* Windows 98 specific overrides */
+body[data-theme="light"] {
+  background-color: #c0c0c0;
+}
+
+body[data-theme="light"] .sidebar {
+  background: #d4d0c8;
+  border-right: 1px solid #808080;
+  box-shadow: inset -1px 0 0 #ffffff, inset 1px 0 0 #dfdfdf;
+}
+
+body[data-theme="light"] .card,
+body[data-theme="light"] .form-section {
+  background: #ffffff;
+  border: 1px solid #808080;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] .btn,
+body[data-theme="light"] button:not(.btn-link) {
+  background: #d4d0c8;
+  border: none;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .btn:active,
+body[data-theme="light"] button:not(.btn-link):active {
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #808080, inset -2px -2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
+body[data-theme="light"] select,
+body[data-theme="light"] textarea {
+  background: #ffffff;
+  border: none;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+  color: #000000;
+}
+
+body[data-theme="light"] .modal-content {
+  background: #d4d0c8;
+  border: 1px solid #808080;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] .modal-header {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  color: #ffffff;
+}
+
+body[data-theme="light"] .modal-title {
+  color: #ffffff;
+  font-weight: bold;
+  text-shadow: none;
+}
+
+/* Tab styling */
+body[data-theme="light"] .tab-btn.active {
+  background: #ffffff;
+  box-shadow: inset -1px 0 0 #808080, inset 1px 0 0 #808080, inset 0 -1px 0 #ffffff;
+}
+
+body[data-theme="light"] .nav-section-title {
+  color: #000000;
+  font-weight: bold;
+}
+
+/* Scrollbar styling */
+body[data-theme="light"] ::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+body[data-theme="light"] ::-webkit-scrollbar-track {
+  background: #d4d0c8;
+  border: 1px solid #808080;
+}
+
+body[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #d4d0c8;
+  border: none;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] ::-webkit-scrollbar-button {
+  background: #d4d0c8;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+/* Progress bars */
+body[data-theme="light"] .progress {
+  background: #ffffff;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff;
+}
+
+body[data-theme="light"] .progress-bar {
+  background: #000080;
+}
+
+/* Tooltips */
+body[data-theme="light"] .tooltip,
+body[data-theme="light"] [data-tooltip] {
+  background: #ffffcc;
+  border: 1px solid #000000;
+  color: #000000;
+}
+
+/* Links */
+body[data-theme="light"] a {
+  color: #0000ff;
+}
+
+body[data-theme="light"] a:visited {
+  color: #800080;
+}
+
+body[data-theme="light"] a:hover {
+  color: #ff0000;
+}
+
+/* Event log text - darker colors for readability */
+body[data-theme="light"] .event-item,
+body[data-theme="light"] .event-log-item,
+body[data-theme="light"] .event-dock {
+  color: #000000;
+}
+
+body[data-theme="light"] .event-item.success,
+body[data-theme="light"] .event-log-item.success,
+body[data-theme="light"] .text-success {
+  color: #005000 !important;
+}
+
+body[data-theme="light"] .event-item.error,
+body[data-theme="light"] .event-log-item.error,
+body[data-theme="light"] .text-danger {
+  color: #800000 !important;
+}
+
+body[data-theme="light"] .event-item.warning,
+body[data-theme="light"] .event-log-item.warning,
+body[data-theme="light"] .text-warning {
+  color: #605000 !important;
+}
+
+body[data-theme="light"] .event-item.info,
+body[data-theme="light"] .event-log-item.info,
+body[data-theme="light"] .text-info {
+  color: #000060 !important;
+}
+
+/* Event dock specific */
+body[data-theme="light"] .event-dock-content,
+body[data-theme="light"] .event-list {
+  color: #000000;
+}
+
+body[data-theme="light"] .event-dock-content .text-muted,
+body[data-theme="light"] .event-list .text-muted {
+  color: #404040 !important;
+}
+
+/* Card styling - slightly grayer than navbar */
+body[data-theme="light"] .card,
+body[data-theme="light"] .form-section {
+  background: #d8d4cc;
+  border: 1px solid #808080;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+/* Normalize button heights */
+body[data-theme="light"] .btn {
+  padding: 0.375rem 0.75rem;
+  line-height: 1.5;
+}
+
+body[data-theme="light"] .action-bar .btn,
+body[data-theme="light"] .btn-group .btn {
+  height: auto;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Theme switcher text */
+body[data-theme="light"] .theme-tile,
+body[data-theme="light"] .theme-selector,
+body[data-theme="light"] [class*="theme-"] label,
+body[data-theme="light"] .form-check-label {
+  color: #000000;
+}
+
+body[data-theme="light"] select,
+body[data-theme="light"] select option {
+  color: #000000;
+  background: #ffffff;
+}
+
+/* Dropdown menus */
+body[data-theme="light"] .dropdown-menu {
+  background: #d4d0c8;
+  border: 1px solid #808080;
+  color: #000000;
+}
+
+body[data-theme="light"] .dropdown-item {
+  color: #000000;
+}
+
+body[data-theme="light"] .dropdown-item:hover {
+  background: #000080;
+  color: #ffffff;
+}
+
+/* Training wizard header - white text on blue */
+body[data-theme="light"] .wizard-header,
+body[data-theme="light"] .training-wizard-header,
+body[data-theme="light"] .wizard-title,
+body[data-theme="light"] [class*="wizard"] h1,
+body[data-theme="light"] [class*="wizard"] h2,
+body[data-theme="light"] [class*="wizard"] h3 {
+  color: #ffffff !important;
+}
+
+/* Training wizard Next button */
+body[data-theme="light"] .wizard-next-btn {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+/* Base btn-primary - blue with white text */
+body[data-theme="light"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .btn-primary:hover {
+  background: #0000a0 !important;
+  color: #ffffff !important;
+}
+
+/* Base btn-success - green with white text */
+body[data-theme="light"] .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] .btn-success:hover {
+  background: #00a000 !important;
+  color: #ffffff !important;
+}
+
+/* Base btn-danger - red with white text */
+body[data-theme="light"] .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+body[data-theme="light"] .btn-danger:hover {
+  background: #a00000 !important;
+  color: #ffffff !important;
+}
+
+/* Wizard nav bar button - light blue background */
+body[data-theme="light"] .wizard-nav-btn,
+body[data-theme="light"] .wizard-step,
+body[data-theme="light"] .wizard-nav .btn {
+  background: #6080c0;
+  color: #ffffff;
+}
+
+body[data-theme="light"] .wizard-nav-btn.active,
+body[data-theme="light"] .wizard-step.active {
+  background: #000080;
+  color: #ffffff;
+}
+
+/* Alert info - black text */
+body[data-theme="light"] .alert-info {
+  background: #c0d0e0;
+  border: 1px solid #808080;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .alert-info * {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .alert-warning {
+  background: #e0d8a0;
+  border: 1px solid #808080;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .alert-success {
+  background: #a0d0a0;
+  border: 1px solid #808080;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .alert-danger {
+  background: #e0a0a0;
+  border: 1px solid #808080;
+  color: #000000 !important;
+}
+
+/* Win98 style checkboxes - square with outline */
+body[data-theme="light"] input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  background: #ffffff;
+  border: none;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+body[data-theme="light"] input[type="checkbox"]:checked {
+  background: #ffffff;
+}
+
+body[data-theme="light"] input[type="checkbox"]:checked::after {
+  content: "✓";
+  display: block;
+  text-align: center;
+  font-size: 11px;
+  font-weight: bold;
+  color: #000000;
+  line-height: 13px;
+}
+
+/* Win98 style radio buttons */
+body[data-theme="light"] input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  background: #ffffff;
+  border: none;
+  border-radius: 50%;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+body[data-theme="light"] input[type="radio"]:checked::after {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  background: #000000;
+  border-radius: 50%;
+  margin: 4px;
+}
+
+/* GPU workers page table */
+body[data-theme="light"] .table,
+body[data-theme="light"] table {
+  background: #d8d4cc;
+  color: #000000;
+}
+
+body[data-theme="light"] .table th,
+body[data-theme="light"] table th {
+  background: #d4d0c8;
+  color: #000000;
+  border: 1px solid #808080;
+}
+
+body[data-theme="light"] .table td,
+body[data-theme="light"] table td {
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid #808080;
+}
+
+body[data-theme="light"] .table-empty,
+body[data-theme="light"] .no-data,
+body[data-theme="light"] .empty-state,
+body[data-theme="light"] td[colspan] {
+  background: #d8d4cc !important;
+  color: #000000 !important;
+}
+
+/* Preset buttons and descriptions */
+body[data-theme="light"] .preset-btn {
+  background: #d4d0c8;
+  color: #000000;
+  border: 1px solid #808080;
+}
+
+body[data-theme="light"] .preset-btn .preset-description,
+body[data-theme="light"] .preset-description {
+  color: #404040 !important;
+}
+
+body[data-theme="light"] .preset-btn .preset-name,
+body[data-theme="light"] .preset-name {
+  color: #000000;
+}
+
+/* Dataset page - toggle and path */
+body[data-theme="light"] .dataset-toggle,
+body[data-theme="light"] .dataset-item {
+  background: #d4d0c8;
+  color: #000000;
+}
+
+body[data-theme="light"] .dataset-path,
+body[data-theme="light"] .dataset-toggle .dataset-path,
+body[data-theme="light"] .dataset-item .dataset-path {
+  color: #404040 !important;
+}
+
+body[data-theme="light"] .dataset-name,
+body[data-theme="light"] .dataset-toggle .dataset-name {
+  color: #000000 !important;
+}
+
+/* General text fixes for light theme */
+body[data-theme="light"] .text-white {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .text-light {
+  color: #202020 !important;
+}
+
+body[data-theme="light"] p,
+body[data-theme="light"] span,
+body[data-theme="light"] div,
+body[data-theme="light"] label {
+  color: inherit;
+}
+
+/* Ensure all form labels are readable */
+body[data-theme="light"] .form-label,
+body[data-theme="light"] .form-check-label,
+body[data-theme="light"] label {
+  color: #000000;
+}
+
+/* Prompt library selector button */
+body[data-theme="light"] .prompt-library-selector,
+body[data-theme="light"] .prompt-library-selector .btn-link,
+body[data-theme="light"] .btn-link {
+  color: #000080 !important;
+}
+
+body[data-theme="light"] .btn-link:hover {
+  color: #0000c0 !important;
+}
+
+/* Mode switcher button - white text on blue */
+body[data-theme="light"] .mode-switcher,
+body[data-theme="light"] .mode-switcher .btn,
+body[data-theme="light"] .mode-switcher button {
+  color: #ffffff !important;
+}
+
+/* Button group color swap */
+body[data-theme="light"] .btn-group .btn-primary {
+  background: #008000;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] .btn-group .btn-primary:hover {
+  background: #00a000;
+}
+
+body[data-theme="light"] .btn-group .btn-success {
+  background: #000080;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .btn-group .btn-success:hover {
+  background: #0000a0;
+}
+
+/* JSON Mode button */
+body[data-theme="light"] .json-mode-btn,
+body[data-theme="light"] [class*="json-mode"],
+body[data-theme="light"] .btn-outline-secondary {
+  background: #d4d0c8;
+  color: #000000 !important;
+  border: 1px solid #808080;
+}
+
+/* Save Preferences button */
+body[data-theme="light"] .save-preferences-btn,
+body[data-theme="light"] [class*="save-preferences"],
+body[data-theme="light"] .ui-settings .btn-primary,
+body[data-theme="light"] .card-footer .btn-primary,
+body[data-theme="light"] #save-preferences {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+/* Hero CTA - Win98 style */
+body[data-theme="light"] .hero-cta,
+body[data-theme="light"] [class*="hero-cta"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .hero-cta *,
+body[data-theme="light"] [class*="hero-cta"] * {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .hero-cta h1,
+body[data-theme="light"] .hero-cta h2,
+body[data-theme="light"] .hero-cta h3,
+body[data-theme="light"] .hero-cta h4,
+body[data-theme="light"] .hero-cta .title,
+body[data-theme="light"] [class*="hero-cta"] h1,
+body[data-theme="light"] [class*="hero-cta"] h2,
+body[data-theme="light"] [class*="hero-cta"] h3 {
+  color: #000080 !important;
+}
+
+body[data-theme="light"] .hero-cta p,
+body[data-theme="light"] .hero-cta span,
+body[data-theme="light"] .hero-cta .description,
+body[data-theme="light"] [class*="hero-cta"] p {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .hero-cta .btn,
+body[data-theme="light"] .hero-cta button,
+body[data-theme="light"] [class*="hero-cta"] .btn,
+body[data-theme="light"] [class*="hero-cta"] button {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .hero-cta .btn:hover,
+body[data-theme="light"] .hero-cta button:hover,
+body[data-theme="light"] [class*="hero-cta"] .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .hero-cta .btn-primary,
+body[data-theme="light"] [class*="hero-cta"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .hero-cta .dismiss,
+body[data-theme="light"] .hero-cta .btn-dismiss,
+body[data-theme="light"] .hero-cta [class*="dismiss"],
+body[data-theme="light"] [class*="hero-cta"] .dismiss,
+body[data-theme="light"] [class*="hero-cta"] [class*="dismiss"] {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border-radius: 0 !important;
+}
+
+/* Memory presets modal - Win98 style */
+body[data-theme="light"] #memory-presets-modal,
+body[data-theme="light"] .memory-presets-modal,
+body[data-theme="light"] [id*="memory-presets"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .modal-content,
+body[data-theme="light"] .memory-presets-modal .modal-content {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] #memory-presets-modal .modal-header,
+body[data-theme="light"] .memory-presets-modal .modal-header {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%) !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .modal-header *,
+body[data-theme="light"] .memory-presets-modal .modal-header * {
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .modal-body,
+body[data-theme="light"] .memory-presets-modal .modal-body {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .modal-body *,
+body[data-theme="light"] .memory-presets-modal .modal-body * {
+  color: #000000;
+}
+
+body[data-theme="light"] #memory-presets-modal .modal-footer,
+body[data-theme="light"] .memory-presets-modal .modal-footer {
+  background: #d4d0c8 !important;
+  border-top: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .btn,
+body[data-theme="light"] .memory-presets-modal .btn,
+body[data-theme="light"] #memory-presets-modal button,
+body[data-theme="light"] .memory-presets-modal button {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] #memory-presets-modal .btn:hover,
+body[data-theme="light"] .memory-presets-modal .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .btn-primary,
+body[data-theme="light"] .memory-presets-modal .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] #memory-presets-modal .btn-close,
+body[data-theme="light"] .memory-presets-modal .btn-close {
+  background: #d4d0c8 !important;
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .btn-close::before,
+body[data-theme="light"] .memory-presets-modal .btn-close::before {
+  content: "✕";
+  color: #ffffff;
+}
+
+/* Memory preset cards/items */
+body[data-theme="light"] #memory-presets-modal .preset-card,
+body[data-theme="light"] #memory-presets-modal .memory-preset,
+body[data-theme="light"] #memory-presets-modal [class*="preset"] {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .preset-card *,
+body[data-theme="light"] #memory-presets-modal .memory-preset *,
+body[data-theme="light"] #memory-presets-modal [class*="preset"] span,
+body[data-theme="light"] #memory-presets-modal [class*="preset"] p {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #memory-presets-modal .form-text,
+body[data-theme="light"] .memory-presets-modal .form-text {
+  color: #404040 !important;
+}
+
+/* Cloud page - Win98 style */
+body[data-theme="light"] .cloud-page,
+body[data-theme="light"] [class*="cloud-"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .cloud-card,
+body[data-theme="light"] .cloud-card-body {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .cloud-card-body .text-truncate,
+body[data-theme="light"] .cloud-card .text-truncate {
+  color: #800000 !important;
+}
+
+body[data-theme="light"] .cloud-card-body *,
+body[data-theme="light"] .cloud-card * {
+  color: #000000;
+}
+
+/* Cloud nav tabs */
+body[data-theme="light"] .cloud-page .nav-item,
+body[data-theme="light"] .cloud-page .nav-link,
+body[data-theme="light"] [class*="cloud"] .nav-item,
+body[data-theme="light"] [class*="cloud"] .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .cloud-page .nav-link.active,
+body[data-theme="light"] [class*="cloud"] .nav-link.active {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* Provider name */
+body[data-theme="light"] .provider-name,
+body[data-theme="light"] [class*="provider-name"] {
+  color: #000000 !important;
+}
+
+/* Cloud submit button */
+body[data-theme="light"] .cloud-submit-btn,
+body[data-theme="light"] [class*="cloud-submit"],
+body[data-theme="light"] .cloud-page .btn-primary,
+body[data-theme="light"] .cloud-page .btn-success {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .cloud-submit-btn:hover,
+body[data-theme="light"] .cloud-page .btn-primary:hover {
+  background: #0000a0 !important;
+}
+
+/* Cloud page buttons */
+body[data-theme="light"] .cloud-page .btn,
+body[data-theme="light"] .cloud-page button,
+body[data-theme="light"] .cloud-card .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .cloud-page .btn:hover,
+body[data-theme="light"] .cloud-card .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+/* Cloud page inputs */
+body[data-theme="light"] .cloud-page input,
+body[data-theme="light"] .cloud-page select,
+body[data-theme="light"] .cloud-page textarea,
+body[data-theme="light"] .cloud-card input,
+body[data-theme="light"] .cloud-card select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Cloud page labels and text */
+body[data-theme="light"] .cloud-page label,
+body[data-theme="light"] .cloud-page .form-label,
+body[data-theme="light"] .cloud-card label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .cloud-page .form-text,
+body[data-theme="light"] .cloud-card .form-text {
+  color: #404040 !important;
+}
+
+/* Cloud page headers */
+body[data-theme="light"] .cloud-page h1,
+body[data-theme="light"] .cloud-page h2,
+body[data-theme="light"] .cloud-page h3,
+body[data-theme="light"] .cloud-page h4,
+body[data-theme="light"] .cloud-card h1,
+body[data-theme="light"] .cloud-card h2,
+body[data-theme="light"] .cloud-card h3 {
+  color: #000080 !important;
+}
+
+/* Job Queue page - Win98 style */
+body[data-theme="light"] .job-queue,
+body[data-theme="light"] .jobs-page,
+body[data-theme="light"] [class*="job-queue"],
+body[data-theme="light"] [class*="jobs-"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .job-card,
+body[data-theme="light"] .job-item,
+body[data-theme="light"] .queue-item,
+body[data-theme="light"] [class*="job-card"],
+body[data-theme="light"] [class*="queue-item"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .job-card *,
+body[data-theme="light"] .job-item *,
+body[data-theme="light"] .queue-item *,
+body[data-theme="light"] [class*="job-card"] *,
+body[data-theme="light"] [class*="queue-item"] * {
+  color: #000000;
+}
+
+/* Job status badges */
+body[data-theme="light"] .job-status,
+body[data-theme="light"] [class*="job-status"],
+body[data-theme="light"] .badge {
+  border-radius: 0 !important;
+  border: 1px solid #808080;
+}
+
+body[data-theme="light"] .job-status.running,
+body[data-theme="light"] .badge-running,
+body[data-theme="light"] .badge.bg-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .job-status.queued,
+body[data-theme="light"] .badge-queued,
+body[data-theme="light"] .badge.bg-warning {
+  background: #808000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .job-status.completed,
+body[data-theme="light"] .badge-completed,
+body[data-theme="light"] .badge.bg-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .job-status.failed,
+body[data-theme="light"] .badge-failed,
+body[data-theme="light"] .badge.bg-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .badge.bg-secondary,
+body[data-theme="light"] .badge.bg-info {
+  background: #008080 !important;
+  color: #ffffff !important;
+}
+
+/* Job queue buttons */
+body[data-theme="light"] .job-queue .btn,
+body[data-theme="light"] .jobs-page .btn,
+body[data-theme="light"] .job-card .btn,
+body[data-theme="light"] [class*="job-"] .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .job-queue .btn:hover,
+body[data-theme="light"] .jobs-page .btn:hover,
+body[data-theme="light"] .job-card .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .job-queue .btn-primary,
+body[data-theme="light"] .jobs-page .btn-primary,
+body[data-theme="light"] .job-card .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .job-queue .btn-danger,
+body[data-theme="light"] .jobs-page .btn-danger,
+body[data-theme="light"] .job-card .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+body[data-theme="light"] .job-queue .btn-success,
+body[data-theme="light"] .jobs-page .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+/* Job queue table */
+body[data-theme="light"] .job-queue table,
+body[data-theme="light"] .jobs-page table,
+body[data-theme="light"] .job-table {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .job-queue th,
+body[data-theme="light"] .jobs-page th,
+body[data-theme="light"] .job-table th {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  font-weight: bold;
+}
+
+body[data-theme="light"] .job-queue td,
+body[data-theme="light"] .jobs-page td,
+body[data-theme="light"] .job-table td {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+}
+
+/* Job queue headers */
+body[data-theme="light"] .job-queue h1,
+body[data-theme="light"] .job-queue h2,
+body[data-theme="light"] .job-queue h3,
+body[data-theme="light"] .jobs-page h1,
+body[data-theme="light"] .jobs-page h2,
+body[data-theme="light"] .jobs-page h3 {
+  color: #000080 !important;
+}
+
+/* Job queue labels and text */
+body[data-theme="light"] .job-queue label,
+body[data-theme="light"] .job-queue .form-label,
+body[data-theme="light"] .jobs-page label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .job-queue .form-text,
+body[data-theme="light"] .job-queue .text-muted,
+body[data-theme="light"] .jobs-page .form-text,
+body[data-theme="light"] .jobs-page .text-muted {
+  color: #404040 !important;
+}
+
+/* Job queue inputs */
+body[data-theme="light"] .job-queue input,
+body[data-theme="light"] .job-queue select,
+body[data-theme="light"] .jobs-page input,
+body[data-theme="light"] .jobs-page select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Job progress bars */
+body[data-theme="light"] .job-queue .progress,
+body[data-theme="light"] .jobs-page .progress,
+body[data-theme="light"] .job-card .progress {
+  background: #ffffff !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff;
+}
+
+body[data-theme="light"] .job-queue .progress-bar,
+body[data-theme="light"] .jobs-page .progress-bar,
+body[data-theme="light"] .job-card .progress-bar {
+  background: #000080 !important;
+}
+
+/* Environment page - Win98 style */
+body[data-theme="light"] .environment-page,
+body[data-theme="light"] .environments,
+body[data-theme="light"] [class*="environment"] {
+  color: #000000;
+}
+
+/* New button - green */
+body[data-theme="light"] .environment-page .btn-new,
+body[data-theme="light"] .environments .btn-new,
+body[data-theme="light"] .btn-new-env,
+body[data-theme="light"] .new-environment-btn,
+body[data-theme="light"] #new-environment-btn,
+body[data-theme="light"] .btn-new {
+  background: #008000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] .environment-page .btn-new:hover,
+body[data-theme="light"] .btn-new:hover {
+  background: #00a000 !important;
+}
+
+/* Import button - blue */
+body[data-theme="light"] .environment-page .btn-import,
+body[data-theme="light"] .environments .btn-import,
+body[data-theme="light"] .import-environment-btn,
+body[data-theme="light"] #import-environment-btn,
+body[data-theme="light"] .btn-import {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .environment-page .btn-import:hover,
+body[data-theme="light"] .btn-import:hover {
+  background: #0000a0 !important;
+}
+
+/* Delete button - red */
+body[data-theme="light"] .environment-page .btn-delete,
+body[data-theme="light"] .environments .btn-delete,
+body[data-theme="light"] .delete-environment-btn,
+body[data-theme="light"] #delete-environment-btn,
+body[data-theme="light"] .btn-delete {
+  background: #800000 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+body[data-theme="light"] .environment-page .btn-delete:hover,
+body[data-theme="light"] .btn-delete:hover {
+  background: #a00000 !important;
+}
+
+/* Environment cards */
+body[data-theme="light"] .environment-card,
+body[data-theme="light"] .env-card,
+body[data-theme="light"] [class*="environment-card"],
+body[data-theme="light"] [class*="env-card"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .environment-card *,
+body[data-theme="light"] .env-card *,
+body[data-theme="light"] [class*="environment-card"] *,
+body[data-theme="light"] [class*="env-card"] * {
+  color: #000000;
+}
+
+/* Notifications page - Win98 style */
+body[data-theme="light"] .notifications-page,
+body[data-theme="light"] .notifications,
+body[data-theme="light"] [class*="notification"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .notification-card,
+body[data-theme="light"] .notification-item,
+body[data-theme="light"] [class*="notification-card"],
+body[data-theme="light"] [class*="notification-item"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .notification-card *,
+body[data-theme="light"] .notification-item *,
+body[data-theme="light"] [class*="notification-card"] *,
+body[data-theme="light"] [class*="notification-item"] * {
+  color: #000000;
+}
+
+/* Notification headers */
+body[data-theme="light"] .notifications-page h1,
+body[data-theme="light"] .notifications-page h2,
+body[data-theme="light"] .notifications-page h3,
+body[data-theme="light"] .notifications h1,
+body[data-theme="light"] .notifications h2,
+body[data-theme="light"] .notifications h3 {
+  color: #000080 !important;
+}
+
+/* Notification form elements */
+body[data-theme="light"] .notifications-page input,
+body[data-theme="light"] .notifications-page select,
+body[data-theme="light"] .notifications-page textarea,
+body[data-theme="light"] .notifications input,
+body[data-theme="light"] .notifications select,
+body[data-theme="light"] .notifications textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Notification labels */
+body[data-theme="light"] .notifications-page label,
+body[data-theme="light"] .notifications-page .form-label,
+body[data-theme="light"] .notifications label,
+body[data-theme="light"] .notifications .form-label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .notifications-page .form-text,
+body[data-theme="light"] .notifications-page .text-muted,
+body[data-theme="light"] .notifications .form-text,
+body[data-theme="light"] .notifications .text-muted {
+  color: #404040 !important;
+}
+
+/* Notification buttons */
+body[data-theme="light"] .notifications-page .btn,
+body[data-theme="light"] .notifications .btn,
+body[data-theme="light"] .notification-card .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .notifications-page .btn:hover,
+body[data-theme="light"] .notifications .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .notifications-page .btn-primary,
+body[data-theme="light"] .notifications .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] .notifications-page .btn-success,
+body[data-theme="light"] .notifications .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] .notifications-page .btn-danger,
+body[data-theme="light"] .notifications .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+/* Notification tabs/nav */
+body[data-theme="light"] .notifications-page .nav-item,
+body[data-theme="light"] .notifications-page .nav-link,
+body[data-theme="light"] .notifications .nav-item,
+body[data-theme="light"] .notifications .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .notifications-page .nav-link.active,
+body[data-theme="light"] .notifications .nav-link.active {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* Notification provider cards */
+body[data-theme="light"] .provider-card,
+body[data-theme="light"] [class*="provider-card"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] .provider-card *,
+body[data-theme="light"] [class*="provider-card"] * {
+  color: #000000;
+}
+
+/* Notification toggles/switches */
+body[data-theme="light"] .notifications-page .form-check-input,
+body[data-theme="light"] .notifications .form-check-input,
+body[data-theme="light"] .notification-toggle {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+/* Notification status indicators */
+body[data-theme="light"] .notification-status.connected,
+body[data-theme="light"] .status-connected {
+  color: #008000 !important;
+}
+
+body[data-theme="light"] .notification-status.disconnected,
+body[data-theme="light"] .status-disconnected {
+  color: #800000 !important;
+}
+
+body[data-theme="light"] .notification-status.pending,
+body[data-theme="light"] .status-pending {
+  color: #808000 !important;
+}
+
+/* Notifications page - force all elements */
+body[data-theme="light"] #notifications-tab,
+body[data-theme="light"] [id*="notification"],
+body[data-theme="light"] [class*="notification"] {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #notifications-tab *,
+body[data-theme="light"] [id*="notification"] *,
+body[data-theme="light"] [class*="notification"] * {
+  border-radius: 0 !important;
+}
+
+/* Notification page cards and panels */
+body[data-theme="light"] #notifications-tab .card,
+body[data-theme="light"] #notifications-tab .panel,
+body[data-theme="light"] [id*="notification"] .card,
+body[data-theme="light"] [class*="notification"] .card {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #notifications-tab .card *,
+body[data-theme="light"] [id*="notification"] .card * {
+  color: #000000 !important;
+}
+
+/* Notification channel cards */
+body[data-theme="light"] .channel-card,
+body[data-theme="light"] [class*="channel-card"],
+body[data-theme="light"] .webhook-card,
+body[data-theme="light"] [class*="webhook"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .channel-card *,
+body[data-theme="light"] [class*="channel-card"] *,
+body[data-theme="light"] .webhook-card *,
+body[data-theme="light"] [class*="webhook"] * {
+  color: #000000 !important;
+  border-radius: 0 !important;
+}
+
+/* Notification settings sections */
+body[data-theme="light"] .notification-settings,
+body[data-theme="light"] [class*="notification-settings"],
+body[data-theme="light"] .settings-section,
+body[data-theme="light"] .config-section {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+/* Notification page all buttons */
+body[data-theme="light"] #notifications-tab .btn,
+body[data-theme="light"] [id*="notification"] .btn,
+body[data-theme="light"] [class*="notification"] .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] #notifications-tab .btn-primary,
+body[data-theme="light"] [id*="notification"] .btn-primary,
+body[data-theme="light"] [class*="notification"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #notifications-tab .btn-success,
+body[data-theme="light"] [id*="notification"] .btn-success,
+body[data-theme="light"] [class*="notification"] .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #notifications-tab .btn-danger,
+body[data-theme="light"] [id*="notification"] .btn-danger,
+body[data-theme="light"] [class*="notification"] .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+}
+
+/* Notification inputs */
+body[data-theme="light"] #notifications-tab input,
+body[data-theme="light"] #notifications-tab select,
+body[data-theme="light"] #notifications-tab textarea,
+body[data-theme="light"] [id*="notification"] input,
+body[data-theme="light"] [id*="notification"] select,
+body[data-theme="light"] [id*="notification"] textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* Notification badges */
+body[data-theme="light"] #notifications-tab .badge,
+body[data-theme="light"] [id*="notification"] .badge,
+body[data-theme="light"] [class*="notification"] .badge {
+  border-radius: 0 !important;
+  border: 1px solid #808080;
+}
+
+/* Notification list items */
+body[data-theme="light"] .notification-list-item,
+body[data-theme="light"] [class*="notification-list"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+}
+
+/* Notification accordions/collapsibles */
+body[data-theme="light"] #notifications-tab .accordion,
+body[data-theme="light"] #notifications-tab .accordion-item,
+body[data-theme="light"] #notifications-tab .accordion-header,
+body[data-theme="light"] #notifications-tab .accordion-button,
+body[data-theme="light"] #notifications-tab .accordion-body,
+body[data-theme="light"] [id*="notification"] .accordion-item,
+body[data-theme="light"] [id*="notification"] .accordion-button {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] #notifications-tab .accordion-button:not(.collapsed) {
+  background: #c8c4bc !important;
+  color: #000000 !important;
+}
+
+/* Metrics page - Win98 style */
+body[data-theme="light"] .metrics-page,
+body[data-theme="light"] .metrics,
+body[data-theme="light"] [class*="metrics"] {
+  color: #000000;
+}
+
+body[data-theme="light"] .metrics-card,
+body[data-theme="light"] .metric-card,
+body[data-theme="light"] [class*="metrics-card"],
+body[data-theme="light"] [class*="metric-card"] {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .metrics-card *,
+body[data-theme="light"] .metric-card *,
+body[data-theme="light"] [class*="metrics-card"] *,
+body[data-theme="light"] [class*="metric-card"] * {
+  color: #000000;
+}
+
+/* Metrics headers */
+body[data-theme="light"] .metrics-page h1,
+body[data-theme="light"] .metrics-page h2,
+body[data-theme="light"] .metrics-page h3,
+body[data-theme="light"] .metrics h1,
+body[data-theme="light"] .metrics h2,
+body[data-theme="light"] .metrics h3 {
+  color: #000080 !important;
+}
+
+/* Metrics values */
+body[data-theme="light"] .metric-value,
+body[data-theme="light"] .metrics-value,
+body[data-theme="light"] [class*="metric-value"] {
+  color: #000080 !important;
+  font-weight: bold;
+}
+
+/* Metrics labels */
+body[data-theme="light"] .metric-label,
+body[data-theme="light"] .metrics-label,
+body[data-theme="light"] [class*="metric-label"] {
+  color: #000000 !important;
+}
+
+/* Metrics charts/graphs container */
+body[data-theme="light"] .chart-container,
+body[data-theme="light"] .metrics-chart,
+body[data-theme="light"] [class*="chart"] {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff;
+}
+
+/* Metrics buttons */
+body[data-theme="light"] .metrics-page .btn,
+body[data-theme="light"] .metrics .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] .metrics-page .btn-primary,
+body[data-theme="light"] .metrics .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}
+
+/* Metrics nav/tabs */
+body[data-theme="light"] .metrics-page .nav-link,
+body[data-theme="light"] .metrics .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .metrics-page .nav-link.active,
+body[data-theme="light"] .metrics .nav-link.active {
+  background: #ffffff !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* Metrics table */
+body[data-theme="light"] .metrics-page table,
+body[data-theme="light"] .metrics table {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .metrics-page th,
+body[data-theme="light"] .metrics th {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .metrics-page td,
+body[data-theme="light"] .metrics td {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+}
+
+/* Metrics form elements */
+body[data-theme="light"] .metrics-page input,
+body[data-theme="light"] .metrics-page select,
+body[data-theme="light"] .metrics input,
+body[data-theme="light"] .metrics select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* DeepSpeed Builder Modal - Win98 style */
+body[data-theme="light"] #deepspeed-modal,
+body[data-theme="light"] .deepspeed-modal,
+body[data-theme="light"] #deepspeed-builder-modal,
+body[data-theme="light"] .deepspeed-builder-modal,
+body[data-theme="light"] [id*="deepspeed"] {
+  color: #000000;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-content,
+body[data-theme="light"] .deepspeed-modal .modal-content,
+body[data-theme="light"] #deepspeed-builder-modal .modal-content,
+body[data-theme="light"] [id*="deepspeed"] .modal-content {
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-header,
+body[data-theme="light"] .deepspeed-modal .modal-header,
+body[data-theme="light"] #deepspeed-builder-modal .modal-header,
+body[data-theme="light"] [id*="deepspeed"] .modal-header {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%) !important;
+  border-radius: 0 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-header *,
+body[data-theme="light"] .deepspeed-modal .modal-header *,
+body[data-theme="light"] #deepspeed-builder-modal .modal-header *,
+body[data-theme="light"] [id*="deepspeed"] .modal-header * {
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-body,
+body[data-theme="light"] .deepspeed-modal .modal-body,
+body[data-theme="light"] #deepspeed-builder-modal .modal-body,
+body[data-theme="light"] [id*="deepspeed"] .modal-body {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-body *,
+body[data-theme="light"] .deepspeed-modal .modal-body *,
+body[data-theme="light"] #deepspeed-builder-modal .modal-body *,
+body[data-theme="light"] [id*="deepspeed"] .modal-body * {
+  color: #000000;
+}
+
+body[data-theme="light"] #deepspeed-modal .modal-footer,
+body[data-theme="light"] .deepspeed-modal .modal-footer,
+body[data-theme="light"] #deepspeed-builder-modal .modal-footer,
+body[data-theme="light"] [id*="deepspeed"] .modal-footer {
+  background: #d4d0c8 !important;
+  border-top: 1px solid #808080 !important;
+}
+
+/* DeepSpeed buttons */
+body[data-theme="light"] #deepspeed-modal .btn,
+body[data-theme="light"] .deepspeed-modal .btn,
+body[data-theme="light"] #deepspeed-builder-modal .btn,
+body[data-theme="light"] [id*="deepspeed"] .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn:hover,
+body[data-theme="light"] .deepspeed-modal .btn:hover,
+body[data-theme="light"] [id*="deepspeed"] .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn-primary,
+body[data-theme="light"] .deepspeed-modal .btn-primary,
+body[data-theme="light"] #deepspeed-builder-modal .btn-primary,
+body[data-theme="light"] [id*="deepspeed"] .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn-success,
+body[data-theme="light"] .deepspeed-modal .btn-success,
+body[data-theme="light"] [id*="deepspeed"] .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060;
+}
+
+body[data-theme="light"] #deepspeed-modal .btn-danger,
+body[data-theme="light"] .deepspeed-modal .btn-danger,
+body[data-theme="light"] [id*="deepspeed"] .btn-danger {
+  background: #800000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #400000, inset 1px 1px 0 #c04040, inset -2px -2px 0 #600000, inset 2px 2px 0 #e06060;
+}
+
+/* DeepSpeed form elements */
+body[data-theme="light"] #deepspeed-modal input,
+body[data-theme="light"] #deepspeed-modal select,
+body[data-theme="light"] #deepspeed-modal textarea,
+body[data-theme="light"] .deepspeed-modal input,
+body[data-theme="light"] .deepspeed-modal select,
+body[data-theme="light"] [id*="deepspeed"] input,
+body[data-theme="light"] [id*="deepspeed"] select,
+body[data-theme="light"] [id*="deepspeed"] textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8;
+}
+
+/* DeepSpeed labels */
+body[data-theme="light"] #deepspeed-modal label,
+body[data-theme="light"] #deepspeed-modal .form-label,
+body[data-theme="light"] .deepspeed-modal label,
+body[data-theme="light"] [id*="deepspeed"] label,
+body[data-theme="light"] [id*="deepspeed"] .form-label {
+  color: #000000 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .form-text,
+body[data-theme="light"] .deepspeed-modal .form-text,
+body[data-theme="light"] [id*="deepspeed"] .form-text {
+  color: #404040 !important;
+}
+
+/* DeepSpeed cards/sections */
+body[data-theme="light"] #deepspeed-modal .card,
+body[data-theme="light"] .deepspeed-modal .card,
+body[data-theme="light"] [id*="deepspeed"] .card,
+body[data-theme="light"] .deepspeed-section,
+body[data-theme="light"] [class*="deepspeed-section"] {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff;
+}
+
+/* DeepSpeed nav/tabs */
+body[data-theme="light"] #deepspeed-modal .nav-link,
+body[data-theme="light"] .deepspeed-modal .nav-link,
+body[data-theme="light"] [id*="deepspeed"] .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] #deepspeed-modal .nav-link.active,
+body[data-theme="light"] .deepspeed-modal .nav-link.active,
+body[data-theme="light"] [id*="deepspeed"] .nav-link.active {
+  background: #ffffff !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* DeepSpeed close button */
+body[data-theme="light"] #deepspeed-modal .btn-close,
+body[data-theme="light"] .deepspeed-modal .btn-close,
+body[data-theme="light"] [id*="deepspeed"] .btn-close {
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+/* ============================
+   TRAINING WIZARD - WIN98 STYLE
+   ============================ */
+
+/* Wizard modal - square corners, Win98 window style */
+body[data-theme="light"] .training-wizard-modal {
+  background: #d4d0c8 !important;
+  border: 2px solid #000000 !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, 3px 3px 0 rgba(0,0,0,0.3) !important;
+}
+
+/* Wizard header - Win98 title bar style */
+body[data-theme="light"] .training-wizard-modal .modal-header {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%) !important;
+  border-bottom: none !important;
+  border-radius: 0 !important;
+  padding: 3px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .modal-title {
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  text-shadow: none !important;
+}
+
+/* Close button - Win98 X button */
+body[data-theme="light"] .training-wizard-modal .btn-close {
+  background: #d4d0c8 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf !important;
+  width: 16px !important;
+  height: 14px !important;
+  padding: 0 !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-close:hover {
+  background: #e0dcd4 !important;
+}
+
+/* Progress indicator - Win98 wizard style */
+body[data-theme="light"] .training-wizard-modal .wizard-progress {
+  background: #d4d0c8 !important;
+  border-bottom: 1px solid #808080 !important;
+  padding: 8px 12px !important;
+  gap: 2px !important;
+}
+
+/* Step items - Win98 boxed numbers */
+body[data-theme="light"] .training-wizard-modal .wizard-step {
+  background: transparent !important;
+  border-radius: 0 !important;
+  opacity: 1 !important;
+  min-width: 60px !important;
+  padding: 0 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.active {
+  opacity: 1 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed {
+  opacity: 0.8 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.skipped {
+  opacity: 0.5 !important;
+}
+
+/* Step number - Win98 square badge style */
+body[data-theme="light"] .training-wizard-modal .step-number {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 0 !important;
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040 !important;
+  color: #000000 !important;
+  font-size: 10px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.active .step-number {
+  background: #000080 !important;
+  color: #ffffff !important;
+  border-color: #000040 !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed .step-number {
+  background: #008000 !important;
+  color: transparent !important;
+  border-color: #004000 !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed .step-number::before {
+  color: #ffffff !important;
+  font-size: 10px !important;
+}
+
+/* Step label */
+body[data-theme="light"] .training-wizard-modal .step-label {
+  color: #000000 !important;
+  font-size: 9px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.active .step-label {
+  color: #000080 !important;
+  font-weight: bold !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed .step-label {
+  color: #404040 !important;
+}
+
+/* Progress connector lines */
+body[data-theme="light"] .training-wizard-modal .wizard-step:not(:last-child)::after {
+  background: #808080 !important;
+  height: 2px !important;
+  top: 9px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-step.completed:not(:last-child)::after {
+  background: #008000 !important;
+}
+
+/* Modal body */
+body[data-theme="light"] .training-wizard-modal .modal-body {
+  background: #d4d0c8 !important;
+  border-radius: 0 !important;
+  padding: 12px 16px 16px !important;
+}
+
+/* Modal footer - Win98 button area */
+body[data-theme="light"] .training-wizard-modal .modal-footer {
+  background: #d4d0c8 !important;
+  border-top: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  gap: 6px !important;
+}
+
+/* Wizard content area */
+body[data-theme="light"] .training-wizard-modal .wizard-step-content {
+  min-height: 300px !important;
+  padding: 12px 0 !important;
+}
+
+/* Questions and headings */
+body[data-theme="light"] .training-wizard-modal .wizard-question {
+  color: #000000 !important;
+  font-size: 14px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-question-small {
+  color: #000000 !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Text */
+body[data-theme="light"] .training-wizard-modal .text-muted {
+  color: #404040 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal p {
+  color: #000000 !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  font-size: 11px !important;
+}
+
+/* Option cards - Win98 3D panel style */
+body[data-theme="light"] .training-wizard-modal .wizard-options {
+  gap: 8px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040 !important;
+  padding: 10px !important;
+  cursor: pointer !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card:hover {
+  background: #f0f0f0 !important;
+  border-color: #000080 !important;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #404040 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card.selected {
+  background: #e8e8ff !important;
+  border: 2px solid #000080 !important;
+  box-shadow: inset 1px 1px 0 #c0c0ff, inset -1px -1px 0 #000060 !important;
+}
+
+/* Selected checkmark */
+body[data-theme="light"] .training-wizard-modal .wizard-option-card.selected::before {
+  background: #008000 !important;
+  border-radius: 0 !important;
+  width: 16px !important;
+  height: 16px !important;
+  font-size: 10px !important;
+  top: 4px !important;
+  right: 4px !important;
+}
+
+/* Option card text */
+body[data-theme="light"] .training-wizard-modal .wizard-option-card h6 {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  margin-bottom: 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-option-card .text-muted.small,
+body[data-theme="light"] .training-wizard-modal .wizard-option-card p.small {
+  color: #404040 !important;
+  font-size: 10px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Input groups - Win98 group box style */
+body[data-theme="light"] .training-wizard-modal .wizard-input-group {
+  background: #d4d0c8 !important;
+  border: 2px groove #ffffff !important;
+  border-radius: 0 !important;
+  padding: 12px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .wizard-input-group label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Form controls - Win98 sunken style */
+body[data-theme="light"] .training-wizard-modal .form-control,
+body[data-theme="light"] .training-wizard-modal .form-select {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8 !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  font-size: 11px !important;
+  padding: 4px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-control:focus,
+body[data-theme="light"] .training-wizard-modal .form-select:focus {
+  outline: 1px dotted #000000 !important;
+  outline-offset: -2px !important;
+  box-shadow: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #d4d0c8 !important;
+}
+
+/* Form labels */
+body[data-theme="light"] .training-wizard-modal .form-label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Form text/help */
+body[data-theme="light"] .training-wizard-modal .form-text {
+  color: #404040 !important;
+  font-size: 10px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-text a {
+  color: #000080 !important;
+}
+
+/* Buttons - Win98 3D beveled style, smaller */
+body[data-theme="light"] .training-wizard-modal .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  font-size: 11px !important;
+  padding: 4px 12px !important;
+  min-height: auto !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn:hover {
+  background: #e0dcd4 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn:active {
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #808080, inset -2px -2px 0 #dfdfdf !important;
+}
+
+/* Primary buttons - Navy blue */
+body[data-theme="light"] .training-wizard-modal .btn-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #000040, inset 1px 1px 0 #4040c0, inset -2px -2px 0 #000060, inset 2px 2px 0 #6060d0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-primary:hover {
+  background: #0000a0 !important;
+}
+
+/* Success buttons - Green */
+body[data-theme="light"] .training-wizard-modal .btn-success {
+  background: #008000 !important;
+  color: #ffffff !important;
+  box-shadow: inset -1px -1px 0 #004000, inset 1px 1px 0 #40a040, inset -2px -2px 0 #006000, inset 2px 2px 0 #60c060 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-success:hover {
+  background: #00a000 !important;
+}
+
+/* Outline secondary buttons */
+body[data-theme="light"] .training-wizard-modal .btn-outline-secondary {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: none !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-outline-secondary.active {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset 1px 1px 0 #000040, inset -1px -1px 0 #4040c0, inset 2px 2px 0 #000060, inset -2px -2px 0 #6060d0 !important;
+}
+
+/* Link buttons */
+body[data-theme="light"] .training-wizard-modal .btn-link {
+  background: transparent !important;
+  color: #000080 !important;
+  box-shadow: none !important;
+  text-decoration: underline !important;
+  padding: 2px 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-link:hover {
+  color: #0000c0 !important;
+}
+
+/* Button groups */
+body[data-theme="light"] .training-wizard-modal .btn-group {
+  gap: 0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-group .btn {
+  margin: 0 !important;
+}
+
+/* Button check inputs (radio style) */
+body[data-theme="light"] .training-wizard-modal .btn-check + .btn {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .btn-check:checked + .btn {
+  background: #000080 !important;
+  color: #ffffff !important;
+  box-shadow: inset 1px 1px 0 #000040, inset -1px -1px 0 #4040c0, inset 2px 2px 0 #000060, inset -2px -2px 0 #6060d0 !important;
+}
+
+/* Alerts - Win98 message box style */
+body[data-theme="light"] .training-wizard-modal .alert {
+  background: #ffffc0 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  padding: 8px 10px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-warning {
+  background: #ffffc0 !important;
+  border-color: #808000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-info {
+  background: #e0e0ff !important;
+  border-color: #000080 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-success {
+  background: #c0ffc0 !important;
+  border-color: #008000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .alert-secondary {
+  background: #e0e0e0 !important;
+  border-color: #808080 !important;
+}
+
+/* Help text box */
+body[data-theme="light"] .training-wizard-modal .wizard-help-text {
+  background: #e0e0ff !important;
+  border-left: 3px solid #000080 !important;
+  border-radius: 0 !important;
+  color: #000000 !important;
+  font-size: 11px !important;
+  padding: 8px 10px !important;
+}
+
+/* Review summary */
+body[data-theme="light"] .training-wizard-modal .review-summary {
+  background: #ffffff !important;
+  border: 2px groove #ffffff !important;
+  border-radius: 0 !important;
+  padding: 10px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .review-item {
+  border-bottom: 1px solid #d4d0c8 !important;
+  padding: 6px 0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .review-item label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .review-item span {
+  color: #000000 !important;
+  font-size: 11px !important;
+}
+
+/* Memory tabs */
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-tabs {
+  border-bottom: 1px solid #808080 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-link {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-bottom: none !important;
+  border-radius: 0 !important;
+  padding: 4px 12px !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+  margin-bottom: -1px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-link.active {
+  background: #ffffff !important;
+  border-bottom: 1px solid #ffffff !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .memory-tabs .nav-link:hover {
+  background: #e0dcd4 !important;
+}
+
+/* Memory strategy rows */
+body[data-theme="light"] .training-wizard-modal .memory-strategy-row {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  padding: 8px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .strategy-label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+}
+
+/* Preset badges */
+body[data-theme="light"] .training-wizard-modal .preset-tradeoffs .badge {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  font-size: 9px !important;
+  font-weight: normal !important;
+  padding: 2px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .bg-success-subtle {
+  background: #c0ffc0 !important;
+  color: #004000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .bg-warning-subtle {
+  background: #ffffc0 !important;
+  color: #404000 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .bg-info-subtle {
+  background: #c0c0ff !important;
+  color: #000040 !important;
+}
+
+/* Checkboxes in wizard */
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="checkbox"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 13px !important;
+  height: 13px !important;
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  margin-top: 2px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="checkbox"]:checked {
+  background: #ffffff !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="checkbox"]:checked::before {
+  content: "✓" !important;
+  display: block !important;
+  color: #000000 !important;
+  font-size: 10px !important;
+  font-weight: bold !important;
+  line-height: 11px !important;
+  text-align: center !important;
+}
+
+/* Radio buttons in wizard */
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 13px !important;
+  height: 13px !important;
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  border-radius: 50% !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  margin-top: 2px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"]:checked::before {
+  content: "" !important;
+  display: block !important;
+  width: 7px !important;
+  height: 7px !important;
+  background: #000000 !important;
+  border-radius: 50% !important;
+  margin: 2px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-check-label {
+  color: #000000 !important;
+  font-size: 11px !important;
+  font-family: "MS Sans Serif", Tahoma, sans-serif !important;
+}
+
+/* Form range/slider - Win98 style */
+body[data-theme="light"] .training-wizard-modal .form-range {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 100% !important;
+  height: 20px !important;
+  background: transparent !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-range::-webkit-slider-track {
+  background: #ffffff !important;
+  border: 1px solid #808080 !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  height: 4px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .form-range::-webkit-slider-thumb {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background: #d4d0c8 !important;
+  border: 1px solid #808080 !important;
+  box-shadow: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff !important;
+  width: 11px !important;
+  height: 21px !important;
+  border-radius: 0 !important;
+  margin-top: -9px !important;
+}
+
+/* Spinner */
+body[data-theme="light"] .training-wizard-modal .spinner-border {
+  border-color: #000080 !important;
+  border-right-color: transparent !important;
+}
+
+/* Pre/code blocks */
+body[data-theme="light"] .training-wizard-modal pre {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff !important;
+  font-family: "Courier New", monospace !important;
+  font-size: 10px !important;
+  padding: 8px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal code {
+  background: #e0e0e0 !important;
+  color: #000080 !important;
+  font-family: "Courier New", monospace !important;
+  padding: 1px 3px !important;
+}
+
+/* Border/divider overrides */
+body[data-theme="light"] .training-wizard-modal .border {
+  border-color: #808080 !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .rounded {
+  border-radius: 0 !important;
+}
+
+/* Additional Win98 polish - remove ALL rounded corners */
+body[data-theme="light"] .training-wizard-modal *,
+body[data-theme="light"] .training-wizard-modal *::before,
+body[data-theme="light"] .training-wizard-modal *::after {
+  border-radius: 0 !important;
+}
+
+/* Exception for radio buttons which should stay round */
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"],
+body[data-theme="light"] .training-wizard-modal .form-check-input[type="radio"]::before {
+  border-radius: 50% !important;
+}
+
+/* Row/column gaps */
+body[data-theme="light"] .training-wizard-modal .row.g-3 {
+  --bs-gutter-x: 12px !important;
+  --bs-gutter-y: 12px !important;
+}
+
+/* Badge styling */
+body[data-theme="light"] .training-wizard-modal .badge {
+  background: #d4d0c8 !important;
+  color: #000000 !important;
+  border: 1px solid #808080 !important;
+  border-radius: 0 !important;
+  font-size: 10px !important;
+  font-weight: normal !important;
+  padding: 2px 6px !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .badge.bg-secondary {
+  background: #808080 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="light"] .training-wizard-modal .badge.bg-primary {
+  background: #000080 !important;
+  color: #ffffff !important;
+}

@@ -95,9 +95,10 @@ test = ["selenium>=4.0.0", "coverage>=7.0.0"]
 
 # Documentation extras
 docs = [
-    "sphinx>=6.0.0",
-    "sphinx-rtd-theme>=1.2.0",
-    "myst-parser>=1.0.0",
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocs-static-i18n>=1.2.0",
+    "pymdown-extensions>=10.0",
 ]
 
 # All extras combined
@@ -111,7 +112,7 @@ all = [
 ]
 
 [project.scripts]
-simpletuner = "simpletuner.cli:main"
+simpletuner = "st_cli:main"
 simpletuner-train = "simpletuner.train:main"
 simpletuner-configure = "simpletuner.configure:main"
 simpletuner-inference = "simpletuner.inference:main"
@@ -120,13 +121,14 @@ simpletuner-inference = "simpletuner.inference:main"
 Homepage = "https://github.com/bghira/SimpleTuner"
 Repository = "https://github.com/bghira/SimpleTuner.git"
 Issues = "https://github.com/bghira/SimpleTuner/issues"
-Documentation = "https://github.com/bghira/SimpleTuner/blob/main/README.md"
+Documentation = "https://simpletuner.dev"
 Changelog = "https://github.com/bghira/SimpleTuner/releases"
 
 # Setuptools configuration
 [tool.setuptools]
 include-package-data = true
 zip-safe = false
+py-modules = ["st_cli"]
 
 [tool.setuptools.dynamic]
 version = {attr = "simpletuner.__version__"}

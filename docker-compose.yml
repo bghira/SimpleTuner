@@ -1,0 +1,37 @@
+services:
+  simpletuner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: "3.12"
+    image: simpletuner:local
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # Persist config, datasets, and output locally
+      - ./config:/workspace/simpletuner/config
+      - ./datasets:/workspace/simpletuner/datasets
+      - ./output:/workspace/simpletuner/output
+      # Cache models to host machine to avoid re-downloading
+      - ~/.cache/huggingface:/workspace/huggingface
+    ports:
+      - "8001:8001" # WebUI
+      - "2222:22"   # SSH
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - WANDB_API_KEY=${WANDB_API_KEY}
+      - GIT_USER=${GIT_USER}
+      - GIT_PAT=${GIT_PAT}
+      - GIT_REPOSITORY=${GIT_REPOSITORY}
+      - TRAINING_NAME=${TRAINING_NAME}
+      - USE_SSL=${USE_SSL:-false}
+    shm_size: 16gb
+    tty: true
+    stdin_open: true
+    restart: unless-stopped

@@ -1,5 +1,26 @@
 """Test package initialization - suppress warnings before any imports."""
 
+import warnings
+
+# Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)
+# These warnings come from Python's frozen import machinery when loading SWIG types.
+# We need to intercept the showwarning function since filterwarnings doesn't work
+# reliably for warnings from frozen modules.
+_original_showwarning = warnings.showwarning
+
+
+def _filtered_showwarning(message, category, filename, lineno, file=None, line=None):
+    msg_str = str(message)
+    # Suppress SWIG-related deprecation warnings from importlib bootstrap
+    if category is DeprecationWarning and "__module__" in msg_str:
+        # Cover all SWIG variants: SwigPyPacked, SwigPyObject, swigvarlink
+        if "Swig" in msg_str or "swig" in msg_str:
+            return
+    return _original_showwarning(message, category, filename, lineno, file, line)
+
+
+warnings.showwarning = _filtered_showwarning
+
 import logging
 import os
 import sys

@@ -73,6 +73,15 @@ class LongCatVideo(VideoModelFoundation):
     }
 
     @classmethod
+    def adjust_video_frames(cls, num_frames: int) -> int:
+        """Adjust frame count to satisfy frames % 8 == 1 constraint."""
+        if num_frames % 8 == 1:
+            return num_frames
+        # Round down to nearest valid count
+        adjusted = ((num_frames - 1) // 8) * 8 + 1
+        return max(adjusted, 1)
+
+    @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # LongCat-Video has 48 transformer blocks
         # Leave at least 1 block on GPU

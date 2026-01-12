@@ -1,12 +1,21 @@
 <!-- templates/git_mirror_tab.html - Git integration tab -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-git">
-<script>document.getElementById('css-form-sections-git').href = '/static/css/form-sections.css?t=' + Date.now();</script>
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-git">
 
 <script>
 if (!window.gitMirrorTabComponent) {
     window.gitMirrorTabComponent = function(initialDefaults) {
         const defaults = initialDefaults || {};
         return {
+            // Hero CTA state (using HintMixin)
+            ...window.HintMixin.createSingleHint({
+                useApi: true,
+                hintKey: 'git_mirror_hero',
+            }),
+            loaded: false,
+
             status: null,
             loading: false,
             savingPrefs: false,
@@ -25,8 +34,19 @@ if (!window.gitMirrorTabComponent) {
                 include_untracked: defaults.git_include_untracked || false,
                 push_on_snapshot: defaults.git_push_on_snapshot || false,
             },
-            init() {
-                this.loadStatus();
+            async init() {
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    // User needs to login - skip API-dependent initialization
+                    return;
+                }
+
+                // Load hero CTA dismissed state
+                await this.loadHeroCTAState();
+                await this.loadStatus();
+                this.loaded = true;
+
                 if (window.Alpine && typeof Alpine.effect === 'function' && typeof Alpine.onCleanup === 'function') {
                     Alpine.effect(() => {
                         const syncTimer = window.setInterval(() => {
@@ -304,14 +324,39 @@ if (!window.gitMirrorTabComponent) {
 }
 </script>
 
-<div class="tab-fragment" id="git-mirror-tab" x-data="gitMirrorTabComponent({{ webui_defaults | tojson | safe }})">
-    <div class="card mb-4">
+<div class="tab-fragment" id="git-mirror-tab" x-data='gitMirrorTabComponent({{ webui_defaults | tojson | safe }})'>
+    <!-- Hero CTA for first-time users -->
+    {{ hero_cta(
+        theme='green',
+        icon_class='fa-code-branch',
+        icon_shape='circle',
+        title='Git Version Control',
+        description='Track every configuration change with Git. Push to remote repositories, sync across machines, and never lose your training setup.',
+        features=[
+            {'icon': 'fa-history', 'color': 'text-success', 'label': 'Version history'},
+            {'icon': 'fa-cloud-upload-alt', 'color': 'text-info', 'label': 'Remote sync'},
+            {'icon': 'fa-magic', 'color': 'text-warning', 'label': 'Auto-commit'},
+        ],
+        show_condition='showHeroCTA',
+        dismiss_method='dismissHeroCTA()',
+        tip_text='Initialize a repository to start tracking. Connect a remote to sync your configs across machines.'
+    ) }}
+
+    <div class="card mb-4" x-show="!showHeroCTA || loaded" x-cloak>
         <div class="card-header d-flex justify-content-between align-items-center">
             <div>
                 <h5 class="mb-1"><i class="fas fa-code-branch me-2"></i>Git Mirror</h5>
                 <p class="text-muted mb-0">Track configuration changes, inspect status, and control remote sync.</p>
             </div>
-            <span class="badge bg-secondary" x-text="statusBadge()"></span>
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-outline-secondary"
+                        x-show="!showHeroCTA"
+                        @click="restoreHeroCTA()"
+                        title="Show getting started guide">
+                    <i class="fas fa-question-circle me-1"></i>Help
+                </button>
+                <span class="badge bg-secondary" x-text="statusBadge()"></span>
+            </div>
         </div>
         <div class="card-body" :class="{ 'opacity-50': loading }">
             <div class="row g-4">

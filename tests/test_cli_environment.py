@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from simpletuner.cli import _validate_environment_config, run_training
+from simpletuner.cli.common import _validate_environment_config
+from simpletuner.cli.train import run_training
 from simpletuner.helpers.configuration.json_file import load_json_config
 
 

@@ -101,8 +101,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             json.dump(config_data, f, indent=2)
         return config_path
 
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_config_file_not_found(self, mock_torch_save):
+    def test_config_file_not_found(self):
         """Test behavior when config file doesn't exist."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -281,6 +280,45 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(conditioning_cfg.get("type"), "canny")
         self.assertEqual(conditioning_cfg.get("conditioning_type"), "controlnet")
 
+    def test_huggingface_metadata_paths_without_instance_data_dir(self):
+        """Huggingface metadata backend should allow missing instance_data_dir."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "hf_video",
+            "type": "huggingface",
+            "dataset_type": "video",
+            "metadata_backend": "huggingface",
+            "huggingface": {},
+        }
+        init_backend = {
+            "id": backend["id"],
+            "config": backend.copy(),
+            "instance_data_dir": "",
+            "data_backend": MagicMock(),
+            "bucket_report": MagicMock(),
+        }
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        with patch("simpletuner.helpers.metadata.backends.huggingface.HuggingfaceMetadataBackend") as mock_backend:
+            mock_backend_instance = MagicMock()
+            mock_backend.return_value = mock_backend_instance
+
+            factory._configure_metadata_backend(backend, init_backend)
+
+        self.assertIs(init_backend["metadata_backend"], mock_backend_instance)
+        metadata_file = mock_backend.call_args.kwargs.get("metadata_file")
+        cache_file = mock_backend.call_args.kwargs.get("cache_file")
+        self.assertIsInstance(metadata_file, str)
+        self.assertIsInstance(cache_file, str)
+
     def test_multiple_default_text_embed_backends(self):
         """Test error when multiple text embed backends are marked as default."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -323,8 +361,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             self.assertIn("Only one text embed backend can be marked as default", str(context.exception))
 
     @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_deepfloyd_model_warnings(self, mock_torch_save, mock_validate_paths):
+    def test_deepfloyd_model_warnings(self, mock_validate_paths):
         """Test DeepFloyd model specific warnings and handling."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -371,8 +408,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # We mainly want to ensure no exceptions are raised for DeepFloyd
 
     @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_pixel_area_resolution_conversion(self, mock_torch_save, mock_validate_paths):
+    def test_pixel_area_resolution_conversion(self, mock_validate_paths):
         """Test pixel_area to area resolution type conversion."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -436,8 +472,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 expected_resolution = (1024 * 1024) / (1000**2)  # Convert to megapixels
                 self.assertAlmostEqual(backend_config["resolution"], expected_resolution, places=6)
 
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_csv_backend_invalid_config(self, mock_torch_save):
+    def test_csv_backend_invalid_config(self):
         """Test CSV backend with invalid configuration."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -518,8 +553,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 factory.configure_data_backends(loaded_config)
 
     @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_parquet_backend_missing_config(self, mock_torch_save, mock_validate_paths):
+    def test_parquet_backend_missing_config(self, mock_validate_paths):
         """Test parquet metadata backend with missing parquet config."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -589,8 +623,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._finalize_metrics()
         self.assertGreater(factory.metrics["initialization_time"], 0)
 
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_no_data_backends_error(self, mock_torch_save):
+    def test_no_data_backends_error(self):
         """Test error when no data backends are found after configuration."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -642,6 +675,16 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_state_tracker.set_data_backend_config.return_value = None
         mock_state_tracker.set_default_text_embed_cache.return_value = None
 
+        # Mock TextEmbeddingCache to prevent serializing MagicMock embeddings
+        text_cache_patcher = patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache")
+        mock_text_cache = text_cache_patcher.start()
+        self.addCleanup(text_cache_patcher.stop)
+        mock_cache_instance = MagicMock()
+        mock_cache_instance.discover_all_files.return_value = None
+        mock_cache_instance.compute_embeddings_for_prompts.return_value = None
+        mock_cache_instance.set_webhook_handler.return_value = None
+        mock_text_cache.return_value = mock_cache_instance
+
     def _setup_comprehensive_mocks(self, mock_state_tracker):
         """Set up comprehensive mocks for full configuration testing."""
         self._setup_state_tracker_mocks(mock_state_tracker)
@@ -660,15 +703,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.addCleanup(local_backend_patcher.stop)
         mock_local.return_value.list_files.return_value = ["image1.jpg", "image2.jpg"]
 
-        # Use autospec to validate constructor parameters
-        text_cache_patcher = patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache", autospec=True)
-        mock_text_cache = text_cache_patcher.start()
-        self.addCleanup(text_cache_patcher.stop)
-        mock_cache_instance = MagicMock()
-        mock_cache_instance.discover_all_files.return_value = None
-        mock_cache_instance.compute_embeddings_for_prompts.return_value = None
-        mock_cache_instance.set_webhook_handler.return_value = None
-        mock_text_cache.return_value = mock_cache_instance
+        # Note: TextEmbeddingCache is already mocked in _setup_state_tracker_mocks
 
         # Use autospec to validate constructor parameters
         vae_cache_patcher = patch("simpletuner.helpers.data_backend.factory.VAECache", autospec=True)
@@ -952,8 +987,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_accelerator.split_between_processes.assert_called_once()
 
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_oversubscription_auto_adjustment(self, mock_torch_save):
+    def test_oversubscription_auto_adjustment(self):
         """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -1034,8 +1068,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertIn("manually set repeats=2", error_msg)
                 self.assertIn("will not override manual repeats", error_msg)
 
-    @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_oversubscription_disabled_raises_error(self, mock_torch_save):
+    def test_oversubscription_disabled_raises_error(self):
         """Test that error is raised when oversubscription is disabled."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker

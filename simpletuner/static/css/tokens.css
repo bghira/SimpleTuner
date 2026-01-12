@@ -10,9 +10,36 @@
   --colors-purple: #a855f7;
   --colors-purple-muted: #c084fc;
 
+  /* Indigo accent scale */
+  --colors-indigo-500: #6366f1;
+  --colors-indigo-400: #818cf8;
+  --colors-indigo-300: #a5b4fc;
+  --colors-indigo-200: #c4b5fd;
+  --colors-indigo-bg: rgba(99, 102, 241, 0.1);
+  --colors-indigo-bg-hover: rgba(99, 102, 241, 0.15);
+  --colors-indigo-bg-active: rgba(99, 102, 241, 0.2);
+  --colors-indigo-border: rgba(99, 102, 241, 0.3);
+
+  /* Violet accent scale */
+  --colors-violet-600: #7c3aed;
+  --colors-violet-500: #8b5cf6;
+  --colors-violet-400: #a78bfa;
+  --colors-violet-700: #7e22ce;
+  --colors-violet-gradient: linear-gradient(135deg, #7e22ce 0%, #6366f1 100%);
+  --colors-violet-gradient-alt: linear-gradient(135deg, #7e22ce 0%, #4f46e5 100%);
+
+  /* Amber/warning accent */
+  --colors-amber-400: #fbbf24;
+  --colors-amber-bg: rgba(245, 158, 11, 0.2);
+
+  /* Success variants */
+  --colors-success-bright: #4ade80;
+  --colors-emerald-400: #6ee7b7;
+
   /* Base surfaces */
   --colors-dark-bg: #0a0a0a;
   --colors-dark-sidebar: #0f0f0f;
+  --colors-dark-surface: #1c1f2e;
   --colors-card-bg: rgba(255, 255, 255, 0.04);
   --colors-card-bg-elevated: rgba(255, 255, 255, 0.06);
   --colors-card-bg-hover: rgba(255, 255, 255, 0.08);
@@ -29,12 +56,32 @@
   --colors-border-strong: rgba(255, 255, 255, 0.18);
   --colors-focus-ring: rgba(102, 126, 234, 0.1);
 
+  /* Slate surface scale (interactive elements) */
+  --colors-slate-800: rgba(30, 41, 59, 1);
+  --colors-slate-800-15: rgba(30, 41, 59, 0.15);
+  --colors-slate-800-20: rgba(30, 41, 59, 0.2);
+  --colors-slate-800-30: rgba(30, 41, 59, 0.3);
+  --colors-slate-800-40: rgba(30, 41, 59, 0.4);
+  --colors-slate-800-50: rgba(30, 41, 59, 0.5);
+  --colors-slate-800-60: rgba(30, 41, 59, 0.6);
+  --colors-slate-800-70: rgba(30, 41, 59, 0.7);
+  --colors-slate-800-80: rgba(30, 41, 59, 0.8);
+  --colors-slate-800-95: rgba(30, 41, 59, 0.95);
+  --colors-slate-border: rgba(148, 163, 184, 0.15);
+  --colors-slate-border-hover: rgba(148, 163, 184, 0.3);
+  --colors-slate-border-subtle: rgba(148, 163, 184, 0.1);
+  --colors-slate-border-strong: rgba(148, 163, 184, 0.4);
+
   /* Text */
   --colors-text-primary: #ffffff;
   --colors-text-secondary: #94a3b8;
   --colors-text-muted: #64748b;
   --colors-text-tertiary: rgba(226, 232, 240, 0.75);
   --colors-text-soft: rgba(226, 232, 240, 0.4);
+  --colors-text-light: #f1f5f9;
+  --colors-text-bright: #f8fafc;
+  --colors-text-heading: #e2e8f0;
+  --colors-text-body: #cbd5e1;
 
   /* Semantic */
   --colors-semantic-success: #22c55e;
@@ -262,4 +309,174 @@
   --dataset-type-image-embeds-text: var(--colors-dataset-type-image-embeds-text);
   --dataset-type-conditioning-bg: var(--colors-dataset-type-conditioning-bg);
   --dataset-type-conditioning-text: var(--colors-dataset-type-conditioning-text);
+
+  /* Extended text aliases */
+  --text-light: var(--colors-text-light);
+  --text-bright: var(--colors-text-bright);
+  --text-heading: var(--colors-text-heading);
+  --text-body: var(--colors-text-body);
+
+  /* Indigo aliases */
+  --indigo-500: var(--colors-indigo-500);
+  --indigo-400: var(--colors-indigo-400);
+  --indigo-300: var(--colors-indigo-300);
+  --indigo-200: var(--colors-indigo-200);
+  --indigo-bg: var(--colors-indigo-bg);
+  --indigo-bg-hover: var(--colors-indigo-bg-hover);
+  --indigo-bg-active: var(--colors-indigo-bg-active);
+  --indigo-border: var(--colors-indigo-border);
+
+  /* Violet aliases */
+  --violet-600: var(--colors-violet-600);
+  --violet-500: var(--colors-violet-500);
+  --violet-400: var(--colors-violet-400);
+  --violet-700: var(--colors-violet-700);
+  --violet-gradient: var(--colors-violet-gradient);
+
+  /* Amber aliases */
+  --amber-400: var(--colors-amber-400);
+  --amber-bg: var(--colors-amber-bg);
+
+  /* Success aliases */
+  --success-bright: var(--colors-success-bright);
+  --emerald-400: var(--colors-emerald-400);
+
+  /* Slate surface aliases */
+  --slate-800: var(--colors-slate-800);
+  --slate-800-15: var(--colors-slate-800-15);
+  --slate-800-20: var(--colors-slate-800-20);
+  --slate-800-30: var(--colors-slate-800-30);
+  --slate-800-40: var(--colors-slate-800-40);
+  --slate-800-50: var(--colors-slate-800-50);
+  --slate-800-60: var(--colors-slate-800-60);
+  --slate-800-70: var(--colors-slate-800-70);
+  --slate-800-80: var(--colors-slate-800-80);
+  --slate-800-95: var(--colors-slate-800-95);
+  --slate-border: var(--colors-slate-border);
+  --slate-border-hover: var(--colors-slate-border-hover);
+  --slate-border-subtle: var(--colors-slate-border-subtle);
+
+  /* Blue scale (blue-500 = #3b82f6) */
+  --colors-blue-700: #1d4ed8;
+  --colors-blue-600: #2563eb;
+  --colors-blue-500: #3b82f6;
+  --colors-blue-400: #60a5fa;
+  --colors-blue-bg: rgba(59, 130, 246, 0.1);
+  --colors-blue-bg-15: rgba(59, 130, 246, 0.15);
+  --colors-blue-bg-20: rgba(59, 130, 246, 0.2);
+  --colors-blue-bg-25: rgba(59, 130, 246, 0.25);
+  --colors-blue-bg-30: rgba(59, 130, 246, 0.3);
+  --colors-blue-border: rgba(59, 130, 246, 0.3);
+  --colors-blue-border-hover: rgba(59, 130, 246, 0.5);
+  --colors-blue-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  --colors-blue-gradient-hover: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  --blue-700: var(--colors-blue-700);
+  --blue-600: var(--colors-blue-600);
+  --blue-500: var(--colors-blue-500);
+  --blue-400: var(--colors-blue-400);
+  --blue-bg: var(--colors-blue-bg);
+  --blue-bg-15: var(--colors-blue-bg-15);
+  --blue-bg-20: var(--colors-blue-bg-20);
+  --blue-bg-25: var(--colors-blue-bg-25);
+  --blue-bg-30: var(--colors-blue-bg-30);
+  --blue-border: var(--colors-blue-border);
+  --blue-gradient: var(--colors-blue-gradient);
+  --blue-gradient-hover: var(--colors-blue-gradient-hover);
+
+  /* Violet scale variants */
+  --colors-violet-bg: rgba(139, 92, 246, 0.1);
+  --colors-violet-bg-15: rgba(139, 92, 246, 0.15);
+  --colors-violet-bg-20: rgba(139, 92, 246, 0.2);
+  --colors-violet-bg-25: rgba(139, 92, 246, 0.25);
+  --colors-violet-bg-30: rgba(139, 92, 246, 0.3);
+  --colors-violet-border: rgba(139, 92, 246, 0.3);
+  --colors-violet-border-hover: rgba(139, 92, 246, 0.5);
+  --colors-violet-border-active: rgba(139, 92, 246, 0.6);
+  --violet-bg: var(--colors-violet-bg);
+  --violet-bg-15: var(--colors-violet-bg-15);
+  --violet-bg-20: var(--colors-violet-bg-20);
+  --violet-bg-25: var(--colors-violet-bg-25);
+  --violet-bg-30: var(--colors-violet-bg-30);
+  --violet-border: var(--colors-violet-border);
+  --violet-border-hover: var(--colors-violet-border-hover);
+
+  /* Additional violet-400 variants (a78bfa = violet-400) */
+  --colors-violet-400-bg: rgba(167, 139, 250, 0.1);
+  --colors-violet-400-bg-20: rgba(167, 139, 250, 0.2);
+  --colors-violet-400-bg-30: rgba(167, 139, 250, 0.3);
+  --colors-violet-400-bg-40: rgba(167, 139, 250, 0.4);
+  --colors-violet-400-border: rgba(167, 139, 250, 0.3);
+  --colors-violet-400-border-hover: rgba(167, 139, 250, 0.5);
+  --violet-400-bg: var(--colors-violet-400-bg);
+  --violet-400-bg-20: var(--colors-violet-400-bg-20);
+  --violet-400-bg-30: var(--colors-violet-400-bg-30);
+  --violet-400-bg-40: var(--colors-violet-400-bg-40);
+  --violet-400-border: var(--colors-violet-400-border);
+  --violet-400-border-hover: var(--colors-violet-400-border-hover);
+
+  /* Green/Success scale */
+  --colors-green-500: #22c55e;
+  --colors-green-400: #4ade80;
+  --colors-green-bg: rgba(34, 197, 94, 0.1);
+  --colors-green-bg-20: rgba(34, 197, 94, 0.2);
+  --colors-green-border: rgba(34, 197, 94, 0.3);
+  --green-500: var(--colors-green-500);
+  --green-400: var(--colors-green-400);
+  --green-bg: var(--colors-green-bg);
+  --green-bg-20: var(--colors-green-bg-20);
+  --green-border: var(--colors-green-border);
+
+  /* Dark surface variants */
+  --colors-dark-surface-95: rgba(15, 23, 42, 0.95);
+  --colors-dark-surface-98: rgba(15, 23, 42, 0.98);
+  --colors-dark-surface-60: rgba(15, 23, 42, 0.6);
+  --colors-dark-surface-80: rgba(15, 23, 42, 0.8);
+  --dark-surface-95: var(--colors-dark-surface-95);
+  --dark-surface-98: var(--colors-dark-surface-98);
+  --dark-surface-60: var(--colors-dark-surface-60);
+  --dark-surface-80: var(--colors-dark-surface-80);
+
+  /* Modal overlays */
+  --colors-modal-backdrop: rgba(0, 0, 0, 0.75);
+  --colors-modal-surface: rgba(15, 23, 42, 0.98);
+  --colors-modal-header-bg: rgba(30, 41, 59, 0.6);
+  --colors-modal-border: rgba(148, 163, 184, 0.2);
+  --modal-backdrop: var(--colors-modal-backdrop);
+  --modal-surface: var(--colors-modal-surface);
+  --modal-header-bg: var(--colors-modal-header-bg);
+  --modal-border: var(--colors-modal-border);
+
+  /* Black overlays */
+  --colors-black-15: rgba(0, 0, 0, 0.15);
+  --colors-black-20: rgba(0, 0, 0, 0.2);
+  --colors-black-30: rgba(0, 0, 0, 0.3);
+  --colors-black-50: rgba(0, 0, 0, 0.5);
+  --colors-black-75: rgba(0, 0, 0, 0.75);
+  --black-15: var(--colors-black-15);
+  --black-20: var(--colors-black-20);
+  --black-30: var(--colors-black-30);
+  --black-50: var(--colors-black-50);
+
+  /* White overlays */
+  --colors-white-02: rgba(255, 255, 255, 0.02);
+  --colors-white-03: rgba(255, 255, 255, 0.03);
+  --colors-white-05: rgba(255, 255, 255, 0.05);
+  --colors-white-08: rgba(255, 255, 255, 0.08);
+  --colors-white-10: rgba(255, 255, 255, 0.1);
+  --colors-white-15: rgba(255, 255, 255, 0.15);
+  --colors-white-20: rgba(255, 255, 255, 0.2);
+  --white-02: var(--colors-white-02);
+  --white-03: var(--colors-white-03);
+  --white-05: var(--colors-white-05);
+  --white-08: var(--colors-white-08);
+  --white-10: var(--colors-white-10);
+  --white-15: var(--colors-white-15);
+  --white-20: var(--colors-white-20);
+
+  /* Theme asset URLs - override via theme CSS */
+  --asset-logo: none;
+  --asset-favicon: none;
+  --asset-sidebar-bg: none;
+  --asset-header-bg: none;
+  --asset-card-pattern: none;
 }

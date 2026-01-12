@@ -1,0 +1,227 @@
+<!-- partials/cloud_action_bar.html - Primary action bar -->
+<div class="cloud-action-bar">
+    <div class="d-flex justify-content-between align-items-center">
+        <!-- Primary Action (left) -->
+        <div class="d-flex align-items-center gap-2">
+            <button type="button"
+                    class="btn btn-primary cloud-submit-btn"
+                    :disabled="!isActiveProviderConfigured() || submitting"
+                    @click="openPreSubmitModal()">
+                <i class="fas me-2" :class="submitting ? 'fa-spinner fa-spin' : 'fa-rocket'"></i>
+                <span x-text="submitting ? 'Submitting...' : 'Submit Job'"></span>
+            </button>
+
+            <!-- Upload Progress (inline when active) -->
+            <div class="upload-progress-inline"
+                 x-show="uploadProgress.active"
+                 x-cloak>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="progress upload-progress-bar">
+                        <div class="progress-bar"
+                             :class="uploadProgress.error ? 'bg-danger' : 'bg-primary'"
+                             :style="'width: ' + uploadProgress.percent + '%'"
+                             role="progressbar"></div>
+                    </div>
+                    <span class="upload-progress-text" x-text="uploadProgress.percent + '%'"></span>
+                </div>
+            </div>
+
+            <!-- Submit error (inline) -->
+            <div class="submit-error-inline"
+                 x-show="submitError"
+                 x-cloak>
+                <i class="fas fa-exclamation-circle text-danger me-1"></i>
+                <span class="text-danger small" x-text="submitError"></span>
+            </div>
+        </div>
+
+        <!-- Utility Actions (right) -->
+        <div class="d-flex align-items-center gap-2">
+            <!-- Show checklist button (when hidden) -->
+            <button type="button"
+                    class="btn btn-outline-info btn-sm"
+                    x-show="hints.dataloader_dismissed"
+                    x-cloak
+                    @click="showHint('dataloader')"
+                    title="Show setup checklist">
+                <i class="fas fa-tasks"></i>
+            </button>
+
+            <!-- Validate button -->
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm"
+                    id="cloud-validate-btn"
+                    hx-post="/api/training/validate"
+                    hx-include="#trainer-form"
+                    hx-target="#validation-results"
+                    hx-swap="innerHTML"
+                    hx-indicator="#cloud-validate-spinner"
+                    title="Validate configuration">
+                <i class="fas fa-check me-1"></i>Validate
+                <span id="cloud-validate-spinner" class="htmx-indicator">
+                    <span class="spinner-border spinner-border-sm ms-1" role="status"></span>
+                </span>
+            </button>
+
+            <!-- Sync jobs -->
+            <button type="button"
+                    class="btn btn-outline-info btn-sm"
+                    @click="syncJobs()"
+                    :disabled="syncing || !isActiveProviderConfigured()"
+                    title="Discover jobs from Replicate">
+                <i class="fas fa-cloud-download-alt" :class="{ 'fa-spin': syncing }"></i>
+            </button>
+
+            <!-- Queue panel toggle -->
+            <button type="button"
+                    class="btn btn-sm position-relative"
+                    :class="showQueuePanel ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="toggleQueuePanel()"
+                    title="Job Queue">
+                <i class="fas fa-layer-group"></i>
+                <template x-if="queueStats.queue_depth > 0">
+                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-info"
+                          style="font-size: 0.6rem;">
+                        <span x-text="queueStats.queue_depth"></span>
+                    </span>
+                </template>
+            </button>
+
+            <!-- Refresh -->
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm"
+                    @click="loadJobs(); loadMetrics();"
+                    :disabled="jobsLoading"
+                    title="Refresh">
+                <i class="fas fa-sync" :class="{ 'fa-spin': jobsLoading }"></i>
+            </button>
+
+            <!-- Pending approvals badge (admin only) -->
+            <template x-if="pendingApprovals.count > 0">
+                <a href="/api/approvals/requests?pending_only=true"
+                   target="_blank"
+                   class="btn btn-outline-warning btn-sm position-relative"
+                   title="Pending approval requests">
+                    <i class="fas fa-user-clock"></i>
+                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark"
+                          style="font-size: 0.6rem;">
+                        <span x-text="pendingApprovals.count"></span>
+                    </span>
+                </a>
+            </template>
+
+            <!-- SSE Connection Status -->
+            <div class="sse-status-indicator"
+                 x-show="sseConnection"
+                 :title="'Real-time updates: ' + (sseConnection?.status || 'unknown') + (sseConnection?.message ? ' - ' + sseConnection.message : '')">
+                <span class="badge rounded-pill d-flex align-items-center gap-1"
+                      :class="{
+                          'bg-success': sseConnection?.status === 'connected',
+                          'bg-danger': sseConnection?.status === 'disconnected',
+                          'bg-warning text-dark': sseConnection?.status === 'reconnecting',
+                          'bg-info': sseConnection?.status === 'connecting',
+                          'bg-secondary': !sseConnection || !['connected', 'disconnected', 'reconnecting', 'connecting'].includes(sseConnection.status)
+                      }"
+                      style="font-size: 0.65rem; padding: 0.25rem 0.5rem;">
+                    <i class="fas" :class="sseStatusIcon" style="font-size: 0.6rem;"></i>
+                    <span class="d-none d-md-inline" x-text="sseConnection?.status === 'connected' ? 'Live' : (sseConnection?.status || 'unknown')"></span>
+                </span>
+            </div>
+
+            <!-- Settings dropdown -->
+            <div class="dropdown">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        data-bs-toggle="dropdown"
+                        aria-expanded="false"
+                        title="Settings">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                    <li>
+                        <button class="dropdown-item" type="button"
+                                @click="showSettingsPanel = !showSettingsPanel">
+                            <i class="fas fa-sliders-h me-2"></i>Configuration
+                        </button>
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="https://replicate.com/account/billing" target="_blank">
+                            <i class="fas fa-wallet me-2"></i>Billing
+                        </a>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <a class="dropdown-item doc-link" href="{{ docs_url('experimental/cloud/REPLICATE.md') }}" target="_blank">
+                            <i class="fas fa-book me-2"></i>Documentation
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.cloud-action-bar {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.cloud-submit-btn {
+    padding: 0.625rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.upload-progress-inline {
+    min-width: 120px;
+}
+
+.upload-progress-bar {
+    width: 80px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.upload-progress-text {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    min-width: 35px;
+}
+
+.submit-error-inline {
+    max-width: 300px;
+}
+
+.submit-error-inline span {
+    font-size: 0.75rem;
+}
+
+/* Mobile */
+@media (max-width: 767.98px) {
+    .cloud-action-bar {
+        padding: 0.75rem;
+    }
+
+    .cloud-submit-btn {
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+    }
+
+    .cloud-submit-btn span {
+        display: none;
+    }
+
+    .cloud-submit-btn i {
+        margin: 0 !important;
+    }
+
+    .upload-progress-inline {
+        display: none;
+    }
+}
+</style>

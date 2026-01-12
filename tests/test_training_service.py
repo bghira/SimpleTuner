@@ -5,10 +5,35 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Dict, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from simpletuner.simpletuner_sdk.server.services import training_service
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults
+
+
+class MockGPUAllocator:
+    """Mock GPU allocator that always allows allocation."""
+
+    async def can_allocate(
+        self,
+        required_count,
+        preferred_gpus=None,
+        any_gpu=False,
+        org_id=None,
+        for_approval=False,
+    ):
+        gpus = list(range(required_count))
+        return (True, gpus, "")
+
+    async def allocate(self, job_id, gpu_indices):
+        return True
+
+    async def release(self, job_id):
+        return True
+
+
+def _mock_get_gpu_allocator():
+    return MockGPUAllocator()
 
 
 class DummyValidation:
@@ -157,12 +182,11 @@ class TrainingServiceTests(unittest.TestCase):
 
     def test_validate_training_config_flags_constant_warmup(self) -> None:
         store = DummyStore(DummyValidation())
-        result = training_service.validate_training_config(
-            store,
-            {"--lr_scheduler": "constant", "--lr_warmup_steps": 12},
-        )
+        config = {"--lr_scheduler": "constant", "--lr_warmup_steps": 12}
+        result = training_service.validate_training_config(store, config)
 
-        self.assertTrue(any("Warmup steps" in error for error in result.errors))
+        self.assertFalse(any("Warmup steps" in error for error in result.errors))
+        self.assertEqual(config.get("--lr_scheduler"), "constant_with_warmup")
 
     def test_validate_training_config_checks_prompt_library_path(self) -> None:
         store = DummyStore(DummyValidation())
@@ -272,8 +296,17 @@ class TrainingServiceTests(unittest.TestCase):
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
+            # Mock get_authenticated_webhook_config to return DEFAULT_WEBHOOK_CONFIG
+            # (without auth_token) so the test compares against a predictable value
+            patch.object(
+                training_service, "get_authenticated_webhook_config", return_value=training_service.DEFAULT_WEBHOOK_CONFIG
+            ),
         ):
-            job_id = training_service.start_training_job({"--foo": "bar"})
+            result = training_service.start_training_job({"--foo": "bar"})
+            job_id = result.job_id
 
         self.assertEqual(job_id, captured["job_id"])
         self.assertIs(captured["func"], training_service.run_trainer_job)
@@ -301,8 +334,12 @@ class TrainingServiceTests(unittest.TestCase):
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
-            job_id = training_service.start_training_job(payload)
+            result = training_service.start_training_job(payload)
+            job_id = result.job_id
 
         self.assertEqual(job_id, captured["job_id"])
         self.assertEqual(captured["config"].get("accelerate_visible_devices"), [1])
@@ -319,10 +356,14 @@ class TrainingServiceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmpdir,
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
             source = Path(tmpdir) / "library.json"
             source.write_text(json.dumps({"prompt": "value"}), encoding="utf-8")
-            job_id = training_service.start_training_job({"--user_prompt_library": str(source)})
+            result = training_service.start_training_job({"--user_prompt_library": str(source)})
+            job_id = result.job_id
 
         runtime_path = Path(captured["config"]["--user_prompt_library"])
         self.assertEqual(job_id, captured["job_id"])
@@ -334,6 +375,9 @@ class TrainingServiceTests(unittest.TestCase):
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
             patch.object(training_service.process_keeper, "submit_job", side_effect=AssertionError("should not submit")),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
         ):
             with self.assertRaises(FileNotFoundError):
                 training_service.start_training_job({"--user_prompt_library": "/missing/library.json"})
@@ -443,16 +487,10 @@ class TrainingServiceTests(unittest.TestCase):
 
     def test_preserve_defaults_excludes_default_values(self) -> None:
         """
-        Regression test: preserve_defaults should exclude fields matching default values from saved configs.
+        Regression test: preserve_defaults should consistently exclude fields matching default
+        values from saved configs, regardless of whether they were in the original config.
 
-        Bug: The webUI frontend sends ALL fields in form submission (via appendConfigValuesToFormData),
-        including fields the user didn't touch. This made preserve_defaults ineffective because every
-        field looked "explicitly set" even though it was just carried forward from the saved config.
-
-        Fix: Compare form values with saved config values to detect actual changes. Only fields that
-        were actually modified should bypass preserve_defaults filtering.
-
-        Expected: Fields matching defaults should be excluded unless explicitly changed by user.
+        This ensures consistent behavior - if a value matches the default, it's always pruned.
         """
         # Set up field defaults that match what we'll put in stored_config
         field_defaults = {
@@ -463,8 +501,8 @@ class TrainingServiceTests(unittest.TestCase):
 
         # Simulate a saved config where some fields match their defaults
         stored_config = {
-            "learning_rate": 1e-4,  # Matches default
-            "model_family": "flux",  # Matches default
+            "learning_rate": 1e-4,  # Matches default - should be excluded
+            "model_family": "flux",  # Matches default - should be excluded
             "output_dir": "/custom/output",  # Different from default - should be saved
         }
 
@@ -475,11 +513,10 @@ class TrainingServiceTests(unittest.TestCase):
         )
 
         # Simulate the real webUI behavior: form submission contains ALL fields (unchanged ones too)
-        # This is what appendConfigValuesToFormData() does in production
         form_data = {
-            "--learning_rate": 1e-4,  # In form, but unchanged from saved config
-            "--model_family": "flux",  # In form, but unchanged from saved config
-            "--output_dir": "/custom/output",  # In form, unchanged from saved config
+            "--learning_rate": 1e-4,  # Matches default - should be excluded
+            "--model_family": "flux",  # Matches default - should be excluded
+            "--output_dir": "/custom/output",  # Non-default - should be preserved
         }
 
         # Build bundle with form containing all fields (like production)
@@ -490,15 +527,11 @@ class TrainingServiceTests(unittest.TestCase):
             field_defaults=field_defaults,
         )
 
-        # Fields matching defaults AND unchanged from saved config should NOT be in save_config
-        self.assertNotIn(
-            "learning_rate", bundle.save_config, "learning_rate matches default and wasn't changed, should be excluded"
-        )
-        self.assertNotIn(
-            "model_family", bundle.save_config, "model_family matches default and wasn't changed, should be excluded"
-        )
+        # Fields matching defaults should be excluded (consistent pruning)
+        self.assertNotIn("learning_rate", bundle.save_config, "learning_rate matches default, should be excluded")
+        self.assertNotIn("model_family", bundle.save_config, "model_family matches default, should be excluded")
 
-        # Field with non-default value SHOULD be in save_config (even if unchanged)
+        # Field with non-default value SHOULD be in save_config
         self.assertIn("output_dir", bundle.save_config, "output_dir differs from default and should be in save_config")
         self.assertEqual(bundle.save_config["output_dir"], "/custom/output")
 
@@ -507,12 +540,13 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertIn("--model_family", bundle.complete_config)
         self.assertIn("--output_dir", bundle.complete_config)
 
-    def test_preserve_defaults_saves_changed_fields_even_if_default(self) -> None:
+    def test_preserve_defaults_prunes_changed_fields_if_default(self) -> None:
         """
-        Test that fields explicitly changed to their default value ARE saved.
+        Test that fields changed to their default value are pruned for consistency.
 
         If a user changes a field FROM a non-default value TO the default value,
-        that's an explicit change and should be saved even with preserve_defaults=True.
+        the result matches the default, so it should be pruned. This ensures
+        consistent behavior: values matching defaults are always pruned.
         """
         field_defaults = {
             "--learning_rate": 1e-4,  # Default learning rate
@@ -528,7 +562,7 @@ class TrainingServiceTests(unittest.TestCase):
             auto_preserve_defaults=True,
         )
 
-        # User changes learning_rate back to default value
+        # User changes learning_rate to the default value
         form_data = {
             "--learning_rate": 1e-4,  # Changed from 5e-5 to 1e-4 (the default)
         }
@@ -540,13 +574,12 @@ class TrainingServiceTests(unittest.TestCase):
             field_defaults=field_defaults,
         )
 
-        # Should be saved because user explicitly changed it (even though it's now the default)
-        self.assertIn(
+        # Should be pruned because it now matches the default (consistent pruning)
+        self.assertNotIn(
             "learning_rate",
             bundle.save_config,
-            "learning_rate was explicitly changed and should be saved even though it matches default",
+            "learning_rate matches default and should be pruned (consistent behavior)",
         )
-        self.assertEqual(bundle.save_config["learning_rate"], 1e-4)
 
     def test_preserve_defaults_excludes_new_fields_with_default_values(self) -> None:
         """

@@ -1,0 +1,55 @@
+<!-- Quota Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': quotaFormOpen }" tabindex="-1"
+     x-show="quotaFormOpen" @keydown.escape="quotaFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingQuota ? 'Edit Quota' : 'Create Quota'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="quotaFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small">Quota Type</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="quotaForm.quota_type">
+                        <option value="COST_MONTHLY">Monthly Cost ($)</option>
+                        <option value="COST_DAILY">Daily Cost ($)</option>
+                        <option value="CONCURRENT_JOBS">Concurrent Jobs</option>
+                        <option value="JOBS_PER_DAY">Jobs per Day</option>
+                        <option value="JOBS_PER_HOUR">Jobs per Hour</option>
+                    </select>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <label class="form-label small">Target</label>
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="quotaForm.target_type">
+                            <option value="global">Global (all users)</option>
+                            <option value="level">Per Level</option>
+                            <option value="user">Per User</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Limit Value</label>
+                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model.number="quotaForm.limit_value" min="0">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Action When Exceeded</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="quotaForm.action">
+                        <option value="WARN">Warn (allow with warning)</option>
+                        <option value="BLOCK">Block (reject submission)</option>
+                        <option value="REQUIRE_APPROVAL">Require Approval</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="quotaFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveQuota()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingQuota ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="quotaFormOpen" @click="quotaFormOpen = false"></div>

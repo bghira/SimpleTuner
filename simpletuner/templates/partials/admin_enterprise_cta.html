@@ -1,0 +1,588 @@
+<!-- partials/admin_enterprise_cta.html - Enterprise feature onboarding with progressive disclosure -->
+
+<!-- Show CTA only when enterprise features need setup and user hasn't skipped -->
+<template x-if="shouldShowEnterpriseOnboarding()">
+    <div class="admin-enterprise-cta"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+
+        <!-- Step 1: Auth Provider Setup -->
+        <template x-if="!enterpriseOnboarding.auth_configured && !enterpriseOnboarding.auth_skipped">
+            <div class="enterprise-hero-content">
+                <div class="enterprise-hero-icon" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);">
+                    <i class="fas fa-shield-alt"></i>
+                </div>
+                <h2 class="enterprise-hero-title">Connect Your Identity Provider</h2>
+                <p class="enterprise-hero-description">
+                    Enable single sign-on with your existing identity system. Users will be auto-provisioned on first login.
+                </p>
+
+                <div class="enterprise-hero-features">
+                    <div class="hero-feature">
+                        <i class="fab fa-openid text-info"></i>
+                        <span>OIDC (Keycloak, Okta, Auth0)</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-sitemap text-warning"></i>
+                        <span>LDAP / Active Directory</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-users text-success"></i>
+                        <span>Auto-provision users</span>
+                    </div>
+                </div>
+
+                <!-- Provider Type Selection -->
+                <div class="enterprise-inline-form auth-provider-form" x-show="!quickAuthForm.provider_type">
+                    <div class="auth-type-selector">
+                        <button type="button"
+                                class="auth-type-btn"
+                                @click="quickAuthForm.provider_type = 'oidc'">
+                            <div class="auth-type-icon oidc">
+                                <i class="fab fa-openid"></i>
+                            </div>
+                            <div class="auth-type-info">
+                                <div class="auth-type-name">OpenID Connect</div>
+                                <div class="auth-type-desc">Keycloak, Okta, Auth0, Google</div>
+                            </div>
+                            <i class="fas fa-chevron-right ms-auto text-muted"></i>
+                        </button>
+                        <button type="button"
+                                class="auth-type-btn"
+                                @click="quickAuthForm.provider_type = 'ldap'">
+                            <div class="auth-type-icon ldap">
+                                <i class="fas fa-sitemap"></i>
+                            </div>
+                            <div class="auth-type-info">
+                                <div class="auth-type-name">LDAP / Active Directory</div>
+                                <div class="auth-type-desc">FreeIPA, OpenLDAP, AD</div>
+                            </div>
+                            <i class="fas fa-chevron-right ms-auto text-muted"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- OIDC Configuration Form -->
+                <div class="enterprise-inline-form auth-provider-form" x-show="quickAuthForm.provider_type === 'oidc'" x-transition>
+                    <div class="form-header">
+                        <button type="button" class="btn btn-sm btn-link text-muted p-0" @click="quickAuthForm.provider_type = ''">
+                            <i class="fas fa-arrow-left me-1"></i>Back
+                        </button>
+                        <span class="ms-2"><i class="fab fa-openid text-info me-2"></i>OIDC Configuration</span>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Provider Name</label>
+                        <input type="text"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               placeholder="e.g., Company SSO"
+                               x-model="quickAuthForm.name">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Issuer URL</label>
+                        <input type="url"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               placeholder="https://auth.example.com/realms/main"
+                               x-model="quickAuthForm.oidc.issuer_url">
+                        <div class="form-text text-muted small">The OpenID Connect discovery URL</div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Client ID</label>
+                            <input type="text"
+                                   class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   placeholder="simpletuner"
+                                   x-model="quickAuthForm.oidc.client_id">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Client Secret</label>
+                            <input type="password"
+                                   class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   placeholder="••••••••"
+                                   x-model="quickAuthForm.oidc.client_secret">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="oidcAutoProvision"
+                                   x-model="quickAuthForm.oidc.auto_provision">
+                            <label class="form-check-label small" for="oidcAutoProvision">
+                                Auto-provision users on first login
+                            </label>
+                        </div>
+                    </div>
+                    <button type="button"
+                            class="btn btn-success"
+                            :disabled="!quickAuthForm.name || !quickAuthForm.oidc.issuer_url || !quickAuthForm.oidc.client_id || quickAuthForm.saving"
+                            @click="saveQuickAuthProvider()">
+                        <template x-if="!quickAuthForm.saving">
+                            <span><i class="fas fa-plug me-2"></i>Connect OIDC Provider</span>
+                        </template>
+                        <template x-if="quickAuthForm.saving">
+                            <span><i class="fas fa-spinner fa-spin me-2"></i>Connecting...</span>
+                        </template>
+                    </button>
+                    <div class="text-danger small mt-2" x-show="quickAuthForm.error" x-text="quickAuthForm.error"></div>
+                </div>
+
+                <!-- LDAP Configuration Form -->
+                <div class="enterprise-inline-form auth-provider-form" x-show="quickAuthForm.provider_type === 'ldap'" x-transition>
+                    <div class="form-header">
+                        <button type="button" class="btn btn-sm btn-link text-muted p-0" @click="quickAuthForm.provider_type = ''">
+                            <i class="fas fa-arrow-left me-1"></i>Back
+                        </button>
+                        <span class="ms-2"><i class="fas fa-sitemap text-warning me-2"></i>LDAP Configuration</span>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Provider Name</label>
+                        <input type="text"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               placeholder="e.g., Company LDAP"
+                               x-model="quickAuthForm.name">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Server URL</label>
+                        <input type="url"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               placeholder="ldaps://ldap.example.com:636"
+                               x-model="quickAuthForm.ldap.server_url">
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Bind DN</label>
+                            <input type="text"
+                                   class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   placeholder="cn=admin,dc=example,dc=com"
+                                   x-model="quickAuthForm.ldap.bind_dn">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Bind Password</label>
+                            <input type="password"
+                                   class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   placeholder="••••••••"
+                                   x-model="quickAuthForm.ldap.bind_password">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Base DN</label>
+                        <input type="text"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               placeholder="ou=users,dc=example,dc=com"
+                               x-model="quickAuthForm.ldap.base_dn">
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="ldapAutoProvision"
+                                   x-model="quickAuthForm.ldap.auto_provision">
+                            <label class="form-check-label small" for="ldapAutoProvision">
+                                Auto-provision users on first login
+                            </label>
+                        </div>
+                    </div>
+                    <button type="button"
+                            class="btn btn-success"
+                            :disabled="!quickAuthForm.name || !quickAuthForm.ldap.server_url || !quickAuthForm.ldap.base_dn || quickAuthForm.saving"
+                            @click="saveQuickAuthProvider()">
+                        <template x-if="!quickAuthForm.saving">
+                            <span><i class="fas fa-plug me-2"></i>Connect LDAP Provider</span>
+                        </template>
+                        <template x-if="quickAuthForm.saving">
+                            <span><i class="fas fa-spinner fa-spin me-2"></i>Connecting...</span>
+                        </template>
+                    </button>
+                    <div class="text-danger small mt-2" x-show="quickAuthForm.error" x-text="quickAuthForm.error"></div>
+                </div>
+
+                <div class="enterprise-hero-footer">
+                    <a href="{{ docs_url('experimental/cloud/ENTERPRISE.md#authentication') }}"
+                       target="_blank"
+                       class="hero-link">
+                        <i class="fas fa-book me-1"></i>Authentication Guide
+                    </a>
+                </div>
+
+                <div class="enterprise-skip-step">
+                    <button type="button"
+                            class="btn btn-link btn-sm text-muted"
+                            @click="skipEnterpriseStep('auth')">
+                        <i class="fas fa-arrow-right me-1"></i>Skip - I'll use local accounts
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Step 2: Organization Setup -->
+        <template x-if="(enterpriseOnboarding.auth_configured || enterpriseOnboarding.auth_skipped) && !enterpriseOnboarding.org_created && !enterpriseOnboarding.org_skipped">
+            <div class="enterprise-hero-content">
+                <div class="enterprise-hero-icon" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    <i class="fas fa-building"></i>
+                </div>
+                <h2 class="enterprise-hero-title">Create Your Organization</h2>
+                <p class="enterprise-hero-description">
+                    Organizations group users together and set spending ceilings that no team member can exceed.
+                </p>
+
+                <div class="enterprise-hero-features">
+                    <div class="hero-feature">
+                        <i class="fas fa-users text-info"></i>
+                        <span>Group users together</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-shield-alt text-warning"></i>
+                        <span>Enforce spending limits</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-chart-line text-success"></i>
+                        <span>Track usage by org</span>
+                    </div>
+                </div>
+
+                <div class="enterprise-inline-form">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Organization Name</label>
+                        <input type="text"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="e.g., My Company"
+                               x-model="quickOrgForm.name"
+                               @input="quickOrgForm.slug = slugify(quickOrgForm.name)">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">URL Slug</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-dark text-muted border-secondary">/org/</span>
+                            <input type="text"
+                                   class="form-control bg-dark text-light border-secondary"
+                                   placeholder="my-company"
+                                   x-model="quickOrgForm.slug">
+                        </div>
+                    </div>
+                    <button type="button"
+                            class="btn btn-success"
+                            :disabled="!quickOrgForm.name || quickOrgForm.saving"
+                            @click="createQuickOrg()">
+                        <template x-if="!quickOrgForm.saving">
+                            <span><i class="fas fa-plus me-2"></i>Create Organization</span>
+                        </template>
+                        <template x-if="quickOrgForm.saving">
+                            <span><i class="fas fa-spinner fa-spin me-2"></i>Creating...</span>
+                        </template>
+                    </button>
+                    <div class="text-danger small mt-2" x-show="quickOrgForm.error" x-text="quickOrgForm.error"></div>
+                </div>
+
+                <div class="enterprise-hero-footer">
+                    <a href="{{ docs_url('experimental/cloud/ENTERPRISE.md#organizations') }}"
+                       target="_blank"
+                       class="hero-link">
+                        <i class="fas fa-book me-1"></i>Organizations Guide
+                    </a>
+                </div>
+
+                <div class="enterprise-skip-step">
+                    <button type="button"
+                            class="btn btn-link btn-sm text-muted"
+                            @click="skipEnterpriseStep('org')">
+                        <i class="fas fa-arrow-right me-1"></i>Skip - I don't need organizations
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Step 3: Team Setup -->
+        <template x-if="enterpriseOnboarding.org_created && !enterpriseOnboarding.team_created && !enterpriseOnboarding.team_skipped">
+            <div class="enterprise-hero-content">
+                <div class="enterprise-hero-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                    <i class="fas fa-users-cog"></i>
+                </div>
+                <h2 class="enterprise-hero-title">Create Your First Team</h2>
+                <p class="enterprise-hero-description">
+                    Teams are groups within your organization. Each team can have its own quota ceiling.
+                </p>
+
+                <div class="quota-inheritance-preview">
+                    <div class="inheritance-diagram">
+                        <div class="inheritance-level org-level">
+                            <i class="fas fa-building me-2"></i>
+                            <span x-text="enterpriseOnboarding.created_org_name || 'Organization'"></span>
+                            <span class="text-muted ms-2">← ceiling</span>
+                        </div>
+                        <div class="inheritance-arrow">
+                            <i class="fas fa-arrow-down"></i>
+                        </div>
+                        <div class="inheritance-level team-level highlight">
+                            <i class="fas fa-users me-2"></i>
+                            <span>Your Team</span>
+                            <span class="text-muted ms-2">← ceiling (≤ org)</span>
+                        </div>
+                        <div class="inheritance-arrow">
+                            <i class="fas fa-arrow-down"></i>
+                        </div>
+                        <div class="inheritance-level user-level">
+                            <i class="fas fa-user me-2"></i>
+                            <span>Users</span>
+                            <span class="text-muted ms-2">← effective = min(all)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="enterprise-inline-form">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Team Name</label>
+                        <input type="text"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="e.g., Research, Production"
+                               x-model="quickTeamForm.name"
+                               @input="quickTeamForm.slug = slugify(quickTeamForm.name)">
+                    </div>
+                    <button type="button"
+                            class="btn btn-success"
+                            :disabled="!quickTeamForm.name || quickTeamForm.saving"
+                            @click="createQuickTeam()">
+                        <template x-if="!quickTeamForm.saving">
+                            <span><i class="fas fa-plus me-2"></i>Create Team</span>
+                        </template>
+                        <template x-if="quickTeamForm.saving">
+                            <span><i class="fas fa-spinner fa-spin me-2"></i>Creating...</span>
+                        </template>
+                    </button>
+                    <div class="text-danger small mt-2" x-show="quickTeamForm.error" x-text="quickTeamForm.error"></div>
+                </div>
+
+                <div class="enterprise-hero-footer">
+                    <a href="{{ docs_url('experimental/cloud/ENTERPRISE.md#teams') }}"
+                       target="_blank"
+                       class="hero-link">
+                        <i class="fas fa-book me-1"></i>Teams Guide
+                    </a>
+                </div>
+
+                <div class="enterprise-skip-step">
+                    <button type="button"
+                            class="btn btn-link btn-sm text-muted"
+                            @click="skipEnterpriseStep('team')">
+                        <i class="fas fa-arrow-right me-1"></i>Skip - I'll create teams later
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Step 4: Quota Ceilings -->
+        <template x-if="enterpriseOnboarding.team_created && !enterpriseOnboarding.quotas_configured && !enterpriseOnboarding.quotas_skipped">
+            <div class="enterprise-hero-content">
+                <div class="enterprise-hero-icon" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+                    <i class="fas fa-tachometer-alt"></i>
+                </div>
+                <h2 class="enterprise-hero-title">Set Spending Limits</h2>
+                <p class="enterprise-hero-description">
+                    Organization quotas are <strong>ceilings</strong> - no team or user can exceed them, even if assigned higher limits.
+                </p>
+
+                <div class="quota-inheritance-explainer">
+                    <div class="explainer-box">
+                        <div class="explainer-title">
+                            <i class="fas fa-info-circle text-info me-2"></i>How Quota Ceilings Work
+                        </div>
+                        <div class="explainer-content">
+                            <div class="explainer-example">
+                                <div class="example-scenario">
+                                    <strong>Example:</strong> Org ceiling = $500/month
+                                </div>
+                                <div class="example-cases">
+                                    <div class="example-case">
+                                        <span class="case-input">User quota: $100</span>
+                                        <i class="fas fa-arrow-right mx-2 text-muted"></i>
+                                        <span class="case-result text-success">Effective: $100</span>
+                                    </div>
+                                    <div class="example-case">
+                                        <span class="case-input">User quota: $800</span>
+                                        <i class="fas fa-arrow-right mx-2 text-muted"></i>
+                                        <span class="case-result text-warning">Effective: $500 <small>(capped by org)</small></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="enterprise-inline-form quota-form">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Monthly Spending Ceiling for Organization</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-dark text-muted border-secondary">$</span>
+                            <input type="number"
+                                   class="form-control bg-dark text-light border-secondary"
+                                   placeholder="e.g., 1000"
+                                   min="0"
+                                   step="100"
+                                   x-model.number="quickQuotaForm.monthly_ceiling">
+                            <span class="input-group-text bg-dark text-muted border-secondary">/ month</span>
+                        </div>
+                        <div class="form-text text-muted small">Leave empty for no limit</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Max Concurrent Jobs</label>
+                        <input type="number"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="e.g., 10"
+                               min="1"
+                               x-model.number="quickQuotaForm.concurrent_jobs">
+                    </div>
+                    <button type="button"
+                            class="btn btn-success"
+                            :disabled="quickQuotaForm.saving"
+                            @click="saveQuickQuotas()">
+                        <template x-if="!quickQuotaForm.saving">
+                            <span><i class="fas fa-check me-2"></i>Save & Continue</span>
+                        </template>
+                        <template x-if="quickQuotaForm.saving">
+                            <span><i class="fas fa-spinner fa-spin me-2"></i>Saving...</span>
+                        </template>
+                    </button>
+                    <div class="text-danger small mt-2" x-show="quickQuotaForm.error" x-text="quickQuotaForm.error"></div>
+                </div>
+
+                <div class="enterprise-hero-footer">
+                    <a href="{{ docs_url('experimental/cloud/IDEMPOTENCY_AND_QUOTAS.md') }}"
+                       target="_blank"
+                       class="hero-link">
+                        <i class="fas fa-book me-1"></i>Quotas Documentation
+                    </a>
+                </div>
+
+                <div class="enterprise-skip-step">
+                    <button type="button"
+                            class="btn btn-link btn-sm text-muted"
+                            @click="skipEnterpriseStep('quotas')">
+                        <i class="fas fa-arrow-right me-1"></i>Skip - I'll configure quotas later
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Step 5: Credential Security -->
+        <template x-if="(enterpriseOnboarding.quotas_configured || enterpriseOnboarding.quotas_skipped) && !enterpriseOnboarding.credentials_configured && !enterpriseOnboarding.credentials_skipped">
+            <div class="enterprise-hero-content">
+                <div class="enterprise-hero-icon" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
+                    <i class="fas fa-key"></i>
+                </div>
+                <h2 class="enterprise-hero-title">Credential Security</h2>
+                <p class="enterprise-hero-description">
+                    Configure credential rotation policies to keep API keys fresh and reduce security risk.
+                </p>
+
+                <div class="enterprise-hero-features">
+                    <div class="hero-feature">
+                        <i class="fas fa-clock text-warning"></i>
+                        <span>Rotation reminders</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-bell text-info"></i>
+                        <span>Expiry warnings</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-shield-alt text-success"></i>
+                        <span>Proactive security</span>
+                    </div>
+                </div>
+
+                <!-- Security Trade-off Warning -->
+                <div class="credential-security-warning">
+                    <div class="warning-box">
+                        <div class="warning-title">
+                            <i class="fas fa-info-circle text-info me-2"></i>Security vs. Convenience
+                        </div>
+                        <div class="warning-content">
+                            <p class="mb-2">
+                                <strong>Enabling rotation monitoring</strong> helps you identify stale credentials before they become a security risk.
+                            </p>
+                            <p class="mb-0 text-muted small">
+                                <i class="fas fa-lightbulb text-warning me-1"></i>
+                                Skipping this won't break anything, but credentials may remain active indefinitely.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="enterprise-inline-form credential-form">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Credential Rotation Threshold</label>
+                        <div class="input-group">
+                            <input type="number"
+                                   class="form-control bg-dark text-light border-secondary"
+                                   placeholder="90"
+                                   min="30"
+                                   max="365"
+                                   x-model.number="quickCredentialForm.threshold_days">
+                            <span class="input-group-text bg-dark text-muted border-secondary">days</span>
+                        </div>
+                        <div class="form-text text-muted small">Credentials older than this are flagged as "stale"</div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   id="earlyWarningEnabled"
+                                   x-model="quickCredentialForm.early_warning_enabled">
+                            <label class="form-check-label small" for="earlyWarningEnabled">
+                                Enable early warning (highlight credentials approaching expiry)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="mb-3" x-show="quickCredentialForm.early_warning_enabled" x-transition>
+                        <label class="form-label small text-muted">Early Warning at</label>
+                        <div class="input-group">
+                            <input type="number"
+                                   class="form-control bg-dark text-light border-secondary"
+                                   placeholder="75"
+                                   min="50"
+                                   max="95"
+                                   x-model.number="quickCredentialForm.early_warning_percent">
+                            <span class="input-group-text bg-dark text-muted border-secondary">% of threshold</span>
+                        </div>
+                        <div class="form-text text-muted small">
+                            At <span x-text="Math.round((quickCredentialForm.threshold_days || 90) * (quickCredentialForm.early_warning_percent || 75) / 100)"></span> days, credentials will show a warning
+                        </div>
+                    </div>
+                    <button type="button"
+                            class="btn btn-success"
+                            :disabled="quickCredentialForm.saving"
+                            @click="saveQuickCredentialSettings()">
+                        <template x-if="!quickCredentialForm.saving">
+                            <span><i class="fas fa-check me-2"></i>Enable Rotation Monitoring</span>
+                        </template>
+                        <template x-if="quickCredentialForm.saving">
+                            <span><i class="fas fa-spinner fa-spin me-2"></i>Saving...</span>
+                        </template>
+                    </button>
+                    <div class="text-danger small mt-2" x-show="quickCredentialForm.error" x-text="quickCredentialForm.error"></div>
+                </div>
+
+                <div class="enterprise-hero-footer">
+                    <a href="{{ docs_url('experimental/cloud/ENTERPRISE.md#credential-management') }}"
+                       target="_blank"
+                       class="hero-link">
+                        <i class="fas fa-book me-1"></i>Credential Management Guide
+                    </a>
+                </div>
+
+                <div class="enterprise-skip-step">
+                    <button type="button"
+                            class="btn btn-link btn-sm text-muted"
+                            @click="skipEnterpriseStep('credentials')">
+                        <i class="fas fa-arrow-right me-1"></i>Skip - I accept the security trade-off
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Full Skip Option (always visible at bottom) -->
+        <div class="enterprise-full-skip">
+            <button type="button"
+                    class="btn btn-link btn-sm text-muted"
+                    @click="skipEnterpriseOnboarding()">
+                Skip all enterprise setup
+            </button>
+        </div>
+    </div>
+</template>
+<!-- Styles moved to static/css/admin.css -->

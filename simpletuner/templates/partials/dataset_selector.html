@@ -102,11 +102,6 @@
             const config = trainerStore.configValues || {};
             const path = config.data_backend_config || config['--data_backend_config'] || '';
             currentEnv = trainerStore.selectedEnvironment || '';
-            const badge = document.getElementById('current-env-badge');
-            if (badge) {
-                badge.textContent = currentEnv || 'none';
-            }
-
             if (path) {
                 const matchingConfig = allConfigs.find(c => c.path === path);
                 if (matchingConfig && window.__setDatasetSelection) {

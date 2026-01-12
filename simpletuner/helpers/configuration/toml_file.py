@@ -37,8 +37,7 @@ def load_toml_config():
             config = toml.load(file)
             logger.info(f"[CONFIG.TOML] Loaded configuration from {config_toml_path}")
         except toml.TomlDecodeError as e:
-            logger.error(f"Failed to parse TOML file {config_toml_path}: {e}")
-            config = {}
+            raise ValueError(f"Failed to parse TOML file {config_toml_path}: {e}")
 
     cli_args = mapping_to_cli_args(config)
     logger.info(f"[CONFIG] Loaded and normalized TOML configuration: {cli_args}")

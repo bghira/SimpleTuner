@@ -475,7 +475,27 @@ class ParquetMetadataBackend(MetadataBackend):
                     num_frames_val = database_row.get(self.num_frames_column, None)
                     if num_frames_val is not None:
                         num_frames_val = self._get_first_value(num_frames_val)
+                        original_num_frames = num_frames_val
                         image_metadata["num_frames"] = num_frames_val
+
+                        # Adjust frames to satisfy model constraints
+                        from simpletuner.helpers.models import ModelRegistry
+                        from simpletuner.helpers.training.state_tracker import StateTracker
+
+                        model_family = StateTracker.get_model_family()
+                        if model_family and model_family in ModelRegistry.model_families():
+                            model_class = ModelRegistry.model_families()[model_family]
+                            if hasattr(model_class, "adjust_video_frames"):
+                                adjusted_frames = model_class.adjust_video_frames(original_num_frames)
+                                if adjusted_frames != original_num_frames:
+                                    logger.info(
+                                        f"(id={self.id}) Adjusted video {image_path_str} from {original_num_frames} to "
+                                        f"{adjusted_frames} frames (parquet metadata)"
+                                    )
+                                    image_metadata["num_frames"] = adjusted_frames
+                                    image_metadata["original_num_frames"] = original_num_frames
+                                    num_frames_val = adjusted_frames
+
                         # check frame count constraints
                         if self.minimum_num_frames and num_frames_val < self.minimum_num_frames:
                             statistics.setdefault("skipped", {}).setdefault("too_small", 0)

@@ -286,7 +286,7 @@ class ExampleConfigsServiceTests(unittest.TestCase):
         dataloader_file = self.examples_root / "multidatabackend-demo.json"
         dataloader_file.write_text(json.dumps(dataloader_payload), encoding="utf-8")
 
-        example_dir = self.examples_root / "demo-example"
+        example_dir = self.examples_root / "demo.example"
         example_dir.mkdir(parents=True, exist_ok=True)
         config_payload = {
             "--model_family": "demo",

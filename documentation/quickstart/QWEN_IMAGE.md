@@ -46,10 +46,10 @@ apt -y install nvidia-cuda-toolkit
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
-For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+For manual installation or development setup, see the [installation documentation](../INSTALL.md).
 
 ### Setting up the environment
 
@@ -158,7 +158,7 @@ Your config.json will look something like this for a minimal setup:
 ```
 </details>
 
-> ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+> ℹ️ Multi-GPU users can reference [this document](../OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 > ⚠️ **Critical for 24GB GPUs**: The text encoder alone uses ~16GB VRAM. With `int2-quanto` or `nf4-bnb` quantization, this can be reduced significantly.
 
@@ -166,7 +166,7 @@ For a quick sanity check with a known working configuration:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train example=qwen_image.peft-lora
 ```
 
@@ -188,7 +188,7 @@ ENV=examples/qwen_image.peft-lora ./train.sh
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -231,11 +231,11 @@ A set of diverse prompts will help determine whether the model is learning prope
 
 #### CLIP score tracking
 
-If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+If you wish to enable evaluations to score the model's performance, see [this document](../evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
 #### Stable evaluation loss
 
-If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+If you wish to use stable MSE loss to score the model's performance, see [this document](../evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 #### Validation previews
 
@@ -381,7 +381,7 @@ From the SimpleTuner directory, one simply has to run:
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
+For more information, see the [dataloader](../DATALOADER.md) and [tutorial](../TUTORIAL.md) documents.
 
 ### Memory optimization tips
 

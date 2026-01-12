@@ -1,0 +1,123 @@
+<!-- Admin - Registration Settings Tab -->
+<div x-show="activeTab === 'registration'" x-transition>
+    <!-- Registration Hint -->
+    <div class="admin-hint admin-hint-inline" x-show="hints.registration" x-transition>
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="small">
+                <div class="d-flex align-items-start mb-2">
+                    <i class="fas fa-lightbulb text-warning me-2 mt-1"></i>
+                    <strong>Public Registration Settings</strong>
+                </div>
+                <p class="mb-2">
+                    Control whether new users can create accounts themselves. When disabled, only administrators
+                    can create user accounts manually. When enabled, anyone can register via the login page.
+                </p>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <strong>Recommended:</strong>
+                        <ul class="mb-0 ps-3 mt-1">
+                            <li>Keep disabled for private/internal deployments</li>
+                            <li>Configure email before enabling (for password reset)</li>
+                            <li>Set appropriate default permission level</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Admin User Creation:</strong>
+                        <ul class="mb-0 ps-3 mt-1">
+                            <li>Admins can always create users manually</li>
+                            <li>Use the "Add User" button in the Users tab</li>
+                            <li>Assign specific levels and permissions</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('registration')"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+    <!-- Registration Settings Card -->
+    <div class="card bg-dark border-secondary m-3">
+        <div class="card-header border-secondary py-2">
+            <h6 class="mb-0"><i class="fas fa-user-plus me-2"></i>Public Registration</h6>
+        </div>
+        <div class="card-body">
+            <!-- Loading state -->
+            <div class="text-center py-3" x-show="registrationLoading">
+                <i class="fas fa-spinner fa-spin me-2"></i>Loading settings...
+            </div>
+
+            <div x-show="!registrationLoading">
+                <!-- Email Warning -->
+                <div class="alert alert-warning py-2 small mb-3" x-show="registrationSettings.email_required_warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <span x-text="registrationSettings.email_required_warning"></span>
+                    <a href="#" @click.prevent="activeTab = 'notifications'" class="alert-link ms-1">Configure email</a>
+                </div>
+
+                <!-- Main Toggle -->
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="form-check form-switch mb-3">
+                            <input type="checkbox" class="form-check-input" id="registrationEnabled"
+                                   x-model="registrationSettings.enabled"
+                                   @change="saveRegistrationSettings()">
+                            <label class="form-check-label" for="registrationEnabled">
+                                <strong>Enable Public Registration</strong>
+                            </label>
+                        </div>
+                        <p class="small text-muted mb-0">
+                            <template x-if="registrationSettings.enabled">
+                                <span class="text-success">
+                                    <i class="fas fa-check-circle me-1"></i>
+                                    Anyone can create an account via the login page
+                                </span>
+                            </template>
+                            <template x-if="!registrationSettings.enabled">
+                                <span class="text-warning">
+                                    <i class="fas fa-lock me-1"></i>
+                                    Only administrators can create user accounts
+                                </span>
+                            </template>
+                        </p>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label small">Default Permission Level</label>
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                x-model="registrationSettings.default_level"
+                                @change="saveRegistrationSettings()"
+                                :disabled="!registrationSettings.enabled">
+                            <template x-for="level in levels" :key="level.name">
+                                <option :value="level.name" x-text="level.name"></option>
+                            </template>
+                        </select>
+                        <div class="form-text text-muted small">
+                            New users will be assigned this level automatically
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Info -->
+                <div class="mt-4 pt-3 border-top border-secondary">
+                    <div class="row g-3 small">
+                        <div class="col-md-4">
+                            <span class="text-muted">Email System:</span>
+                            <span class="ms-2" :class="registrationSettings.email_configured ? 'text-success' : 'text-warning'">
+                                <i class="fas" :class="registrationSettings.email_configured ? 'fa-check-circle' : 'fa-exclamation-circle'"></i>
+                                <span x-text="registrationSettings.email_configured ? 'Configured' : 'Not configured'"></span>
+                            </span>
+                        </div>
+                        <div class="col-md-4">
+                            <span class="text-muted">Registration Endpoint:</span>
+                            <code class="ms-2">POST /api/auth/register</code>
+                        </div>
+                        <div class="col-md-4">
+                            <span class="text-muted">Status Check:</span>
+                            <code class="ms-2">GET /api/auth/setup/status</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

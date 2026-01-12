@@ -1,0 +1,185 @@
+<!-- partials/cloud_first_run_setup.html - First-run admin bootstrap wizard -->
+<!-- Note: This template is designed for the Cloud tab context. For app-wide setup, see trainer_htmx.html -->
+<div class="cloud-first-run-setup"
+     x-show="setupState?.needsSetup && !setupState?.loading"
+     x-cloak>
+    <div class="hero-cta hero-cta--welcome mx-auto" style="max-width: 600px;">
+        <div class="hero-content">
+            <!-- Welcome Icon -->
+            <div class="hero-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <i class="fas fa-cog fa-spin-slow"></i>
+            </div>
+
+            <!-- Title & Description -->
+            <h2 class="hero-title">Welcome to SimpleTuner</h2>
+            <p class="hero-description">
+                You're moments away from training your first model. Let's set up your administrator account
+                so you can manage training jobs, configure cloud providers, and control access.
+            </p>
+
+            <!-- What you can do -->
+            <div class="hero-features">
+                <div class="hero-feature">
+                    <i class="fas fa-brain text-info"></i>
+                    <span>Train LoRA & full fine-tunes</span>
+                </div>
+                <div class="hero-feature">
+                    <i class="fas fa-cloud text-primary"></i>
+                    <span>Local or cloud training</span>
+                </div>
+                <div class="hero-feature">
+                    <i class="fas fa-users-cog text-warning"></i>
+                    <span>Multi-user access control</span>
+                </div>
+            </div>
+
+            <!-- Setup Form -->
+            <div class="hero-steps">
+                <div class="setup-step setup-step--form">
+                    <div class="step-number"><i class="fas fa-user-shield"></i></div>
+                    <div class="step-content">
+                        <h6>Create Your Admin Account</h6>
+                        <p class="small text-muted mb-3">
+                            This will be your primary account with full administrative privileges.
+                            You can add more users later.
+                        </p>
+
+                        <form @submit.prevent="submitFirstRunSetup()">
+                            <div class="row g-2">
+                                <!-- Email -->
+                                <div class="col-12">
+                                    <div class="form-floating">
+                                        <input type="email"
+                                               id="setup-email"
+                                               class="form-control"
+                                               x-model="setupState.form.email"
+                                               placeholder=" "
+                                               required
+                                               :disabled="setupState.submitting">
+                                        <label for="setup-email">Email Address</label>
+                                    </div>
+                                </div>
+
+                                <!-- Username -->
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <input type="text"
+                                               id="setup-username"
+                                               class="form-control"
+                                               x-model="setupState.form.username"
+                                               placeholder=" "
+                                               pattern="^[a-zA-Z0-9_\-]+$"
+                                               minlength="3"
+                                               maxlength="50"
+                                               required
+                                               :disabled="setupState.submitting">
+                                        <label for="setup-username">Username</label>
+                                    </div>
+                                </div>
+
+                                <!-- Display Name -->
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <input type="text"
+                                               id="setup-display-name"
+                                               class="form-control"
+                                               x-model="setupState.form.displayName"
+                                               placeholder=" "
+                                               :disabled="setupState.submitting">
+                                        <label for="setup-display-name">Display Name (optional)</label>
+                                    </div>
+                                </div>
+
+                                <!-- Password -->
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <input :type="setupState.showPassword ? 'text' : 'password'"
+                                               id="setup-password"
+                                               class="form-control"
+                                               x-model="setupState.form.password"
+                                               placeholder=" "
+                                               minlength="8"
+                                               required
+                                               :disabled="setupState.submitting">
+                                        <label for="setup-password">Password</label>
+                                    </div>
+                                </div>
+
+                                <!-- Confirm Password -->
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <input :type="setupState.showPassword ? 'text' : 'password'"
+                                               id="setup-confirm-password"
+                                               class="form-control"
+                                               x-model="setupState.form.confirmPassword"
+                                               placeholder=" "
+                                               minlength="8"
+                                               required
+                                               :disabled="setupState.submitting"
+                                               :class="{ 'is-invalid': setupState.form.confirmPassword && setupState.form.password !== setupState.form.confirmPassword }">
+                                        <label for="setup-confirm-password">Confirm Password</label>
+                                    </div>
+                                </div>
+
+                                <!-- Show password toggle -->
+                                <div class="col-12">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="setup-show-password"
+                                               @change="setupState.showPassword = $event.target.checked">
+                                        <label class="form-check-label small" for="setup-show-password">
+                                            Show passwords
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Error Message -->
+                            <template x-if="setupState.error">
+                                <div class="alert alert-danger py-2 small mt-3 mb-0">
+                                    <i class="fas fa-exclamation-circle me-1"></i>
+                                    <span x-text="setupState.error"></span>
+                                </div>
+                            </template>
+
+                            <!-- Submit Button -->
+                            <button type="submit"
+                                    class="btn btn-primary btn-lg w-100 mt-3"
+                                    :disabled="setupState.submitting || !setupFormValid">
+                                <template x-if="setupState.submitting">
+                                    <span>
+                                        <i class="fas fa-spinner fa-spin me-2"></i>
+                                        Creating Account...
+                                    </span>
+                                </template>
+                                <template x-if="!setupState.submitting">
+                                    <span>
+                                        <i class="fas fa-rocket me-2"></i>
+                                        Get Started
+                                    </span>
+                                </template>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer links -->
+            <div class="hero-footer">
+                <a href="https://github.com/bghira/SimpleTuner"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="hero-link">
+                    <i class="fab fa-github me-1"></i>GitHub
+                </a>
+                <span class="hero-link-separator">|</span>
+                <a href="{{ docs_url('') }}"
+                   target="_blank"
+                   class="hero-link doc-link">
+                    <i class="fas fa-book me-1"></i>Documentation
+                </a>
+            </div>
+        </div>
+    </div>
+</div>

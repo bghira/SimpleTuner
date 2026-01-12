@@ -8,6 +8,7 @@ import logging
 import marshal
 import os
 import pickle
+import re
 import signal
 import subprocess
 import sys
@@ -653,6 +654,26 @@ logger.info("Subprocess exiting")
 
             time.sleep(interval)
 
+    @staticmethod
+    def _format_signal_message(signal_num: int, signal_name: Optional[str] = None) -> str:
+        if signal_name is None:
+            try:
+                signal_name = signal.Signals(signal_num).name
+            except ValueError:
+                signal_name = None
+
+        sigkill_value = getattr(signal, "SIGKILL", None)
+        if signal_name == "SIGKILL" or (sigkill_value is not None and signal_num == sigkill_value):
+            return "Training subprocess was killed by SIGKILL (likely out of system memory or critical system condition)."
+        if signal_name:
+            return f"Training subprocess was killed by {signal_name} (signal {signal_num})."
+        return f"Training subprocess was killed by signal {signal_num}."
+
+    def _format_signal_exit_message(self, exit_code: Optional[int]) -> Optional[str]:
+        if exit_code is None or exit_code >= 0:
+            return None
+        return self._format_signal_message(-exit_code)
+
     def _emit_fallback_error_if_needed(self) -> None:
         if self._relayed_failure:
             return
@@ -663,7 +684,7 @@ logger.info("Subprocess exiting")
 
         synthesized = self._extract_error_from_logs(exit_code)
         if synthesized is None:
-            message = f"Training failed with exit code {exit_code}."
+            message = self._format_signal_exit_message(exit_code) or f"Training failed with exit code {exit_code}."
             synthesized = {"message": message, "exit_code": exit_code, "source": "process"}
         else:
             synthesized.setdefault("exit_code", exit_code)
@@ -698,6 +719,7 @@ logger.info("Subprocess exiting")
         tail_lines = [line.rstrip("\n") for line in lines[-200:]]
         meaningful_lines = [line.strip() for line in tail_lines if line.strip()]
 
+        signal_message = self._format_signal_exit_message(exit_code)
         preferred_message: Optional[str] = None
         for line in reversed(tail_lines):
             lowered = line.lower().strip()
@@ -707,9 +729,19 @@ logger.info("Subprocess exiting")
             if "childfailederror" in lowered:
                 preferred_message = line.strip()
                 break
+            if "died with <signals." in lowered:
+                match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", line)
+                if match:
+                    signal_name = match.group(1)
+                    signal_num = int(match.group(2))
+                    preferred_message = self._format_signal_message(signal_num, signal_name)
+                    break
             if "nccl" in lowered and "warning" in lowered:
                 # Skip NCCL warnings as final result unless nothing better is found
                 preferred_message = preferred_message or line.strip()
+
+        if not preferred_message and signal_message:
+            preferred_message = signal_message
 
         if not preferred_message and meaningful_lines:
             preferred_message = meaningful_lines[-1]
@@ -980,6 +1012,8 @@ logger.info("Subprocess exiting")
 
         if first_failure:
             self._update_training_state_from_subprocess(status="error")
+            # Release GPUs when job fails
+            self._release_gpus()
         self._dispatch_callback_event(payload)
         self._dispatch_training_status_event(status="failed", data=payload_data, message=message)
 
@@ -1000,6 +1034,8 @@ logger.info("Subprocess exiting")
         }
 
         self._update_training_state_from_subprocess(status="completed")
+        # Release GPUs when job completes
+        self._release_gpus()
         self._dispatch_callback_event(payload)
         self._dispatch_training_status_event(status="completed", data=data, message=payload["message"])
 
@@ -1019,7 +1055,54 @@ logger.info("Subprocess exiting")
         }
 
         self._update_training_state_from_subprocess(status="cancelled")
+        # Release GPUs when job is cancelled, but don't process pending jobs.
+        # This prevents starting new jobs during bulk cancellation operations.
+        self._release_gpus(process_pending=False)
         self._dispatch_callback_event(payload)
+
+    def _release_gpus(self, *, process_pending: bool = True) -> None:
+        """Release GPUs allocated to this job.
+
+        Args:
+            process_pending: If True, process pending jobs after release.
+                Set to False during cancellation to avoid starting jobs
+                that may also be about to be cancelled.
+        """
+        try:
+            import asyncio
+
+            from simpletuner.simpletuner_sdk.server.services.local_gpu_allocator import get_gpu_allocator
+
+            def _do_release():
+                async def _async_release():
+                    allocator = get_gpu_allocator()
+                    await allocator.release(self.job_id)
+                    if process_pending:
+                        # Process pending jobs to start the next one if GPUs are available
+                        started = await allocator.process_pending_jobs()
+                        if started:
+                            logger.info(
+                                "Started %d pending job(s) after GPU release from job %s",
+                                len(started),
+                                self.job_id,
+                            )
+
+                try:
+                    loop = asyncio.get_running_loop()
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        pool.submit(lambda: asyncio.run(_async_release()))
+                except RuntimeError:
+                    asyncio.run(_async_release())
+
+            _do_release()
+        except Exception:
+            logger.debug(
+                "Failed to release GPUs for job %s (may be normal for non-GPU jobs)",
+                self.job_id,
+                exc_info=True,
+            )
 
     def _update_training_state_from_subprocess(self, *, status: str) -> None:
         normalized = status.strip().lower()
@@ -1316,6 +1399,24 @@ def get_process_status(job_id: str) -> str:
                 entry["status"] = process.status
 
         return process.status
+
+
+def get_process_pid(job_id: str) -> Optional[int]:
+    """Get the PID of a running job's subprocess.
+
+    Args:
+        job_id: The job ID to look up
+
+    Returns:
+        The process ID if found, None otherwise
+    """
+    with lock:
+        entry = process_registry.get(job_id)
+        if entry and entry.get("process"):
+            proc = entry["process"].process
+            if proc:
+                return proc.pid
+    return None
 
 
 def terminate_process(job_id: str) -> bool:

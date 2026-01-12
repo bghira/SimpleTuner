@@ -100,6 +100,13 @@ class EventHandler {
     }
 
     async init() {
+        // Wait for auth before making any API calls
+        const canProceed = await window.waitForAuthReady();
+        if (!canProceed) {
+            // User needs to login - skip API-dependent initialization
+            return;
+        }
+
         // Wait for server configuration to be ready
         await window.ServerConfig.waitForReady();
 

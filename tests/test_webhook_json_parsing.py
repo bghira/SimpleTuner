@@ -26,7 +26,7 @@ class TestWebhookJSONParsing(unittest.TestCase):
 
         # Create minimal args list with webhook_config
         args_list = [
-            "--model_family=pixart_sigma",
+            "--model_family=pixart",
             "--output_dir=/tmp/output",
             "--model_type=lora",
             "--optimizer=adamw_bf16",
@@ -59,7 +59,7 @@ class TestWebhookJSONParsing(unittest.TestCase):
         )
 
         args_list = [
-            "--model_family=pixart_sigma",
+            "--model_family=pixart",
             "--output_dir=/tmp/output",
             "--model_type=lora",
             "--optimizer=adamw_bf16",
@@ -85,7 +85,7 @@ class TestWebhookJSONParsing(unittest.TestCase):
         )
 
         args_list = [
-            "--model_family=pixart_sigma",
+            "--model_family=pixart",
             "--output_dir=/tmp/output",
             "--model_type=lora",
             "--optimizer=adamw_bf16",
@@ -120,7 +120,7 @@ class TestWebhookJSONParsing(unittest.TestCase):
         )
 
         args_list = [
-            "--model_family=pixart_sigma",
+            "--model_family=pixart",
             "--output_dir=/tmp/output",
             "--model_type=lora",
             "--optimizer=adamw_bf16",
@@ -152,7 +152,7 @@ class TestWebhookJSONParsing(unittest.TestCase):
         )
 
         args_list = [
-            "--model_family=pixart_sigma",
+            "--model_family=pixart",
             "--output_dir=/tmp/output",
             "--model_type=lora",
             "--optimizer=adamw_bf16",

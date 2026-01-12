@@ -1,5 +1,6 @@
 import logging
 import os
+from functools import partial
 from typing import Any, Callable, Mapping, Optional
 
 import torch
@@ -13,7 +14,16 @@ if should_log():
 else:
     logger.setLevel(logging.ERROR)
 
-PIPELINE_QUANTIZATION_PRESETS = {"nf4-bnb", "int4-torchao"}
+PIPELINE_ONLY_PRESETS = {"nf4-bnb", "int4-torchao"}
+PIPELINE_QUANTIZATION_PRESETS = PIPELINE_ONLY_PRESETS | {
+    "int8-torchao",
+    "fp8-torchao",
+    "int8-quanto",
+    "int4-quanto",
+    "int2-quanto",
+    "fp8-quanto",
+    "fp8uz-quanto",
+}
 MANUAL_QUANTO_PRESETS = {"int2-quanto", "int4-quanto", "int8-quanto", "fp8-quanto", "fp8uz-quanto"}
 MANUAL_TORCHAO_PRESETS = {"int8-torchao", "fp8-torchao"}
 MANUAL_SDNQ_PRESETS = {
@@ -40,12 +50,29 @@ def _normalize_dtype(weight_dtype: Any):
     return weight_dtype
 
 
-def _bnb_nf4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = None):
+def _get_bnb_config_cls(component_type: str):
+    if component_type == "transformers":
+        try:
+            from transformers import BitsAndBytesConfig
+        except ImportError as exc:
+            raise ImportError(
+                "Pipeline BitsAndBytes quantization for text encoders requires transformers with BitsAndBytesConfig."
+            ) from exc
+        return BitsAndBytesConfig
     try:
         from diffusers import BitsAndBytesConfig
     except ImportError as exc:
+        raise ImportError("Pipeline BitsAndBytes quantization requires diffusers with BitsAndBytesConfig support.") from exc
+    return BitsAndBytesConfig
+
+
+def _bnb_nf4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = None, component_type: str = "diffusers"):
+    try:
+        bitsandbytes_cls = _get_bnb_config_cls(component_type)
+    except ImportError as exc:
         raise ImportError(
-            "nf4-bnb quantization requires diffusers[torch] with BitsAndBytes support. Please install diffusers and bitsandbytes."
+            "nf4-bnb quantization requires diffusers[torch] with BitsAndBytes support. "
+            "Please install diffusers and bitsandbytes."
         ) from exc
 
     kwargs = {
@@ -57,7 +84,7 @@ def _bnb_nf4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = 
     if isinstance(overrides, Mapping):
         kwargs.update(overrides)
     try:
-        return BitsAndBytesConfig(**kwargs)
+        return bitsandbytes_cls(**kwargs)
     except Exception as exc:
         # BitsAndBytesConfig.post_init() checks for bitsandbytes package metadata,
         # which raises PackageNotFoundError if bitsandbytes is not installed.
@@ -69,33 +96,136 @@ def _bnb_nf4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = 
         raise
 
 
-def _torchao_int4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = None):
+def _get_torchao_config_cls(component_type: str):
+    if component_type == "transformers":
+        try:
+            from transformers import TorchAoConfig
+        except ImportError as exc:
+            raise ImportError(
+                "Pipeline TorchAO quantization for text encoders requires transformers with TorchAoConfig."
+            ) from exc
+        return TorchAoConfig
     try:
-        from torchao.quantization import Int4WeightOnlyConfig
-        from transformers import TorchAoConfig
+        from diffusers import TorchAoConfig
+    except ImportError as exc:
+        raise ImportError("Pipeline TorchAO quantization requires diffusers with TorchAoConfig support.") from exc
+    return TorchAoConfig
+
+
+def _build_torchao_config(
+    weight_dtype=None,
+    overrides: Optional[Mapping[str, Any]] = None,
+    component_type: str = "diffusers",
+    *,
+    default_quant_type: str,
+):
+    try:
+        torchao_cls = _get_torchao_config_cls(component_type)
     except ImportError as exc:
         raise ImportError(
-            "TorchAO int4 quantization requires torchao and transformers with TorchAoConfig. Please install torchao and transformers>=4.39."
+            "TorchAO quantization requires torchao and a compatible TorchAoConfig implementation. "
+            "Please install torchao and a recent diffusers/transformers."
         ) from exc
 
     override_dict = dict(overrides) if isinstance(overrides, Mapping) else {}
     quant_type_override = override_dict.pop("quant_type", None)
-    group_size = override_dict.pop("group_size", None)
-    if quant_type_override is None:
-        quant_kwargs = {}
-        if group_size is not None:
-            quant_kwargs["group_size"] = group_size
-        quant_type_override = Int4WeightOnlyConfig(**quant_kwargs)
-    return TorchAoConfig(quant_type=quant_type_override, **override_dict)
+    quant_type_kwargs = override_dict.pop("quant_type_kwargs", None)
+    if isinstance(quant_type_kwargs, Mapping):
+        override_dict.update(quant_type_kwargs)
+    quant_type_override = quant_type_override or default_quant_type
+    return torchao_cls(quant_type=quant_type_override, **override_dict)
 
 
-PIPELINE_PRESET_BUILDERS: dict[str, Callable[[Any, Optional[Mapping[str, Any]]], Any]] = {
+def _get_quanto_config_cls(component_type: str):
+    if component_type == "transformers":
+        try:
+            from transformers import QuantoConfig
+        except ImportError as exc:
+            raise ImportError(
+                "Pipeline Quanto quantization for text encoders requires transformers with QuantoConfig."
+            ) from exc
+        return QuantoConfig
+    try:
+        from diffusers import QuantoConfig
+    except ImportError as exc:
+        raise ImportError("Pipeline Quanto quantization requires diffusers with QuantoConfig support.") from exc
+    return QuantoConfig
+
+
+def _build_quanto_config(
+    weight_dtype=None,
+    overrides: Optional[Mapping[str, Any]] = None,
+    component_type: str = "diffusers",
+    *,
+    default_weights_dtype: str,
+):
+    try:
+        quanto_cls = _get_quanto_config_cls(component_type)
+    except ImportError as exc:
+        raise ImportError(
+            "Quanto quantization requires diffusers/transformers with QuantoConfig support. "
+            "Please install a recent diffusers/transformers and optimum-quanto."
+        ) from exc
+
+    override_dict = dict(overrides) if isinstance(overrides, Mapping) else {}
+    if component_type == "transformers":
+        weight_key = "weights"
+        if "weights_dtype" in override_dict and weight_key not in override_dict:
+            override_dict[weight_key] = override_dict.pop("weights_dtype")
+    else:
+        weight_key = "weights_dtype"
+        if "weights" in override_dict and weight_key not in override_dict:
+            override_dict[weight_key] = override_dict.pop("weights")
+    weights_value = override_dict.pop(weight_key, default_weights_dtype)
+    return quanto_cls(**{weight_key: weights_value}, **override_dict)
+
+
+def _build_quanto_fp8uz_config(
+    weight_dtype=None,
+    overrides: Optional[Mapping[str, Any]] = None,
+    component_type: str = "diffusers",
+):
+    logger.warning(
+        "fp8uz-quanto pipeline quantization maps to diffusers float8 weights (qfloat8_e4m3fn). "
+        "Use manual quanto quantization if you require the FP8-NUZ variant."
+    )
+    return _build_quanto_config(
+        weight_dtype=weight_dtype,
+        overrides=overrides,
+        component_type=component_type,
+        default_weights_dtype="float8",
+    )
+
+
+TORCHAO_PIPELINE_PRESET_MAP = {
+    "int4-torchao": "int4wo",
+    "int8-torchao": "int8wo",
+    "fp8-torchao": "float8wo_e4m3",
+}
+QUANTO_PIPELINE_PRESET_MAP = {
+    "int8-quanto": "int8",
+    "int4-quanto": "int4",
+    "int2-quanto": "int2",
+    "fp8-quanto": "float8",
+}
+
+PIPELINE_PRESET_BUILDERS: dict[str, Callable[[Any, Optional[Mapping[str, Any]], str], Any]] = {
     "nf4-bnb": _bnb_nf4_config,
-    "int4-torchao": _torchao_int4_config,
+    **{
+        preset: partial(_build_torchao_config, default_quant_type=quant_type)
+        for preset, quant_type in TORCHAO_PIPELINE_PRESET_MAP.items()
+    },
+    **{
+        preset: partial(_build_quanto_config, default_weights_dtype=weights_dtype)
+        for preset, weights_dtype in QUANTO_PIPELINE_PRESET_MAP.items()
+    },
+    "fp8uz-quanto": _build_quanto_fp8uz_config,
 }
 
 
-def get_pipeline_quantization_builder(preset: Optional[str]) -> Optional[Callable[[Any, Optional[Mapping[str, Any]]], Any]]:
+def get_pipeline_quantization_builder(
+    preset: Optional[str],
+) -> Optional[Callable[[Any, Optional[Mapping[str, Any]], str], Any]]:
     if preset is None:
         return None
     return PIPELINE_PRESET_BUILDERS.get(str(preset))
@@ -201,7 +331,7 @@ def _quanto_model(
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     weight_quant = _quanto_type_map(model_precision)
     extra_quanto_args = {}
-    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "wan"]:
+    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "ltxvideo2", "wan", "wan_s2v"]:
         extra_quanto_args["exclude"] = [
             # Norm layers of all types
             "*norm*",  # catches *.norm, .norm1, .norm2, .norm_q, .norm_k, .norm_out, etc.
@@ -339,6 +469,8 @@ def _sdnq_model(
         return model
 
     try:
+        # Silence sdnq startup logs
+        logging.getLogger("sdnq").setLevel(logging.WARNING)
         from sdnq.common import use_torch_compile as sdnq_triton_available
         from sdnq.training import sdnq_training_post_load_quant
     except ImportError as e:

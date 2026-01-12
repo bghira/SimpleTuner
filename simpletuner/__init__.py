@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import warnings
 
-from simpletuner.helpers import logging as webhook_logging  # noqa: F401
+# Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)
+# These warnings are issued during import before we can install custom handlers.
+warnings.filterwarnings(
+    "ignore",
+    message=r"builtin type Swig.*has no __module__ attribute",
+    category=DeprecationWarning,
+)
+
+# Skip heavy imports in CLI mode for fast startup
+if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "yes"):
+    from simpletuner.helpers import logging as webhook_logging  # noqa: F401
 
 warnings.filterwarnings(
     "ignore",
@@ -66,7 +77,10 @@ def _suppress_swigvarlink(message, *args, **kwargs):
     if "attribute" in text and "Field()" in text:
         return None
 
-    if "swigvarlink" in text and category is DeprecationWarning:
+    # Suppress all SWIG-related deprecation warnings from third-party libraries
+    if category is DeprecationWarning and any(
+        swig_type in text for swig_type in ("swigvarlink", "SwigPyPacked", "SwigPyObject")
+    ):
         return None
     if "MPS autocast" in text:
         return None
@@ -79,4 +93,4 @@ def _suppress_swigvarlink(message, *args, **kwargs):
 warnings.warn = _suppress_swigvarlink
 
 
-__version__ = "3.3.4"
+__version__ = "4.0.0"

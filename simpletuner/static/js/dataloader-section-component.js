@@ -459,6 +459,16 @@ function dataloaderSectionComponent() {
         if (dataset._showVideoSettings === undefined) {
             dataset._showVideoSettings = true;
         }
+        // Initialize schedule mode based on start_epoch and start_step values
+        if (dataset._scheduleMode === undefined) {
+            if (dataset.start_step !== undefined && dataset.start_step !== null && dataset.start_step > 0) {
+                dataset._scheduleMode = 'step';
+            } else if (dataset.start_epoch !== undefined && dataset.start_epoch !== null && dataset.start_epoch > 1) {
+                dataset._scheduleMode = 'epoch';
+            } else {
+                dataset._scheduleMode = 'none';
+            }
+        }
         if (this._collapseStateLoaded) {
             this.applyCollapsedStateToDataset(dataset);
         }
@@ -649,6 +659,10 @@ function dataloaderSectionComponent() {
             html += `<option value="${this.escapeHtml(option.id)}">${this.escapeHtml(option.label)}</option>`;
         });
         return html;
+    },
+    shortenPath(path) {
+        if (!path) return '';
+        return path.split('/').slice(-2).join('/');
     },
     escapeHtml(text) {
         const map = {

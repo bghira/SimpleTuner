@@ -84,10 +84,10 @@ apt -y install nvidia-cuda-toolkit
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
-For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+For manual installation or development setup, see the [installation documentation](../INSTALL.md).
 #### SageAttention 2
 
 If you wish to use SageAttention 2, some steps should be followed.
@@ -170,7 +170,7 @@ Copy `config/config.json.example` to `config/config.json`:
 cp config/config.json.example config/config.json
 ```
 
-Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+Multi-GPU users can reference [this document](../OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 Your config at the end will look like mine:
 
@@ -265,7 +265,7 @@ For smoother motion and less identity drift on Wan:
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -275,7 +275,7 @@ SimpleTuner includes experimental features that can significantly improve traini
 
 > ⚠️ **Experimental**: TREAD is a newly implemented feature. While functional, optimal configurations are still being explored.
 
-[TREAD](/documentation/TREAD.md) (paper) stands for **T**oken **R**outing for **E**fficient **A**rchitecture-agnostic **D**iffusion. It is a method that can accelerate Flux training by intelligently routing tokens through transformer layers. The speedup is proportional to how many tokens you drop.
+[TREAD](../TREAD.md) (paper) stands for **T**oken **R**outing for **E**fficient **A**rchitecture-agnostic **D**iffusion. It is a method that can accelerate Flux training by intelligently routing tokens through transformer layers. The speedup is proportional to how many tokens you drop.
 
 #### Quick setup
 
@@ -353,7 +353,7 @@ For some datasets, more aggressive dropout may be tolerable, but a value of 0.5 
 - Some LoRA configurations may train slightly slower - optimal configs still being explored
 - The RoPE (rotary position embedding) implementation is functional but may not be 100% correct
 
-For detailed configuration options and troubleshooting, see the [full TREAD documentation](/documentation/TREAD.md).
+For detailed configuration options and troubleshooting, see the [full TREAD documentation](../TREAD.md).
 
 
 #### Validation prompts
@@ -418,7 +418,7 @@ This should not be enabled for video model training, at the present time.
 
 # Stable evaluation loss
 
-If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+If you wish to use stable MSE loss to score the model's performance, see [this document](../evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 #### Validation previews
 
@@ -644,7 +644,7 @@ From the SimpleTuner directory, you have several options to start training:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train
 ```
 
@@ -662,7 +662,7 @@ simpletuner train
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
+For more information, see the [dataloader](../DATALOADER.md) and [tutorial](../TUTORIAL.md) documents.
 
 ## Notes & troubleshooting tips
 

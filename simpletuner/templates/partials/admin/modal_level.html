@@ -1,0 +1,38 @@
+<!-- Level Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': levelFormOpen }" tabindex="-1"
+     x-show="levelFormOpen" @keydown.escape="levelFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingLevel ? 'Edit Level' : 'Create Level'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="levelFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small">Name</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="levelForm.name" required placeholder="e.g., team_lead">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Priority</label>
+                    <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model.number="levelForm.priority" min="0" max="1000">
+                    <div class="form-text small">Higher priority = more permissions when overlapping</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Description</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="levelForm.description" placeholder="Brief description">
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="levelFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveLevel()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingLevel ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="levelFormOpen" @click="levelFormOpen = false"></div>

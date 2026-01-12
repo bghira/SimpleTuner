@@ -1,3 +1,5 @@
+import os
+
 quantised_precision_levels = [
     "no_change",
     "int8-quanto",
@@ -19,23 +21,26 @@ quantised_precision_levels = [
     "uint3-sdnq",
     "uint2-sdnq",
 ]
-import torch
 
-if torch.cuda.is_available():
-    quantised_precision_levels.extend(
-        [
-            "nf4-bnb",
-            "int4-torchao",
-            # "fp4-bnb",
-            # "fp8-bnb",
-            "fp8-quanto",
-            "fp8uz-quanto",
-        ]
-    )
-    primary_device = torch.cuda.get_device_properties(0)
-    if primary_device.major >= 8:
-        # Hopper! Or blackwell+.
-        quantised_precision_levels.append("fp8-torchao")
+# Skip torch import in CLI mode for fast startup
+if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "yes"):
+    import torch
+
+    if torch.cuda.is_available():
+        quantised_precision_levels.extend(
+            [
+                "nf4-bnb",
+                "int4-torchao",
+                # "fp4-bnb",
+                # "fp8-bnb",
+                "fp8-quanto",
+                "fp8uz-quanto",
+            ]
+        )
+        primary_device = torch.cuda.get_device_properties(0)
+        if primary_device.major >= 8:
+            # Hopper! Or blackwell+.
+            quantised_precision_levels.append("fp8-torchao")
 
 try:
     import pillow_jxl
@@ -48,7 +53,20 @@ image_file_extensions = set(
     ext.lower().lstrip(".") for ext, img_format in supported_extensions.items() if img_format in Image.OPEN
 )
 
-video_file_extensions = set(["mp4", "avi", "gif", "mov", "webm"])
+video_file_extensions = {
+    "mp4",
+    "avi",
+    "mov",
+    "mkv",
+    "webm",
+    "flv",
+    "wmv",
+    "m4v",
+    "mpeg",
+    "mpg",
+    "3gp",
+    "ogv",
+}
 audio_file_extensions = {
     "wav",
     "wave",
@@ -71,7 +89,9 @@ image_file_extensions = image_file_extensions.union(video_file_extensions)
 
 from simpletuner.lycoris_defaults import lycoris_defaults
 
-from . import diffusers_overrides  # noqa: F401  Ensures FSDP and attention patches are registered on import
+# Skip diffusers overrides in CLI mode (they require torch)
+if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "yes"):
+    from . import diffusers_overrides  # noqa: F401  Ensures FSDP and attention patches are registered on import
 
 
 def steps_remaining_in_epoch(current_step: int, steps_per_epoch: int) -> int:

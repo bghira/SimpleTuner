@@ -36,6 +36,179 @@ The API lives at `http://localhost:8001`. Leave the server running while you iss
 >
 > This validates your configuration at startup and launches training immediately after the server is ready—useful for unattended or scripted deployments. The `--env` option works identically to `simpletuner train --env`.
 
+### Configuration & Deployment
+
+For production usage, you can configure the bind address and port:
+
+| Option | Environment Variable | Default | Description |
+|--------|---------------------|---------|-------------|
+| `--host` | `SIMPLETUNER_HOST` | `0.0.0.0` | Address to bind the server to (use `127.0.0.1` behind reverse proxy) |
+| `--port` | `SIMPLETUNER_PORT` | `8001` | Port to bind the server to |
+
+<details>
+<summary><b>Production Deployment Options (TLS, Reverse Proxy, Systemd, Docker)</b></summary>
+
+For production deployments, it is recommended to use a reverse proxy for TLS termination.
+
+#### Nginx Configuration
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name training.example.com;
+
+    # TLS configuration (example using Let's Encrypt paths)
+    ssl_certificate /etc/letsencrypt/live/training.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/training.example.com/privkey.pem;
+
+    # WebSocket support for SSE streaming (Critical for real-time logs)
+    location /api/training/stream {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        # SSE-specific settings
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+    }
+
+    # Main application
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # Large file uploads for datasets
+        client_max_body_size 10G;
+        proxy_request_buffering off;
+    }
+}
+```
+
+#### Caddy Configuration
+
+```caddyfile
+training.example.com {
+    reverse_proxy 127.0.0.1:8001 {
+        # SSE streaming support
+        flush_interval -1
+    }
+    # Large file uploads
+    request_body {
+        max_size 10GB
+    }
+}
+```
+
+#### systemd Service
+
+```ini
+[Unit]
+Description=SimpleTuner Training Server
+After=network.target
+
+[Service]
+Type=simple
+User=trainer
+WorkingDirectory=/home/trainer/simpletuner-workspace
+Environment="SIMPLETUNER_HOST=127.0.0.1"
+Environment="SIMPLETUNER_PORT=8001"
+ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### Docker Compose with Traefik
+
+```yaml
+version: '3.8'
+services:
+  simpletuner:
+    image: ghcr.io/bghira/simpletuner:latest
+    command: simpletuner server --host 0.0.0.0 --port 8001
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.simpletuner.rule=Host(`training.example.com`)"
+      - "traefik.http.services.simpletuner.loadbalancer.server.port=8001"
+```
+</details>
+
+## Authentication
+
+SimpleTuner supports multi-user authentication. On first launch, you'll need to create an admin account.
+
+### First-time setup
+
+Check if setup is needed:
+
+```bash
+curl -s http://localhost:8001/api/cloud/auth/setup/status | jq
+```
+
+If `needs_setup` is `true`, create the first admin:
+
+```bash
+curl -s -X POST http://localhost:8001/api/cloud/auth/setup/first-admin \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "admin@example.com",
+    "username": "admin",
+    "password": "your-secure-password"
+  }'
+```
+
+### API keys
+
+For scripted access, generate an API key after logging in:
+
+```bash
+# Login first (stores session cookie)
+curl -s -X POST http://localhost:8001/api/cloud/auth/login \
+  -H 'Content-Type: application/json' \
+  -c cookies.txt \
+  -d '{"username": "admin", "password": "your-secure-password"}'
+
+# Create an API key
+curl -s -X POST http://localhost:8001/api/cloud/auth/api-keys \
+  -H 'Content-Type: application/json' \
+  -b cookies.txt \
+  -d '{"name": "automation-key"}' | jq
+```
+
+Use the returned key (prefixed with `st_`) in subsequent requests:
+
+```bash
+curl -s http://localhost:8001/api/training/status \
+  -H 'X-API-Key: st_your_key_here'
+```
+
+### User management
+
+Admins can create additional users via the API or the WebUI's **Manage Users** page:
+
+```bash
+# Create a new user (requires admin session)
+curl -s -X POST http://localhost:8001/api/users \
+  -H 'Content-Type: application/json' \
+  -b cookies.txt \
+  -d '{
+    "email": "researcher@example.com",
+    "username": "researcher",
+    "password": "their-password",
+    "level_names": ["researcher"]
+  }'
+```
+
+> **Note:** Public registration is disabled by default. Admins can enable it in **Manage Users → Registration** tab, but it's recommended to keep it disabled for private deployments.
+
 ## Discover the API
 
 FastAPI serves interactive docs and the OpenAPI schema:
@@ -141,6 +314,20 @@ curl -s -X POST http://localhost:8001/api/training/start \
 ```
 
 The payload must be JSON serialised as a string; the server posts job lifecycle updates to the `callback_url`. See the `--webhook_config` description in `documentation/OPTIONS.md` or the sample `config/webhooks.json` template for supported fields.
+
+<details>
+<summary><b>Webhook Configuration for Reverse Proxies</b></summary>
+
+When using a reverse proxy with HTTPS, your webhook URL must be the public endpoint:
+
+1.  **Public Server:** Use `https://training.example.com/webhook/callback`
+2.  **Tunneling:** Use ngrok or cloudflared for local dev.
+
+**Troubleshooting Real-time Logs (SSE):**
+If `GET /api/training/events` works but the stream hangs:
+*   **Nginx:** Ensure `proxy_buffering off;` and `proxy_read_timeout` is high (e.g., 86400s).
+*   **CloudFlare:** Terminates long-lived connections; use CloudFlare Tunnel or bypass the proxy for the stream endpoint.
+</details>
 
 ### Trigger manual validation
 
@@ -258,6 +445,8 @@ If the dataset is not yet on the machine where SimpleTuner runs, you can push it
      -F files[]=@image001.txt
    ```
 
+> **Troubleshooting Uploads:** If large uploads fail with a "Entity Too Large" error when using a reverse proxy, ensure you have increased the body size limit (e.g., `client_max_body_size 10G;` in Nginx or `request_body { max_size 10GB }` in Caddy).
+
 After the upload finishes, point your `multidatabackend.json` entry at the new folder (for example, `"/data/datasets/pixart-upload"`).
 
 ## Example: PixArt Sigma 900M full fine-tune
@@ -267,13 +456,15 @@ After the upload finishes, point your `multidatabackend.json` entry at the new f
 ```bash
 curl -s -X POST http://localhost:8001/api/configs/environments \
   -H 'Content-Type: application/json' \
-  -d '{
+  -d
+```json
+{
         "name": "pixart-api-demo",
         "model_family": "pixart_sigma",
         "model_flavour": "900M-1024-v0.6",
         "model_type": "full",
         "description": "PixArt 900M API-driven training"
-      }'
+      }
 ```
 
 This creates `config/pixart-api-demo/` and a starter `multidatabackend.json`.
@@ -414,14 +605,16 @@ Kontext shares most of its pipeline with Flux Dev but needs paired edit/referenc
 ```bash
 curl -s -X POST http://localhost:8001/api/configs/environments \
   -H 'Content-Type: application/json' \
-  -d '{
+  -d
+```json
+{
         "name": "kontext-api-demo",
         "model_family": "flux",
         "model_flavour": "kontext",
         "model_type": "lora",
         "lora_type": "lycoris",
         "description": "Flux Kontext LoRA via API"
-      }'
+      }
 ```
 
 ### 2. Describe the paired dataloader
@@ -534,6 +727,167 @@ Kontext tips:
 - Quantise to `int8-quanto` to stay within 24 GB VRAM at 1024 px; full precision requires Hopper/Blackwell-class GPUs
 - For multi-node runs, set `--accelerate_config` or `CUDA_VISIBLE_DEVICES` before launching the server
 
+## Submit local jobs with GPU-aware queuing
+
+When running on a multi-GPU machine, you can submit local training jobs through the queue API with GPU allocation awareness. Jobs are queued if required GPUs are unavailable.
+
+### Check GPU availability
+
+```bash
+curl -s "http://localhost:8001/api/system/status?include_allocation=true" | jq '.gpu_allocation'
+```
+
+Response shows which GPUs are available:
+
+```json
+{
+  "allocated_gpus": [0, 1],
+  "available_gpus": [2, 3],
+  "running_local_jobs": 1,
+  "devices": [
+    {"index": 0, "name": "A100", "memory_gb": 40, "allocated": true, "job_id": "abc123"},
+    {"index": 1, "name": "A100", "memory_gb": 40, "allocated": true, "job_id": "abc123"},
+    {"index": 2, "name": "A100", "memory_gb": 40, "allocated": false, "job_id": null},
+    {"index": 3, "name": "A100", "memory_gb": 40, "allocated": false, "job_id": null}
+  ]
+}
+```
+
+You can also get queue statistics including local GPU info:
+
+```bash
+curl -s http://localhost:8001/api/queue/stats | jq '.local'
+```
+
+### Submit a local job
+
+```bash
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "no_wait": false,
+    "any_gpu": false
+  }'
+```
+
+Options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `config_name` | required | Name of the training environment to run |
+| `no_wait` | false | If true, reject immediately when GPUs unavailable |
+| `any_gpu` | false | If true, use any available GPUs instead of configured device IDs |
+
+Response:
+
+```json
+{
+  "success": true,
+  "job_id": "abc123",
+  "status": "running",
+  "allocated_gpus": [0, 1],
+  "queue_position": null
+}
+```
+
+The `status` field indicates the outcome:
+
+- `running` - Job started immediately with allocated GPUs
+- `queued` - Job queued, will start when GPUs become available
+- `rejected` - GPUs unavailable and `no_wait` was true
+
+### Configure local concurrency limits
+
+Admins can limit how many local jobs and GPUs can be used via the queue concurrency endpoint:
+
+```bash
+# Get current limits
+curl -s http://localhost:8001/api/queue/stats | jq '{local_gpu_max_concurrent, local_job_max_concurrent}'
+
+# Update limits (alongside cloud limits)
+curl -s -X POST http://localhost:8001/api/queue/concurrency \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "local_gpu_max_concurrent": 6,
+    "local_job_max_concurrent": 2
+  }'
+```
+
+Set `local_gpu_max_concurrent` to `null` for unlimited GPU usage.
+
+### CLI alternative
+
+The same functionality is available via CLI:
+
+```bash
+# Submit with default queuing behavior
+simpletuner jobs submit my-config
+
+# Reject if GPUs unavailable
+simpletuner jobs submit my-config --no-wait
+
+# Use any available GPUs
+simpletuner jobs submit my-config --any-gpu
+
+# Preview what would happen (dry-run)
+simpletuner jobs submit my-config --dry-run
+```
+
+## Dispatch jobs to remote workers
+
+If you have remote GPU machines registered as workers (see [Worker Orchestration](../experimental/server/WORKERS.md)), you can dispatch jobs to them via the queue API.
+
+### Check available workers
+
+```bash
+curl -s http://localhost:8001/api/admin/workers | jq '.workers[] | {name, status, gpu_name, gpu_count}'
+```
+
+### Submit to a specific target
+
+```bash
+# Prefer remote workers, fall back to local GPUs (default)
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "auto"
+  }'
+
+# Force dispatch to remote workers only
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "worker"
+  }'
+
+# Run only on orchestrator's local GPUs
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "local"
+  }'
+```
+
+### Select workers by label
+
+Workers can have labels for filtering (e.g., GPU type, location, team):
+
+```bash
+curl -s -X POST http://localhost:8001/api/queue/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "config_name": "my-training-config",
+    "target": "worker",
+    "worker_labels": {"gpu_type": "a100*", "team": "nlp"}
+  }'
+```
+
+Labels support glob patterns (`*` matches any characters).
+
 ## Useful endpoints at a glance
 
 - `GET /api/configs/` – list environments (pass `?config_type=model` for training configs)
@@ -541,7 +895,12 @@ Kontext tips:
 - `POST /api/configs/{name}/dataloader` – regenerate a dataloader file if you want defaults
 - `GET /api/training/status` – high-level state, active `job_id`, and startup stage info
 - `GET /api/training/events?since_index=N` – incremental trainer log stream
-- `POST /api/training/checkpoints` – list checkpoints for the active job’s output directory
+- `POST /api/training/checkpoints` – list checkpoints for the active job's output directory
+- `GET /api/system/status?include_allocation=true` – system metrics with GPU allocation info
+- `GET /api/queue/stats` – queue statistics including local GPU allocation
+- `POST /api/queue/submit` – submit a local or worker job with GPU-aware queuing
+- `POST /api/queue/concurrency` – update cloud and local concurrency limits
+- `GET /api/admin/workers` – list registered workers and their status
 
 ## Where to go next
 
@@ -549,5 +908,6 @@ Kontext tips:
 - Combine these REST calls with `jq`/`yq` or a Python client for automation
 - Hook WebSockets at `/api/training/events/stream` for real-time dashboards
 - Reuse the exported configs (`GET /api/configs/<env>/export`) to version-control working setups
+- **Run training on cloud GPUs** via Replicate—see the [Cloud Training Tutorial](../experimental/cloud/TUTORIAL.md)
 
 With these patterns you can fully script SimpleTuner training without touching the WebUI, while still relying on the battle-tested CLI setup process.

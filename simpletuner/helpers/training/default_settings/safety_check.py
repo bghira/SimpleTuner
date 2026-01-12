@@ -62,6 +62,10 @@ def safety_check(args, accelerator):
                 f"ControlNet is not yet supported with {args.model_family} models. Please disable --controlnet, or switch model types."
             )
 
+    if getattr(args, "ramtorch", False) and (getattr(args, "musubi_blocks_to_swap", 0) or 0) > 0:
+        logger.error("RamTorch is incompatible with Musubi block swap. Disable --ramtorch or set --musubi_blocks_to_swap=0.")
+        sys.exit(1)
+
     if "lora" in args.model_type and args.train_text_encoder:
         if args.lora_type.lower() == "lycoris":
             logger.error(
@@ -147,6 +151,8 @@ def safety_check(args, accelerator):
             sys.exit(1)
 
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3", "chroma"]
+    if args.gradient_checkpointing_interval == 1:
+        args.gradient_checkpointing_interval = None
     if args.gradient_checkpointing_interval is not None:
         if args.model_family.lower() not in gradient_checkpointing_interval_supported_models:
             logger.warning(

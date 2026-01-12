@@ -1,0 +1,298 @@
+<!-- partials/cloud_job_logs_modal.html - Enhanced logs viewer modal -->
+<div class="modal fade cloud-logs-modal"
+     :class="{ 'show d-block': logsModal.open }"
+     tabindex="-1"
+     x-show="logsModal.open"
+     @keydown.escape="closeLogsModal()">
+    <!-- modal-fullscreen-md-down for full screen on mobile/tablet -->
+    <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-md-down">
+        <div class="modal-content bg-dark">
+            <!-- Compact mobile header -->
+            <div class="modal-header border-secondary py-2">
+                <h5 class="modal-title d-flex align-items-center">
+                    <i class="fas fa-file-alt me-2"></i>
+                    <span class="d-none d-sm-inline">Logs</span>
+                    <code class="ms-2 text-truncate" style="max-width: 200px; font-size: 0.7rem;" x-text="logsModal.jobId"></code>
+                </h5>
+                <div class="d-flex align-items-center gap-2">
+                    <!-- Streaming indicator (moved to header on mobile) -->
+                    <span class="badge bg-success d-md-none" x-show="logsModal.streaming">
+                        <i class="fas fa-circle me-1 streaming-pulse" style="font-size: 0.5rem;"></i>
+                        Live
+                    </span>
+                    <button type="button" class="btn-close btn-close-white" style="padding: 0.75rem;" @click="closeLogsModal()"></button>
+                </div>
+            </div>
+
+            <!-- Mobile-optimized toolbar -->
+            <div class="logs-toolbar border-bottom border-secondary px-2 px-sm-3 py-2" style="background: rgba(0,0,0,0.2);">
+                <!-- Mobile: Compact single row -->
+                <div class="d-flex d-md-none gap-2 align-items-center">
+                    <div class="input-group input-group-sm flex-grow-1">
+                        <input type="text"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="Search..."
+                               x-model="logsModal.searchQuery"
+                               @input="filterLogs()">
+                        <button class="btn btn-outline-secondary"
+                                type="button"
+                                x-show="logsModal.searchQuery"
+                                @click="logsModal.searchQuery = ''; filterLogs()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            style="width: auto; min-width: 80px;"
+                            x-model="logsModal.levelFilter"
+                            @change="filterLogs()">
+                        <option value="">All</option>
+                        <option value="ERROR">Error</option>
+                        <option value="WARN">Warn</option>
+                        <option value="INFO">Info</option>
+                    </select>
+                    <div class="btn-group btn-group-sm">
+                        <button type="button"
+                                class="btn"
+                                :class="logsModal.autoScroll ? 'btn-info' : 'btn-outline-secondary'"
+                                @click="logsModal.autoScroll = !logsModal.autoScroll"
+                                title="Auto-scroll">
+                            <i class="fas fa-arrow-down"></i>
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                @click="refreshLogs()"
+                                :disabled="logsModal.loading">
+                            <i class="fas fa-sync-alt" :class="logsModal.loading ? 'fa-spin' : ''"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Desktop: Full toolbar -->
+                <div class="d-none d-md-block">
+                    <div class="row g-2 align-items-center">
+                        <!-- Search -->
+                        <div class="col-12 col-sm-5">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-dark border-secondary">
+                                    <i class="fas fa-search text-muted"></i>
+                                </span>
+                                <input type="text"
+                                       class="form-control bg-dark text-light border-secondary"
+                                       placeholder="Search logs..."
+                                       x-model="logsModal.searchQuery"
+                                       @input="filterLogs()">
+                                <button class="btn btn-outline-secondary"
+                                        type="button"
+                                        x-show="logsModal.searchQuery"
+                                        @click="logsModal.searchQuery = ''; filterLogs()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Level Filter -->
+                        <div class="col-6 col-sm-3">
+                            <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                    x-model="logsModal.levelFilter"
+                                    @change="filterLogs()">
+                                <option value="">All Levels</option>
+                                <option value="ERROR">Errors</option>
+                                <option value="WARN">Warnings</option>
+                                <option value="INFO">Info</option>
+                                <option value="DEBUG">Debug</option>
+                            </select>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="col-6 col-sm-4 text-end">
+                            <div class="btn-group btn-group-sm">
+                                <button type="button"
+                                        class="btn"
+                                        :class="logsModal.autoScroll ? 'btn-info' : 'btn-outline-secondary'"
+                                        @click="logsModal.autoScroll = !logsModal.autoScroll"
+                                        title="Auto-scroll">
+                                    <i class="fas fa-arrow-down"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        @click="refreshLogs()"
+                                        :disabled="logsModal.loading"
+                                        title="Refresh">
+                                    <i class="fas fa-sync-alt" :class="logsModal.loading ? 'fa-spin' : ''"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        @click="downloadLogs()"
+                                        :disabled="!logsModal.logs"
+                                        title="Download">
+                                    <i class="fas fa-download"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Match count -->
+                    <div class="small text-muted mt-1" x-show="logsModal.searchQuery || logsModal.levelFilter" style="font-size: 0.7rem;">
+                        <span x-text="logsModal.matchCount"></span> matches
+                        <template x-if="logsModal.searchQuery">
+                            <span> for "<span x-text="logsModal.searchQuery"></span>"</span>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Mobile match count -->
+                <div class="d-md-none small text-muted mt-1" x-show="logsModal.searchQuery || logsModal.levelFilter" style="font-size: 0.65rem;">
+                    <span x-text="logsModal.matchCount"></span> matches
+                </div>
+            </div>
+
+            <div class="modal-body p-0 p-md-3">
+                <template x-if="logsModal.loading && !logsModal.logs">
+                    <div class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-2 small">Loading...</p>
+                    </div>
+                </template>
+                <template x-if="!logsModal.loading || logsModal.logs">
+                    <div class="log-viewer-container">
+                        <pre class="log-viewer"
+                             role="log"
+                             aria-label="Job logs"
+                             :aria-live="logsModal.streaming ? 'polite' : 'off'"
+                             aria-atomic="false"
+                             x-ref="logViewer"
+                             x-html="logsModal.filteredLogsHtml || escapeHtml(logsModal.logs)"></pre>
+                        <!-- Streaming indicator (desktop only, mobile is in header) -->
+                        <div class="streaming-indicator d-none d-md-block"
+                             x-show="logsModal.streaming"
+                             aria-live="polite"
+                             style="position: absolute; bottom: 0.5rem; right: 0.5rem;">
+                            <span class="badge bg-success">
+                                <i class="fas fa-circle me-1 streaming-pulse" style="font-size: 0.5rem;"></i>
+                                Live
+                            </span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Mobile: Minimal footer -->
+            <div class="modal-footer border-secondary py-2">
+                <div class="text-muted small me-auto" style="font-size: 0.7rem;">
+                    <span x-text="logsModal.lineCount"></span> lines
+                    <template x-if="logsModal.streaming">
+                        <span class="ms-2 text-success d-none d-md-inline">• Streaming</span>
+                    </template>
+                </div>
+                <!-- Download button moved to footer on mobile -->
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm d-md-none"
+                        @click="downloadLogs()"
+                        :disabled="!logsModal.logs">
+                    <i class="fas fa-download me-1"></i>Save
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" @click="closeLogsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="logsModal.open" @click="closeLogsModal()"></div>
+
+<style>
+.log-viewer-container {
+    position: relative;
+    height: 100%;
+}
+
+.log-viewer {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.8rem;
+    max-height: 60vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    margin: 0;
+}
+
+/* Log level colors - WCAG AA compliant */
+.log-viewer .log-error {
+    color: #fca5a5;
+    background: rgba(248, 113, 113, 0.15);
+}
+
+.log-viewer .log-warn {
+    color: #fcd34d;
+    background: rgba(251, 191, 36, 0.15);
+}
+
+.log-viewer .log-info {
+    color: #93c5fd;
+}
+
+.log-viewer .log-debug {
+    color: #cbd5e1;
+}
+
+.log-viewer .log-highlight {
+    background: rgba(251, 191, 36, 0.35);
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+.log-viewer .log-timestamp {
+    color: #94a3b8;
+}
+
+/* Streaming pulse animation */
+.streaming-pulse {
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Reduced motion: disable pulse animations */
+@media (prefers-reduced-motion: reduce) {
+    .streaming-pulse {
+        animation: none;
+    }
+}
+
+/* Mobile fullscreen optimizations */
+@media (max-width: 767.98px) {
+    .cloud-logs-modal .modal-content {
+        border-radius: 0;
+    }
+
+    .cloud-logs-modal .modal-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .cloud-logs-modal .log-viewer-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .cloud-logs-modal .log-viewer {
+        flex: 1;
+        max-height: none;
+        height: 100%;
+        border-radius: 0;
+        font-size: 0.65rem;
+        padding: 0.5rem;
+    }
+
+    .cloud-logs-modal .logs-toolbar {
+        flex-shrink: 0;
+    }
+}
+</style>

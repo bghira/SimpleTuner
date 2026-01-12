@@ -129,6 +129,7 @@ class WebhookHandler:
             "log_level": log_levels.get(config.log_level or "info", log_levels["info"]),
             "ssl_no_verify": getattr(config, "ssl_no_verify", False)
             or os.environ.get("SIMPLETUNER_SSL_NO_VERIFY", "false").lower() == "true",
+            "auth_token": getattr(config, "auth_token", None),
         }
 
     @staticmethod
@@ -243,7 +244,14 @@ class WebhookHandler:
             # logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
             # Configure SSL verification
             verify = not backend.get("ssl_no_verify", False)
-            post_result = requests.post(webhook_url, **request_args, timeout=5, verify=verify)
+
+            # Add authentication header if auth token is provided
+            headers = {}
+            auth_token = backend.get("auth_token")
+            if auth_token:
+                headers["X-API-Key"] = auth_token
+
+            post_result = requests.post(webhook_url, **request_args, headers=headers, timeout=5, verify=verify)
             post_result.raise_for_status()
         except (requests.exceptions.ConnectionError, BrokenPipeError) as e:
             # Connection errors are expected when WebUI is refreshed/closed
@@ -291,7 +299,13 @@ class WebhookHandler:
         if isinstance(payload, (list, tuple, set)):
             return [self._sanitize_for_json(item, _seen) for item in payload]
 
-        if hasattr(payload, "dict") and callable(payload.dict):
+        # Support Pydantic v2 (model_dump) and v1 (dict) style serialization
+        if hasattr(payload, "model_dump") and callable(payload.model_dump):
+            try:
+                return self._sanitize_for_json(payload.model_dump(), _seen)
+            except Exception:
+                pass
+        elif hasattr(payload, "dict") and callable(payload.dict):
             try:
                 return self._sanitize_for_json(payload.dict(), _seen)
             except Exception:
@@ -659,6 +673,7 @@ class WebhookHandler:
         images: list | None = None,
         videos: list | None = None,
         audios: list | None = None,
+        exclude_webhook_urls: list[str] | set[str] | tuple[str, ...] | str | None = None,
     ):
         """
         Send structured data to all "raw" webhooks (JSON payload) with optional media attachments.
@@ -692,9 +707,18 @@ class WebhookHandler:
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
 
+        exclude_urls = set()
+        if exclude_webhook_urls:
+            if isinstance(exclude_webhook_urls, str):
+                exclude_urls.add(exclude_webhook_urls)
+            else:
+                exclude_urls.update([url for url in exclude_webhook_urls if isinstance(url, str) and url])
+
         # Send to all raw webhook backends that meet the log level
         for backend in self.backends:
             if backend["webhook_type"] != "raw":
+                continue
+            if exclude_urls and backend.get("webhook_url") in exclude_urls:
                 continue
             if not self._check_level(message_level, backend["log_level"]):
                 continue

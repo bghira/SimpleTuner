@@ -33,10 +33,10 @@ apt -y install nvidia-cuda-toolkit
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
-For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+For manual installation or development setup, see the [installation documentation](../INSTALL.md).
 
 ### Setting up the environment
 
@@ -155,8 +155,8 @@ export OPTIMIZER="adamw_bf16"
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
-*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training Kolors with a Flow Matching objective, potentially improving generation straightness and quality.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](../experimental/DIFF2FLOW.md):** allows training Kolors with a Flow Matching objective, potentially improving generation straightness and quality.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -247,15 +247,15 @@ bash train.sh
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
+For more information, see the [dataloader](../DATALOADER.md) and [tutorial](../TUTORIAL.md) documents.
 
 ### CLIP score tracking
 
-If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+If you wish to enable evaluations to score the model's performance, see [this document](../evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
 # Stable evaluation loss
 
-If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+If you wish to use stable MSE loss to score the model's performance, see [this document](../evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 #### Validation previews
 

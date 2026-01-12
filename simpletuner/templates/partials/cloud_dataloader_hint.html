@@ -1,0 +1,281 @@
+<!-- partials/cloud_dataloader_hint.html - Setup checklist with status detection -->
+<template x-if="!hints.dataloader_dismissed">
+    <div class="cloud-card mb-3 mb-lg-4 cloud-setup-checklist">
+        <div class="cloud-card-header d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0">
+                <i class="fas me-2" :class="allSetupComplete ? 'fa-check-circle text-success' : 'fa-tasks text-info'"></i>
+                <span x-text="allSetupComplete ? 'Ready to Submit' : 'Setup Checklist'"></span>
+            </h6>
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary py-0 px-2"
+                    @click="dismissHint('dataloader')"
+                    title="Hide checklist">
+                <i class="fas fa-times" style="font-size: 0.65rem;"></i>
+            </button>
+        </div>
+        <div class="cloud-card-body py-2">
+            <!-- Step 1: Dataset Configuration -->
+            <div class="setup-step mb-3" :class="{ 'step-complete': hasDatasets }">
+                <div class="d-flex align-items-start">
+                    <span class="step-indicator me-2">
+                        <template x-if="hasDatasets">
+                            <i class="fas fa-check-circle text-success"></i>
+                        </template>
+                        <template x-if="!hasDatasets">
+                            <span class="step-number">1</span>
+                        </template>
+                    </span>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <strong class="small">Dataset Configuration</strong>
+                            <template x-if="hasDatasets">
+                                <span class="badge bg-success bg-opacity-25 text-success" style="font-size: 0.65rem;">
+                                    <i class="fas fa-check me-1"></i>Configured
+                                </span>
+                            </template>
+                        </div>
+                        <template x-if="hasDatasets">
+                            <p class="small text-muted mb-1" style="font-size: 0.75rem;">
+                                <i class="fas fa-info-circle me-1"></i>Your local data backends will be packaged and uploaded when you submit.
+                                You'll review and consent before any data is transferred.
+                            </p>
+                        </template>
+                        <template x-if="!hasDatasets">
+                            <div>
+                                <p class="small text-muted mb-1" style="font-size: 0.75rem;">
+                                    Configure where your training images are in the <strong>Datasets</strong> tab.
+                                </p>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-info"
+                                        @click="document.querySelector('[data-tab=datasets]')?.click()">
+                                    <i class="fas fa-database me-1"></i>Setup Datasets
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Training Settings -->
+            <div class="setup-step mb-3" :class="{ 'step-complete': hasActiveConfig }">
+                <div class="d-flex align-items-start">
+                    <span class="step-indicator me-2">
+                        <template x-if="hasActiveConfig">
+                            <i class="fas fa-check-circle text-success"></i>
+                        </template>
+                        <template x-if="!hasActiveConfig">
+                            <span class="step-number">2</span>
+                        </template>
+                    </span>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <strong class="small">Training Settings</strong>
+                            <template x-if="hasActiveConfig">
+                                <span class="badge bg-success bg-opacity-25 text-success" style="font-size: 0.65rem;">
+                                    <i class="fas fa-check me-1"></i>Configured
+                                </span>
+                            </template>
+                        </div>
+                        <template x-if="hasActiveConfig">
+                            <div>
+                                <p class="small text-muted mb-1" style="font-size: 0.75rem;">
+                                    <template x-if="selectedConfigName">
+                                        <span>Using config: <code x-text="selectedConfigName"></code></span>
+                                    </template>
+                                    <template x-if="!selectedConfigName">
+                                        <span>Using current form settings.</span>
+                                    </template>
+                                </p>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        @click="document.querySelector('[data-tab=basic]')?.click()"
+                                        style="font-size: 0.7rem;">
+                                    <i class="fas fa-edit me-1"></i>Review Settings
+                                </button>
+                            </div>
+                        </template>
+                        <template x-if="!hasActiveConfig">
+                            <div>
+                                <p class="small text-muted mb-1" style="font-size: 0.75rem;">
+                                    Choose your model type, learning rate, and other training options.
+                                </p>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-info"
+                                        @click="document.querySelector('[data-tab=basic]')?.click()">
+                                    <i class="fas fa-sliders-h me-1"></i>Configure Training
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Output Destination -->
+            <div class="setup-step" :class="{ 'step-complete': hasOutputDestination }">
+                <div class="d-flex align-items-start">
+                    <span class="step-indicator me-2">
+                        <template x-if="hasOutputDestination">
+                            <i class="fas fa-check-circle text-success"></i>
+                        </template>
+                        <template x-if="!hasOutputDestination">
+                            <span class="step-number">3</span>
+                        </template>
+                    </span>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <strong class="small">Output Destination</strong>
+                            <template x-if="hasOutputDestination">
+                                <span class="badge bg-success bg-opacity-25 text-success" style="font-size: 0.65rem;">
+                                    <i class="fas fa-check me-1"></i>Configured
+                                </span>
+                            </template>
+                        </div>
+
+                        <!-- Show current output destination if configured -->
+                        <template x-if="hasOutputDestination">
+                            <div>
+                                <div class="small mb-2" style="font-size: 0.75rem;">
+                                    <template x-if="publishingStatus.push_to_hub">
+                                        <span class="text-success"><i class="fas fa-cloud-upload-alt me-1"></i>HuggingFace Hub</span>
+                                    </template>
+                                    <template x-if="publishingStatus.s3_configured && !publishingStatus.push_to_hub">
+                                        <span class="text-warning"><i class="fab fa-aws me-1"></i>S3/Cloud Storage</span>
+                                    </template>
+                                    <template x-if="webhookUrl && webhookUrl.trim().length > 0 && !publishingStatus.push_to_hub && !publishingStatus.s3_configured">
+                                        <span class="text-info"><i class="fas fa-link me-1"></i>Webhook to local machine</span>
+                                    </template>
+                                </div>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        @click="document.querySelector('[data-tab=publishing]')?.click()"
+                                        style="font-size: 0.7rem;">
+                                    <i class="fas fa-edit me-1"></i>Change Output
+                                </button>
+                            </div>
+                        </template>
+
+                        <!-- Setup webhook if not configured -->
+                        <template x-if="!hasOutputDestination">
+                            <div>
+                                <p class="small text-muted mb-2" style="font-size: 0.75rem;">
+                                    Choose where trained models should be delivered.
+                                </p>
+
+                                <!-- Webhook URL input -->
+                                <div class="webhook-setup mb-2">
+                                    <label class="small text-muted mb-1 d-block" style="font-size: 0.7rem;">
+                                        <i class="fas fa-globe me-1"></i>Receive results via webhook
+                                    </label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="url"
+                                               class="form-control form-control-sm"
+                                               placeholder="https://your-public-url.com"
+                                               x-model="webhookUrl"
+                                               @change.stop="saveWebhookConfig()"
+                                               @input.stop
+                                               style="font-size: 0.75rem;">
+                                        <button type="button"
+                                                class="btn btn-outline-secondary"
+                                                @click="saveWebhookConfig()"
+                                                :disabled="!webhookUrl || configSaving"
+                                                title="Save webhook URL">
+                                            <i class="fas" :class="configSaving ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+                                        </button>
+                                    </div>
+                                    <div class="small text-muted mt-1" style="font-size: 0.65rem;">
+                                        <i class="fas fa-info-circle me-1"></i>This should be a public URL where SimpleTuner can reach your machine.
+                                        Replicate will POST training updates and model files to <code x-text="(webhookUrl || 'https://...').replace(/\/$/, '') + '/api/cloud/webhook/replicate'"></code>
+                                    </div>
+                                </div>
+
+                                <div class="text-center small text-muted my-2" style="font-size: 0.65rem;">— or —</div>
+
+                                <!-- Alternative: HuggingFace/S3 -->
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary w-100"
+                                        @click="document.querySelector('[data-tab=publishing]')?.click()">
+                                    <i class="fas fa-cloud-upload-alt me-1"></i>Setup HuggingFace Hub or S3
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dismiss button -->
+            <div class="text-end mt-3 pt-2 border-top border-secondary border-opacity-25">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="dismissHint('dataloader')">
+                    <i class="fas fa-eye-slash me-1"></i>Hide Checklist
+                </button>
+            </div>
+        </div>
+    </div>
+</template>
+
+<style>
+.cloud-setup-checklist {
+    border: 1px solid rgba(13, 202, 240, 0.3);
+    background: rgba(13, 202, 240, 0.05);
+}
+
+.setup-step {
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-left: 3px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+}
+
+.setup-step.step-complete {
+    border-left-color: #10b981;
+    background: rgba(16, 185, 129, 0.05);
+}
+
+.step-indicator {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.step-indicator i {
+    font-size: 1.1rem;
+}
+
+.step-number {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+    border-radius: 50%;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: white;
+}
+
+.setup-step.step-complete .step-number {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.webhook-setup .form-control {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #e2e8f0;
+}
+
+.webhook-setup .form-control:focus {
+    background: rgba(0, 0, 0, 0.3);
+    border-color: #818cf8;
+    box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.2);
+}
+
+.webhook-setup .form-control::placeholder {
+    color: #64748b;
+}
+</style>

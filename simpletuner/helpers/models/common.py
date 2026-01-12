@@ -9,7 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -54,6 +54,7 @@ from simpletuner.helpers.training.lora_format import (
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.quantisation import (
+    PIPELINE_ONLY_PRESETS,
     PIPELINE_QUANTIZATION_PRESETS,
     build_gguf_quantization_config,
     get_pipeline_quantization_builder,
@@ -77,7 +78,9 @@ flow_matching_model_families = [
     "flux2",
     "sana",
     "ltxvideo",
+    "ltxvideo2",
     "wan",
+    "wan_s2v",
     "sd3",
     "chroma",
     "hunyuanvideo",
@@ -99,6 +102,7 @@ upstream_config_sources = {
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
+    "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
 }
@@ -442,6 +446,8 @@ class ModelFoundation(ABC):
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
+    DEFAULT_AUDIO_CHANNELS = 1
+    DEFAULT_LORA_EXCLUDE_TARGETS = None  # regex, not list
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
@@ -506,6 +512,56 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    def load_validation_models(self, pipeline=None, pipeline_type=None) -> None:
+        """
+        Optional hook for models to lazily load validation-only components.
+
+        This is a no-op by default.
+        """
+        return
+
+    def validation_audio_sample_rate(self) -> Optional[int]:
+        """
+        Optional hook for models that emit audio during validation.
+        """
+        return None
+
+    def extract_validation_audio(self, pipeline_result: Any, expected_count: Optional[int] = None) -> Optional[list[Any]]:
+        """
+        Extract audio outputs from a pipeline result, normalising to a list of samples.
+        """
+        audio = None
+        if hasattr(pipeline_result, "audio"):
+            audio = pipeline_result.audio
+        elif hasattr(pipeline_result, "audios"):
+            audio = pipeline_result.audios
+
+        if audio is None:
+            return None
+
+        if isinstance(audio, (list, tuple)):
+            items = []
+            for item in audio:
+                if torch.is_tensor(item):
+                    items.append(item.detach().cpu())
+                else:
+                    items.append(item)
+        elif torch.is_tensor(audio) or isinstance(audio, np.ndarray):
+            if torch.is_tensor(audio):
+                audio = audio.detach().cpu()
+            if getattr(audio, "ndim", 0) >= 3:
+                items = [audio[idx] for idx in range(audio.shape[0])]
+            else:
+                items = [audio]
+        else:
+            logger.warning("Unsupported validation audio payload type %s", type(audio))
+            return None
+
+        if expected_count is not None and len(items) != expected_count:
+            raise ValueError(f"Validation audio count ({len(items)}) does not match validation samples ({expected_count}).")
+
+        return items
 
     @classmethod
     def supports_assistant_lora(cls, config=None) -> bool:
@@ -785,6 +841,7 @@ class ModelFoundation(ABC):
                 module_dropout=0.0,
                 use_effective_conv2d=True,
                 target_modules=target_modules,
+                exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
                 modules_to_save=save_modules,
             )
         else:
@@ -808,6 +865,7 @@ class ModelFoundation(ABC):
                 init_lora_weights=self.config.lora_initialisation_style,
                 target_modules=target_modules,
                 modules_to_save=save_modules,
+                exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
                 use_dora=getattr(self.config, "use_dora", False),
                 **lora_config_kwargs,
             )
@@ -959,6 +1017,15 @@ class ModelFoundation(ABC):
 
     def requires_conditioning_image_embeds(self) -> bool:
         return False
+
+    def supports_audio_inputs(self) -> bool:
+        return False
+
+    def uses_audio_latents(self) -> bool:
+        return False
+
+    def get_vae_for_dataset_type(self, dataset_type: str):
+        return self.get_vae()
 
     def conditioning_image_embeds_use_reference_dataset(self) -> bool:
         """
@@ -1399,6 +1466,8 @@ class ModelFoundation(ABC):
         """
         target_device_obj = torch.device(target_device) if isinstance(target_device, str) else target_device
         accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
+        base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+        torchao_quantized = "torchao" in base_precision
         should_configure_offload = (
             self.group_offload_requested()
             and accelerator_device is not None
@@ -1411,6 +1480,7 @@ class ModelFoundation(ABC):
                 self.config.musubi_blocks_to_swap or 0 > 0,
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
+                torchao_quantized,
             ]
         )
 
@@ -1418,6 +1488,11 @@ class ModelFoundation(ABC):
             model_ref = self.unwrap_model(model=self.model)
             if getattr(model_ref, "device", None) != "meta":
                 model_ref.to(target_device)
+        elif self.model is not None and torchao_quantized:
+            logger.info(
+                "Skipping model.to(%s) for TorchAO-quantized base model to avoid weight swap errors.",
+                target_device,
+            )
         if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
@@ -1499,12 +1574,12 @@ class ModelFoundation(ABC):
             latents = latents / scaling_factor
         return latents
 
-    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+    def pre_latent_decode(self, latents: torch.Tensor) -> torch.Tensor:
         """
-        Pre-process latents before passing to validation preview decoder.
+        Pre-process latents before passing to any decoder (VAE or TAE).
 
-        This is a hook for models that need to transform latents before decode.
-        For example, models using video decoders may need to add a frame dimension.
+        Override for model-specific shape transformations (e.g., unpacking,
+        adding frame dimensions).
 
         Args:
             latents: The latents tensor to transform
@@ -1513,6 +1588,70 @@ class ModelFoundation(ABC):
             The transformed latents tensor
         """
         return latents
+
+    # Backward compatibility alias
+    pre_validation_preview_decode = pre_latent_decode
+
+    def decode_latents_to_pixels(
+        self,
+        latents: torch.Tensor,
+        *,
+        use_tae: bool = False,
+    ) -> torch.Tensor:
+        """
+        Decode latents to pixel space using VAE or TAE.
+
+        Handles all normalization/denormalization internally - callers provide
+        latents in training format and receive pixels in consistent format.
+
+        Args:
+            latents: Latents in training/diffusion space
+            use_tae: If True, use TinyAutoEncoder (faster, lower quality)
+
+        Returns:
+            Decoded pixels in (B, T, C, H, W) format, [0, 1] range.
+            For image models, T=1.
+        """
+        latents = latents.detach()
+
+        if use_tae:
+            decoder = self.get_validation_preview_decoder()
+            if decoder is None:
+                raise ValueError(f"{self.NAME} does not support TAE decoding")
+            # TAE expects normalized latents (training space) - no denorm
+            preprocessed = self.pre_latent_decode(latents)
+            preprocessed = preprocessed.to(device=decoder.device, dtype=decoder.dtype)
+            decoded = decoder.decode(preprocessed)
+            # TAE outputs [0, 1] already
+        else:
+            vae = self.get_vae()
+            if vae is None:
+                raise ValueError(f"{self.NAME} does not have a VAE available")
+            vae_dtype = next(vae.parameters()).dtype
+            # VAE expects denormalized latents
+            denormed = self.denormalize_latents_for_preview(latents)
+            preprocessed = self.pre_latent_decode(denormed)
+            preprocessed = preprocessed.to(device=self.accelerator.device, dtype=vae_dtype)
+            with torch.no_grad():
+                decoded = vae.decode(preprocessed).sample
+            # VAE outputs [-1, 1], normalize to [0, 1]
+            decoded = (decoded.clamp(-1, 1) + 1) / 2
+
+        # Ensure consistent output format: (B, T, C, H, W)
+        return self._ensure_video_format(decoded)
+
+    def _ensure_video_format(self, decoded: torch.Tensor) -> torch.Tensor:
+        """Normalize decoded output to (B, T, C, H, W) format in [0, 1] range."""
+        if decoded.ndim == 4:
+            # (B, C, H, W) -> (B, 1, C, H, W)
+            return decoded.unsqueeze(1)
+        if decoded.ndim == 5:
+            # Check if (B, C, T, H, W) and convert to (B, T, C, H, W)
+            # Heuristic: channel dim is typically 3 or 4, and the temporal
+            # dimension is not larger than the spatial dimensions (H, W).
+            if decoded.shape[1] in (3, 4) and decoded.shape[2] <= decoded.shape[3] and decoded.shape[2] <= decoded.shape[4]:
+                return decoded.permute(0, 2, 1, 3, 4)
+        return decoded
 
     def get_vae(self):
         """
@@ -1655,6 +1794,38 @@ class ModelFoundation(ABC):
                 self.vae.to("meta")
             self.vae = None
 
+    @staticmethod
+    def _is_bitsandbytes_model(model) -> bool:
+        if model is None:
+            return False
+        if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
+            return True
+        try:
+            for param in model.parameters():
+                param_type = type(param).__name__
+                if "Params4bit" in param_type or "Int8Params" in param_type:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def _is_gemma_component(component_cls) -> bool:
+        if component_cls is None:
+            return False
+        component_name = getattr(component_cls, "__name__", "")
+        return "gemma" in component_name.lower()
+
+    def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
+        text_encoder_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
+        config_path = text_encoder_config.get("path", None)
+        if config_path is not None:
+            text_encoder_path = config_path
+        gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
+        if gemma_path and self._is_gemma_component(text_encoder_config.get("model")):
+            text_encoder_path = gemma_path
+        return text_encoder_path
+
     def load_text_tokenizer(self):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
@@ -1670,11 +1841,7 @@ class ModelFoundation(ABC):
             tokenizer_cls = text_encoder_config.get("tokenizer")
             tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
-            tokenizer_kwargs["pretrained_model_name_or_path"] = get_model_config_path(
-                self.config.model_family, self.config.pretrained_model_name_or_path
-            )
-            if text_encoder_config.get("path", None) is not None:
-                tokenizer_kwargs["pretrained_model_name_or_path"] = text_encoder_config.get("path")
+            tokenizer_kwargs["pretrained_model_name_or_path"] = self._resolve_text_encoder_path(text_encoder_config)
             logger.info(f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}")
             tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
             self.tokenizers.append(tokenizer)
@@ -1703,18 +1870,22 @@ class ModelFoundation(ABC):
                 text_encoder_precision = getattr(
                     self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
                 )
-                pipeline_preset = text_encoder_precision if text_encoder_precision in PIPELINE_QUANTIZATION_PRESETS else None
+                quantize_via_pipeline = getattr(self.config, "quantize_via", None) == "pipeline"
+                pipeline_preset = (
+                    text_encoder_precision
+                    if (
+                        text_encoder_precision in PIPELINE_ONLY_PRESETS
+                        or (quantize_via_pipeline and text_encoder_precision in PIPELINE_QUANTIZATION_PRESETS)
+                    )
+                    else None
+                )
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
                 if "torch_dtype" in signature.parameters:
                     extra_kwargs["torch_dtype"] = self.config.weight_dtype
                 logger.info(f"Loading {text_encoder_config.get('name')} text encoder")
-                text_encoder_path = get_model_config_path(
-                    self.config.model_family, self.config.pretrained_model_name_or_path
-                )
-                if text_encoder_config.get("path", None) is not None:
-                    text_encoder_path = text_encoder_config.get("path")
+                text_encoder_path = self._resolve_text_encoder_path(text_encoder_config)
 
                 # Register text encoder cache path for potential deletion
                 if should_track_for_deletion:
@@ -1766,6 +1937,9 @@ class ModelFoundation(ABC):
                 }
                 logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
                 text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
+                is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
+                if is_bnb_quantized:
+                    logger.info("Detected bitsandbytes-quantized text encoder; skipping device/dtype move.")
                 if text_encoder.__class__.__name__ in [
                     "UMT5EncoderModel",
                     "T5EncoderModel",
@@ -1781,6 +1955,7 @@ class ModelFoundation(ABC):
                     and text_encoder_precision in ["no_change", None]
                     and quantization_config is None
                     and not self._ramtorch_text_encoders_requested()
+                    and not is_bnb_quantized
                 ):
                     text_encoder.to(
                         self.accelerator.device,
@@ -1805,6 +1980,7 @@ class ModelFoundation(ABC):
                 if text_encoder is None:
                     continue
                 if hasattr(text_encoder, "to"):
+                    is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
                     # Log memory before move
                     if torch.cuda.is_available():
                         mem_before = torch.cuda.memory_allocated() / (1024**3)
@@ -1820,13 +1996,36 @@ class ModelFoundation(ABC):
                             cuda_buffers,
                         )
 
-                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
-                    try:
-                        text_encoder.to("meta")
-                        logger.info("Text encoder %s successfully moved to meta device", idx + 1)
-                    except Exception as exc:
-                        logger.warning("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
-                        text_encoder.to("cpu")
+                    if is_bnb_quantized:
+                        logger.info(
+                            "Text encoder %s is bitsandbytes-quantized; skipping meta/CPU move.",
+                            idx + 1,
+                        )
+                    else:
+                        # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                        try:
+                            text_encoder.to("meta")
+                            logger.info("Text encoder %s successfully moved to meta device", idx + 1)
+                        except Exception as exc:
+                            logger.warning(
+                                "Text encoder %s could not be moved to meta, moving to CPU instead: %s",
+                                idx + 1,
+                                exc,
+                            )
+                            exc_message = str(exc)
+                            if "Params4bit" in exc_message or "Int8Params" in exc_message:
+                                logger.warning(
+                                    "Text encoder %s appears to be bitsandbytes-quantized; skipping CPU move.",
+                                    idx + 1,
+                                )
+                            else:
+                                has_meta_tensors = any(p.is_meta for p in text_encoder.parameters()) or any(
+                                    b.is_meta for b in text_encoder.buffers()
+                                )
+                                if has_meta_tensors and hasattr(text_encoder, "to_empty"):
+                                    text_encoder.to_empty(device="cpu")
+                                else:
+                                    text_encoder.to("cpu")
 
                     # Log memory after move
                     if torch.cuda.is_available():
@@ -1916,14 +2115,17 @@ class ModelFoundation(ABC):
         if raw_config is None:
             return None
         try:
-            from diffusers import DiffusersPipelineQuantizationConfig
+            from diffusers import PipelineQuantizationConfig
 
-            if isinstance(raw_config, DiffusersPipelineQuantizationConfig):
-                for key in component_keys:
-                    entry = getattr(raw_config, key, None)
-                    if entry is not None:
-                        return entry
-                return getattr(raw_config, "default", None)
+            if isinstance(raw_config, PipelineQuantizationConfig):
+                quant_mapping = getattr(raw_config, "quant_mapping", None) or {}
+                if isinstance(quant_mapping, Mapping):
+                    for key in component_keys:
+                        if key in quant_mapping:
+                            return quant_mapping[key]
+                    if "default" in quant_mapping:
+                        return quant_mapping["default"]
+                return raw_config
         except Exception:
             # Avoid failing when diffusers is unavailable or the config type differs.
             pass
@@ -1941,6 +2143,8 @@ class ModelFoundation(ABC):
 
     def _build_component_quantization_config(self, component_keys: list[str], preset: Optional[str] = None):
         raw_config = getattr(self.config, "quantization_config", None)
+        if raw_config is None:
+            raw_config = getattr(self.config, "pipeline_quantization_config", None)
         entry = self._extract_quantization_entry(raw_config, component_keys)
         preset_candidate = preset
         if isinstance(entry, str):
@@ -1949,16 +2153,92 @@ class ModelFoundation(ABC):
         builder = get_pipeline_quantization_builder(preset_candidate)
         if builder is None and isinstance(entry, Mapping):
             entry_keys = set(entry.keys())
-            if any(key.startswith("bnb_") or key == "load_in_4bit" for key in entry_keys):
+            if any(key.startswith("bnb_") or key in {"load_in_4bit", "load_in_8bit"} for key in entry_keys):
                 builder = get_pipeline_quantization_builder("nf4-bnb")
-            elif "quant_type" in entry_keys or "modules_to_not_convert" in entry_keys:
+            elif "weights_dtype" in entry_keys or "weights" in entry_keys:
+                builder = get_pipeline_quantization_builder("int8-quanto")
+            elif "quant_type" in entry_keys or "quant_type_kwargs" in entry_keys or "modules_to_not_convert" in entry_keys:
                 builder = get_pipeline_quantization_builder("int4-torchao")
         # If we have a known preset builder, prefer it and treat mapping entries as overrides.
         if builder is not None and (entry is None or isinstance(entry, (Mapping, str))):
             overrides = entry if isinstance(entry, Mapping) else None
-            return builder(getattr(self.config, "weight_dtype", None), overrides)
+            component_type = "transformers" if any("text_encoder" in key for key in component_keys) else "diffusers"
+            quantization_config = builder(getattr(self.config, "weight_dtype", None), overrides, component_type)
+            self._register_pipeline_quantization_config(component_keys, quantization_config)
+            return quantization_config
 
+        if entry is not None:
+            try:
+                from diffusers import PipelineQuantizationConfig
+            except Exception:
+                PipelineQuantizationConfig = None
+            if PipelineQuantizationConfig is not None and isinstance(entry, PipelineQuantizationConfig):
+                component_type = "transformers" if any("text_encoder" in key for key in component_keys) else "diffusers"
+                quantization_config = self._resolve_pipeline_backend_config(entry, component_keys, component_type)
+                self._register_pipeline_quantization_config(component_keys, quantization_config)
+                return quantization_config
+        if entry is not None:
+            self._register_pipeline_quantization_config(component_keys, entry)
         return entry
+
+    def _resolve_pipeline_backend_config(self, pipeline_config, component_keys: list[str], component_type: str):
+        quant_backend = getattr(pipeline_config, "quant_backend", None)
+        if not quant_backend:
+            return None
+        components_to_quantize = getattr(pipeline_config, "components_to_quantize", None)
+        if components_to_quantize:
+            if not any(key in components_to_quantize for key in component_keys):
+                return None
+
+        quant_kwargs = getattr(pipeline_config, "quant_kwargs", None) or {}
+        if component_type == "transformers":
+            try:
+                from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING as auto_mapping
+            except ImportError as exc:
+                raise ImportError(
+                    "Pipeline quantization for text encoders requires transformers with quantization config support."
+                ) from exc
+        else:
+            try:
+                from diffusers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING as auto_mapping
+            except ImportError as exc:
+                raise ImportError(
+                    "Pipeline quantization for diffusion components requires diffusers quantization config support."
+                ) from exc
+
+        config_cls = auto_mapping.get(quant_backend)
+        if config_cls is None:
+            raise ValueError(f"Unknown pipeline quantization backend: {quant_backend}")
+        return config_cls(**quant_kwargs)
+
+    def _register_pipeline_quantization_config(self, component_keys: list[str], quantization_config) -> None:
+        if (
+            quantization_config is None
+            or isinstance(quantization_config, Mapping)
+            or getattr(self.config, "quantize_via", None) != "pipeline"
+        ):
+            return
+        try:
+            from diffusers import PipelineQuantizationConfig
+        except ImportError as exc:
+            raise ImportError("Pipeline quantization requires diffusers with PipelineQuantizationConfig support.") from exc
+
+        if isinstance(quantization_config, PipelineQuantizationConfig):
+            setattr(self.config, "pipeline_quantization_config", quantization_config)
+            return
+
+        pipeline_config = getattr(self.config, "pipeline_quantization_config", None)
+        if pipeline_config is None:
+            pipeline_config = PipelineQuantizationConfig(quant_mapping={key: quantization_config for key in component_keys})
+            setattr(self.config, "pipeline_quantization_config", pipeline_config)
+            return
+
+        quant_mapping = getattr(pipeline_config, "quant_mapping", None)
+        if quant_mapping is None:
+            quant_mapping = {}
+            pipeline_config.quant_mapping = quant_mapping
+        for key in component_keys:
+            quant_mapping.setdefault(key, quantization_config)
 
     def load_model(self, move_to_device: bool = True):
         self._group_offload_configured = False
@@ -2001,11 +2281,16 @@ class ModelFoundation(ABC):
         if is_gguf:
             setattr(self.config, "pipeline_quantization", True)
             setattr(self.config, "pipeline_quantization_base", True)
-        if getattr(self.config, "quantize_via", None) == "pipeline":
+        quantize_via_pipeline = getattr(self.config, "quantize_via", None) == "pipeline"
+        if quantize_via_pipeline:
             setattr(self.config, "pipeline_quantization", True)
 
+        pipeline_only_precision = self.config.base_model_precision in PIPELINE_ONLY_PRESETS
+        pipeline_capable_precision = self.config.base_model_precision in PIPELINE_QUANTIZATION_PRESETS
         base_pipeline_preset = (
-            self.config.base_model_precision if self.config.base_model_precision in PIPELINE_QUANTIZATION_PRESETS else None
+            self.config.base_model_precision
+            if (pipeline_only_precision or (quantize_via_pipeline and pipeline_capable_precision))
+            else None
         )
         if base_pipeline_preset is not None:
             setattr(self.config, "pipeline_quantization", True)
@@ -4007,6 +4292,12 @@ class ModelFoundation(ABC):
         loss = loss.mean()
         return loss
 
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        """
+        Computes loss and optional per-batch metrics for logging.
+        """
+        return self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask), None
+
     def auxiliary_loss(
         self,
         model_output,
@@ -4355,7 +4646,41 @@ class VideoModelFoundation(ImageModelFoundation):
         self.config = config
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
+    @classmethod
+    def adjust_video_frames(cls, num_frames: int) -> int:
+        """
+        Calculate nearest valid frame count at or below the given count.
+        Default implementation returns the input unchanged.
+        Subclasses override to enforce model-specific constraints.
+
+        Args:
+            num_frames: The desired number of frames
+
+        Returns:
+            Adjusted frame count (always >= 1)
+        """
+        return num_frames
+
     def get_transforms(self, dataset_type: str = "image"):
+        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
+            if self.uses_audio_latents():
+
+                def _audio_transform(sample):
+                    waveform = sample
+                    if isinstance(sample, dict):
+                        waveform = sample.get("waveform")
+                    if waveform is None:
+                        raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
+                    if isinstance(waveform, np.ndarray):
+                        waveform = torch.from_numpy(waveform)
+                    if not torch.is_tensor(waveform):
+                        raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
+                    waveform = waveform.detach().clone()
+                    if waveform.ndim == 1:
+                        waveform = waveform.unsqueeze(0)
+                    return waveform
+
+                return _audio_transform
         return transforms.Compose(
             [
                 VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
@@ -4394,7 +4719,7 @@ class VideoModelFoundation(ImageModelFoundation):
         if hidden_size is None:
             raise ValueError("CREPA enabled but unable to infer transformer hidden size.")
 
-        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size)
+        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size, model_foundation=self)
         model_component = self.get_trained_component(unwrap_model=False)
         if model_component is None:
             raise ValueError("CREPA requires an attached diffusion model to register its projector.")
@@ -4482,6 +4807,12 @@ class AudioModelFoundation(ModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+
+    def supports_audio_inputs(self) -> bool:
+        return True
+
+    def uses_audio_latents(self) -> bool:
+        return True
 
     def get_transforms(self, dataset_type: str = "image"):
         if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":

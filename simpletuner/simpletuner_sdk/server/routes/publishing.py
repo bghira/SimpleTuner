@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.publishing_service import PUBLISHING_SERVICE, PublishingServiceError
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
@@ -39,7 +41,7 @@ def _call_service(func, *args, **kwargs):
 
 
 @router.get("/token/validate")
-async def validate_token() -> Dict[str, Any]:
+async def validate_token(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Validate the HuggingFace Hub token stored in ~/.cache/huggingface/token.
 
@@ -50,7 +52,7 @@ async def validate_token() -> Dict[str, Any]:
 
 
 @router.post("/repository/check")
-async def check_repository(request: RepositoryCheckRequest) -> Dict[str, Any]:
+async def check_repository(request: RepositoryCheckRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Check if a repository exists and is available for creation.
 
@@ -64,7 +66,7 @@ async def check_repository(request: RepositoryCheckRequest) -> Dict[str, Any]:
 
 
 @router.get("/namespaces")
-async def get_namespaces() -> Dict[str, Any]:
+async def get_namespaces(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Get available namespaces (user and organizations) for repository creation.
 
@@ -75,7 +77,7 @@ async def get_namespaces() -> Dict[str, Any]:
 
 
 @router.post("/license")
-async def get_license(request: LicenseRequest) -> Dict[str, str]:
+async def get_license(request: LicenseRequest, _user: User = Depends(get_current_user)) -> Dict[str, str]:
     """
     Get appropriate license for a model family.
 
@@ -90,7 +92,7 @@ async def get_license(request: LicenseRequest) -> Dict[str, str]:
 
 
 @router.post("/token/save")
-async def save_token(request: TokenSaveRequest) -> Dict[str, Any]:
+async def save_token(request: TokenSaveRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Save HuggingFace Hub token to ~/.cache/huggingface/token.
 
@@ -104,7 +106,7 @@ async def save_token(request: TokenSaveRequest) -> Dict[str, Any]:
 
 
 @router.post("/token/logout")
-async def logout() -> Dict[str, Any]:
+async def logout(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Remove HuggingFace Hub token (logout).
 

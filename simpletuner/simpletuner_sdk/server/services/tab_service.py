@@ -39,7 +39,16 @@ class TabType(str, Enum):
     VALIDATION = "validation"
     PUBLISHING = "publishing"
     CHECKPOINTS = "checkpoints"
+    JOB_QUEUE = "job_queue"
+    CLOUD = "cloud"
     UI_SETTINGS = "ui_settings"
+    ADMIN = "admin"
+    USERS = "users"  # Alias for admin (URL uses #users)
+    AUDIT = "audit"
+    METRICS = "metrics"
+    NOTIFICATIONS = "notifications"
+    QUOTAS = "quotas"
+    WORKERS = "workers"
 
 
 @dataclass
@@ -111,10 +120,10 @@ class TabService:
             ),
             TabType.VALIDATION: TabConfig(
                 id="validation-config",
-                title="Validation & Output",
+                title="Validation",
                 icon="fas fa-check-circle",
                 template="form_tab.html",
-                description="Configure visual validation jobs and output targets",
+                description="Configure visual validation during training",
                 extra_context_handler=self._validation_tab_context,
             ),
             TabType.PUBLISHING: TabConfig(
@@ -132,6 +141,14 @@ class TabService:
                 template="checkpoints_tab.html",
                 description="Browse and manage training checkpoints",
                 extra_context_handler=self._checkpoints_tab_context,
+            ),
+            TabType.JOB_QUEUE: TabConfig(
+                id="job-queue",
+                title="Job Queue",
+                icon="fas fa-tasks",
+                template="job_queue_tab.html",
+                description="View and manage all training jobs",
+                extra_context_handler=None,
             ),
             TabType.ENVIRONMENTS: TabConfig(
                 id="environments-config",
@@ -157,6 +174,70 @@ class TabService:
                 description="Adjust WebUI preferences and behaviour",
                 extra_context_handler=self._ui_settings_tab_context,
             ),
+            TabType.CLOUD: TabConfig(
+                id="cloud-dashboard",
+                title="Cloud",
+                icon="fas fa-cloud",
+                template="cloud_tab.html",
+                description="Manage local and cloud training jobs",
+                extra_context_handler=self._cloud_tab_context,
+            ),
+            TabType.ADMIN: TabConfig(
+                id="admin-panel",
+                title="Administration",
+                icon="fas fa-users-cog",
+                template="admin_tab.html",
+                description="User management and access control",
+                extra_context_handler=None,
+            ),
+            TabType.AUDIT: TabConfig(
+                id="audit-log",
+                title="Audit Log",
+                icon="fas fa-scroll",
+                template="audit_tab.html",
+                description="Security events and system activity",
+                extra_context_handler=None,
+            ),
+            TabType.METRICS: TabConfig(
+                id="metrics-panel",
+                title="Metrics",
+                icon="fas fa-chart-line",
+                template="metrics_tab.html",
+                description="Prometheus metrics export configuration",
+                extra_context_handler=self._metrics_tab_context,
+            ),
+            TabType.USERS: TabConfig(
+                id="admin-panel",
+                title="Manage Users",
+                icon="fas fa-users-cog",
+                template="admin_tab.html",
+                description="User management and access control",
+                extra_context_handler=None,
+            ),
+            TabType.NOTIFICATIONS: TabConfig(
+                id="notifications-panel",
+                title="Notifications",
+                icon="fas fa-bell",
+                template="notifications_tab.html",
+                description="Notification channels and event routing",
+                extra_context_handler=None,
+            ),
+            TabType.QUOTAS: TabConfig(
+                id="quotas-panel",
+                title="Quotas",
+                icon="fas fa-tachometer-alt",
+                template="quotas_tab.html",
+                description="Spending limits and job quotas",
+                extra_context_handler=None,
+            ),
+            TabType.WORKERS: TabConfig(
+                id="workers-panel",
+                title="GPU Workers",
+                icon="fas fa-server",
+                template="workers_tab.html",
+                description="GPU worker management for distributed training",
+                extra_context_handler=None,
+            ),
         }
 
     def get_tab_config(self, tab_name: str) -> TabConfig:
@@ -177,6 +258,22 @@ class TabService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
 
         if tab_type == TabType.GIT_MIRROR and not self._git_mirror_enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
+
+        if tab_type == TabType.CLOUD and not self._cloud_tab_enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
+
+        if tab_type == TabType.ADMIN and not self._admin_tab_enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
+
+        # These tabs follow the same access rules as admin tab
+        if (
+            tab_type in (TabType.USERS, TabType.AUDIT, TabType.NOTIFICATIONS, TabType.QUOTAS, TabType.WORKERS)
+            and not self._admin_tab_enabled()
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
+
+        if tab_type == TabType.METRICS and not self._metrics_tab_enabled():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
 
         return self._tab_configs.get(tab_type)
@@ -294,17 +391,17 @@ class TabService:
         self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Provide context data for UI settings tab."""
+        from .theme_service import ThemeService
+
         store = WebUIStateStore()
         bundle = store.get_defaults_bundle()
+        theme_service = ThemeService.get_instance()
 
         context["ui_settings"] = {
             "defaults": bundle["resolved"],
             "raw_defaults": bundle["raw"],
             "fallbacks": bundle["fallbacks"],
-            "themes": [
-                {"value": "dark", "label": "Dark", "description": "Classic SimpleTuner palette"},
-                {"value": "tron", "label": "Tron Prototype", "description": "Experimental neon styling"},
-            ],
+            "themes": theme_service.list_for_ui(),
             "event_interval_options": [3, 5, 10, 15, 30, 60],
         }
         return context
@@ -408,6 +505,95 @@ class TabService:
             logger.debug("Failed to evaluate git mirror enabled flag: %s", exc, exc_info=True)
             return False
 
+    def _cloud_tab_enabled(self) -> bool:
+        try:
+            defaults = WebUIStateStore().load_defaults()
+            return bool(getattr(defaults, "cloud_tab_enabled", True))
+        except Exception as exc:
+            logger.debug("Failed to evaluate cloud tab enabled flag: %s", exc, exc_info=True)
+            return True
+
+    def _admin_tab_enabled(self) -> bool:
+        """Check if the admin tab should be shown.
+
+        Returns True if:
+        - admin_tab_enabled is True in settings, OR
+        - Auth is in use (users configured or external auth providers)
+        """
+        try:
+            defaults = WebUIStateStore().load_defaults()
+            setting_enabled = bool(getattr(defaults, "admin_tab_enabled", True))
+
+            # If setting says enabled, show it
+            if setting_enabled:
+                return True
+
+            # If setting says disabled, check if auth is actually in use
+            # If auth is in use, we MUST show the admin tab regardless of setting
+            if self._is_auth_in_use():
+                return True
+
+            return False
+        except Exception as exc:
+            logger.debug("Failed to evaluate admin tab enabled flag: %s", exc, exc_info=True)
+            return True
+
+    def _is_auth_in_use(self) -> bool:
+        """Check if user authentication is configured and in use."""
+        try:
+            from .cloud.auth.user_store import UserStore
+
+            user_store = UserStore()
+            users = user_store.list_users()
+            # If there are any non-default users, auth is in use
+            if len(users) > 1:
+                return True
+            # Check if any external auth providers are configured
+            from .cloud.auth.external_auth import ExternalAuthManager
+
+            manager = ExternalAuthManager()
+            providers = manager.list_providers()
+            if providers:
+                return True
+            return False
+        except Exception as exc:
+            logger.debug("Failed to check auth usage: %s", exc)
+            return False
+
+    def _cloud_tab_context(
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Provide context data for cloud tab."""
+        store = WebUIStateStore()
+        defaults = store.load_defaults()
+        context["cloud_settings"] = {
+            "webhook_url": getattr(defaults, "cloud_webhook_url", None),
+        }
+        return context
+
+    def _metrics_tab_enabled(self) -> bool:
+        """Check if the metrics tab should be shown."""
+        try:
+            defaults = WebUIStateStore().load_defaults()
+            return bool(getattr(defaults, "metrics_tab_enabled", True))
+        except Exception as exc:
+            logger.debug("Failed to evaluate metrics tab enabled flag: %s", exc, exc_info=True)
+            return True
+
+    def _metrics_tab_context(
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Provide context data for metrics tab."""
+        store = WebUIStateStore()
+        defaults = store.load_defaults()
+        context["metrics_settings"] = {
+            "prometheus_enabled": getattr(defaults, "metrics_prometheus_enabled", False),
+            "prometheus_categories": getattr(defaults, "metrics_prometheus_categories", ["jobs", "http"]),
+            "tensorboard_enabled": getattr(defaults, "metrics_tensorboard_enabled", False),
+            "dismissed_hints": getattr(defaults, "metrics_dismissed_hints", []),
+        }
+        return context
+
     def get_all_tabs(self) -> List[Dict[str, str]]:
         """Get information about all available tabs.
 
@@ -423,14 +609,19 @@ class TabService:
             TabType.VALIDATION,
             TabType.PUBLISHING,
             TabType.CHECKPOINTS,
+            TabType.JOB_QUEUE,
             TabType.ENVIRONMENTS,
             TabType.GIT_MIRROR,
+            TabType.CLOUD,
             TabType.UI_SETTINGS,
         ]
         include_git = self._git_mirror_enabled()
+        include_cloud = self._cloud_tab_enabled()
         tabs: List[Dict[str, str]] = []
         for tab_type in ordered:
             if tab_type == TabType.GIT_MIRROR and not include_git:
+                continue
+            if tab_type == TabType.CLOUD and not include_cloud:
                 continue
             config = self._tab_configs.get(tab_type)
             if not config:

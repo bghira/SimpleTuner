@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Any, Mapping
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 try:  # pragma: no cover - optional dependency
     from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
@@ -21,6 +21,8 @@ from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services import training_service
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user, get_current_user_ws
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ class TrainingConfig(BaseModel):
 
 
 @router.post("/validate", response_class=HTMLResponse)
-async def validate_config(request: Request):
+async def validate_config(request: Request, _user: User = Depends(get_current_user)):
     """Validate training configuration and return HTML feedback."""
     form_data = await request.form()
 
@@ -102,13 +104,13 @@ async def validate_config(request: Request):
 
 
 @router.post("/configuration/check", response_class=HTMLResponse)
-async def configuration_check(request: Request):
+async def configuration_check(request: Request, _user: User = Depends(get_current_user)):
     """Compatibility endpoint for legacy clients expecting configuration/check."""
     return await validate_config(request)
 
 
 @router.post("/config", response_class=HTMLResponse)
-async def save_config(request: Request):
+async def save_config(request: Request, _user: User = Depends(get_current_user)):
     """Save training configuration."""
     form_data = await request.form()
 
@@ -129,7 +131,7 @@ async def save_config(request: Request):
 
 
 @router.post("/start", response_class=HTMLResponse)
-async def start_training(request: Request):
+async def start_training(request: Request, _user: User = Depends(get_current_user)):
     """Start training with current configuration."""
     form_data = await request.form()
     bundle = training_service.build_config_bundle(form_data)
@@ -156,14 +158,33 @@ async def start_training(request: Request):
         """
 
     try:
-        training_service.persist_config_bundle(bundle)
-        job_id = training_service.start_training_job(bundle.complete_config)
+        result = training_service.start_training_job(
+            bundle.complete_config,
+            env_name=bundle.active_config,
+        )
+
+        if result.status == "rejected":
+            return f"""
+            <div class="alert alert-warning">
+                <h6><i class="fas fa-exclamation-triangle"></i> Training Rejected</h6>
+                <p>{result.reason or "Required GPUs unavailable"}</p>
+            </div>
+            """
+
+        if result.status == "queued":
+            return f"""
+            <div class="alert alert-info">
+                <h6><i class="fas fa-clock"></i> Training Queued</h6>
+                <p>Your job is queued at position {result.queue_position}.</p>
+                <p class="mb-0"><small>Job ID: {result.job_id}</small></p>
+            </div>
+            """
 
         return f"""
         <div class="alert alert-info">
             <h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6>
             <p>Your training job is being initialized.</p>
-            <p class="mb-0"><small>Job ID: {job_id}</small></p>
+            <p class="mb-0"><small>Job ID: {result.job_id}</small></p>
         </div>
         """
     except Exception as exc:
@@ -176,13 +197,13 @@ async def start_training(request: Request):
 
 
 @router.post("/configuration/run", response_class=HTMLResponse)
-async def configuration_run(request: Request):
+async def configuration_run(request: Request, _user: User = Depends(get_current_user)):
     """Compatibility endpoint mapping to the legacy configuration/run URL."""
     return await start_training(request)
 
 
 @router.post("/stop")
-async def stop_training():
+async def stop_training(_user: User = Depends(get_current_user)):
     """Stop current training."""
     try:
         job_id = APIState.get_state("current_job_id")
@@ -194,7 +215,7 @@ async def stop_training():
 
 
 @router.post("/validation/run")
-async def trigger_manual_validation():
+async def trigger_manual_validation(_user: User = Depends(get_current_user)):
     """Request a validation run after the next gradient sync."""
     job_id = APIState.get_state("current_job_id")
     if not job_id:
@@ -212,7 +233,7 @@ async def trigger_manual_validation():
 
 
 @router.post("/checkpoint/run")
-async def trigger_manual_checkpoint():
+async def trigger_manual_checkpoint(_user: User = Depends(get_current_user)):
     """Request a checkpoint save after the next gradient sync."""
     job_id = APIState.get_state("current_job_id")
     if not job_id:
@@ -230,7 +251,7 @@ async def trigger_manual_checkpoint():
 
 
 @router.post("/cancel", response_class=HTMLResponse)
-async def cancel_training(request: Request):
+async def cancel_training(request: Request, _user: User = Depends(get_current_user)):
     """Cancel current training and return HTML response for HTMX."""
     try:
         form_data = await request.form()
@@ -260,7 +281,7 @@ async def cancel_training(request: Request):
 
 
 @router.get("/status")
-async def get_training_status():
+async def get_training_status(_user: User = Depends(get_current_user)):
     """Get current training status."""
     status = APIState.get_state("training_status") or "idle"
     config = APIState.get_state("training_config") or {}
@@ -376,7 +397,7 @@ async def get_training_status():
 
 
 @router.get("/events")
-async def get_training_events(since_index: int = 0):
+async def get_training_events(since_index: int = 0, _user: User = Depends(get_current_user)):
     """Get training events since a given index."""
     job_id = APIState.get_state("current_job_id")
 
@@ -392,7 +413,7 @@ async def get_training_events(since_index: int = 0):
 
 
 @router.websocket("/events/stream")
-async def stream_training_events(websocket: WebSocket):
+async def stream_training_events(websocket: WebSocket, _user: User = Depends(get_current_user_ws)):
     """Stream training events via WebSocket."""
     await websocket.accept()
 
@@ -452,7 +473,7 @@ async def stream_training_events(websocket: WebSocket):
 
 
 @router.get("/checkpoints")
-async def list_checkpoints(output_dir: str = None):
+async def list_checkpoints(output_dir: str = None, _user: User = Depends(get_current_user)):
     """List available checkpoints in the output directory.
 
     Args:
@@ -486,7 +507,7 @@ async def list_checkpoints(output_dir: str = None):
 
 
 @router.get("/checkpoints/validate/{checkpoint_name}")
-async def validate_checkpoint(checkpoint_name: str, output_dir: str = None):
+async def validate_checkpoint(checkpoint_name: str, output_dir: str = None, _user: User = Depends(get_current_user)):
     """Validate a specific checkpoint for resuming training.
 
     Args:

@@ -132,6 +132,7 @@ class TestAudioValidation(unittest.TestCase):
         mock_config.weight_dtype = torch.float32
         mock_config.controlnet = False
         mock_config.control = False
+        mock_config.should_abort.return_value = False
 
         mock_embed_cache = MagicMock()
         mock_embed_cache.compute_embeddings_for_prompts.return_value = None

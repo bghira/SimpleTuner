@@ -56,10 +56,10 @@ apt -y install nvidia-cuda-toolkit
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
-For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+For manual installation or development setup, see the [installation documentation](../INSTALL.md).
 
 ### AMD ROCm follow-up steps
 
@@ -119,7 +119,7 @@ There, you will possibly need to modify the following variables:
   - `krea` - The default FLUX.1-Krea [dev] model, an open-weights variant of Krea 1, a proprietary model collaboration between BFL and Krea.ai
   - `dev` - Dev model flavour, the previous default
   - `schnell` - Schnell model flavour; the quickstart sets the fast noise schedule and assistant LoRA stack automatically
-  - `kontext` - Kontext training (see [this guide](/documentation/quickstart/FLUX_KONTEXT.md) for specific guidance)
+  - `kontext` - Kontext training (see [this guide](../quickstart/FLUX_KONTEXT.md) for specific guidance)
   - `fluxbooru` - A de-distilled (requires CFG) model based on FLUX.1-Dev called [FluxBooru](https://hf.co/terminusresearch/fluxbooru-v0.3), created by terminus research group
   - `libreflux` - A de-distilled model based on FLUX.1-Schnell that requires attention masking on the T5 text encoder inputs
 - `offload_during_startup` - Set this to `true` if you run out of memory during VAE encodes.
@@ -151,7 +151,7 @@ There, you will possibly need to modify the following variables:
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -233,11 +233,11 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 #### CLIP score tracking
 
-If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+If you wish to enable evaluations to score the model's performance, see [this document](../evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
 # Stable evaluation loss
 
-If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+If you wish to use stable MSE loss to score the model's performance, see [this document](../evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 #### Validation previews
 
@@ -448,7 +448,7 @@ From the SimpleTuner directory, you have several options to start training:
 **Option 1 (Recommended - pip install):**
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train
 ```
 
@@ -466,7 +466,7 @@ simpletuner train
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
+For more information, see the [dataloader](../DATALOADER.md) and [tutorial](../TUTORIAL.md) documents.
 
 **Note:** It's unclear whether training on multi-aspect buckets works correctly for Flux at the moment. It's recommended to use `crop_style=random` and `crop_aspect=square`.
 
@@ -480,7 +480,7 @@ SimpleTuner includes **automatic GPU detection** through the WebUI. During onboa
 
 The WebUI detects your hardware and configures `--num_processes` and `CUDA_VISIBLE_DEVICES` automatically.
 
-For manual configuration or advanced setups, see the [Multi-GPU Training section](/documentation/INSTALL.md#multiple-gpu-training) in the installation guide.
+For manual configuration or advanced setups, see the [Multi-GPU Training section](../INSTALL.md#multiple-gpu-training) in the installation guide.
 
 ## Inference tips
 
@@ -544,13 +544,13 @@ If VRAM is not a concern (eg. 48G or greater) then int8 with torch.compile is yo
 
 ### Masked loss
 
-If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
+If you are training a subject or style and would like to mask one or the other, see the [masked loss training](../DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
 
 ### TREAD training
 
 > ⚠️ **Experimental**: TREAD is a newly implemented feature. While functional, optimal configurations are still being explored.
 
-[TREAD](/documentation/TREAD.md) (paper) stands for **T**oken **R**outing for **E**fficient **A**rchitecture-agnostic **D**iffusion. It is a method that can accelerate Flux training by intelligently routing tokens through transformer layers. The speedup is proportional to how many tokens you drop.
+[TREAD](../TREAD.md) (paper) stands for **T**oken **R**outing for **E**fficient **A**rchitecture-agnostic **D**iffusion. It is a method that can accelerate Flux training by intelligently routing tokens through transformer layers. The speedup is proportional to how many tokens you drop.
 
 #### Quick setup
 
@@ -603,7 +603,7 @@ This configuration will:
 - Some LoRA configurations may train slightly slower - optimal configs still being explored
 - The RoPE (rotary position embedding) implementation is functional but may not be 100% correct
 
-For detailed configuration options and troubleshooting, see the [full TREAD documentation](/documentation/TREAD.md).
+For detailed configuration options and troubleshooting, see the [full TREAD documentation](../TREAD.md).
 
 ### Classifier-free guidance
 

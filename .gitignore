@@ -78,3 +78,5 @@ test-folder/
 node_modules
 package-lock.json
 **/config
+site/
+tunableop_results*.csv

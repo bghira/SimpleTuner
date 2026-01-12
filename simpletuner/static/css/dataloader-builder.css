@@ -1249,7 +1249,7 @@
 }
 
 /* Discovery overrides specific spacing */
-#dataloaderSection .dataset-subgroup-title:contains("Discovery Overrides") {
+#dataloaderSection .dataset-subgroup-title.discovery-overrides-title {
     margin-bottom: var(--spacing-xl);
 }
 
@@ -1526,11 +1526,6 @@
     #datasets-tab-content #filterByEnvironment + label {
         font-size: 0.75rem;
         line-height: 1.3;
-    }
-
-    #datasets-tab-content #current-env-badge {
-        font-size: 0.65rem;
-        padding: 0.15rem 0.35rem;
     }
 
     /* Mode switcher - compact buttons */

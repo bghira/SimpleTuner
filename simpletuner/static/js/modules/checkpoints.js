@@ -6,6 +6,16 @@
 if (!window.checkpointsManager) {
     window.checkpointsManager = function() {
         return {
+            // Hero CTA hint management
+            ...window.HintMixin.createMultiHint({
+                useApi: false,
+                storageKey: 'st_checkpoints_hints',
+                hintKeys: ['hero']
+            }),
+            showHeroCTA() { return this.hints.hero; },
+            dismissHeroCTA() { this.dismissHint('hero'); },
+            restoreHeroCTA() { this.showHint('hero'); },
+
             // State
             checkpoints: [],
             selectedCheckpoint: null,
@@ -23,8 +33,10 @@ if (!window.checkpointsManager) {
                 delete: false,
                 preview: false,
                 cleanup: false,
-                saveRetention: false
+                saveRetention: false,
+                cloudOutputs: false
             },
+            cloudOutputs: [],
             visibilitySettings: {
                 validity: true,
                 images: true,
@@ -59,6 +71,15 @@ if (!window.checkpointsManager) {
 
             // Lifecycle
             async init() {
+                // Wait for auth before making any API calls
+                const canProceed = await window.waitForAuthReady();
+                if (!canProceed) {
+                    return;
+                }
+
+                // Load hint state first (non-blocking)
+                this.loadHints();
+
                 try {
                     await this.ensureEnvironment();
                     this.setupSSEListeners();
@@ -77,6 +98,7 @@ if (!window.checkpointsManager) {
                 await this.loadRetentionConfig();
                 await this.checkHuggingFaceAuth();
                 await this.loadUploadConfig();
+                await this.loadCloudOutputs();
             },
 
             async ensureEnvironment() {
@@ -624,36 +646,13 @@ if (!window.checkpointsManager) {
                 });
             },
 
-            // Utility Functions
+            // Utility Functions - delegate to UIHelpers
             formatDate(dateString) {
-                if (!dateString) return 'Unknown';
-                try {
-                    const date = new Date(dateString);
-                    const now = new Date();
-                    const diffMs = now - date;
-                    const diffMins = Math.floor(diffMs / 60000);
-                    const diffHours = Math.floor(diffMs / 3600000);
-                    const diffDays = Math.floor(diffMs / 86400000);
-
-                    if (diffMins < 1) return 'Just now';
-                    if (diffMins < 60) return `${diffMins} min ago`;
-                    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-                    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-
-                    return date.toLocaleDateString();
-                } catch (error) {
-                    return 'Unknown';
-                }
+                return window.UIHelpers?.formatRelativeTime(dateString, { fallback: 'Unknown' }) || 'Unknown';
             },
 
             formatDateTime(dateString) {
-                if (!dateString) return 'Unknown';
-                try {
-                    const date = new Date(dateString);
-                    return date.toLocaleString();
-                } catch (error) {
-                    return 'Unknown';
-                }
+                return window.UIHelpers?.formatDateTime(dateString, { fallback: 'Unknown' }) || 'Unknown';
             },
 
             formatSize(bytes) {
@@ -1248,6 +1247,31 @@ if (!window.checkpointsManager) {
                 if (currentImage) {
                     this.openLightbox(event, currentImage.src, currentImage.caption, images, currentIndex);
                 }
+            },
+
+            // Cloud Outputs Methods
+            async loadCloudOutputs() {
+                this.loading.cloudOutputs = true;
+                try {
+                    const response = await fetch('/api/cloud/storage');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.cloudOutputs = data.Buckets || [];
+                    } else {
+                        this.cloudOutputs = [];
+                    }
+                } catch (error) {
+                    console.error('Failed to load cloud outputs:', error);
+                    this.cloudOutputs = [];
+                } finally {
+                    this.loading.cloudOutputs = false;
+                }
+            },
+
+            browseCloudOutput(bucketName) {
+                // Open a modal or navigate to browse the bucket contents
+                // For now, show an alert with bucket info
+                window.open(`/api/cloud/storage/${bucketName}`, '_blank');
             }
         };
     };

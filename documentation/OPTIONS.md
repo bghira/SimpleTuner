@@ -166,6 +166,11 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Path to the pretrained T5 model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
+### `--pretrained_gemma_model_name_or_path`
+
+- **What**: Path to the pretrained Gemma model or its identifier from <https://huggingface.co/models>.
+- **Why**: When training Gemma-based models (for example LTX-2, Sana, or Lumina2), you can point at a shared Gemma checkpoint without changing the base diffusion model path.
+
 ### `--gradient_checkpointing`
 
 - **What**: During training, gradients will be calculated layerwise and accumulated to save on peak VRAM requirements at the cost of slower training.
@@ -177,7 +182,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--refiner_training`
 
-- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](MIXTURE_OF_EXPERTS.md) for more information on these options.
 
 ## Precision
 
@@ -186,16 +191,17 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `cpu`, `accelerator`, `pipeline`
   - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
   - On `cpu`, quantisation takes about 30 seconds. (**Default**)
-  - `pipeline` delegates quantization to Diffusers using `--quantization_config` or pipeline-capable presets (e.g., `nf4-bnb`, `int4-torchao`, or `.gguf` checkpoints). Manual Quanto/TorchAO presets are not supported when this mode is enabled.
+  - `pipeline` delegates quantization to Diffusers using `--quantization_config` or pipeline-capable presets (e.g., `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, or `.gguf` checkpoints).
 
 ### `--base_model_precision`
 
-- **What**: Reduce model precision and train using less memory. There are three supported quantisation backends: BitsAndBytes (pipeline), TorchAO (pipeline or manual), and Optimum Quanto (manual).
+- **What**: Reduce model precision and train using less memory. There are three supported quantisation backends: BitsAndBytes (pipeline), TorchAO (pipeline or manual), and Optimum Quanto (pipeline or manual).
 
 #### Diffusers pipeline presets
 
 - `nf4-bnb` loads through Diffusers with a 4-bit NF4 BitsAndBytes config (CUDA only). Requires `bitsandbytes` and a diffusers build with BnB support.
-- `int4-torchao` uses a TorchAoConfig with `Int4WeightOnlyConfig` via Diffusers (CUDA). Requires `torchao` and `transformers>=4.39`.
+- `int4-torchao`, `int8-torchao`, and `fp8-torchao` use a TorchAoConfig via Diffusers (CUDA). Requires `torchao` and a recent diffusers/transformers build.
+- `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto`, and `fp8uz-quanto` use QuantoConfig via Diffusers. Diffusers maps FP8-NUZ to float8 weights; use manual quanto quantization if you need the NUZ variant.
 - `.gguf` checkpoints are auto-detected and loaded with `GGUFQuantizationConfig` when available. Install recent diffusers/transformers for GGUF support.
 
 #### Optimum Quanto
@@ -397,7 +403,7 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 
 - **What**: Path to your SimpleTuner dataset configuration.
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
-- **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
+- **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](DATALOADER.md) for more information on configuring the data loader.
 
 ### `--override_dataset_config`
 
@@ -441,7 +447,7 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 
 ## 🌈 Image and Text Processing
 
-A lot of settings are instead set through the [dataloader config](/documentation/DATALOADER.md), but these will apply globally.
+A lot of settings are instead set through the [dataloader config](DATALOADER.md), but these will apply globally.
 
 ### `--resolution_type`
 
@@ -599,6 +605,11 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **Options**: "none" or "clip"
 - **Scheduling**: Use `--eval_steps_interval` for step-based scheduling or `--eval_epoch_interval` for epoch-based scheduling (fractions like `0.5` run multiple times per epoch). If both are set, the trainer logs a warning and runs both schedules.
 
+### `--eval_loss_disable`
+
+- **What**: Disable evaluation loss calculation during validation.
+- **Why**: When an eval dataset is configured, loss will automatically be calculated. If CLIP evaluation is also enabled, they will both run. This flag will allow you to selectively disable eval loss while keeping CLIP evaluation enabled.
+
 ### `--caption_strategy`
 
 - **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
@@ -607,6 +618,15 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - `filename` will apply some cleanup to the filename before using it as the caption.
   - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
   - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
+
+### `--conditioning_multidataset_sampling` {#--conditioning_multidataset_sampling}
+
+- **What**: How to sample from multiple conditioning datasets. **Choices**: `combined`, `random`
+- **Why**: When training with multiple conditioning datasets (e.g., multiple reference images or control signals), this determines how they are used:
+  - `combined` stitches conditioning inputs together, showing them simultaneously during training. Useful for multi-image compositing tasks.
+  - `random` randomly selects one conditioning dataset per sample, switching between conditions during training.
+- **Note**: When using `combined`, you cannot define separate `captions` on conditioning datasets; the source dataset's captions are used instead.
+- **See also**: [DATALOADER.md](DATALOADER.md#conditioning_data) for configuring multiple conditioning datasets.
 
 ---
 
@@ -665,7 +685,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 > Note: Do not enable fused backward pass for any optimizers when using gradient accumulation steps.
 
-### `--allow_dataset_oversubscription`
+### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
 - **What**: Automatically adjusts dataset `repeats` when the dataset is smaller than the effective batch size.
 - **Why**: Prevents training failures when your dataset size doesn't meet the minimum requirements for your multi-GPU configuration.
@@ -1050,6 +1070,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_model_name_or_path PRETRAINED_UNET_MODEL_NAME_OR_PATH]
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
+                [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -1365,6 +1386,8 @@ options:
                         Subfolder containing UNet model weights
   --pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH
                         Path to pretrained T5 model
+  --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
+                        Path to pretrained Gemma model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}

@@ -2,8 +2,10 @@
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
 
 try:
@@ -25,7 +27,7 @@ router = APIRouter(prefix="/api/fields", tags=["fields"])
 
 
 @router.get("/metadata")
-async def get_all_field_metadata() -> Dict[str, Any]:
+async def get_all_field_metadata(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get complete field metadata for all configuration fields.
 
     Returns:
@@ -35,7 +37,7 @@ async def get_all_field_metadata() -> Dict[str, Any]:
 
 
 @router.get("/tabs")
-async def get_tab_structure() -> Dict[str, Any]:
+async def get_tab_structure(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get the structure of all tabs and sections.
 
     Returns:
@@ -53,6 +55,7 @@ async def get_tab_fields(
     platform: Optional[str] = Query(None, description="Platform (cuda/mps) for filtering"),
     importance_level: Optional[str] = Query("important", description="Maximum importance level to show"),
     include_advanced: bool = Query(False, description="Include advanced fields"),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Get fields for a specific tab with context filtering.
 
@@ -170,7 +173,9 @@ async def get_tab_fields(
 
 @router.get("/field/{field_name}")
 async def get_field_metadata(
-    field_name: str, output_dir: Optional[str] = Query(None, description="Output directory for checkpoint loading")
+    field_name: str,
+    output_dir: Optional[str] = Query(None, description="Output directory for checkpoint loading"),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Get metadata for a specific field.
 
@@ -238,11 +243,21 @@ async def get_field_metadata(
             # Keep default choices if checkpoint loading fails
             pass
 
+    # Handle dynamic loading for data_backend_config field
+    if field_name == "data_backend_config":
+        try:
+            dataset_choices = build_data_backend_choices()
+            if dataset_choices:
+                field_data["choices"] = dataset_choices
+        except Exception:
+            # Keep default choices if loading fails
+            pass
+
     return field_data
 
 
 @router.get("/dependencies/{field_name}")
-async def get_field_dependencies(field_name: str) -> Dict[str, Any]:
+async def get_field_dependencies(field_name: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get fields that depend on the specified field.
 
     Args:
@@ -256,7 +271,9 @@ async def get_field_dependencies(field_name: str) -> Dict[str, Any]:
 
 
 @router.post("/validate")
-async def validate_field_value(field_name: str, value: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def validate_field_value(
+    field_name: str, value: Any, context: Optional[Dict[str, Any]] = None, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Validate a field value against its rules.
 
     Args:
@@ -278,7 +295,11 @@ async def validate_field_value(field_name: str, value: Any, context: Optional[Di
 
 @router.get("/search")
 async def search_fields(
-    query: str, tab: Optional[str] = None, importance: Optional[str] = None, include_experimental: bool = False
+    query: str,
+    tab: Optional[str] = None,
+    importance: Optional[str] = None,
+    include_experimental: bool = False,
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Search for fields by name, label, or help text.
 
@@ -330,7 +351,7 @@ async def search_fields(
 
 
 @router.get("/model-specific/{model_family}")
-async def get_model_specific_fields(model_family: str) -> Dict[str, Any]:
+async def get_model_specific_fields(model_family: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get fields specific to a model family.
 
     Args:
@@ -359,7 +380,7 @@ async def get_model_specific_fields(model_family: str) -> Dict[str, Any]:
 
 
 @router.get("/importance-levels")
-async def get_importance_levels() -> Dict[str, Any]:
+async def get_importance_levels(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Get available importance levels and their descriptions.
 
     Returns:

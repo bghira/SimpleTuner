@@ -512,5 +512,84 @@ class GitRepoService:
             self._run_git(args, cwd=root)
         return {"message": f"Restored {rel}"}
 
+    def get_head_commit(self, config_dir: Path | str) -> Dict[str, Optional[str]]:
+        """Get the current HEAD commit hash and abbreviated form.
+
+        Returns dict with 'commit' (full SHA) and 'abbrev' (short SHA) keys.
+        Returns None values if HEAD cannot be resolved (e.g., empty repo).
+        """
+        config_path = self._normalize_dir(config_dir)
+        root = self._repo_root(config_path)
+        if root is None:
+            return {"commit": None, "abbrev": None}
+
+        result = self._run_git(["rev-parse", "HEAD"], cwd=root, check=False)
+        if result.returncode != 0:
+            return {"commit": None, "abbrev": None}
+
+        commit = result.stdout.strip() or None
+        abbrev = commit[:7] if commit else None
+        return {"commit": commit, "abbrev": abbrev}
+
+    def stage_all(self, config_dir: Path | str, include_untracked: bool = True) -> bool:
+        """Stage all changes in the given directory.
+
+        Args:
+            config_dir: Directory to stage changes from
+            include_untracked: If True, also stage untracked files
+
+        Returns:
+            True if changes were staged, False if nothing to stage
+        """
+        with self._lock:
+            config_path = self._normalize_dir(config_dir)
+            root = self._ensure_repo(config_path)
+
+            if include_untracked:
+                self._run_git(["add", "."], cwd=config_path)
+            else:
+                self._run_git(["add", "-u", "."], cwd=config_path)
+
+            # Check if anything was staged
+            diff_result = self._run_git(["diff", "--cached", "--name-only"], cwd=root, check=False)
+            return bool(diff_result.stdout.strip())
+
+    def has_staged_changes(self, config_dir: Path | str) -> bool:
+        """Check if there are any staged changes ready to commit."""
+        config_path = self._normalize_dir(config_dir)
+        root = self._repo_root(config_path)
+        if root is None:
+            return False
+
+        diff_result = self._run_git(["diff", "--cached", "--name-only"], cwd=root, check=False)
+        return bool(diff_result.stdout.strip())
+
+    def ensure_identity(self, config_dir: Path | str) -> None:
+        """Ensure git identity is configured, setting defaults if needed."""
+        config_path = self._normalize_dir(config_dir)
+        root = self._ensure_repo(config_path)
+        self._ensure_identity(root)
+
+    def commit(self, config_dir: Path | str, message: str) -> Dict[str, Optional[str]]:
+        """Create a commit with the currently staged changes.
+
+        Args:
+            config_dir: Repository directory
+            message: Commit message
+
+        Returns:
+            Dict with 'commit' (full SHA) and 'abbrev' (short SHA) of new commit
+        """
+        cleaned_message = self._validate_commit_message(message)
+
+        with self._lock:
+            config_path = self._normalize_dir(config_dir)
+            root = self._ensure_repo(config_path)
+
+            self._ensure_identity(root)
+            self._run_git(["commit", "-m", cleaned_message], cwd=root)
+
+        return self.get_head_commit(config_dir)
+
 
 GIT_REPO_SERVICE = GitRepoService()

@@ -43,6 +43,28 @@ def _is_falsey(value: object) -> bool:
 _LEGACY_ARG_HANDLERS: dict[str, Callable[[object, list[str], dict[str, object]], bool]] = {}
 
 
+def normalize_lr_scheduler_value(value: object, warmup_steps: object | None = None) -> object:
+    if not isinstance(value, str):
+        return value
+
+    normalized = value.strip().lower()
+    alias_map = {
+        "cosine_with_warmup": "cosine",
+    }
+    if normalized in alias_map:
+        return alias_map[normalized]
+
+    if warmup_steps is not None:
+        try:
+            warmup_value = int(warmup_steps)
+        except (TypeError, ValueError):
+            warmup_value = 0
+        if normalized == "constant" and warmup_value > 0:
+            return "constant_with_warmup"
+
+    return value
+
+
 def _legacy_handler(name: str):
     def _decorator(func: Callable[[object, list[str], dict[str, object]], bool]):
         _LEGACY_ARG_HANDLERS[name] = func
@@ -85,6 +107,24 @@ def _handle_dataset_only_max(value: object, cli_args: list[str], extras: dict[st
 
 @_legacy_handler("repeats")
 def _handle_dataset_only_repeats(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    return True
+
+
+@_legacy_handler("ez_model_type")
+def _handle_ui_only_ez_model_type(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Ignore UI-only EZ Mode wizard sentinel field."""
+    return True
+
+
+@_legacy_handler("__disabled_fields__")
+def _handle_ui_only_disabled_fields(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Ignore UI-only disabled fields tracker."""
+    return True
+
+
+@_legacy_handler("__active_tab__")
+def _handle_ui_only_active_tab(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Ignore UI-only active tab tracker."""
     return True
 
 

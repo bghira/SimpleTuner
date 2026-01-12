@@ -1,0 +1,605 @@
+<!-- partials/cloud_admin_users_modal.html - User & Resource Rules Management -->
+<div class="modal fade cloud-admin-modal"
+     :class="{ 'show d-block': adminModal.open }"
+     tabindex="-1"
+     x-show="adminModal.open"
+     @keydown.escape="closeAdminModal()">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-lg-down">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h5 class="modal-title d-flex align-items-center">
+                    <i class="fas fa-users-cog me-2"></i>
+                    <span>User Management</span>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" @click="closeAdminModal()"></button>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="admin-tabs border-bottom border-secondary">
+                <ul class="nav nav-tabs border-0 px-3">
+                    <li class="nav-item">
+                        <button class="nav-link" :class="{ active: adminModal.tab === 'users' }"
+                                @click="adminModal.tab = 'users'">
+                            <i class="fas fa-users me-1"></i>
+                            <span class="d-none d-sm-inline">Users</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" :class="{ active: adminModal.tab === 'levels' }"
+                                @click="adminModal.tab = 'levels'">
+                            <i class="fas fa-layer-group me-1"></i>
+                            <span class="d-none d-sm-inline">Levels</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" :class="{ active: adminModal.tab === 'rules' }"
+                                @click="adminModal.tab = 'rules'; loadResourceRules()">
+                            <i class="fas fa-shield-alt me-1"></i>
+                            <span class="d-none d-sm-inline">Resource Rules</span>
+                        </button>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="modal-body p-3">
+                <!-- Users Tab -->
+                <div x-show="adminModal.tab === 'users'">
+                    <!-- Search/Filter Bar -->
+                    <div class="d-flex gap-2 mb-3">
+                        <div class="input-group input-group-sm flex-grow-1">
+                            <span class="input-group-text bg-dark border-secondary">
+                                <i class="fas fa-search text-muted"></i>
+                            </span>
+                            <input type="text"
+                                   class="form-control bg-dark text-light border-secondary"
+                                   placeholder="Search users..."
+                                   x-model="adminModal.userSearch"
+                                   @input="filterUsers()">
+                        </div>
+                        <button class="btn btn-sm btn-primary" @click="showCreateUserForm()">
+                            <i class="fas fa-plus me-1"></i><span class="d-none d-sm-inline">Add User</span>
+                        </button>
+                    </div>
+
+                    <!-- Users Table -->
+                    <div class="table-responsive">
+                        <table class="table table-dark table-sm table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width: 30px;"></th>
+                                    <th>User</th>
+                                    <th class="d-none d-md-table-cell">Levels</th>
+                                    <th class="d-none d-lg-table-cell">Last Login</th>
+                                    <th style="width: 100px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-if="adminModal.usersLoading">
+                                    <tr>
+                                        <td colspan="5" class="text-center py-4">
+                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading users...
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-if="!adminModal.usersLoading && adminModal.filteredUsers.length === 0">
+                                    <tr>
+                                        <td colspan="5" class="text-center py-4 text-muted">
+                                            <i class="fas fa-users-slash me-2"></i>No users found
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-for="user in adminModal.filteredUsers" :key="user.id">
+                                    <tr>
+                                        <td>
+                                            <span class="badge" :class="user.is_active ? 'bg-success' : 'bg-secondary'"
+                                                  :title="user.is_active ? 'Active' : 'Inactive'">
+                                                <i class="fas" :class="user.is_active ? 'fa-check' : 'fa-pause'"></i>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <div>
+                                                    <div class="fw-medium" x-text="user.display_name || user.username"></div>
+                                                    <div class="text-muted small" x-text="user.email"></div>
+                                                </div>
+                                                <span class="badge bg-warning ms-2" x-show="user.is_admin" title="Administrator">
+                                                    <i class="fas fa-crown"></i>
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td class="d-none d-md-table-cell">
+                                            <div class="d-flex flex-wrap gap-1">
+                                                <template x-for="level in user.levels" :key="level.id">
+                                                    <span class="badge bg-info bg-opacity-25 text-info" x-text="level.name"></span>
+                                                </template>
+                                            </div>
+                                        </td>
+                                        <td class="d-none d-lg-table-cell">
+                                            <small class="text-muted" x-text="user.last_login_at ? formatDate(user.last_login_at) : 'Never'"></small>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="editUser(user)" title="Edit">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                                <button class="btn btn-outline-danger" @click="confirmDeleteUser(user)" title="Delete"
+                                                        :disabled="user.is_admin">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Levels Tab -->
+                <div x-show="adminModal.tab === 'levels'">
+                    <div class="alert alert-info small py-2">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Levels define user access. Higher priority levels take precedence. Assign resource rules to levels to control what resources users can access.
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-dark table-sm table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Level</th>
+                                    <th>Priority</th>
+                                    <th class="d-none d-md-table-cell">Permissions</th>
+                                    <th>Resource Rules</th>
+                                    <th style="width: 80px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-if="adminModal.levelsLoading">
+                                    <tr>
+                                        <td colspan="5" class="text-center py-4">
+                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading levels...
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-for="level in adminModal.levels" :key="level.id">
+                                    <tr>
+                                        <td>
+                                            <div class="fw-medium" x-text="level.name"></div>
+                                            <div class="text-muted small" x-text="level.description"></div>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary" x-text="level.priority"></span>
+                                        </td>
+                                        <td class="d-none d-md-table-cell">
+                                            <small class="text-muted" x-text="(level.permissions || []).length + ' permissions'"></small>
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-info" @click="editLevelRules(level)">
+                                                <i class="fas fa-shield-alt me-1"></i>
+                                                <span x-text="(level.rules || []).length"></span> rules
+                                            </button>
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-secondary" @click="viewLevelDetails(level)" title="Details">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Resource Rules Tab -->
+                <div x-show="adminModal.tab === 'rules'">
+                    <div class="d-flex gap-2 mb-3">
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;"
+                                x-model="adminModal.ruleTypeFilter" @change="filterRules()">
+                            <option value="">All Types</option>
+                            <option value="config">Config</option>
+                            <option value="hardware">Hardware</option>
+                            <option value="provider">Provider</option>
+                            <option value="output_path">Output Path</option>
+                        </select>
+                        <div class="flex-grow-1"></div>
+                        <button class="btn btn-sm btn-primary" @click="showCreateRuleForm()">
+                            <i class="fas fa-plus me-1"></i><span class="d-none d-sm-inline">Add Rule</span>
+                        </button>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-dark table-sm table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Rule</th>
+                                    <th>Type</th>
+                                    <th>Pattern</th>
+                                    <th>Action</th>
+                                    <th class="d-none d-md-table-cell">Assigned To</th>
+                                    <th style="width: 100px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-if="adminModal.rulesLoading">
+                                    <tr>
+                                        <td colspan="6" class="text-center py-4">
+                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading rules...
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-if="!adminModal.rulesLoading && adminModal.filteredRules.length === 0">
+                                    <tr>
+                                        <td colspan="6" class="text-center py-4 text-muted">
+                                            <i class="fas fa-shield-alt me-2"></i>No resource rules defined
+                                            <div class="mt-2">
+                                                <button class="btn btn-sm btn-outline-primary" @click="showCreateRuleForm()">
+                                                    <i class="fas fa-plus me-1"></i>Create your first rule
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-for="rule in adminModal.filteredRules" :key="rule.id">
+                                    <tr>
+                                        <td>
+                                            <div class="fw-medium" x-text="rule.name"></div>
+                                            <div class="text-muted small" x-text="rule.description || '(no description)'"></div>
+                                        </td>
+                                        <td>
+                                            <span class="badge" :class="{
+                                                'bg-primary': rule.resource_type === 'config',
+                                                'bg-info': rule.resource_type === 'hardware',
+                                                'bg-warning text-dark': rule.resource_type === 'provider',
+                                                'bg-secondary': rule.resource_type === 'output_path'
+                                            }" x-text="rule.resource_type"></span>
+                                        </td>
+                                        <td>
+                                            <code class="text-info" x-text="rule.pattern"></code>
+                                        </td>
+                                        <td>
+                                            <span class="badge" :class="rule.action === 'allow' ? 'bg-success' : 'bg-danger'"
+                                                  x-text="rule.action"></span>
+                                        </td>
+                                        <td class="d-none d-md-table-cell">
+                                            <template x-if="rule.levels && rule.levels.length > 0">
+                                                <div class="d-flex flex-wrap gap-1">
+                                                    <template x-for="level in rule.levels.slice(0, 3)" :key="level.id">
+                                                        <span class="badge bg-info bg-opacity-25 text-info" x-text="level.name"></span>
+                                                    </template>
+                                                    <span class="badge bg-secondary" x-show="rule.levels.length > 3"
+                                                          x-text="'+' + (rule.levels.length - 3)"></span>
+                                                </div>
+                                            </template>
+                                            <template x-if="!rule.levels || rule.levels.length === 0">
+                                                <span class="text-muted small">Unassigned</span>
+                                            </template>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="editRule(rule)" title="Edit">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                                <button class="btn btn-outline-danger" @click="confirmDeleteRule(rule)" title="Delete">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="closeAdminModal()">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="adminModal.open" @click="closeAdminModal()"></div>
+
+<!-- Create/Edit Rule Sub-Modal -->
+<div class="modal fade"
+     :class="{ 'show d-block': adminModal.ruleFormOpen }"
+     tabindex="-1"
+     x-show="adminModal.ruleFormOpen"
+     @keydown.escape="adminModal.ruleFormOpen = false"
+     style="z-index: 1070;">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="adminModal.editingRule ? 'Edit Resource Rule' : 'Create Resource Rule'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="adminModal.ruleFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <form @submit.prevent="saveRule()">
+                    <div class="mb-3">
+                        <label class="form-label small">Name</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.ruleForm.name" required placeholder="e.g., Team X Configs">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label small">Resource Type</label>
+                            <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                    x-model="adminModal.ruleForm.resource_type" required>
+                                <option value="config">Config</option>
+                                <option value="hardware">Hardware</option>
+                                <option value="provider">Provider</option>
+                                <option value="output_path">Output Path</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Action</label>
+                            <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                    x-model="adminModal.ruleForm.action" required>
+                                <option value="allow">Allow</option>
+                                <option value="deny">Deny</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Pattern (glob)</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.ruleForm.pattern" required placeholder="e.g., team-x-*">
+                        <div class="form-text small">Use * as wildcard. Examples: team-x-*, gpu-a100*, prod-*</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Priority</label>
+                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model.number="adminModal.ruleForm.priority" min="0" max="1000">
+                        <div class="form-text small">Higher priority rules are evaluated first</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Description (optional)</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.ruleForm.description" placeholder="Brief description of this rule">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="adminModal.ruleFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveRule()" :disabled="adminModal.saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="adminModal.saving"></i>
+                    <span x-text="adminModal.editingRule ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="adminModal.ruleFormOpen" @click="adminModal.ruleFormOpen = false" style="z-index: 1065;"></div>
+
+<!-- Level Rules Assignment Sub-Modal -->
+<div class="modal fade"
+     :class="{ 'show d-block': adminModal.levelRulesOpen }"
+     tabindex="-1"
+     x-show="adminModal.levelRulesOpen"
+     @keydown.escape="adminModal.levelRulesOpen = false"
+     style="z-index: 1070;">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">
+                    <i class="fas fa-shield-alt me-2"></i>
+                    Rules for <span class="text-info" x-text="adminModal.editingLevel?.name"></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="adminModal.levelRulesOpen = false"></button>
+            </div>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <template x-if="adminModal.rules.length === 0">
+                    <div class="text-center text-muted py-3">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        No resource rules defined. Create rules first.
+                    </div>
+                </template>
+                <template x-for="rule in adminModal.rules" :key="rule.id">
+                    <div class="form-check py-2 border-bottom border-secondary">
+                        <input class="form-check-input" type="checkbox"
+                               :id="'level-rule-' + rule.id"
+                               :value="rule.id"
+                               :checked="adminModal.selectedLevelRules.includes(rule.id)"
+                               @change="toggleLevelRule(rule.id)">
+                        <label class="form-check-label w-100" :for="'level-rule-' + rule.id">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <div class="fw-medium" x-text="rule.name"></div>
+                                    <div class="small">
+                                        <span class="badge me-1" :class="{
+                                            'bg-primary': rule.resource_type === 'config',
+                                            'bg-info': rule.resource_type === 'hardware',
+                                            'bg-warning text-dark': rule.resource_type === 'provider',
+                                            'bg-secondary': rule.resource_type === 'output_path'
+                                        }" x-text="rule.resource_type"></span>
+                                        <code class="text-info" x-text="rule.pattern"></code>
+                                    </div>
+                                </div>
+                                <span class="badge" :class="rule.action === 'allow' ? 'bg-success' : 'bg-danger'"
+                                      x-text="rule.action"></span>
+                            </div>
+                        </label>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="adminModal.levelRulesOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveLevelRules()" :disabled="adminModal.saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="adminModal.saving"></i>
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="adminModal.levelRulesOpen" @click="adminModal.levelRulesOpen = false" style="z-index: 1065;"></div>
+
+<!-- Create/Edit User Sub-Modal -->
+<div class="modal fade"
+     :class="{ 'show d-block': adminModal.userFormOpen }"
+     tabindex="-1"
+     x-show="adminModal.userFormOpen"
+     @keydown.escape="adminModal.userFormOpen = false"
+     style="z-index: 1070;">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="adminModal.editingUser ? 'Edit User' : 'Create User'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="adminModal.userFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <form @submit.prevent="saveUser()">
+                    <div class="mb-3">
+                        <label class="form-label small">Email</label>
+                        <input type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.userForm.email" required placeholder="user@example.com"
+                               :disabled="adminModal.editingUser">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Username</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.userForm.username" required placeholder="username"
+                               pattern="^[a-zA-Z0-9_\-]+$" minlength="3" maxlength="50"
+                               :disabled="adminModal.editingUser">
+                        <div class="form-text small">Letters, numbers, underscores, hyphens only</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Display Name</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.userForm.display_name" placeholder="Display Name (optional)">
+                    </div>
+                    <div class="mb-3" x-show="!adminModal.editingUser">
+                        <label class="form-label small">Password</label>
+                        <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.userForm.password" minlength="8"
+                               :required="!adminModal.editingUser" placeholder="Minimum 8 characters">
+                    </div>
+                    <div class="mb-3" x-show="adminModal.editingUser">
+                        <label class="form-label small">New Password (leave empty to keep current)</label>
+                        <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="adminModal.userForm.password" minlength="8" placeholder="Leave empty to keep current">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Levels</label>
+                        <div class="d-flex flex-wrap gap-2">
+                            <template x-for="level in adminModal.levels" :key="level.id">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox"
+                                           :id="'user-level-' + level.id"
+                                           :value="level.name"
+                                           :checked="adminModal.userForm.level_names.includes(level.name)"
+                                           @change="toggleUserLevel(level.name)">
+                                    <label class="form-check-label small" :for="'user-level-' + level.id" x-text="level.name"></label>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="user-is-admin"
+                                       x-model="adminModal.userForm.is_admin">
+                                <label class="form-check-label small" for="user-is-admin">
+                                    <i class="fas fa-crown text-warning me-1"></i>Administrator
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-6" x-show="adminModal.editingUser">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="user-is-active"
+                                       x-model="adminModal.userForm.is_active">
+                                <label class="form-check-label small" for="user-is-active">
+                                    <i class="fas fa-check-circle text-success me-1"></i>Active
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="adminModal.userFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveUser()" :disabled="adminModal.saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="adminModal.saving"></i>
+                    <span x-text="adminModal.editingUser ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="adminModal.userFormOpen" @click="adminModal.userFormOpen = false" style="z-index: 1065;"></div>
+
+<!-- Delete User Confirmation Sub-Modal -->
+<div class="modal fade"
+     :class="{ 'show d-block': adminModal.deleteUserOpen }"
+     tabindex="-1"
+     x-show="adminModal.deleteUserOpen"
+     @keydown.escape="adminModal.deleteUserOpen = false"
+     style="z-index: 1070;">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title text-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>Delete User
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="adminModal.deleteUserOpen = false"></button>
+            </div>
+            <div class="modal-body text-center">
+                <p class="mb-2">Are you sure you want to delete:</p>
+                <p class="fw-bold mb-3" x-text="adminModal.deletingUser?.display_name || adminModal.deletingUser?.username"></p>
+                <p class="text-muted small mb-0">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer border-secondary py-2 justify-content-center">
+                <button type="button" class="btn btn-secondary btn-sm" @click="adminModal.deleteUserOpen = false">Cancel</button>
+                <button type="button" class="btn btn-danger btn-sm" @click="deleteUser()" :disabled="adminModal.saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="adminModal.saving"></i>
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="adminModal.deleteUserOpen" @click="adminModal.deleteUserOpen = false" style="z-index: 1065;"></div>
+
+<style>
+.cloud-admin-modal .admin-tabs .nav-link {
+    color: rgba(255, 255, 255, 0.6);
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.5rem 1rem;
+    background: transparent;
+}
+
+.cloud-admin-modal .admin-tabs .nav-link:hover {
+    color: rgba(255, 255, 255, 0.9);
+    border-bottom-color: rgba(129, 140, 248, 0.4);
+}
+
+.cloud-admin-modal .admin-tabs .nav-link.active {
+    color: #fff;
+    border-bottom-color: #818cf8;
+}
+
+.cloud-admin-modal .table {
+    margin-bottom: 0;
+}
+
+.cloud-admin-modal .table th {
+    border-top: none;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+}
+
+.cloud-admin-modal .table td {
+    vertical-align: middle;
+}
+
+@media (max-width: 991.98px) {
+    .cloud-admin-modal .modal-content {
+        border-radius: 0;
+    }
+}
+</style>

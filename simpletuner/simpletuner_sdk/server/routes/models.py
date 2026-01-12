@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 
 from simpletuner.helpers.models.all import get_model_flavour_choices
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
+from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.fsdp_service import FSDP_SERVICE, FSDPServiceError
 from simpletuner.simpletuner_sdk.server.services.models_service import MODELS_SERVICE, ModelRegistry, ModelServiceError
 
@@ -26,7 +28,7 @@ def _call_service(func, *args, **kwargs):
 
 @router.get("/api/models")
 @router.get("/models")
-async def get_model_families():
+async def get_model_families(_user: User = Depends(get_current_user)):
     """Return all available model families."""
     if model_families is not _MODEL_FAMILY_SENTINEL:
         try:
@@ -39,21 +41,21 @@ async def get_model_families():
 
 @router.get("/api/models/wizard")
 @router.get("/models/wizard")
-async def get_wizard_models():
+async def get_wizard_models(_user: User = Depends(get_current_user)):
     """Return model families enabled for the training wizard."""
     return _call_service(MODELS_SERVICE.list_wizard_models)
 
 
 @router.get("/api/models/{model_family}")
 @router.get("/models/{model_family}")
-async def get_model_details(model_family: str):
+async def get_model_details(model_family: str, _user: User = Depends(get_current_user)):
     """Return metadata for a specific model family."""
     return _call_service(MODELS_SERVICE.get_model_details, model_family)
 
 
 @router.get("/api/models/{model_family}/flavours")
 @router.get("/models/{model_family}/flavours")
-async def get_model_flavours(model_family: str):
+async def get_model_flavours(model_family: str, _user: User = Depends(get_current_user)):
     """Return the flavours for a specific model family."""
     if model_families is not _MODEL_FAMILY_SENTINEL:
         if model_family not in model_families:  # type: ignore[operator]
@@ -65,7 +67,7 @@ async def get_model_flavours(model_family: str):
 
 @router.get("/api/models/{model_family}/flavours-select", response_class=HTMLResponse)
 @router.get("/models/{model_family}/flavours-select", response_class=HTMLResponse)
-async def get_model_flavours_html(model_family: str, current_value: str = ""):
+async def get_model_flavours_html(model_family: str, current_value: str = "", _user: User = Depends(get_current_user)):
     """Return flavours as HTML <option> elements for HTMX usage."""
     if model_family == "loading":
         return """
@@ -107,7 +109,7 @@ async def get_model_flavours_html(model_family: str, current_value: str = ""):
 
 @router.post("/api/models/requirements")
 @router.post("/models/requirements")
-async def evaluate_model_requirements(payload: Dict[str, Any]):
+async def evaluate_model_requirements(payload: Dict[str, Any], _user: User = Depends(get_current_user)):
     """Evaluate conditioning requirements for a model configuration."""
 
     if not isinstance(payload, dict):
@@ -122,7 +124,7 @@ async def evaluate_model_requirements(payload: Dict[str, Any]):
 
 @router.post("/api/models/{model_family}/fsdp-blocks")
 @router.post("/models/{model_family}/fsdp-blocks")
-async def detect_fsdp_blocks(model_family: str, payload: Dict[str, Any]):
+async def detect_fsdp_blocks(model_family: str, payload: Dict[str, Any], _user: User = Depends(get_current_user)):
     """Detect transformer block classes for FSDP auto-wrap assistance."""
 
     if not isinstance(payload, dict):
@@ -143,7 +145,7 @@ async def detect_fsdp_blocks(model_family: str, payload: Dict[str, Any]):
 
 @router.get("/api/models/{model_family}/acceleration-presets")
 @router.get("/models/{model_family}/acceleration-presets")
-async def get_acceleration_presets(model_family: str):
+async def get_acceleration_presets(model_family: str, _user: User = Depends(get_current_user)):
     """Return model-specific acceleration presets for memory optimization."""
     try:
         model_cls = MODELS_SERVICE._get_model_class(model_family)

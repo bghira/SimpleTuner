@@ -1,0 +1,253 @@
+<!-- API Keys Modal -->
+<div class="modal fade" id="apiKeysModal" tabindex="-1" aria-labelledby="apiKeysModalLabel" aria-hidden="true"
+     x-data="apiKeysComponent()" x-init="init()">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="apiKeysModalLabel">
+                    <i class="fas fa-key me-2"></i>API Keys
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Info -->
+                <div class="alert alert-info py-2 mb-3">
+                    <small>
+                        <i class="fas fa-info-circle me-1"></i>
+                        API keys allow CLI and programmatic access. Set <code>SIMPLETUNER_API_KEY</code> to use with the CLI.
+                    </small>
+                </div>
+
+                <!-- Loading State -->
+                <div x-show="loading" class="text-center py-4">
+                    <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+                    <p class="mt-2 text-muted">Loading API keys...</p>
+                </div>
+
+                <!-- Content -->
+                <div x-show="!loading" x-cloak>
+                    <!-- New Key Form -->
+                    <div class="card mb-3" style="background: rgba(0,0,0,0.2);">
+                        <div class="card-body">
+                            <h6 class="card-title mb-3">Create New Key</h6>
+                            <form @submit.prevent="createKey()">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col">
+                                        <label class="form-label small text-muted">Name</label>
+                                        <input type="text" class="form-control form-control-sm"
+                                               x-model="newKeyName" placeholder="e.g., CLI Access" required>
+                                    </div>
+                                    <div class="col-auto">
+                                        <label class="form-label small text-muted">Expires</label>
+                                        <select class="form-select form-select-sm" x-model="newKeyExpires">
+                                            <option value="">Never</option>
+                                            <option value="7">7 days</option>
+                                            <option value="30">30 days</option>
+                                            <option value="90">90 days</option>
+                                            <option value="365">1 year</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="submit" class="btn btn-primary btn-sm" :disabled="creating || !newKeyName">
+                                            <i class="fas" :class="creating ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                                            <span class="ms-1">Create</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Newly Created Key (shown once) -->
+                    <div x-show="newlyCreatedKey" class="alert alert-success mb-3">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong><i class="fas fa-check-circle me-1"></i>API Key Created</strong>
+                                <p class="mb-1 small">Copy this key now - it won't be shown again!</p>
+                                <code class="d-block p-2 bg-dark rounded" x-text="newlyCreatedKey"></code>
+                            </div>
+                            <button class="btn btn-sm btn-outline-light" @click="copyKey(newlyCreatedKey)" title="Copy to clipboard">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary mt-2" @click="newlyCreatedKey = null">
+                            <i class="fas fa-times me-1"></i>Dismiss
+                        </button>
+                    </div>
+
+                    <!-- Keys List -->
+                    <div class="table-responsive">
+                        <table class="table table-dark table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Key Prefix</th>
+                                    <th>Created</th>
+                                    <th>Last Used</th>
+                                    <th>Expires</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-if="keys.length === 0">
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted py-3">
+                                            No API keys yet. Create one above.
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-for="key in keys" :key="key.id">
+                                    <tr :class="{'text-muted': !key.is_active}">
+                                        <td x-text="key.name"></td>
+                                        <td><code x-text="key.key_prefix + '...'"></code></td>
+                                        <td x-text="formatDate(key.created_at)"></td>
+                                        <td x-text="key.last_used_at ? formatDate(key.last_used_at) : 'Never'"></td>
+                                        <td>
+                                            <span x-show="!key.expires_at" class="text-muted">Never</span>
+                                            <span x-show="key.expires_at" x-text="formatDate(key.expires_at)"
+                                                  :class="{'text-danger': isExpired(key.expires_at)}"></span>
+                                        </td>
+                                        <td class="text-end">
+                                            <button x-show="key.is_active"
+                                                    class="btn btn-sm btn-outline-danger"
+                                                    @click="revokeKey(key.id)"
+                                                    :disabled="revoking === key.id"
+                                                    title="Revoke key">
+                                                <i class="fas" :class="revoking === key.id ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
+                                            </button>
+                                            <span x-show="!key.is_active" class="badge bg-secondary">Revoked</span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div x-show="error" class="alert alert-danger mt-3 py-2" x-text="error"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+if (!window.apiKeysComponent) {
+    window.apiKeysComponent = function() {
+        return {
+            loading: false,
+            creating: false,
+            revoking: null,
+            keys: [],
+            newKeyName: '',
+            newKeyExpires: '',
+            newlyCreatedKey: null,
+            error: null,
+
+            async init() {
+                // Load keys when modal opens
+                const modal = document.getElementById('apiKeysModal');
+                if (modal) {
+                    modal.addEventListener('show.bs.modal', () => this.loadKeys());
+                }
+            },
+
+            async loadKeys() {
+                this.loading = true;
+                this.error = null;
+                try {
+                    const response = await fetch('/api/auth/api-keys');
+                    if (response.ok) {
+                        this.keys = await response.json();
+                    } else if (response.status === 401) {
+                        this.error = 'Not authenticated';
+                    } else {
+                        this.error = 'Failed to load API keys';
+                    }
+                } catch (err) {
+                    this.error = 'Failed to load API keys';
+                    console.error('Failed to load API keys:', err);
+                } finally {
+                    this.loading = false;
+                }
+            },
+
+            async createKey() {
+                this.creating = true;
+                this.error = null;
+                this.newlyCreatedKey = null;
+                try {
+                    const body = { name: this.newKeyName };
+                    if (this.newKeyExpires) {
+                        body.expires_days = parseInt(this.newKeyExpires);
+                    }
+                    const response = await fetch('/api/auth/api-keys', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.newlyCreatedKey = data.key;
+                        this.newKeyName = '';
+                        this.newKeyExpires = '';
+                        await this.loadKeys();
+                        window.showToast?.('API key created', 'success');
+                    } else {
+                        const err = await response.json();
+                        this.error = err.detail || 'Failed to create API key';
+                    }
+                } catch (err) {
+                    this.error = 'Failed to create API key';
+                    console.error('Failed to create API key:', err);
+                } finally {
+                    this.creating = false;
+                }
+            },
+
+            async revokeKey(keyId) {
+                if (!confirm('Revoke this API key? This cannot be undone.')) return;
+
+                this.revoking = keyId;
+                this.error = null;
+                try {
+                    const response = await fetch(`/api/auth/api-keys/${keyId}`, {
+                        method: 'DELETE',
+                    });
+                    if (response.ok) {
+                        await this.loadKeys();
+                        window.showToast?.('API key revoked', 'success');
+                    } else {
+                        const err = await response.json();
+                        this.error = err.detail || 'Failed to revoke API key';
+                    }
+                } catch (err) {
+                    this.error = 'Failed to revoke API key';
+                    console.error('Failed to revoke API key:', err);
+                } finally {
+                    this.revoking = null;
+                }
+            },
+
+            copyKey(key) {
+                navigator.clipboard.writeText(key).then(() => {
+                    window.showToast?.('API key copied to clipboard', 'success');
+                }).catch(() => {
+                    window.showToast?.('Failed to copy to clipboard', 'error');
+                });
+            },
+
+            formatDate(dateStr) {
+                if (!dateStr) return '-';
+                const date = new Date(dateStr);
+                return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            },
+
+            isExpired(dateStr) {
+                if (!dateStr) return false;
+                return new Date(dateStr) < new Date();
+            },
+        };
+    };
+}
+</script>

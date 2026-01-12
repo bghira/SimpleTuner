@@ -67,10 +67,10 @@ apt -y install nvidia-cuda-toolkit-12-8
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
-For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+For manual installation or development setup, see the [installation documentation](../INSTALL.md).
 
 ### AMD ROCm follow-up steps
 
@@ -150,7 +150,7 @@ There, you will possibly need to modify the following variables:
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
 
@@ -226,11 +226,11 @@ A set of diverse prompts will help determine whether the model is collapsing as 
 
 ### CLIP score tracking
 
-If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+If you wish to enable evaluations to score the model's performance, see [this document](../evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
 ### Stable evaluation loss
 
-If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+If you wish to use stable MSE loss to score the model's performance, see [this document](../evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 ### Validation previews
 
@@ -384,7 +384,7 @@ From the SimpleTuner directory, you have several options to start training:
 **Option 1 (Recommended - pip install):**
 
 ```bash
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 simpletuner train
 ```
 
@@ -402,7 +402,7 @@ simpletuner train
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
+For more information, see the [dataloader](../DATALOADER.md) and [tutorial](../TUTORIAL.md) documents.
 
 ## Multi-GPU Configuration
 
@@ -414,7 +414,7 @@ SimpleTuner includes **automatic GPU detection** through the WebUI. During onboa
 
 The WebUI detects your hardware and configures `--num_processes` and `CUDA_VISIBLE_DEVICES` automatically.
 
-For manual configuration or advanced setups, see the [Multi-GPU Training section](/documentation/INSTALL.md#multiple-gpu-training) in the installation guide.
+For manual configuration or advanced setups, see the [Multi-GPU Training section](../INSTALL.md#multiple-gpu-training) in the installation guide.
 
 ## Inference tips
 

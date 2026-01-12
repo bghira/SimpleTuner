@@ -39,7 +39,7 @@
                title="{{ field.cmd_args_help|default(field.description) }}"></i>
             {% endif %}
             {% if field.documentation %}
-            <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/{{ field.documentation }}"
+            <a href="{{ docs_url(field.documentation) }}"
                target="_blank"
                class="text-muted doc-link ms-1"
                title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
@@ -1254,14 +1254,41 @@ window.handleFieldValidation = window.handleFieldValidation || function(event, e
         }
     }
 
-    if (window.Alpine && Alpine.store('trainer')) {
-        const trainerStore = Alpine.store('trainer');
-        if (typeof trainerStore.markFormDirty === 'function') {
-            trainerStore.markFormDirty();
-        } else {
-            trainerStore.formDirty = true;
-            trainerStore._skipNextClean = true;
+    const trainerStore = window.Alpine && window.Alpine.store ? window.Alpine.store('trainer') : null;
+    if (trainerStore && element) {
+        const fieldKey = element.name || element.id;
+        if (fieldKey) {
+            const nextErrors = { ...(trainerStore.validationErrors || {}) };
+            if (responseText.length > 0) {
+                nextErrors[fieldKey] = responseText;
+            } else {
+                delete nextErrors[fieldKey];
+            }
+            trainerStore.validationErrors = nextErrors;
         }
     }
+
+    const relatedFieldMap = {
+        num_train_epochs: 'max_train_steps',
+        max_train_steps: 'num_train_epochs',
+    };
+
+    if (element && element.id && relatedFieldMap[element.id]) {
+        const relatedState = window.__relatedFieldValidation || (window.__relatedFieldValidation = {});
+        if (relatedState[element.id]) {
+            relatedState[element.id] = false;
+        } else {
+            const relatedId = relatedFieldMap[element.id];
+            const relatedEl = document.getElementById(relatedId);
+            if (relatedEl && window.htmx && typeof window.htmx.trigger === 'function') {
+                relatedState[relatedId] = true;
+                window.htmx.trigger(relatedEl, 'change');
+            }
+        }
+    }
+
+    // NOTE: Do NOT mark form dirty here. The original input/change event already
+    // marked the form dirty via handleFieldInput. Validation responses arriving
+    // after save would incorrectly flip formDirty back to true.
 };
 </script>

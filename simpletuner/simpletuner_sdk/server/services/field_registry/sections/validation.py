@@ -183,7 +183,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Number of images to generate per validation",
             tooltip="More images give better sense of model performance but take longer to generate",
             importance=ImportanceLevel.ADVANCED,
-            webui_only=True,  # WebUI-specific field, not passed to trainer
             order=3,
             subsection="advanced",
         )
@@ -278,6 +277,23 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             subsection="advanced",
             order=6,
+        )
+    )
+
+    # Disable Validation Loss
+    registry._add_field(
+        ConfigField(
+            name="eval_loss_disable",
+            arg_name="--eval_loss_disable",
+            ui_label="Disable Validation Loss",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="evaluation",
+            default_value=False,
+            help_text="Disable validation loss computation on eval datasets",
+            tooltip="Skip computing loss on evaluation datasets during training. CLIP scoring (if enabled) still runs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
         )
     )
 
@@ -719,7 +735,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=10,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan"]),
+                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
             ],
         )
     )
@@ -741,7 +757,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=11,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan"]),
+                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
             ],
         )
     )
@@ -763,7 +779,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=12,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan"]),
+                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
             ],
         )
     )
@@ -785,7 +801,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=13,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan"]),
+                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
             ],
         )
     )

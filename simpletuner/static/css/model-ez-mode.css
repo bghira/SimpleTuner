@@ -1,0 +1,873 @@
+/**
+ * Model EZ Mode Styling
+ * A clean, step-based wizard interface for model configuration
+ */
+
+/* ========================================
+   EZ Mode Form Container
+   ======================================== */
+.ez-mode-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* ========================================
+   Step Cards
+   ======================================== */
+.ez-step {
+    background: var(--card-bg);
+    border: 1px solid var(--slate-border-subtle);
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+}
+
+.ez-step-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md-lg) var(--spacing-lg-xl);
+    background: var(--overlay-backdrop);
+    border-bottom: 1px solid var(--slate-border-subtle);
+}
+
+.ez-step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: var(--violet-gradient-alt);
+    color: var(--text-primary);
+    font-size: var(--typography-font-size-sm);
+    font-weight: var(--typography-font-weight-semibold);
+    border-radius: var(--border-radius-full);
+    flex-shrink: 0;
+}
+
+.ez-step-title {
+    font-size: 0.95rem;
+    font-weight: var(--typography-font-weight-semibold);
+    color: var(--text-light);
+}
+
+.ez-step-subtitle {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+    margin-left: var(--spacing-sm);
+}
+
+.ez-step-content {
+    padding: 1.25rem;
+}
+
+/* ========================================
+   Choice Cards (LoRA vs Full)
+   ======================================== */
+.ez-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.ez-choice-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: var(--spacing-lg-xl);
+    background: var(--slate-800-50);
+    border: 2px solid var(--slate-border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ez-choice-card:hover {
+    background: var(--slate-800-70);
+    border-color: var(--slate-border-hover);
+}
+
+.ez-choice-card.selected {
+    background: var(--indigo-bg);
+    border-color: var(--indigo-500);
+    box-shadow: 0 0 0 1px var(--indigo-border);
+}
+
+.ez-choice-icon {
+    font-size: 1.5rem;
+    color: var(--violet-400);
+    margin-bottom: var(--spacing-md);
+}
+
+.ez-choice-card.selected .ez-choice-icon {
+    color: var(--indigo-400);
+}
+
+.ez-choice-label {
+    font-size: var(--typography-font-size-base);
+    font-weight: var(--typography-font-weight-semibold);
+    color: var(--text-light);
+    margin-bottom: var(--spacing-xs);
+}
+
+.ez-choice-badge {
+    display: inline-block;
+    padding: 0.15rem var(--spacing-sm);
+    font-size: 0.65rem;
+    font-weight: var(--typography-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--success-bg);
+    color: var(--success-bright);
+    border-radius: var(--border-radius-sm);
+    margin-bottom: var(--spacing-md);
+    width: fit-content;
+}
+
+.ez-choice-badge.warning {
+    background: var(--amber-bg);
+    color: var(--amber-400);
+}
+
+.ez-choice-desc {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+    line-height: var(--typography-line-height-normal);
+}
+
+/* ========================================
+   Compact Choice Cards (LoRA vs Full)
+   ======================================== */
+.ez-compact-choice-grid {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.ez-compact-choice {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 0.6rem var(--spacing-lg);
+    background: var(--slate-800-50);
+    border: 2px solid var(--slate-border);
+    border-radius: var(--border-radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1;
+    min-width: 140px;
+    max-width: 200px;
+}
+
+.ez-compact-choice:hover {
+    background: var(--slate-800-70);
+    border-color: var(--slate-border-hover);
+}
+
+.ez-compact-choice.selected {
+    background: var(--indigo-bg);
+    border-color: var(--indigo-500);
+    box-shadow: 0 0 0 1px var(--indigo-border);
+}
+
+.ez-compact-icon {
+    font-size: var(--typography-font-size-base);
+    color: var(--violet-400);
+}
+
+.ez-compact-choice.selected .ez-compact-icon {
+    color: var(--indigo-400);
+}
+
+.ez-compact-label {
+    font-size: 0.9rem;
+    font-weight: var(--typography-font-weight-semibold);
+    color: var(--text-light);
+}
+
+.ez-compact-badge {
+    font-size: 0.6rem;
+    font-weight: var(--typography-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 0.1rem 0.35rem;
+    background: var(--success-bg);
+    color: var(--success-bright);
+    border-radius: 3px;
+    margin-left: auto;
+}
+
+.ez-compact-badge.warning {
+    background: var(--amber-bg);
+    color: var(--amber-400);
+}
+
+.ez-choice-explanation {
+    margin-top: var(--spacing-md);
+    padding: 0.6rem var(--spacing-md-lg);
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+    background: var(--slate-800-30);
+    border-radius: 6px;
+    line-height: 1.45;
+}
+
+/* ========================================
+   Presets CTA
+   ======================================== */
+.ez-presets-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: var(--spacing-lg);
+    max-width: 50%;
+}
+
+.ez-presets-cta:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18) 0%, rgba(139, 92, 246, 0.12) 100%);
+    border-color: var(--indigo-border);
+}
+
+.ez-presets-cta-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--indigo-500) 0%, var(--violet-500) 100%);
+    border-radius: var(--border-radius-md);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.ez-presets-cta-content {
+    flex: 1;
+}
+
+.ez-presets-cta-title {
+    font-size: 0.95rem;
+    font-weight: var(--typography-font-weight-semibold);
+    color: var(--text-light);
+    margin-bottom: 0.15rem;
+}
+
+.ez-presets-cta-desc {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.ez-presets-cta-arrow {
+    color: var(--indigo-500);
+    font-size: 0.9rem;
+}
+
+/* ========================================
+   Section Divider
+   ======================================== */
+.ez-section-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-lg);
+    margin: var(--spacing-lg) 0;
+    color: var(--text-muted);
+    font-size: var(--typography-font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ez-section-divider::before,
+.ez-section-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--slate-border);
+}
+
+/* ========================================
+   Block Swap Slider
+   ======================================== */
+.ez-block-swap-slider {
+    background: var(--slate-800-30);
+    border-radius: var(--border-radius-md);
+    padding: var(--spacing-md-lg) var(--spacing-lg);
+    margin-top: -0.25rem;
+    margin-bottom: var(--spacing-sm);
+}
+
+.ez-block-swap-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-sm);
+}
+
+.ez-block-swap-label {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+}
+
+.ez-block-swap-value {
+    font-size: var(--typography-font-size-sm);
+    font-weight: var(--typography-font-weight-semibold);
+    color: var(--indigo-300);
+    background: var(--indigo-bg-hover);
+    padding: 0.15rem var(--spacing-sm);
+    border-radius: var(--border-radius-sm);
+}
+
+.ez-block-swap-range {
+    margin-bottom: 0.75rem;
+}
+
+.ez-block-swap-presets {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+
+.ez-block-preset-btn {
+    flex: 1;
+    padding: 0.35rem var(--spacing-sm);
+    font-size: 0.72rem;
+    font-weight: var(--typography-font-weight-medium);
+    color: var(--text-secondary);
+    background: var(--slate-800-60);
+    border: 1px solid var(--surface-field-border);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ez-block-preset-btn:hover {
+    background: var(--indigo-bg-hover);
+    border-color: var(--indigo-border);
+    color: var(--indigo-200);
+}
+
+.ez-block-preset-btn.active {
+    background: var(--indigo-bg-active);
+    border-color: var(--indigo-500);
+    color: var(--indigo-300);
+}
+
+.ez-block-swap-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+/* ========================================
+   RamTorch Hint
+   ======================================== */
+.ez-ramtorch-hint {
+    padding: var(--spacing-sm) var(--spacing-md-lg);
+    margin-top: -0.25rem;
+    margin-bottom: var(--spacing-sm);
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    background: var(--slate-800-20);
+    border-left: 2px solid var(--indigo-border);
+    border-radius: 0 6px 6px 0;
+}
+
+/* ========================================
+   Option Expandable
+   ======================================== */
+.ez-option-row.ez-option-expandable {
+    margin-bottom: 0;
+    border-radius: 8px 8px 0 0;
+}
+
+.ez-option-row.ez-option-expandable + .ez-block-swap-slider,
+.ez-option-row.ez-option-expandable + .ez-ramtorch-hint {
+    border-radius: 0 0 8px 8px;
+}
+
+.ez-option-select {
+    flex-shrink: 0;
+}
+
+/* ========================================
+   Inline Options (like LoRA Rank)
+   ======================================== */
+.ez-inline-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md-lg) var(--spacing-lg);
+    background: var(--slate-800-40);
+    border-radius: var(--border-radius-md);
+    gap: var(--spacing-lg);
+}
+
+.ez-inline-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.ez-inline-label strong {
+    color: var(--text-heading);
+    font-size: var(--typography-font-size-sm);
+}
+
+.ez-inline-hint {
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-muted);
+}
+
+.ez-inline-input {
+    width: 80px !important;
+    text-align: center;
+}
+
+/* LoRA Rank Slider */
+.ez-rank-slider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 160px;
+}
+
+.ez-rank-slider .form-range {
+    flex: 1;
+    height: 6px;
+    background: var(--surface-field-border);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.ez-rank-slider .form-range::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--violet-gradient);
+    border: 2px solid var(--border-soft);
+    border-radius: var(--border-radius-full);
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.ez-rank-slider .form-range::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+}
+
+.ez-rank-slider .form-range::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--violet-gradient);
+    border: 2px solid var(--border-soft);
+    border-radius: var(--border-radius-full);
+    cursor: pointer;
+}
+
+.ez-rank-value {
+    min-width: 36px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--indigo-bg-active);
+    color: var(--indigo-300);
+    font-size: 0.85rem;
+    font-weight: var(--typography-font-weight-semibold);
+    text-align: center;
+    border-radius: 6px;
+}
+
+/* LoRA Rank Section */
+.ez-lora-rank-section {
+    background: var(--slate-800-40);
+    border-radius: var(--border-radius-md);
+    padding: var(--spacing-lg);
+}
+
+.ez-lora-rank-section .ez-inline-option {
+    background: transparent;
+    padding: 0;
+    margin-bottom: var(--spacing-md);
+}
+
+.ez-rank-explanation {
+    border-top: 1px solid var(--slate-border-subtle);
+    padding-top: var(--spacing-md);
+}
+
+.ez-rank-explanation p {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: var(--typography-line-height-normal);
+    margin-bottom: var(--spacing-sm);
+}
+
+.ez-rank-explanation p strong {
+    color: var(--text-body);
+}
+
+.ez-rank-explanation .text-muted {
+    font-size: 0.72rem;
+    color: var(--text-muted) !important;
+}
+
+.ez-rank-explanation .fa-lightbulb {
+    color: var(--amber-400);
+}
+
+/* ========================================
+   Option List (Memory, VAE, etc.)
+   ======================================== */
+.ez-option-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ez-option-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-md-lg) var(--spacing-lg);
+    background: var(--slate-800-30);
+    border-radius: var(--border-radius-md);
+    transition: background 0.15s ease;
+}
+
+.ez-option-row:hover {
+    background: var(--slate-800-50);
+}
+
+.ez-option-row.ez-option-subtle {
+    background: var(--slate-800-15);
+    border: 1px dashed var(--slate-border);
+}
+
+.ez-option-toggle,
+.ez-option-input {
+    flex-shrink: 0;
+    padding-top: 0.1rem;
+}
+
+.ez-option-toggles {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* VAE Options Section */
+.ez-vae-section {
+    padding: var(--spacing-md-lg) var(--spacing-lg);
+    background: var(--slate-800-15);
+    border: 1px dashed var(--slate-border);
+    border-radius: var(--border-radius-md);
+}
+
+.ez-vae-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.ez-vae-item {
+    padding: 0.5rem 0;
+}
+
+@media (max-width: 768px) {
+    .ez-vae-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.ez-option-info {
+    flex: 1;
+    cursor: pointer;
+}
+
+.ez-option-name {
+    font-size: var(--typography-font-size-sm);
+    font-weight: var(--typography-font-weight-medium);
+    color: var(--text-heading);
+    margin-bottom: var(--spacing-xs);
+}
+
+.ez-option-desc {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.ez-option-desc strong {
+    color: var(--text-body);
+}
+
+/* ========================================
+   Form Controls
+   ======================================== */
+.ez-mode-form .form-label {
+    color: var(--text-body);
+    font-size: var(--typography-font-size-sm);
+    font-weight: var(--typography-font-weight-medium);
+    margin-bottom: 0.4rem;
+}
+
+.ez-mode-form .form-control,
+.ez-mode-form .form-select {
+    background: var(--slate-800-80);
+    border: 1px solid var(--surface-field-border);
+    color: var(--text-bright);
+    font-size: var(--typography-font-size-sm);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ez-mode-form .form-control:focus,
+.ez-mode-form .form-select:focus {
+    background: var(--slate-800-95);
+    border-color: var(--violet-400);
+    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.2);
+    color: var(--text-bright);
+}
+
+.ez-mode-form .form-control:disabled,
+.ez-mode-form .form-select:disabled {
+    background: rgba(15, 23, 42, 0.5);
+    border-color: var(--slate-border);
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+.ez-mode-form .form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+}
+
+.ez-mode-form .form-control-sm {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.6rem;
+}
+
+/* Checkboxes */
+.ez-mode-form .form-check-input {
+    background-color: var(--slate-800-80);
+    border: 1.5px solid var(--slate-border-strong);
+    width: 1.15em;
+    height: 1.15em;
+    cursor: pointer;
+}
+
+.ez-mode-form .form-check-input:checked {
+    background-color: var(--violet-600);
+    border-color: var(--violet-600);
+}
+
+.ez-mode-form .form-check-input:focus {
+    border-color: var(--violet-400);
+    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.2);
+}
+
+.ez-mode-form .form-check-label {
+    color: var(--text-heading);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+/* Field hints */
+.ez-field-hint {
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-secondary);
+    margin-top: var(--spacing-sm);
+    line-height: 1.4;
+}
+
+.ez-field-hint.text-warning {
+    color: var(--amber-400) !important;
+}
+
+.ez-field-hint strong {
+    color: var(--text-body);
+}
+
+.ez-field-hint .text-success {
+    color: var(--success-bright) !important;
+}
+
+/* Warning border for dangerous options */
+.ez-mode-form .form-select.border-warning {
+    border-color: var(--warning) !important;
+}
+
+/* ========================================
+   Footer
+   ======================================== */
+.ez-mode-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+    padding-top: var(--spacing-lg);
+    margin-top: var(--spacing-sm);
+    border-top: 1px solid var(--slate-border-subtle);
+}
+
+.ez-mode-footer .btn-outline-secondary {
+    color: var(--text-secondary);
+    border-color: var(--slate-border-hover);
+}
+
+.ez-mode-footer .btn-outline-secondary:hover {
+    background: var(--slate-border-subtle);
+    color: var(--text-body);
+}
+
+.ez-mode-footer .btn-outline-light {
+    color: var(--text-heading);
+    border-color: rgba(148, 163, 184, 0.35);
+}
+
+.ez-mode-footer .btn-outline-light:hover {
+    background: var(--slate-border);
+    color: var(--text-bright);
+}
+
+/* ========================================
+   Hero Header Adjustments
+   ======================================== */
+.model-ez-mode-hero .hero-cta {
+    text-align: left;
+    padding: 1.75rem 2rem 1.5rem;
+}
+
+.model-ez-mode-hero .hero-content {
+    max-width: none;
+}
+
+.model-ez-mode-hero .hero-icon {
+    width: 52px;
+    height: 52px;
+    font-size: 1.35rem;
+    margin: 0;
+}
+
+.model-ez-mode-hero .hero-title {
+    font-size: 1.15rem;
+    margin-bottom: 0.35rem;
+}
+
+.model-ez-mode-hero .hero-description {
+    font-size: 0.85rem;
+    margin-bottom: 0;
+    color: var(--text-secondary);
+}
+
+/* ========================================
+   Responsive
+   ======================================== */
+@media (max-width: 768px) {
+    .ez-choice-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ez-compact-choice-grid {
+        flex-direction: column;
+    }
+
+    .ez-compact-choice {
+        max-width: none;
+    }
+
+    .ez-presets-cta {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .ez-step-header {
+        flex-wrap: wrap;
+    }
+
+    .ez-step-header .btn {
+        width: 100%;
+        margin-top: 0.5rem;
+    }
+
+    .ez-inline-option {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ez-inline-input {
+        width: 100% !important;
+    }
+
+    .ez-option-row {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .ez-option-row.ez-option-expandable {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .ez-option-select {
+        width: 100%;
+    }
+
+    .ez-option-select .form-select {
+        width: 100% !important;
+    }
+
+    .ez-block-swap-presets {
+        flex-wrap: wrap;
+    }
+
+    .ez-block-preset-btn {
+        flex: 0 0 calc(33.33% - 0.3rem);
+    }
+
+    .ez-option-row.ez-option-subtle {
+        flex-direction: column;
+    }
+
+    .ez-option-toggles {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .ez-mode-footer {
+        flex-direction: column;
+    }
+
+    .ez-mode-footer .btn {
+        width: 100%;
+    }
+}
+
+/* ========================================
+   Animations
+   ======================================== */
+.ez-step {
+    animation: fadeInUp 0.3s ease forwards;
+    opacity: 0;
+}
+
+.ez-step:nth-child(1) { animation-delay: 0.05s; }
+.ez-step:nth-child(2) { animation-delay: 0.1s; }
+.ez-step:nth-child(3) { animation-delay: 0.15s; }
+.ez-step:nth-child(4) { animation-delay: 0.2s; }
+.ez-step:nth-child(5) { animation-delay: 0.25s; }
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Loading spinner */
+.model-ez-mode-hero .spinner-border {
+    color: var(--violet-400) !important;
+}

@@ -194,6 +194,13 @@
             <i class="fas fa-database"></i>
             <span>Caching</span>
         </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'scheduling'}"
+                @click="setListTab(dataset, 'scheduling')"
+                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+            <i class="fas fa-clock"></i>
+            <span>Scheduling</span>
+        </button>
     </div>
 
     <!-- Tab Content -->
@@ -231,6 +238,11 @@
         <!-- Caching Tab -->
         <div x-show="getListTab(dataset) === 'advanced'" x-cloak>
             {% include 'components/dataloader/sections/advanced_body.html' %}
+        </div>
+
+        <!-- Scheduling Tab -->
+        <div x-show="getListTab(dataset) === 'scheduling'" x-cloak>
+            {% include 'components/dataloader/sections/scheduling_body.html' %}
         </div>
     </div>
 </div>

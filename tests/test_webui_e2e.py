@@ -293,6 +293,187 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_config_json_modal_reflects_blank_fields", scenario)
 
 
+class EventDockUptimeTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test connection uptime tooltip updates."""
+
+    MAX_BROWSERS = 1
+
+    def test_connection_uptime_tooltip_updates(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) {"
+                "  store.connectionStatus = 'connected';"
+                "  store.serverUptimeSeconds = 5;"
+                "  store.serverUptimeCapturedAt = Date.now();"
+                "  store.serverUptimeTick = Date.now();"
+                "}"
+            )
+
+            def get_tooltip_text(active_driver):
+                return active_driver.execute_script(
+                    "const el = document.querySelector('.connection-uptime-tooltip');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+
+            WebDriverWait(driver, 5).until(lambda d: "Server uptime:" in get_tooltip_text(d))
+            initial_text = get_tooltip_text(driver)
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store && store.serverUptimeCapturedAt) {"
+                "  store.serverUptimeTick = store.serverUptimeCapturedAt + 3000;"
+                "}"
+            )
+
+            WebDriverWait(driver, 5).until(lambda d: get_tooltip_text(d) != initial_text)
+
+        self.for_each_browser("test_connection_uptime_tooltip_updates", scenario)
+
+
+class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test form dirty state transitions across Easy Mode and full form tabs."""
+
+    MAX_BROWSERS = 1
+
+    def test_save_button_dirty_state(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            basic_tab = BasicConfigTab(driver, base_url=self.base_url)
+            training_tab = TrainingConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            def wait_for_save_state(expected_dirty: bool) -> None:
+                WebDriverWait(driver, 10).until(
+                    lambda d: d.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                        "if (!store || !btn) { return false; }"
+                        "return Boolean(store.formDirty) === arguments[0]"
+                        "  && btn.disabled === !arguments[0]"
+                        "  && btn.classList.contains('is-active') === arguments[0];",
+                        expected_dirty,
+                    )
+                )
+
+            def save_via_ui() -> None:
+                result = driver.execute_async_script(
+                    "const done = arguments[0];"
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (!store || typeof store.doSaveConfig !== 'function') { done(false); return; }"
+                    "const maybePromise = store.doSaveConfig({ preserveDefaults: false, createBackup: false });"
+                    "if (maybePromise && typeof maybePromise.then === 'function') {"
+                    "  maybePromise.then(() => done(true)).catch((err) => { console.error('doSaveConfig failed', err); done(false); });"
+                    "} else { done(true); }"
+                )
+                self.assertTrue(result)
+
+            def wait_for_clean_after_debounce() -> None:
+                """Wait for clean state, then wait out debounce window and verify still clean."""
+                import time
+
+                wait_for_save_state(False)
+                # Wait out the debounce window (default 500ms + buffer)
+                time.sleep(0.7)
+                # Re-verify still clean - catches delayed dirty flips from validation
+                wait_for_save_state(False)
+
+            wait_for_save_state(False)
+
+            # Easy Mode change enables Save
+            basic_tab.set_output_dir("/tmp/dirty-easy-mode")
+            wait_for_save_state(True)
+
+            save_via_ui()
+            wait_for_clean_after_debounce()
+
+            # Full form change enables Save
+            trainer_page.switch_to_training_tab()
+            training_tab.set_num_epochs(5)  # num_train_epochs is on training tab
+            wait_for_save_state(True)
+
+            save_via_ui()
+            wait_for_clean_after_debounce()
+
+            # Tab switch + edit still enables Save
+            trainer_page.switch_to_model_tab()
+            trainer_page.switch_to_training_tab()
+            training_tab.set_learning_rate(0.0005)
+            wait_for_save_state(True)
+
+            save_via_ui()
+            wait_for_clean_after_debounce()
+
+            # Save clears, new edits re-enable
+            trainer_page.switch_to_basic_tab()
+            basic_tab.set_output_dir("/tmp/dirty-easy-mode-2")
+            wait_for_save_state(True)
+
+        self.for_each_browser("test_save_button_dirty_state", scenario)
+
+
+class TrainingEpochsStepsValidationTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test cross-field validation for epochs and max steps stays in sync."""
+
+    MAX_BROWSERS = 1
+
+    def test_epochs_steps_cross_validation(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            training_tab = TrainingConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            training_tab.set_max_train_steps(2000)
+            training_tab.set_num_epochs(1)
+
+            def feedback_text(active_driver):
+                return active_driver.execute_script(
+                    "const el = document.getElementById('field-feedback-max_train_steps');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: "cannot both be set" in feedback_text(d))
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                    "return btn ? btn.disabled : null;"
+                )
+            )
+
+            training_tab.set_num_epochs(0)
+
+            WebDriverWait(driver, 10).until(lambda d: feedback_text(d) == "")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const btn = document.querySelector(\"button[aria-label='Save configuration']\");"
+                    "return btn ? !btn.disabled : null;"
+                )
+            )
+
+        self.for_each_browser("test_epochs_steps_cross_validation", scenario)
+
+
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test configuring and starting training."""
 
@@ -320,7 +501,6 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.switch_to_training_tab()
             trainer_page.wait_for_tab("training")
             training_tab.set_learning_rate("0.0001")
-            training_tab.set_batch_size("1")
             training_tab.set_num_epochs("10")
             training_tab.select_mixed_precision("bf16")
 
@@ -976,6 +1156,50 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(state.get("showNewFolder"), state)
             self.assertTrue(state.get("uploadOpen"), state)
 
+            step_ready = driver.execute_script(
+                """
+                const comp = window.datasetWizardComponentInstance;
+                if (!comp) { return null; }
+                const captionsStep = comp.getStepNumber('captions');
+                if (!captionsStep) { return null; }
+                comp.wizardStep = captionsStep;
+                if (typeof comp.updateWizardTitle === 'function') {
+                    comp.updateWizardTitle();
+                }
+                comp.selectedBackend = 'local';
+                comp.currentDataset.type = 'local';
+                comp.currentDataset.caption_strategy = 'parquet';
+                return captionsStep;
+                """
+            )
+            self.assertIsNotNone(step_ready)
+
+            trainer_page.wait.until(
+                lambda d: d.execute_script(
+                    "const pathInput = document.querySelector('input[x-model=\"currentDataset.parquet.path\"]');"
+                    "const filenameInput = document.querySelector('input[x-model=\"currentDataset.parquet.filename_column\"]');"
+                    "const captionInput = document.querySelector('input[x-model=\"currentDataset.parquet.caption_column\"]');"
+                    "const extToggle = document.querySelector('#identifierExt');"
+                    "return !!(pathInput && filenameInput && captionInput && extToggle);"
+                )
+            )
+
+            parquet_state = driver.execute_script(
+                """
+                const filenameInput = document.querySelector('input[x-model="currentDataset.parquet.filename_column"]');
+                const captionInput = document.querySelector('input[x-model="currentDataset.parquet.caption_column"]');
+                const extToggle = document.querySelector('#identifierExt');
+                return {
+                    filenameValue: filenameInput ? filenameInput.value : null,
+                    captionValue: captionInput ? captionInput.value : null,
+                    extChecked: extToggle ? extToggle.checked : null
+                };
+                """
+            )
+            self.assertEqual(parquet_state.get("filenameValue"), "id")
+            self.assertEqual(parquet_state.get("captionValue"), "caption")
+            self.assertFalse(parquet_state.get("extChecked"))
+
             try:
                 logs = driver.get_log("browser")
             except Exception:
@@ -986,6 +1210,362 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertNotIn("is not defined", message)
 
         self.for_each_browser("test_dataset_wizard_initializes_modal_state", scenario)
+
+
+class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test cloud upload progress wiring for SSE updates."""
+
+    MAX_BROWSERS = 1
+
+    def test_upload_progress_uses_webhooks_endpoint(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+
+            cloud_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+            )
+            cloud_tab.click()
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return !!(window.Alpine && document.querySelector('#cloud-tab-content'));")
+            )
+
+            started = driver.execute_script(
+                """
+                window.__cloudTestOriginalEventSource = window.EventSource;
+                window.__cloudTestEventSourceUrl = null;
+                window.__cloudTestEventSourceInstance = null;
+                window.EventSource = function(url) {
+                    window.__cloudTestEventSourceUrl = url;
+                    const instance = { close: function() {}, onmessage: null, onerror: null };
+                    window.__cloudTestEventSourceInstance = instance;
+                    return instance;
+                };
+                const el = document.querySelector('#cloud-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+                if (!comp || typeof comp.startUploadProgress !== 'function') {
+                    return false;
+                }
+                comp.startUploadProgress('upload-test-1');
+                return true;
+                """
+            )
+            self.assertTrue(started)
+
+            url = driver.execute_script("return window.__cloudTestEventSourceUrl;")
+            self.assertEqual(url, "/api/webhooks/upload/progress/upload-test-1")
+
+            driver.execute_script(
+                """
+                const instance = window.__cloudTestEventSourceInstance;
+                if (instance && instance.onmessage) {
+                    instance.onmessage({
+                        data: JSON.stringify({
+                            stage: 'uploading',
+                            current: 512,
+                            total: 1024,
+                            percent: 50,
+                            message: 'Uploading...'
+                        })
+                    });
+                }
+                """
+            )
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const el = document.querySelector('#cloud-tab-content');"
+                    "const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;"
+                    "return comp && comp.uploadProgress && comp.uploadProgress.message === 'Uploading...';"
+                )
+            )
+
+            driver.execute_script(
+                "if (window.__cloudTestOriginalEventSource) { window.EventSource = window.__cloudTestOriginalEventSource; }"
+            )
+
+        self.for_each_browser("test_upload_progress_uses_webhooks_endpoint", scenario)
+
+
+class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
+    """Ensure uploading jobs appear in the cloud job list."""
+
+    MAX_BROWSERS = 1
+
+    def _seed_cloud_job(self, job_id: str, status: str, run_name: str, error_message: str | None = None) -> None:
+        from datetime import datetime, timezone
+
+        from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+
+        async def _seed() -> None:
+            config_dir = self.home_path / ".simpletuner"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            store = await AsyncJobStore.get_instance(config_dir=config_dir)
+            job = UnifiedJob(
+                job_id=job_id,
+                job_type=JobType.CLOUD,
+                provider="replicate",
+                status=status,
+                config_name="test-config",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                error_message=error_message,
+                metadata={"tracker_run_name": run_name},
+            )
+            await store.add_job(job)
+
+        import asyncio
+
+        asyncio.run(_seed())
+
+    def test_uploading_job_visible_in_cloud_list(self) -> None:
+        self.with_sample_environment()
+        secrets_path = self.home_path / ".simpletuner" / "secrets.json"
+        secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        secrets_path.write_text(json.dumps({"REPLICATE_API_TOKEN": "r8_test_dummy"}), encoding="utf-8")
+
+        self._seed_cloud_job("upload-test-1", "uploading", "Upload Smoke")
+        self._seed_cloud_job("upload-failed-1", "failed", "Upload Failed", "Upload failed")
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+
+            driver.execute_script(
+                "localStorage.setItem('cloud_onboarding', JSON.stringify({"
+                "data_understood: true, results_understood: true, cost_understood: true}));"
+            )
+
+            cloud_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+            )
+            cloud_tab.click()
+
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script(
+                    "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
+                )
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const el = document.querySelector('#cloud-tab-content');"
+                    "const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;"
+                    "if (!comp || !Array.isArray(comp.jobs)) { return false; }"
+                    "const names = comp.jobs.map(job => job.metadata?.tracker_run_name);"
+                    "return names.includes('Upload Smoke') && names.includes('Upload Failed');"
+                )
+            )
+
+            upload_status = driver.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;"
+                "const job = comp.jobs.find(j => j.metadata?.tracker_run_name === 'Upload Smoke');"
+                "return job ? job.status : null;"
+            )
+            self.assertEqual(upload_status, "uploading")
+
+        self.for_each_browser("test_uploading_job_visible_in_cloud_list", scenario)
+
+
+class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test that Easy Mode field changes correctly enable the save button.
+
+    Regression test for: Easy Mode events must use .stop modifier to prevent
+    bubbling to form handlers that reset formDirty state.
+    """
+
+    MAX_BROWSERS = 1
+
+    def test_easy_mode_enables_save_on_direct_load(self) -> None:
+        """Editing Easy Mode fields on direct page load should enable save button."""
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_model_tab()
+            trainer_page.wait_for_tab("model")
+            trainer_page.wait_for_htmx()
+
+            # Wait for Easy Mode component to initialize
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.querySelector('.ez-mode-form select') !== null;")
+            )
+
+            # Verify formDirty starts false
+            initial_dirty = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertFalse(initial_dirty, "formDirty should start as false")
+
+            # Change model type in Easy Mode (click the Full Model radio)
+            driver.execute_script(
+                """
+                const fullModelRadio = document.querySelector('input[type="radio"][value="full"]');
+                if (fullModelRadio) {
+                    fullModelRadio.click();
+                }
+                """
+            )
+
+            # Wait a moment for Alpine reactivity
+            time.sleep(0.2)
+
+            # Verify formDirty is now true
+            dirty_after_change = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertTrue(dirty_after_change, "formDirty should be true after Easy Mode change")
+
+            # Verify save button is enabled
+            save_button_disabled = driver.execute_script(
+                "const btn = document.querySelector('.header-actions .trainer-action-btn');"
+                "return btn ? btn.disabled : null;"
+            )
+            self.assertFalse(save_button_disabled, "Save button should be enabled after Easy Mode change")
+
+        self.for_each_browser("test_easy_mode_enables_save_on_direct_load", scenario)
+
+    def test_easy_mode_select_enables_save(self) -> None:
+        """Changing Easy Mode select dropdowns should enable save button."""
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_model_tab()
+            trainer_page.wait_for_tab("model")
+            trainer_page.wait_for_htmx()
+
+            # Wait for Easy Mode model family select
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.querySelector('.ez-mode-form select') !== null;")
+            )
+
+            # Change a select in Easy Mode (base model precision)
+            driver.execute_script(
+                """
+                const precisionSelect = document.querySelector('.ez-mode-form select[x-model="base_model_precision"]');
+                if (precisionSelect) {
+                    precisionSelect.value = 'int8-quanto';
+                    precisionSelect.dispatchEvent(new Event('change', { bubbles: false }));
+                }
+                """
+            )
+
+            time.sleep(0.2)
+
+            # Verify formDirty is true
+            dirty_state = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertTrue(dirty_state, "formDirty should be true after Easy Mode select change")
+
+        self.for_each_browser("test_easy_mode_select_enables_save", scenario)
+
+    def test_main_form_still_enables_save(self) -> None:
+        """Regular form fields should still enable save button (sanity check)."""
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            basic_tab = BasicConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+            trainer_page.wait_for_htmx()
+
+            # Change a regular form field
+            basic_tab.set_output_dir("/new/output/path")
+
+            time.sleep(0.2)
+
+            # Verify formDirty is true
+            dirty_state = driver.execute_script(
+                "const store = window.Alpine?.store?.('trainer');" "return store ? store.formDirty : null;"
+            )
+            self.assertTrue(dirty_state, "formDirty should be true after main form change")
+
+        self.for_each_browser("test_main_form_still_enables_save", scenario)
+
+
+class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test that Easy Mode optimizer reflects the full form selection."""
+
+    MAX_BROWSERS = 1
+
+    def test_easy_mode_optimizer_syncs_from_full_form(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]') !== null;"
+                )
+            )
+
+            def get_optimizer_values(active_driver):
+                return active_driver.execute_script(
+                    "const ez = document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]');"
+                    "const full = document.getElementById('optimizer');"
+                    "return { ez: ez ? ez.value : null, full: full ? full.value : null };"
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["full"])
+
+            WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["ez"] == get_optimizer_values(d)["full"])
+
+            new_value = driver.execute_script(
+                """
+                const fullSelect = document.getElementById('optimizer');
+                if (!fullSelect || !fullSelect.options || fullSelect.options.length === 0) {
+                    return null;
+                }
+                const options = Array.from(fullSelect.options);
+                const current = fullSelect.value;
+                const next = options.find(opt => opt.value && opt.value !== current) || options[0];
+                fullSelect.value = next.value;
+                fullSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                fullSelect.dispatchEvent(new Event('input', { bubbles: true }));
+                return next.value;
+                """
+            )
+            self.assertTrue(new_value, "Expected to find optimizer options in full form.")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const ez = document.querySelector('.ez-mode-form select[x-model=\"optimizer\"]');"
+                    "return ez ? ez.value : null;"
+                )
+                == new_value
+            )
+
+        self.for_each_browser("test_easy_mode_optimizer_syncs_from_full_form", scenario)
 
 
 if __name__ == "__main__":

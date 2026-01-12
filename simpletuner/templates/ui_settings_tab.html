@@ -1,9 +1,122 @@
 <!-- templates/ui_settings_tab.html - WebUI preferences tab -->
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-ui">
-<script>document.getElementById('css-form-sections-ui').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 {% set ui_context = ui_settings | default({}) %}
 {% set defaults = ui_context.defaults | default({}) %}
 <script>
+if (!window.personalCredentialsComponent) {
+    window.personalCredentialsComponent = function() {
+        return {
+            credentialSource: null,
+            newToken: '',
+            savingCredential: false,
+            validatingCredential: false,
+            deletingCredential: false,
+            validationResult: null,
+
+            async loadCredentials() {
+                try {
+                    const response = await fetch('/api/users/me/credentials?provider=replicate');
+                    if (response.ok) {
+                        const creds = await response.json();
+                        const hasToken = creds.some(c => c.credential_name === 'api_token' && c.is_active);
+                        this.credentialSource = hasToken ? 'user' : null;
+                    }
+                    // Also check global fallback
+                    if (!this.credentialSource) {
+                        const validateResponse = await fetch('/api/users/me/credentials/validate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ provider: 'replicate', credential_name: 'api_token' }),
+                        });
+                        if (validateResponse.ok) {
+                            const result = await validateResponse.json();
+                            if (result.valid && result.token_source === 'global') {
+                                this.credentialSource = 'global';
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.debug('Failed to load credentials:', error);
+                }
+            },
+
+            async saveToken() {
+                if (!this.newToken) return;
+                this.savingCredential = true;
+                this.validationResult = null;
+                try {
+                    const response = await fetch('/api/users/me/credentials', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            provider: 'replicate',
+                            credential_name: 'api_token',
+                            value: this.newToken,
+                        }),
+                    });
+                    if (response.ok) {
+                        this.credentialSource = 'user';
+                        this.newToken = '';
+                        if (window.showToast) window.showToast('Token saved', 'success');
+                    } else {
+                        const data = await response.json();
+                        if (window.showToast) window.showToast(data.detail || 'Failed to save token', 'error');
+                    }
+                } catch (error) {
+                    console.error('Failed to save token:', error);
+                    if (window.showToast) window.showToast('Failed to save token', 'error');
+                } finally {
+                    this.savingCredential = false;
+                }
+            },
+
+            async validateToken() {
+                this.validatingCredential = true;
+                this.validationResult = null;
+                try {
+                    const response = await fetch('/api/users/me/credentials/validate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ provider: 'replicate', credential_name: 'api_token' }),
+                    });
+                    if (response.ok) {
+                        this.validationResult = await response.json();
+                    } else {
+                        this.validationResult = { valid: false, error: 'Validation request failed' };
+                    }
+                } catch (error) {
+                    this.validationResult = { valid: false, error: error.message || 'Network error' };
+                } finally {
+                    this.validatingCredential = false;
+                }
+            },
+
+            async deleteToken() {
+                if (!confirm('Remove your personal token? Cloud operations will use the global token if available.')) return;
+                this.deletingCredential = true;
+                try {
+                    const response = await fetch('/api/users/me/credentials/replicate/api_token', {
+                        method: 'DELETE',
+                    });
+                    if (response.ok) {
+                        this.credentialSource = null;
+                        this.validationResult = null;
+                        if (window.showToast) window.showToast('Token removed', 'success');
+                        await this.loadCredentials();
+                    } else {
+                        if (window.showToast) window.showToast('Failed to remove token', 'error');
+                    }
+                } catch (error) {
+                    console.error('Failed to delete token:', error);
+                    if (window.showToast) window.showToast('Failed to remove token', 'error');
+                } finally {
+                    this.deletingCredential = false;
+                }
+            },
+        };
+    };
+}
 if (!window.uiSettingsTabComponent) {
     window.uiSettingsTabComponent = function(initialData) {
         const initial = initialData || {};
@@ -31,9 +144,34 @@ if (!window.uiSettingsTabComponent) {
                 message: '',
                 error: '',
             },
+            authStatus: {
+                checked: false,
+                inUse: false,
+                userCount: 0,
+                hasProviders: false,
+            },
             init() {
                 this.resetFromDefaults();
                 this.ensureGpuInventory();
+                this.checkAuthStatus();
+            },
+            async checkAuthStatus() {
+                try {
+                    const response = await fetch('/api/users/meta/auth-status');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.authStatus.inUse = data.in_use || false;
+                        this.authStatus.userCount = data.user_count || 0;
+                        this.authStatus.hasProviders = data.has_external_providers || false;
+                    }
+                } catch (error) {
+                    console.debug('Auth status check failed:', error);
+                }
+                this.authStatus.checked = true;
+            },
+            get canDisableAdminTab() {
+                // Can only disable if auth is not in use
+                return !this.authStatus.inUse;
             },
             normalizeAccelerateSelection(rawValue) {
                 const fallback = {
@@ -156,6 +294,10 @@ if (!window.uiSettingsTabComponent) {
                     output_dir: (data.output_dir && data.output_dir !== 'Not configured') ? data.output_dir : '',
                     configs_dir: data.configs_dir || '',
                     accelerate: this.prepareAccelerateState(data.accelerate_overrides),
+                    cloud_tab_enabled: data.cloud_tab_enabled !== false,
+                    cloud_webhook_url: typeof data.cloud_webhook_url === 'string' ? data.cloud_webhook_url : '',
+                    cloud_data_consent: data.cloud_data_consent || 'ask',
+                    admin_tab_enabled: data.admin_tab_enabled !== false,
                     git_mirror_enabled: data.git_mirror_enabled === true,
                     git_auto_commit: data.git_auto_commit === true,
                     git_require_clean: data.git_require_clean === true,
@@ -163,10 +305,30 @@ if (!window.uiSettingsTabComponent) {
                     git_push_on_snapshot: data.git_push_on_snapshot === true,
                     git_remote: typeof data.git_remote === 'string' ? data.git_remote : '',
                     git_branch: typeof data.git_branch === 'string' ? data.git_branch : '',
+                    sounds_enabled: data.sounds_enabled !== false,
+                    sounds_volume: typeof data.sounds_volume === 'number' ? data.sounds_volume : 50,
+                    sounds_success_enabled: data.sounds_success_enabled !== false,
+                    sounds_error_enabled: data.sounds_error_enabled !== false,
+                    sounds_warning_enabled: data.sounds_warning_enabled !== false,
+                    sounds_info_enabled: data.sounds_info_enabled !== false,
+                    sounds_retro_hover_enabled: data.sounds_retro_hover_enabled === true,
                 };
             },
             clone(value) {
                 return JSON.parse(JSON.stringify(value));
+            },
+            syncSoundManager() {
+                if (window.SoundManager) {
+                    window.SoundManager.updateSettings({
+                        sounds_enabled: this.settings.sounds_enabled,
+                        sounds_volume: this.settings.sounds_volume,
+                        sounds_success_enabled: this.settings.sounds_success_enabled,
+                        sounds_error_enabled: this.settings.sounds_error_enabled,
+                        sounds_warning_enabled: this.settings.sounds_warning_enabled,
+                        sounds_info_enabled: this.settings.sounds_info_enabled,
+                        sounds_retro_hover_enabled: this.settings.sounds_retro_hover_enabled,
+                    });
+                }
             },
             resetFromDefaults() {
                 const normalized = this.normalizeDefaults(this.defaults);
@@ -174,6 +336,7 @@ if (!window.uiSettingsTabComponent) {
                 this.original = this.clone(normalized);
                 this.successMessage = '';
                 this.errorMessage = '';
+                this.syncSoundManager();
             },
             syncDefaults(detail) {
                 const payload = detail && (detail.resolved_defaults || detail.defaults);
@@ -187,6 +350,7 @@ if (!window.uiSettingsTabComponent) {
                 this.successMessage = '';
                 this.errorMessage = '';
                 this.ensureGpuInventory();
+                this.syncSoundManager();
             },
             markDirty() {
                 this.successMessage = '';
@@ -325,6 +489,17 @@ if (!window.uiSettingsTabComponent) {
                 this.markDirty();
                 if (typeof window.applyTheme === 'function') {
                     window.applyTheme(theme);
+                }
+            },
+            async refreshThemes() {
+                try {
+                    const response = await fetch('/api/themes/refresh', { method: 'POST' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.themeOptions = data.themes || [];
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh themes:', error);
                 }
             },
             toggleEventStream() {
@@ -482,6 +657,10 @@ if (!window.uiSettingsTabComponent) {
                 }
                 payload.accelerate_overrides = acceleratePayload;
 
+                payload.cloud_tab_enabled = this.settings.cloud_tab_enabled;
+                payload.cloud_webhook_url = this.settings.cloud_webhook_url || null;
+                payload.cloud_data_consent = this.settings.cloud_data_consent || 'ask';
+                payload.admin_tab_enabled = this.settings.admin_tab_enabled;
                 payload.git_mirror_enabled = this.settings.git_mirror_enabled;
                 payload.git_auto_commit = this.settings.git_auto_commit;
                 payload.git_require_clean = this.settings.git_require_clean;
@@ -489,6 +668,14 @@ if (!window.uiSettingsTabComponent) {
                 payload.git_push_on_snapshot = this.settings.git_push_on_snapshot;
                 payload.git_remote = this.settings.git_remote || null;
                 payload.git_branch = this.settings.git_branch || null;
+
+                payload.sounds_enabled = this.settings.sounds_enabled;
+                payload.sounds_volume = this.settings.sounds_volume;
+                payload.sounds_success_enabled = this.settings.sounds_success_enabled;
+                payload.sounds_error_enabled = this.settings.sounds_error_enabled;
+                payload.sounds_warning_enabled = this.settings.sounds_warning_enabled;
+                payload.sounds_info_enabled = this.settings.sounds_info_enabled;
+                payload.sounds_retro_hover_enabled = this.settings.sounds_retro_hover_enabled;
 
                 try {
                     const response = await fetch('/api/webui/defaults/update', {
@@ -568,7 +755,15 @@ if (!window.uiSettingsTabComponent) {
                                 <h6 class="mb-1">Theme</h6>
                                 <p class="text-muted small mb-0">Switch between available UI themes. Changes apply instantly.</p>
                             </div>
-                            <span class="badge bg-secondary" x-text="settings.theme.toUpperCase()"></span>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        @click="refreshThemes()"
+                                        title="Refresh theme list">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <span class="badge bg-secondary" x-text="settings.theme.toUpperCase()"></span>
+                            </div>
                         </div>
                         <div class="row g-3">
                             <template x-for="option in themeOptions" :key="option.value">
@@ -578,12 +773,23 @@ if (!window.uiSettingsTabComponent) {
                                             :class="{ 'active': settings.theme === option.value }"
                                             @click="selectTheme(option.value)">
                                         <div class="theme-tile-body">
-                                            <div class="theme-title">
-                                                <i class="fas fa-circle me-2"
-                                                   :class="settings.theme === option.value ? 'text-success' : 'text-muted'"></i>
-                                                <span x-text="option.label"></span>
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div class="theme-title">
+                                                    <i class="fas fa-circle me-2"
+                                                       :class="settings.theme === option.value ? 'text-success' : 'text-muted'"></i>
+                                                    <span x-text="option.label"></span>
+                                                </div>
+                                                <span class="badge"
+                                                      :class="{
+                                                          'bg-secondary': option.source === 'builtin',
+                                                          'bg-info': option.source === 'pip',
+                                                          'bg-success': option.source === 'local'
+                                                      }"
+                                                      x-text="option.source === 'builtin' ? 'Built-in' :
+                                                              option.source === 'pip' ? 'Package' : 'Local'"
+                                                      style="font-size: 0.65rem;"></span>
                                             </div>
-                                            <p class="text-muted small mb-0" x-text="option.description || ''"></p>
+                                            <p class="text-muted small mb-0 mt-1" x-text="option.description || ''"></p>
                                         </div>
                                     </button>
                                 </div>
@@ -662,6 +868,140 @@ if (!window.uiSettingsTabComponent) {
 
                 <div class="col-xl-6">
                     <div class="preference-card">
+                        <h6 class="mb-3">Cloud Training</h6>
+                        <p class="text-muted small mb-2">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <strong>Enabled by default.</strong> Uncheck to hide the Cloud tab from the sidebar.
+                        </p>
+                        <div class="form-check form-switch form-switch-lg mb-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-cloud-tab-enabled"
+                                   x-model="settings.cloud_tab_enabled"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-cloud-tab-enabled">
+                                Show Cloud tab in sidebar
+                            </label>
+                        </div>
+                        <div class="mb-3" x-show="settings.cloud_tab_enabled">
+                            <label class="form-label" for="ui-cloud-webhook-url">Webhook URL</label>
+                            <input type="url"
+                                   id="ui-cloud-webhook-url"
+                                   class="form-control"
+                                   placeholder="https://your-domain.com/api/cloud/webhook/replicate"
+                                   x-model="settings.cloud_webhook_url"
+                                   @input="markDirty()">
+                            <div class="form-text">
+                                Public URL for receiving Replicate training events (e.g., via ngrok or cloudflared).
+                            </div>
+                        </div>
+                        <div class="mb-3" x-show="settings.cloud_tab_enabled">
+                            <label class="form-label" for="ui-cloud-data-consent">Data Upload Consent</label>
+                            <select id="ui-cloud-data-consent"
+                                    class="form-select"
+                                    x-model="settings.cloud_data_consent"
+                                    @change="markDirty()">
+                                <option value="ask">Always Ask - Review data before each upload</option>
+                                <option value="allow">Always Allow - Auto-consent to uploads</option>
+                                <option value="deny">Never Upload - Disable cloud training (local only)</option>
+                            </select>
+                            <div class="form-text">
+                                Controls whether to ask for confirmation before uploading training data to cloud providers.
+                            </div>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            When enabled, the Cloud tab provides access to Replicate cloud training and job management.
+                            Set <code>REPLICATE_API_TOKEN</code> environment variable to authenticate.
+                            <a href="{{ docs_url('experimental/cloud/README.md') }}" target="_blank" class="text-info ms-1"
+                               x-show="settings.show_documentation_links">
+                                <i class="fas fa-external-link-alt"></i> Docs
+                            </a>
+                        </p>
+                        <!-- Personal Cloud Credentials -->
+                        <div class="mt-3 pt-3 border-top border-secondary" x-show="settings.cloud_tab_enabled && authStatus.inUse"
+                             x-data="personalCredentialsComponent()" x-init="loadCredentials()">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0 small"><i class="fas fa-key me-2"></i>Personal API Token</h6>
+                                <span class="badge" :class="credentialSource === 'user' ? 'bg-success' : (credentialSource === 'global' ? 'bg-info' : 'bg-secondary')"
+                                      x-text="credentialSource === 'user' ? 'Using your token' : (credentialSource === 'global' ? 'Using global token' : 'Not configured')"></span>
+                            </div>
+                            <p class="text-muted small mb-2">
+                                Optionally provide your own Replicate API token. If set, it will be used instead of the global token.
+                            </p>
+                            <div class="input-group input-group-sm mb-2">
+                                <input type="password"
+                                       class="form-control form-control-sm"
+                                       placeholder="r8_xxxxxxxxxxxx"
+                                       x-model="newToken"
+                                       :disabled="savingCredential">
+                                <button class="btn btn-outline-primary"
+                                        type="button"
+                                        @click="saveToken()"
+                                        :disabled="!newToken || savingCredential">
+                                    <i class="fas" :class="savingCredential ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+                                </button>
+                                <button class="btn btn-outline-info"
+                                        type="button"
+                                        @click="validateToken()"
+                                        :disabled="validatingCredential"
+                                        title="Validate current token">
+                                    <i class="fas" :class="validatingCredential ? 'fa-spinner fa-spin' : 'fa-check-circle'"></i>
+                                </button>
+                                <button class="btn btn-outline-danger"
+                                        type="button"
+                                        @click="deleteToken()"
+                                        :disabled="credentialSource !== 'user' || deletingCredential"
+                                        title="Remove your token (use global instead)">
+                                    <i class="fas" :class="deletingCredential ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
+                                </button>
+                            </div>
+                            <template x-if="validationResult">
+                                <div class="small"
+                                     :class="validationResult.valid ? 'text-success' : 'text-danger'">
+                                    <i class="fas" :class="validationResult.valid ? 'fa-check-circle' : 'fa-times-circle'"></i>
+                                    <span x-text="validationResult.valid ? 'Valid (' + validationResult.username + ')' : validationResult.error"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-6">
+                    <div class="preference-card">
+                        <h6 class="mb-3">User Management</h6>
+                        <p class="text-muted small mb-2">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <strong>Enabled by default.</strong> When auth is configured, only admins see this tab.
+                        </p>
+                        <div class="form-check form-switch form-switch-lg mb-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-admin-tab-enabled"
+                                   x-model="settings.admin_tab_enabled"
+                                   :disabled="!canDisableAdminTab"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-admin-tab-enabled">
+                                Show Administration tab in sidebar
+                            </label>
+                        </div>
+                        <template x-if="authStatus.inUse">
+                            <div class="alert alert-info py-2 small mb-3">
+                                <i class="fas fa-lock me-1"></i>
+                                <span x-text="'Authentication is active (' + authStatus.userCount + ' user' + (authStatus.userCount === 1 ? '' : 's') + (authStatus.hasProviders ? ', external providers configured' : '') + '). The Administration tab is automatically shown to admin users and cannot be fully hidden.'"></span>
+                            </div>
+                        </template>
+                        <template x-if="!authStatus.inUse">
+                            <p class="text-muted small mb-0">
+                                <i class="fas fa-user me-1"></i>
+                                No authentication configured. The Administration tab is visible to all users in single-user mode.
+                                Configure users in the Administration tab to enable access control.
+                            </p>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="col-xl-6">
+                    <div class="preference-card">
                         <h6 class="mb-3">Git Mirror</h6>
                         <div class="form-check form-switch form-switch-lg mb-2">
                             <input class="form-check-input"
@@ -733,6 +1073,117 @@ if (!window.uiSettingsTabComponent) {
                         </div>
                         <p class="text-muted small mt-2 mb-0">
                             Git preferences apply to the configs directory. Enable the tab to expose the Git Mirror controls.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-xl-6">
+                    <div class="preference-card">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h6 class="mb-1"><i class="fas fa-volume-up me-2"></i>UI Sounds</h6>
+                                <p class="text-muted small mb-0">Audio feedback for notifications and events.</p>
+                            </div>
+                            <div class="form-check form-switch form-switch-lg">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="ui-sounds-enabled"
+                                       x-model="settings.sounds_enabled"
+                                       @change="markDirty(); if (window.SoundManager) { window.SoundManager.setEnabled(settings.sounds_enabled); }">
+                            </div>
+                        </div>
+                        <div x-show="settings.sounds_enabled">
+                            <label class="form-label" for="ui-sounds-volume">Volume</label>
+                            <div class="d-flex align-items-center gap-3 mb-3">
+                                <i class="fas fa-volume-off text-muted"></i>
+                                <input type="range"
+                                       id="ui-sounds-volume"
+                                       class="form-range flex-grow-1"
+                                       min="0"
+                                       max="100"
+                                       step="5"
+                                       x-model.number="settings.sounds_volume"
+                                       @input="markDirty(); if (window.SoundManager) { window.SoundManager.setVolume(settings.sounds_volume); }"
+                                       @change="if (window.SoundManager) { window.SoundManager.testSound('info'); }">
+                                <i class="fas fa-volume-up text-muted"></i>
+                                <span class="badge bg-secondary" x-text="settings.sounds_volume + '%'" style="min-width: 3rem;"></span>
+                            </div>
+                            <div class="fw-semibold small mb-2">Notification Categories</div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="ui-sounds-success"
+                                               x-model="settings.sounds_success_enabled"
+                                               @change="markDirty(); if (window.SoundManager) { window.SoundManager.setCategoryEnabled('success', settings.sounds_success_enabled); }">
+                                        <label class="form-check-label" for="ui-sounds-success">
+                                            <i class="fas fa-check-circle text-success me-1"></i> Success
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="ui-sounds-error"
+                                               x-model="settings.sounds_error_enabled"
+                                               @change="markDirty(); if (window.SoundManager) { window.SoundManager.setCategoryEnabled('error', settings.sounds_error_enabled); }">
+                                        <label class="form-check-label" for="ui-sounds-error">
+                                            <i class="fas fa-times-circle text-danger me-1"></i> Error
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="ui-sounds-warning"
+                                               x-model="settings.sounds_warning_enabled"
+                                               @change="markDirty(); if (window.SoundManager) { window.SoundManager.setCategoryEnabled('warning', settings.sounds_warning_enabled); }">
+                                        <label class="form-check-label" for="ui-sounds-warning">
+                                            <i class="fas fa-exclamation-triangle text-warning me-1"></i> Warning
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="ui-sounds-info"
+                                               x-model="settings.sounds_info_enabled"
+                                               @change="markDirty(); if (window.SoundManager) { window.SoundManager.setCategoryEnabled('info', settings.sounds_info_enabled); }">
+                                        <label class="form-check-label" for="ui-sounds-info">
+                                            <i class="fas fa-info-circle text-info me-1"></i> Info
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button"
+                                    class="btn btn-outline-secondary btn-sm mt-3"
+                                    @click="if (window.SoundManager) { window.SoundManager.testSound('success'); }">
+                                <i class="fas fa-play me-1"></i> Test Sound
+                            </button>
+                            <hr class="my-3 opacity-25">
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="ui-sounds-retro-hover"
+                                       x-model="settings.sounds_retro_hover_enabled"
+                                       @change="markDirty(); if (window.SoundManager) { window.SoundManager.setRetroHoverEnabled(settings.sounds_retro_hover_enabled); }">
+                                <label class="form-check-label" for="ui-sounds-retro-hover">
+                                    <i class="fas fa-compact-disc text-info me-1"></i> Retro hover sounds
+                                    <span class="ms-1">🥚</span>
+                                </label>
+                            </div>
+                            <p class="text-muted small mt-1 mb-0">
+                                <i class="fas fa-history me-1"></i>
+                                Play Norton SystemWorks 2006 sounds when hovering over menu items.
+                                For millennials and Gen X'ers who remember.
+                            </p>
+                        </div>
+                        <p class="text-muted small mt-3 mb-0" x-show="!settings.sounds_enabled">
+                            Enable sounds to receive audio feedback when notifications appear.
                         </p>
                     </div>
                 </div>

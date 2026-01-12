@@ -1,0 +1,184 @@
+<!-- templates/workers_tab.html - GPU Workers Management Page -->
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-workers">
+<link rel="stylesheet" href="/static/css/admin.css" id="css-admin-workers">
+
+<div class="tab-fragment"
+     id="workers-tab-content"
+     data-tab-name="workers"
+     x-data="workersPageComponent()"
+     x-init="init()">
+
+    <!-- Page Header -->
+    <div class="admin-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1"><i class="fas fa-server me-2"></i>GPU Workers</h4>
+                <p class="text-muted small mb-0">Manage distributed GPU workers for training jobs</p>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-sm btn-primary" @click="showAddWorkerModal()">
+                    <i class="fas fa-plus me-1"></i>Add Worker
+                </button>
+                <button class="btn btn-sm btn-outline-secondary"
+                        @click="loadWorkers()"
+                        :disabled="workersLoading"
+                        title="Refresh workers">
+                    <i class="fas" :class="workersLoading ? 'fa-spinner fa-spin' : 'fa-sync'"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Summary -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body p-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small">Total Workers</div>
+                            <div class="h4 mb-0" x-text="workerStats.total">0</div>
+                        </div>
+                        <i class="fas fa-server fa-2x text-muted"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body p-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small">Idle</div>
+                            <div class="h4 mb-0 text-success" x-text="workerStats.idle">0</div>
+                        </div>
+                        <i class="fas fa-check-circle fa-2x text-success"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body p-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small">Busy</div>
+                            <div class="h4 mb-0 text-info" x-text="workerStats.busy">0</div>
+                        </div>
+                        <i class="fas fa-cog fa-spin fa-2x text-info" x-show="workerStats.busy > 0"></i>
+                        <i class="fas fa-cog fa-2x text-muted" x-show="workerStats.busy === 0"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body p-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small">Offline</div>
+                            <div class="h4 mb-0 text-secondary" x-text="workerStats.offline">0</div>
+                        </div>
+                        <i class="fas fa-times-circle fa-2x text-secondary"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workers Table -->
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>GPU</th>
+                    <th class="d-none d-md-table-cell">Type</th>
+                    <th class="d-none d-lg-table-cell">Current Job</th>
+                    <th class="d-none d-lg-table-cell">Uptime</th>
+                    <th class="d-none d-lg-table-cell">Last Seen</th>
+                    <th style="width: 150px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="workersLoading">
+                    <tr>
+                        <td colspan="8" class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin me-2"></i>Loading workers...
+                        </td>
+                    </tr>
+                </template>
+                <template x-if="!workersLoading && workers.length === 0">
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">
+                            <i class="fas fa-server me-2"></i>No workers registered. Add a worker to get started.
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="worker in workers" :key="worker.worker_id">
+                    <tr>
+                        <td>
+                            <div class="fw-medium" x-text="worker.name"></div>
+                            <div class="text-muted small font-monospace" x-text="worker.worker_id.slice(0, 8)"></div>
+                        </td>
+                        <td>
+                            <span class="badge" :class="getWorkerStatusBadgeClass(worker.status)" x-text="worker.status"></span>
+                        </td>
+                        <td>
+                            <div x-text="worker.gpu_info?.name || 'Unknown'"></div>
+                            <div class="text-muted small" x-show="worker.gpu_info?.vram_gb">
+                                <span x-text="worker.gpu_info?.vram_gb"></span> GB VRAM
+                            </div>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <span class="badge bg-secondary" x-text="worker.worker_type"></span>
+                        </td>
+                        <td class="d-none d-lg-table-cell">
+                            <template x-if="worker.current_job_id">
+                                <a :href="'/jobs/' + worker.current_job_id" class="text-info text-decoration-none font-monospace small">
+                                    <span x-text="worker.current_job_id.slice(0, 8)"></span>
+                                    <i class="fas fa-external-link-alt ms-1"></i>
+                                </a>
+                            </template>
+                            <template x-if="!worker.current_job_id">
+                                <span class="text-muted">-</span>
+                            </template>
+                        </td>
+                        <td class="d-none d-lg-table-cell text-muted small">
+                            <span x-text="formatWorkerUptime(worker)"></span>
+                        </td>
+                        <td class="d-none d-lg-table-cell text-muted small">
+                            <span x-text="formatWorkerTimeAgo(worker.last_heartbeat)"></span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-warning"
+                                        @click="drainWorker(worker)"
+                                        :disabled="worker.status === 'offline' || worker.status === 'draining'"
+                                        title="Drain (finish job, then stop)">
+                                    <i class="fas fa-pause"></i>
+                                </button>
+                                <button class="btn btn-outline-info"
+                                        @click="rotateWorkerToken(worker)"
+                                        title="Rotate token">
+                                    <i class="fas fa-key"></i>
+                                </button>
+                                <button class="btn btn-outline-danger"
+                                        @click="confirmDeleteWorker(worker)"
+                                        title="Remove worker">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Add Worker Modal -->
+    {% include 'partials/admin/modal_worker.html' %}
+
+</div>

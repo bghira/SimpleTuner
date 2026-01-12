@@ -1,0 +1,184 @@
+<!-- Admin - Organizations Tab -->
+<div x-show="activeTab === 'orgs'" x-transition>
+    <!-- Orgs Hint -->
+    <div class="admin-hint admin-hint-inline" x-show="hints.orgs" x-transition>
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="small">
+                <i class="fas fa-lightbulb text-warning me-2"></i>
+                <strong>Organizations & Teams:</strong>
+                Create organizations to group users and enforce <strong>quota ceilings</strong>.
+                Org limits override user limits even if admins assign higher values.
+                <strong>Teams</strong> are groups within an org that share their own quota ceilings.
+                Effective quota = min(org ceiling, team ceiling, user limit).
+            </div>
+            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('orgs')"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+    <div class="admin-toolbar">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <div class="input-group input-group-sm" style="max-width: 300px;">
+                <span class="input-group-text bg-dark border-secondary">
+                    <i class="fas fa-search text-muted"></i>
+                </span>
+                <input type="text"
+                       class="form-control bg-dark text-light border-secondary"
+                       placeholder="Search organizations..."
+                       x-model="orgSearch"
+                       @input="filterOrgs()">
+            </div>
+            <button class="btn btn-sm btn-primary" @click="showCreateOrgForm()">
+                <i class="fas fa-plus me-1"></i>Add Organization
+            </button>
+        </div>
+    </div>
+
+    <!-- Organizations List -->
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 50px;">Status</th>
+                    <th>Organization</th>
+                    <th class="d-none d-md-table-cell">Slug</th>
+                    <th class="d-none d-md-table-cell">Teams</th>
+                    <th class="d-none d-lg-table-cell">Members</th>
+                    <th style="width: 180px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="orgsLoading">
+                    <tr>
+                        <td colspan="6" class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin me-2"></i>Loading organizations...
+                        </td>
+                    </tr>
+                </template>
+                <template x-if="!orgsLoading && filteredOrgs.length === 0">
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            <i class="fas fa-building me-2"></i>No organizations found
+                            <div class="mt-2">
+                                <button class="btn btn-sm btn-outline-primary" @click="showCreateOrgForm()">
+                                    <i class="fas fa-plus me-1"></i>Create First Organization
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="org in filteredOrgs" :key="org.id">
+                    <tr>
+                        <td>
+                            <span class="badge" :class="org.is_active ? 'bg-success' : 'bg-secondary'"
+                                  :title="org.is_active ? 'Active' : 'Inactive'">
+                                <i class="fas" :class="org.is_active ? 'fa-check' : 'fa-pause'"></i>
+                            </span>
+                        </td>
+                        <td>
+                            <div class="fw-medium" x-text="org.name"></div>
+                            <div class="text-muted small" x-text="org.description || '(no description)'"></div>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <code class="small" x-text="org.slug"></code>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <span class="text-muted small"><span x-text="org.team_count || 0"></span> team(s)</span>
+                        </td>
+                        <td class="d-none d-lg-table-cell">
+                            <span class="text-muted small"><span x-text="org.member_count || 0"></span> member(s)</span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-info" @click="openOrgTeams(org)" title="Manage Teams">
+                                    <i class="fas fa-users-cog"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" @click="openOrgQuotas(org)" title="Quota Ceilings">
+                                    <i class="fas fa-tachometer-alt"></i>
+                                </button>
+                                <button class="btn btn-outline-primary" @click="showEditOrgForm(org)" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" @click="deleteOrg(org)" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Teams Section (shown when an org is selected) -->
+    <div class="teams-section mt-4" x-show="selectedOrg">
+        <div class="d-flex justify-content-between align-items-center mb-3 px-3">
+            <h6 class="mb-0">
+                <i class="fas fa-users me-2"></i>Teams in <span class="text-info" x-text="selectedOrg?.name"></span>
+            </h6>
+            <button class="btn btn-sm btn-primary" @click="showCreateTeamForm()">
+                <i class="fas fa-plus me-1"></i>Add Team
+            </button>
+        </div>
+
+        <div class="admin-table-container">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">Status</th>
+                        <th>Team</th>
+                        <th class="d-none d-md-table-cell">Slug</th>
+                        <th class="d-none d-lg-table-cell">Members</th>
+                        <th style="width: 150px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-if="teamsLoading">
+                        <tr><td colspan="5" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading...</td></tr>
+                    </template>
+                    <template x-if="!teamsLoading && teams.length === 0">
+                        <tr>
+                            <td colspan="5" class="text-center py-4 text-muted">
+                                <i class="fas fa-users me-2"></i>No teams in this organization
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="team in teams" :key="team.id">
+                        <tr>
+                            <td>
+                                <span class="badge" :class="team.is_active ? 'bg-success' : 'bg-secondary'">
+                                    <i class="fas" :class="team.is_active ? 'fa-check' : 'fa-pause'"></i>
+                                </span>
+                            </td>
+                            <td>
+                                <div class="fw-medium" x-text="team.name"></div>
+                                <div class="text-muted small" x-text="team.description || ''"></div>
+                            </td>
+                            <td class="d-none d-md-table-cell">
+                                <code class="small" x-text="team.slug"></code>
+                            </td>
+                            <td class="d-none d-lg-table-cell">
+                                <span class="text-muted small"><span x-text="team.member_count || 0"></span></span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-info" @click="openTeamMembers(team)" title="Manage Members">
+                                        <i class="fas fa-user-plus"></i>
+                                    </button>
+                                    <button class="btn btn-outline-secondary" @click="openTeamQuotas(team)" title="Quota Ceilings">
+                                        <i class="fas fa-tachometer-alt"></i>
+                                    </button>
+                                    <button class="btn btn-outline-primary" @click="showEditTeamForm(team)" title="Edit">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger" @click="deleteTeam(team)" title="Delete">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

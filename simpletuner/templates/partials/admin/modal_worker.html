@@ -1,0 +1,118 @@
+<!-- Add Worker Modal -->
+<div class="modal fade" :class="{ 'show d-block': workerFormOpen }" tabindex="-1"
+     x-show="workerFormOpen" @keydown.escape="workerFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">Add GPU Worker</h6>
+                <button type="button" class="btn-close btn-close-white" @click="workerFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <form @submit.prevent="createWorker()">
+                    <div class="mb-3">
+                        <label class="form-label small">Worker Name</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="workerForm.name" required placeholder="e.g., gpu-server-1">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Worker Type</label>
+                        <select x-model="workerForm.worker_type" class="form-select form-select-sm bg-dark text-light border-secondary">
+                            <option value="persistent">Persistent (always-on)</option>
+                            <option value="ephemeral">Ephemeral (shutdown after job)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Labels (optional)</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="workerForm.labels_str" placeholder="e.g., region=us-east,tier=premium">
+                        <div class="form-text small text-muted">Comma-separated key=value pairs</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="workerFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="createWorker()" :disabled="saving || !workerForm.name">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>Create Worker
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="workerFormOpen" @click="workerFormOpen = false"></div>
+
+<!-- Token Display Modal -->
+<div class="modal fade" :class="{ 'show d-block': workerTokenModalOpen }" tabindex="-1"
+     x-show="workerTokenModalOpen">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">Worker Token</h6>
+                <button type="button" class="btn-close btn-close-white" @click="workerTokenModalOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning mb-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Save this token now!</strong> It will only be shown once and cannot be recovered.
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small">Worker Token</label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control bg-dark text-light border-secondary font-monospace small"
+                               :value="workerToken" readonly>
+                        <button class="btn btn-outline-secondary" @click="copyWorkerToken()" type="button">
+                            <i class="fas fa-copy me-1"></i>Copy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small">Connection Command</label>
+                    <pre class="bg-black p-2 rounded border border-secondary small mb-2"><code x-text="workerConnectionCommand"></code></pre>
+                    <button class="btn btn-outline-secondary btn-sm" @click="copyWorkerCommand()" type="button">
+                        <i class="fas fa-copy me-1"></i>Copy Command
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-primary btn-sm" @click="workerTokenModalOpen = false">
+                    Done
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="workerTokenModalOpen"></div>
+
+<!-- Delete Worker Confirmation -->
+<div class="modal fade" :class="{ 'show d-block': deleteWorkerOpen }" tabindex="-1"
+     x-show="deleteWorkerOpen" @keydown.escape="deleteWorkerOpen = false">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title text-danger"><i class="fas fa-exclamation-triangle me-2"></i>Remove Worker</h6>
+                <button type="button" class="btn-close btn-close-white" @click="deleteWorkerOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">Are you sure you want to remove worker:</p>
+                <p class="fw-bold mb-3" x-text="deletingWorker?.name"></p>
+                <template x-if="deletingWorker?.current_job_id">
+                    <div class="alert alert-danger small mb-0">
+                        <i class="fas fa-exclamation-circle me-1"></i>
+                        This worker has an active job. Removing it will orphan the job.
+                    </div>
+                </template>
+                <template x-if="!deletingWorker?.current_job_id">
+                    <p class="text-muted small mb-0">This cannot be undone.</p>
+                </template>
+            </div>
+            <div class="modal-footer border-secondary py-2 justify-content-center">
+                <button type="button" class="btn btn-secondary btn-sm" @click="deleteWorkerOpen = false">Cancel</button>
+                <button type="button" class="btn btn-danger btn-sm" @click="deleteWorker()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>Remove
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="deleteWorkerOpen" @click="deleteWorkerOpen = false"></div>

@@ -264,6 +264,25 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
             self.fail("Expected payload from log extraction")
         self.assertIn("CUDA out of memory", payload.get("message", ""))
 
+    def test_log_extraction_prefers_signal_exit(self):
+        """Synthetic log extraction should highlight signal-based exits."""
+        job_id = "test_log_signal_exit"
+        process = TrainerProcess(job_id)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "stdout.log")
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...\n")
+
+            process.log_file = log_path
+            payload = process._extract_error_from_logs(exit_code=-9)
+
+        self.assertIsNotNone(payload)
+        if payload is None:  # Pragmatic guard for static checkers
+            self.fail("Expected payload from log extraction")
+        message = payload.get("message", "")
+        self.assertTrue("SIGKILL" in message or "signal 9" in message)
+
     @unittest.skip("Requires process fixes")
     def test_force_kill_unresponsive_process(self):
         """Test force killing a process that ignores SIGTERM."""

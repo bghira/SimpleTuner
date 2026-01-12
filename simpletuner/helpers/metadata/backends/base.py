@@ -1,4 +1,5 @@
 import logging
+import numbers
 import os
 import threading
 import time
@@ -9,7 +10,7 @@ from random import shuffle
 
 # For semaphore
 from threading import Semaphore, Thread
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -18,6 +19,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -29,6 +31,71 @@ else:
     logger.setLevel("ERROR")
 
 DEFAULT_AUDIO_BUCKET_INTERVAL = 3.0
+
+
+def _normalize_parallel_size(value: Any, name: str) -> int:
+    if value is None:
+        return 1
+    if isinstance(value, torch.SymInt):
+        return int(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    raise TypeError(f"{name} must be an integer type, got {type(value).__name__}.")
+
+
+def _normalize_parallel_rank(value: Any, name: str) -> int:
+    if isinstance(value, torch.SymInt):
+        return int(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    raise TypeError(f"{name} must be an integer type, got {type(value).__name__}.")
+
+
+def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
+    """
+    Get context-parallel-aware data parallelism information.
+
+    When context parallelism is enabled, the effective data parallelism degree
+    is reduced because multiple ranks share the same data (which is then split
+    along the sequence dimension).
+
+    Returns:
+        Tuple of (effective_dp_size, dp_rank, cp_size):
+        - effective_dp_size: Number of unique data shards needed
+        - dp_rank: This rank's position in the DP dimension (0 to effective_dp_size-1)
+        - cp_size: The context parallel size (1 if CP is disabled)
+    """
+    world_size = accelerator.num_processes
+    global_rank = accelerator.process_index
+
+    cp_enabled, _cp_group, _cp_rank, cp_size = get_cp_info(accelerator)
+    if not cp_enabled:
+        return world_size, global_rank, 1
+
+    parallelism_config = getattr(accelerator, "parallelism_config", None)
+    if parallelism_config is None:
+        return world_size, global_rank, 1
+
+    dp_replicate_size = _normalize_parallel_size(getattr(parallelism_config, "dp_replicate_size", 1), "dp_replicate_size")
+    dp_shard_size = _normalize_parallel_size(getattr(parallelism_config, "dp_shard_size", 1), "dp_shard_size")
+
+    dp_replicate_rank = 0
+    if dp_replicate_size > 1:
+        dp_replicate_rank = _normalize_parallel_rank(accelerator.data_parallel_rank, "data_parallel_rank")
+
+    dp_shard_rank = 0
+    if dp_shard_size > 1:
+        dp_shard_rank = _normalize_parallel_rank(accelerator.data_parallel_shard_rank, "data_parallel_shard_rank")
+
+    effective_dp_size = dp_replicate_size * dp_shard_size
+    dp_rank = (dp_replicate_rank * dp_shard_size) + dp_shard_rank
+
+    logger.debug(
+        f"Context parallel data splitting: world_size={world_size}, cp_size={cp_size}, "
+        f"effective_dp_size={effective_dp_size}, global_rank={global_rank}, dp_rank={dp_rank}"
+    )
+
+    return effective_dp_size, dp_rank, cp_size
 
 
 class MetadataBackend:
@@ -567,7 +634,18 @@ class MetadataBackend:
         total_samples = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
         logger.debug(f"Count of items before split: {total_samples}")
 
-        num_processes = self.accelerator.num_processes
+        # Get context-parallel-aware data parallelism info
+        # When CP is enabled, multiple ranks share the same data shard, so we split
+        # by effective_dp_size (world_size / cp_size) instead of world_size
+        effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)
+        num_processes = effective_dp_size  # Use effective DP size for batch calculations
+
+        if cp_size > 1:
+            logger.info(
+                f"(id={self.id}) Context parallel enabled: splitting data across {effective_dp_size} DP groups "
+                f"(cp_size={cp_size}, this rank's dp_rank={dp_rank})"
+            )
+
         # Evaluation datasets are not trained, so gradient accumulation does not apply.
         dataset_type = getattr(self, "dataset_type", None)
         try:
@@ -701,8 +779,27 @@ class MetadataBackend:
                         effective_batch_size=effective_batch_size,
                     )
 
-            with self.accelerator.split_between_processes(trimmed_images, apply_padding=apply_padding) as images_split:
+            # Split data by DP rank (not global rank) when context parallelism is enabled.
+            # This ensures all ranks in a CP group get the same data shard.
+            if cp_size > 1:
+                # Custom CP-aware splitting: split by dp_rank instead of process_index
+                chunk_size = ceil(len(trimmed_images) / effective_dp_size) if effective_dp_size > 0 else len(trimmed_images)
+                start_idx = dp_rank * chunk_size
+                end_idx = min(start_idx + chunk_size, len(trimmed_images))
+                images_split = trimmed_images[start_idx:end_idx]
+
+                # Handle padding if requested (for uniform batch sizes)
+                if apply_padding and len(images_split) < chunk_size and len(images_split) > 0:
+                    padding_needed = chunk_size - len(images_split)
+                    # Pad by repeating elements from the split
+                    padding = (images_split * ((padding_needed // len(images_split)) + 1))[:padding_needed]
+                    images_split = images_split + padding
+
                 new_aspect_ratio_bucket_indices[bucket] = images_split
+            else:
+                # Standard splitting when CP is disabled
+                with self.accelerator.split_between_processes(trimmed_images, apply_padding=apply_padding) as images_split:
+                    new_aspect_ratio_bucket_indices[bucket] = images_split
 
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
         post_total = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
@@ -918,6 +1015,35 @@ class MetadataBackend:
             return True
         if self.dataset_type is DatasetType.AUDIO:
             return True
+
+        # Adjust video frame count to satisfy model constraints
+        if image_metadata and "num_frames" in image_metadata:
+            from simpletuner.helpers.models import ModelRegistry
+
+            model_family = StateTracker.get_model_family()
+            model_class = None
+            if model_family and model_family in ModelRegistry.model_families():
+                model_class = ModelRegistry.model_families()[model_family]
+
+            if model_class and hasattr(model_class, "adjust_video_frames"):
+                original_frames = image_metadata["num_frames"]
+                adjusted_frames = model_class.adjust_video_frames(original_frames)
+
+                if adjusted_frames != original_frames:
+                    logger.debug(f"(id={self.id}) Adjusted frame count from {original_frames} to {adjusted_frames}")
+                    image_metadata["num_frames"] = adjusted_frames
+                    image_metadata["original_num_frames"] = original_frames
+
+            # Check minimum after adjustment
+            if self.minimum_num_frames is not None:
+                if image_metadata["num_frames"] < self.minimum_num_frames:
+                    return False
+
+            # Check maximum
+            if self.maximum_num_frames is not None:
+                if image_metadata["num_frames"] > self.maximum_num_frames:
+                    return False
+
         if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
@@ -946,6 +1072,27 @@ class MetadataBackend:
             width, height = image.size
         elif image_metadata is not None:
             width, height = image_metadata["original_size"]
+            num_frames = image_metadata.get("num_frames") if isinstance(image_metadata, dict) else None
+            if num_frames is not None and self.dataset_type is DatasetType.VIDEO:
+                try:
+                    num_frames_val = int(num_frames)
+                except (TypeError, ValueError):
+                    num_frames_val = None
+                if num_frames_val is not None:
+                    if self.minimum_num_frames is not None and num_frames_val < self.minimum_num_frames:
+                        logger.debug(
+                            "Video has %s frames, which is less than the minimum required %s.",
+                            num_frames_val,
+                            self.minimum_num_frames,
+                        )
+                        return False
+                    if self.maximum_num_frames is not None and num_frames_val > self.maximum_num_frames:
+                        logger.debug(
+                            "Video has %s frames, which is more than the maximum configured %s.",
+                            num_frames_val,
+                            self.maximum_num_frames,
+                        )
+                        return False
         else:
             raise ValueError(
                 f"meets_resolution_requirements expects an image_path"

@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps, apply_rotary_emb, get_2d_sincos_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -335,6 +336,12 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["OmniGenBlock"]
     _skip_layerwise_casting_patterns = ["patch_embedding", "embed_tokens", "norm"]
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "final_layer": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     @register_to_config
     def __init__(

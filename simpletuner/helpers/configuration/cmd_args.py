@@ -15,7 +15,7 @@ import torch
 from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
-from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import should_log
@@ -71,18 +71,22 @@ def _configure_tf32(disable_tf32: bool) -> None:
     cudnn_conv_backend = getattr(cudnn_backend, "conv", None)
     cudnn_rnn_backend = getattr(cudnn_backend, "rnn", None)
 
-    supports_precision_overrides = (
-        hasattr(backend_root, "fp32_precision")
-        and matmul_backend is not None
-        and hasattr(matmul_backend, "fp32_precision")
-        and cudnn_backend is not None
-        and hasattr(cudnn_backend, "fp32_precision")
+    supports_precision_overrides = any(
+        (
+            hasattr(torch, "set_float32_matmul_precision"),
+            hasattr(backend_root, "fp32_precision"),
+            matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"),
+            cudnn_backend is not None and hasattr(cudnn_backend, "fp32_precision"),
+        )
     )
 
     def _set_tf32(enabled: bool) -> None:
         if supports_precision_overrides:
             precision = "tf32" if enabled else "ieee"
-            backend_root.fp32_precision = precision
+            if hasattr(torch, "set_float32_matmul_precision"):
+                torch.set_float32_matmul_precision("high" if enabled else "highest")
+            if hasattr(backend_root, "fp32_precision"):
+                backend_root.fp32_precision = precision
             if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
                 matmul_backend.fp32_precision = precision
             if cudnn_backend is not None and hasattr(cudnn_backend, "fp32_precision"):
@@ -90,6 +94,12 @@ def _configure_tf32(disable_tf32: bool) -> None:
             for cudnn_op_backend in (cudnn_conv_backend, cudnn_rnn_backend):
                 if cudnn_op_backend is not None and hasattr(cudnn_op_backend, "fp32_precision"):
                     cudnn_op_backend.fp32_precision = precision
+            if (
+                cudnn_backend is not None
+                and hasattr(cudnn_backend, "allow_tf32")
+                and not hasattr(cudnn_backend, "fp32_precision")
+            ):
+                cudnn_backend.allow_tf32 = enabled
         else:
             if matmul_backend is not None and hasattr(matmul_backend, "allow_tf32"):
                 matmul_backend.allow_tf32 = enabled
@@ -571,6 +581,18 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 skip_next = False
                 continue
 
+            if arg.startswith(("--lr_scheduler=", "--lr-scheduler=")):
+                prefix, value = arg.split("=", 1)
+                normalized_value = normalize_lr_scheduler_value(value)
+                normalized_args.append(f"{prefix}={normalized_value}")
+                continue
+
+            if arg in ("--lr_scheduler", "--lr-scheduler") and idx + 1 < len(raw_args):
+                normalized_args.append(arg)
+                normalized_args.append(normalize_lr_scheduler_value(raw_args[idx + 1]))
+                skip_next = True
+                continue
+
             if arg.startswith(("--model_family=", "--model-family=")):
                 prefix, value = arg.split("=", 1)
                 normalized_args.append(f"{prefix}={_normalize_model_family(value)}")
@@ -586,15 +608,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         return normalized_args
 
+    parser_error_traceback = None
     try:
         normalized_args = _normalize_input_args(input_args)
         args = parser.parse_args(normalized_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
         parser_error = sys.exc_info()[1]
-        logger.error(f"Could not parse input: {input_args}")
         import traceback
 
-        logger.error(traceback.format_exc())
+        parser_error_traceback = traceback.format_exc()
+        logger.error(f"Could not parse input: {input_args}")
+        logger.error(parser_error_traceback)
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
             try:
@@ -611,10 +635,19 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
-        raise ValueError(f"Could not parse command line arguments: {parser_error or 'see above logs for details'}")
+        error_detail = parser_error_traceback or str(parser_error) if parser_error else "unknown parsing error"
+        raise ValueError(f"Could not parse command line arguments:\n{error_detail}")
 
     if args is None:
         return None
+
+    if hasattr(args, "lr_scheduler"):
+        normalized_lr_scheduler = normalize_lr_scheduler_value(
+            getattr(args, "lr_scheduler", None),
+            getattr(args, "lr_warmup_steps", None),
+        )
+        if normalized_lr_scheduler != getattr(args, "lr_scheduler", None):
+            args.lr_scheduler = normalized_lr_scheduler
 
     if args.controlnet_custom_config is not None and type(args.controlnet_custom_config) is str:
         if args.controlnet_custom_config.startswith("{"):
@@ -685,6 +718,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     manual_quant_precisions = set(MANUAL_QUANTIZATION_PRESETS)
     pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
+    manual_only_precisions = manual_quant_precisions - pipeline_quant_precisions
+    quantization_precisions = manual_quant_precisions | pipeline_quant_precisions
     base_precision = getattr(args, "base_model_precision", "no_change")
     model_path = str(getattr(args, "pretrained_model_name_or_path", "") or "")
     is_gguf_checkpoint = model_path.endswith(".gguf")
@@ -693,7 +728,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.quantization_config is not None and args.model_type != "lora":
         raise ValueError("quantization_config is only supported for LoRA training.")
 
-    if quantize_via_pipeline and base_precision in manual_quant_precisions:
+    if quantize_via_pipeline and base_precision in manual_only_precisions:
         raise ValueError(
             f"quantize_via=pipeline cannot be combined with base_model_precision '{base_precision}'. "
             "Use a Diffusers-compatible preset such as nf4-bnb or int4-torchao, or provide a pipeline quantization_config."
@@ -702,7 +737,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if quantize_via_pipeline:
         for idx in range(1, 5):
             te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
-            if te_precision in manual_quant_precisions:
+            if te_precision in manual_only_precisions:
                 raise ValueError(
                     f"quantize_via=pipeline cannot be combined with manual text encoder quantization ({te_precision}). "
                     "Provide a pipeline quantization_config entry for text encoders instead."
@@ -721,7 +756,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if base_precision in pipeline_quant_precisions:
         for idx in range(1, 5):
             te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
-            if te_precision in manual_quant_precisions:
+            if te_precision in manual_only_precisions:
                 raise ValueError(
                     f"base_model_precision '{base_precision}' cannot be combined with manual text encoder quantization ({te_precision}). "
                     "Use pipeline presets for text encoders or disable manual quantization."
@@ -738,10 +773,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.quantization_config is not None:
         for idx in range(1, 5):
             te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
-            if te_precision in manual_quant_precisions:
+            if te_precision in quantization_precisions:
                 raise ValueError(
                     "quantization_config should include any text encoder quantization settings. "
-                    f"Manual text encoder precision '{te_precision}' is not supported alongside quantization_config."
+                    f"Text encoder precision '{te_precision}' is not supported alongside quantization_config."
                 )
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -1140,7 +1175,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError("--ramtorch cannot be used together with --enable_group_offload.")
 
     if args.validation_guidance_skip_layers is not None:
-        if args.model_family not in ["sd3", "wan"]:
+        if args.model_family not in ["sd3", "wan", "wan_s2v"]:
             raise ValueError("Currently, skip-layer guidance is not supported for {}".format(args.model_family))
         try:
             import json

@@ -1,11 +1,12 @@
 import json
 import logging
 import os
+import shutil
 import traceback
 from io import BytesIO
 from typing import Optional
 
-from simpletuner.helpers.audio import load_audio
+from simpletuner.helpers.audio import generate_zero_audio, load_audio, load_audio_from_video
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
@@ -35,6 +36,15 @@ if should_log():
 else:
     target_level = "ERROR"
 logger.setLevel(target_level)
+
+_ffprobe_available: Optional[bool] = None
+
+
+def _is_ffprobe_available() -> bool:
+    global _ffprobe_available
+    if _ffprobe_available is None:
+        _ffprobe_available = shutil.which("ffprobe") is not None
+    return _ffprobe_available
 
 
 class DiscoveryMetadataBackend(MetadataBackend):
@@ -84,6 +94,138 @@ class DiscoveryMetadataBackend(MetadataBackend):
             repeats=repeats,
         )
 
+    def _should_use_metadata_only_for_video(self) -> bool:
+        if not _is_ffprobe_available():
+            return False
+        if self.dataset_type is not DatasetType.VIDEO:
+            return False
+        crop_enabled = bool(self.dataset_config.get("crop", False))
+        crop_style = str(self.dataset_config.get("crop_style") or "random").lower()
+        if crop_enabled and crop_style == "face":
+            return False
+        return True
+
+    def _needs_video_frame_count(self) -> bool:
+        if self.bucket_strategy == "resolution_frames":
+            return True
+        return self.minimum_num_frames is not None or self.maximum_num_frames is not None
+
+    @staticmethod
+    def _parse_frame_rate(value: object) -> Optional[float]:
+        if value in (None, "", "N/A"):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if not text or text.upper() == "N/A":
+            return None
+        if "/" in text:
+            num_text, denom_text = text.split("/", 1)
+            try:
+                denom = float(denom_text)
+                if denom == 0:
+                    return None
+                return float(num_text) / denom
+            except (TypeError, ValueError):
+                return None
+        try:
+            return float(text)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_int(value: object) -> Optional[int]:
+        if value in (None, "", "N/A"):
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_float(value: object) -> Optional[float]:
+        if value in (None, "", "N/A"):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _probe_video_metadata(self, video_path: str, payload: Optional[bytes]) -> Optional[dict]:
+        if not _is_ffprobe_available():
+            return None
+
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        cleanup_temp = False
+        probe_path = video_path
+        suffix = Path(video_path).suffix or ".mp4"
+
+        if payload is not None:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(payload)
+                    probe_path = tmp.name
+                cleanup_temp = True
+            except Exception as exc:
+                logger.debug("Failed to write temp video for ffprobe: %s", exc)
+                return None
+
+        try:
+            cmd = [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,nb_frames,avg_frame_rate,r_frame_rate,duration",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                probe_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+            raw_payload = json.loads(result.stdout) if result.stdout else {}
+            streams = raw_payload.get("streams") or []
+            stream = streams[0] if streams else {}
+
+            width = self._safe_int(stream.get("width"))
+            height = self._safe_int(stream.get("height"))
+            if not width or not height:
+                return None
+
+            metadata: dict = {"original_size": (width, height)}
+
+            fps = self._parse_frame_rate(stream.get("avg_frame_rate") or stream.get("r_frame_rate"))
+            if fps:
+                metadata["fps"] = fps
+
+            num_frames = self._safe_int(stream.get("nb_frames"))
+            duration = self._safe_float(stream.get("duration"))
+            if duration is None:
+                duration = self._safe_float((raw_payload.get("format") or {}).get("duration"))
+            if num_frames is None and fps and duration:
+                num_frames = int(round(fps * duration))
+            if num_frames:
+                metadata["num_frames"] = num_frames
+            if duration:
+                metadata["video_duration"] = duration
+
+            return metadata
+        except Exception as exc:
+            logger.debug("ffprobe metadata extraction failed for %s: %s", video_path, exc)
+            return None
+        finally:
+            if cleanup_temp:
+                try:
+                    Path(probe_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         """
         Discover new files that have not been processed yet.
@@ -99,7 +241,14 @@ class DiscoveryMetadataBackend(MetadataBackend):
             return list(all_image_files.keys())
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
-            extension_pool = audio_file_extensions if self.dataset_type is DatasetType.AUDIO else image_file_extensions
+            if self.dataset_type is DatasetType.AUDIO:
+                # Check if audio is sourced from video files
+                if self.audio_config.get("source_from_video", False):
+                    extension_pool = video_file_extensions
+                else:
+                    extension_pool = audio_file_extensions
+            else:
+                extension_pool = image_file_extensions
             all_image_files = self.data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=extension_pool,
@@ -217,27 +366,121 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
         try:
             image_metadata = {}
-            image_data = self.data_backend.read(image_path_str)
-            if image_data is None:
-                logger.debug(f"Image {image_path_str} was not found on the backend. Skipping image.")
-                statistics.setdefault("skipped", {}).setdefault("not_found", 0)
-                statistics["skipped"]["not_found"] += 1
-                return aspect_ratio_bucket_indices
-
+            image_data = None
+            image = None
             file_extension = os.path.splitext(image_path_str)[1].lower()
-            file_loader = load_image
-            if file_extension.strip(".") in video_file_extensions:
-                file_loader = load_video
-            image = file_loader(BytesIO(image_data))
-            if not self.meets_resolution_requirements(image=image):
-                if not self.delete_unwanted_images:
-                    logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")
+            is_video_file = file_extension.strip(".") in video_file_extensions
+
+            use_metadata_only = False
+            if is_video_file and self._should_use_metadata_only_for_video():
+                if getattr(self.data_backend, "type", None) == "local":
+                    video_metadata = self._probe_video_metadata(image_path_str, None)
                 else:
-                    logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Deleting image.")
-                    self.data_backend.delete(image_path_str)
-                statistics.setdefault("skipped", {}).setdefault("too_small", 0)
-                statistics["skipped"]["too_small"] += 1
-                return aspect_ratio_bucket_indices
+                    image_data = self.data_backend.read(image_path_str)
+                    if image_data is None:
+                        logger.debug(f"Image {image_path_str} was not found on the backend. Skipping image.")
+                        statistics.setdefault("skipped", {}).setdefault("not_found", 0)
+                        statistics["skipped"]["not_found"] += 1
+                        return aspect_ratio_bucket_indices
+                    video_metadata = self._probe_video_metadata(image_path_str, image_data)
+
+                if video_metadata and self._needs_video_frame_count() and "num_frames" not in video_metadata:
+                    logger.debug(
+                        "(id=%s) ffprobe metadata missing num_frames for %s; falling back to full decode.",
+                        self.id,
+                        image_path_str,
+                    )
+                    video_metadata = None
+
+                if video_metadata:
+                    use_metadata_only = True
+                    image_metadata.update(video_metadata)
+
+                    # Adjust video frame count in metadata to satisfy model constraints (metadata-only path)
+                    if "num_frames" in image_metadata:
+                        from simpletuner.helpers.models import ModelRegistry
+
+                        model_family = StateTracker.get_model_family()
+                        model_class = None
+                        if model_family and model_family in ModelRegistry.model_families():
+                            model_class = ModelRegistry.model_families()[model_family]
+
+                        if model_class and hasattr(model_class, "adjust_video_frames"):
+                            original_frames = image_metadata["num_frames"]
+                            adjusted_frames = model_class.adjust_video_frames(original_frames)
+
+                            if adjusted_frames != original_frames:
+                                logger.info(
+                                    f"(id={self.id}) Adjusted video {image_path_str} from {original_frames} to "
+                                    f"{adjusted_frames} frames to satisfy model constraints (metadata-only)."
+                                )
+                                image_metadata["num_frames"] = adjusted_frames
+                                image_metadata["original_num_frames"] = original_frames
+
+                    logger.debug("(id=%s) Using ffprobe metadata-only scan for %s", self.id, image_path_str)
+
+            if use_metadata_only:
+                if not self.meets_resolution_requirements(image_metadata=image_metadata):
+                    if not self.delete_unwanted_images:
+                        logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")
+                    else:
+                        logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Deleting image.")
+                        self.data_backend.delete(image_path_str)
+                    statistics.setdefault("skipped", {}).setdefault("too_small", 0)
+                    statistics["skipped"]["too_small"] += 1
+                    return aspect_ratio_bucket_indices
+            else:
+                if image_data is None:
+                    image_data = self.data_backend.read(image_path_str)
+                if image_data is None:
+                    logger.debug(f"Image {image_path_str} was not found on the backend. Skipping image.")
+                    statistics.setdefault("skipped", {}).setdefault("not_found", 0)
+                    statistics["skipped"]["not_found"] += 1
+                    return aspect_ratio_bucket_indices
+
+                file_loader = load_image
+                if is_video_file:
+                    file_loader = load_video
+                image = file_loader(BytesIO(image_data))
+
+                # Adjust video frames to satisfy model constraints (full decode path)
+                if is_video_file and hasattr(image, "shape"):
+                    from simpletuner.helpers.image_manipulation.load import adjust_video_frames_for_model
+                    from simpletuner.helpers.models import ModelRegistry
+
+                    model_family = StateTracker.get_model_family()
+                    model_class = None
+                    if model_family and model_family in ModelRegistry.model_families():
+                        model_class = ModelRegistry.model_families()[model_family]
+
+                    image, original_frames, was_adjusted = adjust_video_frames_for_model(image, model_class)
+
+                    if was_adjusted:
+                        adjusted_frames = image.shape[0]
+                        logger.info(
+                            f"(id={self.id}) Adjusted video {image_path_str} from {original_frames} to "
+                            f"{adjusted_frames} frames to satisfy model constraints."
+                        )
+
+                        # Check if adjusted frames meet minimum requirements
+                        if self.minimum_num_frames is not None and adjusted_frames < self.minimum_num_frames:
+                            logger.warning(
+                                f"(id={self.id}) Skipping video {image_path_str}: after adjusting from {original_frames} to "
+                                f"{adjusted_frames} frames, it is below minimum required {self.minimum_num_frames} frames."
+                            )
+                            statistics.setdefault("skipped", {}).setdefault("insufficient_frames_after_adjustment", 0)
+                            statistics["skipped"]["insufficient_frames_after_adjustment"] += 1
+                            return aspect_ratio_bucket_indices
+
+                if not self.meets_resolution_requirements(image=image):
+                    if not self.delete_unwanted_images:
+                        logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")
+                    else:
+                        logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Deleting image.")
+                        self.data_backend.delete(image_path_str)
+                    statistics.setdefault("skipped", {}).setdefault("too_small", 0)
+                    statistics["skipped"]["too_small"] += 1
+                    return aspect_ratio_bucket_indices
 
             if hasattr(image, "shape"):
                 image_metadata["original_size"] = (image.shape[2], image.shape[1])
@@ -257,8 +500,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 "target_size": prepared_sample.target_size,
                 "intermediary_size": prepared_sample.intermediary_size,
                 "aspect_ratio": prepared_sample.aspect_ratio,
-                "luminance": calculate_luminance(image),
             }
+            if image is not None:
+                cur_image_metadata["luminance"] = calculate_luminance(image)
             image_metadata.update(cur_image_metadata)
             logger.debug(f"Image {image_path_str} has metadata: {cur_image_metadata}")
 
@@ -305,9 +549,39 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
 
-            buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
-            buffer.seek(0)
-            waveform, sample_rate = load_audio(buffer)
+            # Check if audio is sourced from video files
+            source_from_video = self.audio_config.get("source_from_video", False)
+            allow_zero_audio = self.audio_config.get("allow_zero_audio", False)
+            file_ext = os.path.splitext(image_path_str)[1].lower().lstrip(".")
+            is_video_file = file_ext in video_file_extensions
+
+            if source_from_video and is_video_file:
+                # Extract audio from video file
+                target_sr = self.audio_config.get("sample_rate", 16000)
+                target_channels = self.audio_config.get("channels", 1)
+                try:
+                    waveform, sample_rate = load_audio_from_video(audio_payload, target_sr, target_channels)
+                except ValueError:
+                    # Video has no audio stream
+                    if allow_zero_audio:
+                        video_duration = self._get_video_duration(image_path_str, audio_payload)
+                        if video_duration and video_duration > 0:
+                            waveform, sample_rate = generate_zero_audio(video_duration, target_sr, target_channels)
+                            logger.debug(f"Generated zero audio ({video_duration:.2f}s) for {image_path_str}")
+                        else:
+                            logger.debug(f"Skipping video without audio (no duration): {image_path_str}")
+                            statistics.setdefault("skipped", {}).setdefault("no_duration", 0)
+                            statistics["skipped"]["no_duration"] += 1
+                            return aspect_ratio_bucket_indices
+                    else:
+                        logger.debug(f"Skipping video without audio: {image_path_str}")
+                        statistics.setdefault("skipped", {}).setdefault("no_audio", 0)
+                        statistics["skipped"]["no_audio"] += 1
+                        return aspect_ratio_bucket_indices
+            else:
+                buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
+                buffer.seek(0)
+                waveform, sample_rate = load_audio(buffer)
             if waveform is None or waveform.numel() == 0:
                 logger.debug(f"Audio sample {image_path_str} is empty. Skipping.")
                 statistics.setdefault("skipped", {}).setdefault("other", 0)
@@ -358,6 +632,66 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices
+
+    def _get_video_duration(self, video_path: str, video_bytes: bytes = None) -> Optional[float]:
+        """
+        Get video duration for zero-audio generation.
+
+        Args:
+            video_path: Path to the video file
+            video_bytes: Raw video bytes (optional, used if file not directly accessible)
+
+        Returns:
+            Duration in seconds, or None if unavailable.
+        """
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        # Try to get from existing video metadata if this is a linked dataset
+        source_dataset_id = self.dataset_config.get("source_dataset_id")
+        if source_dataset_id:
+            video_meta = StateTracker.get_metadata_by_filepath(video_path, source_dataset_id)
+            if video_meta:
+                # Check for video_duration or compute from num_frames/fps if available
+                if "video_duration" in video_meta:
+                    return video_meta["video_duration"]
+                if "num_frames" in video_meta:
+                    # Assume 24fps if not specified for duration estimate
+                    fps = video_meta.get("fps", 24)
+                    return video_meta["num_frames"] / fps
+
+        # Fallback: probe video file with ffprobe
+        cleanup_temp = False
+        probe_path = video_path
+        try:
+            if video_bytes:
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                    tmp.write(video_bytes)
+                    probe_path = tmp.name
+                cleanup_temp = True
+
+            cmd = [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                probe_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+            return float(result.stdout.strip())
+        except Exception as e:
+            logger.debug(f"Failed to get video duration for {video_path}: {e}")
+            return None
+        finally:
+            if cleanup_temp:
+                try:
+                    Path(probe_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def __len__(self):
         """

@@ -1,8 +1,54 @@
+import json
+import os
 from typing import Any, Dict, Type
+
+
+class LazyModelClass:
+    def __init__(self, metadata):
+        self._metadata = metadata
+        self._real_class = None
+
+    @property
+    def NAME(self):
+        return self._metadata.get("name", "Unknown Model")
+
+    def get_flavour_choices(self):
+        return self._metadata.get("flavour_choices", [])
+
+    def __call__(self, *args, **kwargs):
+        if self._real_class is None:
+            import importlib
+
+            module = importlib.import_module(self._metadata["module_path"])
+            self._real_class = getattr(module, self._metadata["class_name"])
+        return self._real_class(*args, **kwargs)
+
+    def __getattr__(self, name):
+        if self._real_class is None:
+            import importlib
+
+            module = importlib.import_module(self._metadata["module_path"])
+            self._real_class = getattr(module, self._metadata["class_name"])
+        return getattr(self._real_class, name)
 
 
 class ModelRegistry:
     _registry: Dict[str, Type[Any]] = {}
+    _metadata: Dict[str, Dict[str, Any]] = {}
+    _loaded_metadata: bool = False
+
+    @classmethod
+    def _load_metadata(cls):
+        if cls._loaded_metadata:
+            return
+        metadata_path = os.path.join(os.path.dirname(__file__), "model_metadata.json")
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, "r") as f:
+                    cls._metadata = json.load(f)
+            except Exception:
+                pass
+        cls._loaded_metadata = True
 
     @classmethod
     def register(cls, family: str, model_class: Type[Any]) -> None:
@@ -10,8 +56,24 @@ class ModelRegistry:
 
     @classmethod
     def get(cls, family: str) -> Type[Any]:
-        return cls._registry.get(family.lower())
+        family_lower = family.lower()
+        if family_lower in cls._registry:
+            return cls._registry[family_lower]
+
+        cls._load_metadata()
+        if family_lower in cls._metadata:
+            return LazyModelClass(cls._metadata[family_lower])
+
+        return None
 
     @classmethod
     def model_families(cls) -> Dict[str, Type[Any]]:
-        return cls._registry.copy()
+        cls._load_metadata()
+        combined = {}
+        # Metadata-based lazy classes
+        for family, meta in cls._metadata.items():
+            combined[family] = LazyModelClass(meta)
+        # Explicitly registered classes override metadata
+        for family, model_cls in cls._registry.items():
+            combined[family] = model_cls
+        return combined

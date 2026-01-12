@@ -1,0 +1,206 @@
+<!-- partials/cloud_hero_cta.html - Provider-specific onboarding CTAs -->
+
+<!-- Show CTA only when the active provider is NOT configured -->
+<template x-if="!getActiveProvider()?.configured">
+    <div class="hero-cta hero-cta--indigo"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+
+        <!-- Replicate onboarding -->
+        <template x-if="activeProvider === 'replicate'">
+            <div class="hero-content">
+                <div class="hero-icon" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                </div>
+                <h2 class="hero-title">Get Started with Replicate</h2>
+                <p class="hero-description">
+                    Run your training jobs on Replicate's cloud infrastructure. Pay per second with no upfront costs.
+                </p>
+
+                <div class="hero-features">
+                    <div class="hero-feature">
+                        <i class="fas fa-bolt text-warning"></i>
+                        <span>L40S & A100 GPUs</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-dollar-sign text-success"></i>
+                        <span>Pay per second</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-sync text-info"></i>
+                        <span>Auto-upload datasets</span>
+                    </div>
+                </div>
+
+                <div class="hero-steps">
+                    <div class="setup-step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h6>Get your API key from Replicate</h6>
+                            <a href="https://replicate.com/account/api-tokens"
+                               target="_blank"
+                               rel="noopener noreferrer"
+                               class="btn btn-primary btn-sm">
+                                <i class="fas fa-external-link-alt me-1"></i>Open Replicate Dashboard
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="setup-step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h6>Paste your API token</h6>
+                            <div class="token-input-group">
+                                <input type="password"
+                                       class="form-control form-control-sm"
+                                       placeholder="r8_xxxxxxxxxxxxxxxxxxxxx"
+                                       x-model="tokenInput"
+                                       :disabled="tokenSaving"
+                                       @keyup.enter="saveReplicateToken()">
+                                <button type="button"
+                                        class="btn btn-success btn-sm"
+                                        :disabled="!tokenInput || tokenSaving"
+                                        @click="saveReplicateToken()">
+                                    <template x-if="!tokenSaving">
+                                        <span><i class="fas fa-save me-1"></i>Save & Connect</span>
+                                    </template>
+                                    <template x-if="tokenSaving">
+                                        <span><i class="fas fa-spinner fa-spin me-1"></i>Saving...</span>
+                                    </template>
+                                </button>
+                            </div>
+                            <p class="small text-muted mt-1">
+                                <i class="fas fa-lock me-1"></i>Saved to <code>~/.simpletuner/secrets.json</code> with restricted permissions
+                            </p>
+                            <template x-if="tokenError">
+                                <div class="alert alert-danger py-1 px-2 small mt-2" x-text="tokenError"></div>
+                            </template>
+                            <template x-if="tokenSuccess">
+                                <div class="alert alert-success py-1 px-2 small mt-2">
+                                    <i class="fas fa-check-circle me-1"></i>Connected successfully!
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Alternative: Environment variable -->
+                    <div class="setup-step cloud-alternative-step">
+                        <div class="step-divider">
+                            <span>or use environment variable</span>
+                        </div>
+                        <div class="step-content">
+                            <div class="d-flex align-items-center gap-2 bg-dark rounded px-2 py-1">
+                                <code class="text-info small flex-grow-1">export REPLICATE_API_TOKEN=r8_your_token</code>
+                                <button type="button"
+                                        class="btn btn-sm btn-link text-muted p-0"
+                                        @click="navigator.clipboard.writeText('export REPLICATE_API_TOKEN=')"
+                                        title="Copy to clipboard">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                            <p class="small text-muted mt-1 mb-0">Add to shell profile, then restart SimpleTuner</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hero-footer">
+                    <a href="https://replicate.com/simpletuner/advanced-trainer"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       class="hero-link">
+                        <i class="fas fa-external-link-alt me-1"></i>View on Replicate
+                    </a>
+                    <span class="hero-link-separator">|</span>
+                    <a href="{{ docs_url('experimental/cloud/REPLICATE.md') }}"
+                       target="_blank"
+                       class="hero-link doc-link">
+                        <i class="fas fa-book me-1"></i>Setup Guide
+                    </a>
+                </div>
+            </div>
+        </template>
+
+        <!-- SimpleTuner.io onboarding (coming soon) -->
+        <template x-if="activeProvider === 'simpletuner_io'">
+            <div class="hero-content">
+                <div class="hero-icon" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    <i class="fas fa-cloud-bolt"></i>
+                </div>
+                <h2 class="hero-title">SimpleTuner.io</h2>
+                <p class="hero-description">
+                    Managed cloud training by the SimpleTuner team. One-click training with optimized infrastructure.
+                </p>
+                <div class="hero-features">
+                    <div class="hero-feature">
+                        <i class="fas fa-microchip text-info"></i>
+                        <span>H100 & MI300X GPUs</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-magic text-warning"></i>
+                        <span>Zero configuration</span>
+                    </div>
+                    <div class="hero-feature">
+                        <i class="fas fa-headset text-success"></i>
+                        <span>Direct support</span>
+                    </div>
+                </div>
+                <div class="text-muted small mt-3">
+                    <i class="fas fa-clock me-1"></i>Coming soon
+                </div>
+            </div>
+        </template>
+
+        <!-- Generic fallback for unknown providers -->
+        <template x-if="!['replicate', 'simpletuner_io'].includes(activeProvider)">
+            <div class="hero-content">
+                <div class="hero-icon">
+                    <i class="fas fa-cloud"></i>
+                </div>
+                <h2 class="hero-title">Configure <span x-text="getActiveProvider()?.name || activeProvider"></span></h2>
+                <p class="hero-description">
+                    Set up this provider to start training in the cloud.
+                </p>
+            </div>
+        </template>
+    </div>
+</template>
+
+<style>
+/* Cloud-specific styles for the alternative step and divider */
+.cloud-alternative-step {
+    flex-direction: column;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.1);
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.step-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    color: #64748b;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.step-divider::before,
+.step-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.hero-link-separator {
+    color: #475569;
+}
+
+@media (max-width: 767.98px) {
+    .hero-link-separator {
+        display: none;
+    }
+}
+</style>

@@ -1517,6 +1517,7 @@ class TrainingConfigTab(BasePage):
     LEARNING_RATE_INPUT = (By.ID, "learning_rate")
     BATCH_SIZE_INPUT = (By.ID, "train_batch_size")
     NUM_EPOCHS_INPUT = (By.ID, "num_train_epochs")
+    MAX_TRAIN_STEPS_INPUT = (By.ID, "max_train_steps")
     MIXED_PRECISION_SELECT = (By.ID, "mixed_precision")
 
     def set_learning_rate(self, rate):
@@ -1526,7 +1527,11 @@ class TrainingConfigTab(BasePage):
         except (TimeoutException, ElementNotInteractableException):
             self.driver.execute_script(
                 "const el = document.getElementById('learning_rate');"
-                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                "if (el) {"
+                "  el.value = arguments[0];"
+                "  el.dispatchEvent(new Event('input', { bubbles: true }));"
+                "  el.dispatchEvent(new Event('change', { bubbles: true }));"
+                "}",
                 str(rate),
             )
 
@@ -1537,7 +1542,11 @@ class TrainingConfigTab(BasePage):
         except (TimeoutException, ElementNotInteractableException):
             self.driver.execute_script(
                 "const el = document.getElementById('train_batch_size');"
-                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                "if (el) {"
+                "  el.value = arguments[0];"
+                "  el.dispatchEvent(new Event('input', { bubbles: true }));"
+                "  el.dispatchEvent(new Event('change', { bubbles: true }));"
+                "}",
                 str(size),
             )
 
@@ -1548,8 +1557,27 @@ class TrainingConfigTab(BasePage):
         except (TimeoutException, ElementNotInteractableException):
             self.driver.execute_script(
                 "const el = document.getElementById('num_train_epochs');"
-                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                "if (el) {"
+                "  el.value = arguments[0];"
+                "  el.dispatchEvent(new Event('input', { bubbles: true }));"
+                "  el.dispatchEvent(new Event('change', { bubbles: true }));"
+                "}",
                 str(epochs),
+            )
+
+    def set_max_train_steps(self, steps):
+        """Set max training steps."""
+        try:
+            self.send_keys(*self.MAX_TRAIN_STEPS_INPUT, str(steps))
+        except (TimeoutException, ElementNotInteractableException):
+            self.driver.execute_script(
+                "const el = document.getElementById('max_train_steps');"
+                "if (el) {"
+                "  el.value = arguments[0];"
+                "  el.dispatchEvent(new Event('input', { bubbles: true }));"
+                "  el.dispatchEvent(new Event('change', { bubbles: true }));"
+                "}",
+                str(steps),
             )
 
     def select_mixed_precision(self, precision):

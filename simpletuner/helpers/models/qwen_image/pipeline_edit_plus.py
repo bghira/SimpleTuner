@@ -286,7 +286,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         num_images_per_prompt: int = 1,
         prompt_embeds: Optional[torch.Tensor] = None,
         prompt_embeds_mask: Optional[torch.Tensor] = None,
-        max_sequence_length: int = 1024,
+        max_sequence_length: int = 512,
     ):
         r"""
 

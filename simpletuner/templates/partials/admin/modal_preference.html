@@ -1,0 +1,80 @@
+<!-- Notification Preference Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': preferenceFormOpen }" tabindex="-1"
+     x-show="preferenceFormOpen" @keydown.escape="preferenceFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingPreference ? 'Edit Event Routing' : 'Add Event Routing'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="preferenceFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Event Type -->
+                <div class="mb-3">
+                    <label class="form-label small">Event Type</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            x-model="preferenceForm.event_type">
+                        <template x-for="(events, category) in getGroupedEventTypes()" :key="category">
+                            <optgroup :label="category">
+                                <template x-for="evt in events" :key="evt.id">
+                                    <option :value="evt.id" x-text="evt.name"></option>
+                                </template>
+                            </optgroup>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Channel -->
+                <div class="mb-3">
+                    <label class="form-label small">Send to Channel</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            x-model="preferenceForm.channel_id">
+                        <template x-for="ch in notifications.channels" :key="ch.id">
+                            <option :value="ch.id" x-text="ch.name + ' (' + ch.channel_type + ')'"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Minimum Severity -->
+                <div class="mb-3">
+                    <label class="form-label small">Minimum Severity</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            x-model="preferenceForm.min_severity">
+                        <option value="debug">Debug (all events)</option>
+                        <option value="info">Info (default)</option>
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                        <option value="critical">Critical only</option>
+                    </select>
+                    <div class="form-text text-muted small">
+                        Only send events at or above this severity level.
+                    </div>
+                </div>
+
+                <!-- Recipients Override -->
+                <div class="mb-3">
+                    <label class="form-label small">Recipients (optional)</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="preferenceForm.recipients"
+                           placeholder="email@example.com, other@example.com">
+                    <div class="form-text text-muted small">
+                        Override default channel recipients. Comma-separated.
+                    </div>
+                </div>
+
+                <!-- Enabled -->
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="pref-enabled" x-model="preferenceForm.is_enabled">
+                    <label class="form-check-label small" for="pref-enabled">Enabled</label>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="preferenceFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="savePreference()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingPreference ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="preferenceFormOpen" @click="preferenceFormOpen = false"></div>

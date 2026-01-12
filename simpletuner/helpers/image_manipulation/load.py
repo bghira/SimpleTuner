@@ -222,3 +222,29 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
     # Stack frames into a numpy array: shape (num_frames, height, width, channels)
     video_array = np.stack(frames, axis=0)
     return video_array
+
+
+def adjust_video_frames_for_model(video_array: np.ndarray, model_class) -> tuple[np.ndarray, int, bool]:
+    """
+    Adjust video frame count to satisfy model constraints.
+
+    Args:
+        video_array: Video as numpy array (num_frames, height, width, channels)
+        model_class: Model class with adjust_video_frames method
+
+    Returns:
+        (adjusted_array, original_frames, was_adjusted)
+    """
+    original_frames = video_array.shape[0]
+
+    if model_class is None or not hasattr(model_class, "adjust_video_frames"):
+        return video_array, original_frames, False
+
+    adjusted_frames = model_class.adjust_video_frames(original_frames)
+
+    if adjusted_frames == original_frames:
+        return video_array, original_frames, False
+
+    # Trim to adjusted frame count
+    adjusted_array = video_array[:adjusted_frames]
+    return adjusted_array, original_frames, True

@@ -456,9 +456,15 @@
         openModal,
         refreshList,
         getLibraries: () => state.libraries,
-        init() {
+        async init() {
             initModal();
             initFieldTriggers();
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                // User needs to login - skip API-dependent initialization
+                return;
+            }
             refreshList().catch((error) => console.debug('Prompt library preload failed:', error));
         },
         initTriggers: (root) => initFieldTriggers(root),

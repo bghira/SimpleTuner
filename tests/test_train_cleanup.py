@@ -82,6 +82,9 @@ class _FakeTrainer:
     def init_benchmark_base_model(self, *_, **__):
         return None
 
+    def init_delete_model_caches(self, *_, **__):
+        return None
+
     def resume_and_prepare(self, *_, **__):
         return None
 
@@ -106,7 +109,8 @@ class TrainEntryCleanupTest(unittest.TestCase):
             patch("simpletuner.train.AttentionBackendController.apply", MagicMock()),
             patch("multiprocessing.set_start_method", MagicMock()),
         ):
-            runpy.run_module("simpletuner.train", run_name="__main__")
+            with self.assertRaises(RuntimeError):
+                runpy.run_module("simpletuner.train", run_name="__main__")
 
         self.assertTrue(_FakeTrainer.instances, "Fake trainer was not constructed")
         trainer = _FakeTrainer.instances[0]

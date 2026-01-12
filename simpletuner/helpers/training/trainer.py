@@ -19,15 +19,16 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
-import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -40,6 +41,7 @@ from simpletuner.helpers.data_backend.factory import (
     run_distillation_cache_generation,
 )
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
@@ -70,7 +72,7 @@ from simpletuner.helpers.training.optimizer_param import (
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
-from simpletuner.helpers.training.quantisation import PIPELINE_QUANTIZATION_PRESETS
+from simpletuner.helpers.training.quantisation import PIPELINE_ONLY_PRESETS, PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -88,6 +90,45 @@ from simpletuner.helpers.webhooks.events import (
 from simpletuner.simpletuner_sdk.api_state import APIState
 
 
+def _format_signal_message(signal_num: int, signal_name: Optional[str] = None) -> str:
+    if signal_name is None:
+        try:
+            signal_name = signal.Signals(signal_num).name
+        except ValueError:
+            signal_name = None
+
+    sigkill_value = getattr(signal, "SIGKILL", None)
+    if signal_name == "SIGKILL" or (sigkill_value is not None and signal_num == sigkill_value):
+        return "Training subprocess was killed by SIGKILL (likely out of system memory or critical system condition)."
+    if signal_name:
+        return f"Training subprocess was killed by {signal_name} (signal {signal_num})."
+    return f"Training subprocess was killed by signal {signal_num}."
+
+
+def _format_signal_exit_message(exit_code: int) -> Optional[str]:
+    if exit_code >= 0:
+        return None
+    return _format_signal_message(-exit_code)
+
+
+def _default_callback_url() -> str:
+    ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"
+    protocol = "https" if ssl_enabled else "http"
+    host = os.environ.get("SIMPLETUNER_WEBHOOK_HOST", "localhost")
+    port = os.environ.get("SIMPLETUNER_WEBHOOK_PORT", "8001")
+    base_url = f"{protocol}://{host}:{port}"
+    return os.environ.get("SIMPLETUNER_WEBHOOK_CALLBACK_URL", f"{base_url}/callback")
+
+
+def _webui_callback_exclusions() -> Optional[set[str]]:
+    if not os.environ.get("SIMPLETUNER_PARENT_PID"):
+        return None
+    callback_url = _default_callback_url()
+    if not callback_url:
+        return None
+    return {callback_url}
+
+
 def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
     """Derive a concise failure summary and optional log excerpt from accelerate output."""
 
@@ -96,6 +137,38 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
 
     best_index: Optional[int] = None
     best_line: Optional[str] = None
+    exception_fallback: Optional[tuple[int, str]] = None
+    signal_fallback: Optional[tuple[int, str]] = None
+    signal_exit_message = _format_signal_exit_message(exit_code)
+
+    def _extract_exception_name(text: str) -> Optional[str]:
+        match = re.search(r"\b([A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit))\b", text)
+        return match.group(1) if match else None
+
+    exception_wrappers = (
+        "subprocess.CalledProcessError",
+        "ChildFailedError",
+        "torch.distributed.elastic.multiprocessing.errors.ChildFailedError",
+    )
+    wrapper_tokens = ("accelerate launch exited", "subprocess.calledprocesserror", "childfailederror")
+
+    def _is_wrapper_line(text: str) -> bool:
+        lowered = text.lower()
+        return any(token in lowered for token in wrapper_tokens)
+
+    for idx in range(len(cleaned) - 1, -1, -1):
+        candidate_raw = cleaned[idx].strip()
+        if not candidate_raw:
+            continue
+        match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", candidate_raw)
+        if match:
+            signal_name = match.group(1)
+            signal_num = int(match.group(2))
+            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
+            break
+
+    if signal_fallback is None and signal_exit_message is not None:
+        signal_fallback = (max(len(cleaned) - 1, 0), signal_exit_message)
 
     for idx in range(len(cleaned) - 1, -1, -1):
         candidate_raw = cleaned[idx].strip()
@@ -118,6 +191,49 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
             if best_line is None:
                 best_index = idx
                 best_line = candidate_raw
+
+    prefer_exception = best_line is None
+    if best_line:
+        if _is_wrapper_line(best_line):
+            prefer_exception = True
+
+    if prefer_exception:
+        traceback_idx = None
+        for idx in range(len(cleaned) - 1, -1, -1):
+            if cleaned[idx].strip().startswith("Traceback (most recent call last):"):
+                traceback_idx = idx
+                break
+
+        def _find_exception_line(start_idx: int, end_idx: int) -> Optional[tuple[int, str]]:
+            nonlocal exception_fallback
+            for idx in range(end_idx, start_idx - 1, -1):
+                candidate_raw = cleaned[idx].strip()
+                if not candidate_raw:
+                    continue
+                exc_name = _extract_exception_name(candidate_raw)
+                if not exc_name:
+                    continue
+                if exc_name in exception_wrappers or _is_wrapper_line(candidate_raw):
+                    if exception_fallback is None:
+                        exception_fallback = (idx, candidate_raw)
+                    continue
+                return idx, candidate_raw
+            return None
+
+        preferred = None
+        if traceback_idx is not None:
+            preferred = _find_exception_line(traceback_idx + 1, len(cleaned) - 1)
+        if preferred is None:
+            preferred = _find_exception_line(0, len(cleaned) - 1)
+        if preferred is not None:
+            best_index, best_line = preferred
+        elif exception_fallback is not None:
+            best_index, best_line = exception_fallback
+        elif signal_fallback is not None:
+            best_index, best_line = signal_fallback
+
+    if best_line is not None and _is_wrapper_line(best_line) and signal_fallback is not None:
+        best_index, best_line = signal_fallback
 
     if best_line is None:
         for idx in range(len(cleaned) - 1, -1, -1):
@@ -649,7 +765,11 @@ class Trainer:
             self.config = load_config(None, exit_on_error=True)
 
         if self.config is None:
-            raise ValueError("Training configuration could not be parsed")
+            config_source = "provided arguments" if args_payload else "file-based configuration"
+            raise ValueError(
+                f"Training configuration could not be parsed from {config_source}. "
+                "Check that your configuration file exists and is valid, or that command-line arguments are correctly formatted."
+            )
 
         accelerate_config_path = getattr(self.config, "accelerate_config", None)
         if accelerate_config_path not in (None, "", "None"):
@@ -1802,7 +1922,6 @@ class Trainer:
         self.lr = 0.0
 
     def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
-        self.webhook_handler = None
         if raw_config is not None:
             # Handle both dict and argparse.Namespace
             if hasattr(raw_config, "get"):
@@ -1815,6 +1934,9 @@ class Trainer:
             webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
         if webhook_config is None:
             return
+
+        # Only reset webhook_handler if we have a valid config to replace it with
+        self.webhook_handler = None
 
         # Handle string webhook_config (file path or JSON string)
         if isinstance(webhook_config, str):
@@ -2096,7 +2218,9 @@ class Trainer:
             return isinstance(candidate, str) and candidate.endswith(".gguf")
 
         gguf_requested = any(_is_gguf_path(path) for path in base_paths if path)
-        base_pipeline_precision = base_model_precision in PIPELINE_QUANTIZATION_PRESETS
+        pipeline_only_precision = base_model_precision in PIPELINE_ONLY_PRESETS
+        pipeline_capable_precision = base_model_precision in PIPELINE_QUANTIZATION_PRESETS
+        base_pipeline_precision = pipeline_only_precision or (quantize_via_pipeline and pipeline_capable_precision)
         self.config.is_quanto = False
         self.config.is_torchao = False
         self.config.is_bnb = False
@@ -2955,6 +3079,19 @@ class Trainer:
                 continue
             if backend_type not in training_dataset_types:
                 continue
+            backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
+            probability = backend_config.get("probability", 1.0)
+            if probability is None:
+                probability_value = 1.0
+            else:
+                try:
+                    probability_value = float(probability)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Dataset {backend_id} has invalid probability={probability!r}; must be a number."
+                    ) from exc
+            if probability_value <= 0:
+                continue
             try:
                 dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
             except Exception:
@@ -3681,8 +3818,10 @@ class Trainer:
                 return None
             return value if value > 0 else None
 
+        eval_loss_disable = getattr(self.config, "eval_loss_disable", False)
         has_eval_schedule = bool(
-            _normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float)
+            not eval_loss_disable
+            and (_normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float))
         )
         if has_eval_schedule:
             from simpletuner.helpers.training.validation import Evaluation
@@ -3941,6 +4080,61 @@ class Trainer:
             }
         return init_kwargs
 
+    def _serialize_pipeline_quantization_config(self, payload: Any, _seen: set[int]) -> dict[str, Any]:
+        serialized: dict[str, Any] = {
+            "quant_backend": getattr(payload, "quant_backend", None),
+            "quant_kwargs": self._sanitize_for_json(getattr(payload, "quant_kwargs", None), _seen),
+            "components_to_quantize": self._sanitize_for_json(getattr(payload, "components_to_quantize", None), _seen),
+        }
+        quant_mapping = getattr(payload, "quant_mapping", None)
+        if quant_mapping is not None:
+            serialized["quant_mapping"] = self._sanitize_for_json(quant_mapping, _seen)
+        return serialized
+
+    def _sanitize_for_json(self, payload: Any, _seen: set[int] | None = None) -> Any:
+        if _seen is None:
+            _seen = set()
+
+        if payload is None or isinstance(payload, (str, int, float, bool)):
+            return payload
+
+        if isinstance(payload, Path):
+            return str(payload)
+
+        if isinstance(payload, Enum):
+            return payload.value
+
+        if isinstance(payload, torch.dtype):
+            return str(payload)
+
+        if isinstance(payload, torch.device):
+            return str(payload)
+
+        obj_id = id(payload)
+        if obj_id in _seen:
+            return f"<cycle:{payload.__class__.__name__}>"
+        _seen.add(obj_id)
+
+        if isinstance(payload, Mapping):
+            return {str(key): self._sanitize_for_json(value, _seen) for key, value in payload.items()}
+
+        if isinstance(payload, (list, tuple, set)):
+            return [self._sanitize_for_json(item, _seen) for item in payload]
+
+        if payload.__class__.__name__ == "PipelineQuantizationConfig":
+            return self._serialize_pipeline_quantization_config(payload, _seen)
+
+        if hasattr(payload, "to_dict") and callable(payload.to_dict):
+            return self._sanitize_for_json(payload.to_dict(), _seen)
+
+        if hasattr(payload, "__dict__"):
+            try:
+                return self._sanitize_for_json(vars(payload), _seen)
+            except TypeError:
+                pass
+
+        raise TypeError(f"Object of type {payload.__class__.__name__} is not JSON serializable")
+
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
@@ -3960,14 +4154,15 @@ class Trainer:
             if hasattr(public_args, "sana_complex_human_instruction"):
                 delattr(public_args, "sana_complex_human_instruction")
 
+            public_args_payload = self._sanitize_for_json(vars(public_args))
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
-            public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
+            public_args_hash = hashlib.md5(json.dumps(public_args_payload, sort_keys=True).encode("utf-8")).hexdigest()
             project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
                 init_kwargs = self._build_init_tracker_kwargs(tracker_run_name, public_args_hash)
                 self.accelerator.init_trackers(
                     project_name,
-                    config=vars(public_args),
+                    config=public_args_payload,
                     init_kwargs=init_kwargs,
                 )
             except Exception as e:
@@ -3985,7 +4180,7 @@ class Trainer:
                 message="Training configuration initialized",
                 title="Training Config",
                 job_id=self.job_id,
-                data=public_args.__dict__,
+                data=public_args_payload,
             )
             self._emit_event(event)
 
@@ -4859,7 +5054,7 @@ class Trainer:
             disable=not show_progress_bar,
             initial=self.state["global_step"],
             desc=f"Epoch {self.state['first_epoch']}/{self.config.num_train_epochs} Steps",
-            ncols=125,
+            dynamic_ncols=True,
         )
         self.accelerator.wait_for_everyone()
         self.iteration_tracker.mark_start()
@@ -4870,6 +5065,9 @@ class Trainer:
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
+        # Context-parallel batch synchronization: ensures all ranks in a CP group
+        # receive the same batch data before it's split along the sequence dimension
+        cp_batch_synchronizer = ContextParallelBatchSynchronizer(self.accelerator)
         num_epochs_to_track = int(math.ceil(self.config.num_train_epochs)) + 1
         if self.config.ignore_final_epochs:
             num_epochs_to_track += 1000000
@@ -4919,8 +5117,11 @@ class Trainer:
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
+            # With CP enabled, only the CP-local leader prefetches; batches are broadcast via CP sync.
             iterator_args = [train_backends]
-            if self.config.dataloader_prefetch:
+            prefetch_on_rank = not cp_batch_synchronizer.is_cp_enabled or cp_batch_synchronizer.is_cp_leader
+            should_prefetch = self.config.dataloader_prefetch and prefetch_on_rank
+            if should_prefetch:
                 iterator_args = []
                 if self.bf is not None:
                     self.bf.stop_fetching()
@@ -4938,7 +5139,12 @@ class Trainer:
                 checkpoint_saved_this_step = False
                 self._exit_on_signal()
                 step += 1
-                prepared_batch = self.prepare_batch(iterator_fn(step, *iterator_args))
+                # Fetch the batch with CP-aware sampling. When context parallelism is
+                # enabled, only the CP leader samples; non-leaders receive via broadcast.
+                # This ensures all ranks in a CP group receive the same batch before the
+                # model's _cp_plan splits it along the sequence dimension.
+                raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
+                prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
                     self.extra_lr_scheduler_kwargs["step"] = self.state["global_step"]
@@ -5034,7 +5240,7 @@ class Trainer:
                     model_pred = self.model_predict(
                         prepared_batch=prepared_batch,
                     )
-                    loss = self.model.loss(
+                    loss, loss_logs = self.model.loss_with_logs(
                         prepared_batch=prepared_batch,
                         model_output=model_pred,
                         apply_conditioning_mask=True,
@@ -5254,6 +5460,8 @@ class Trainer:
                         for key, value in aux_loss_logs.items():
                             wandb_logs[f"aux_loss/{key}"] = value
                         wandb_logs["diffusion_loss"] = self.train_diffusion_loss
+                    if loss_logs is not None:
+                        wandb_logs.update(loss_logs)
                     self._update_grad_metrics(wandb_logs)
                     if self.validation is not None and hasattr(self.validation, "evaluation_result"):
                         eval_result = self.validation.get_eval_result()
@@ -5444,6 +5652,15 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
+                progress_logs = dict(logs)
+                if loss_logs is not None:
+                    logs.update(loss_logs)
+                    if "video_loss" in loss_logs:
+                        progress_logs["v_loss"] = loss_logs["video_loss"]
+                    if "audio_loss" in loss_logs:
+                        progress_logs["a_loss"] = loss_logs["audio_loss"]
+                    if "audio_loss_weighted" in loss_logs:
+                        progress_logs["a_w"] = loss_logs["audio_loss_weighted"]
                 if aux_loss_logs is not None:
                     logs_to_print = {}
                     for key, value in aux_loss_logs.items():
@@ -5455,7 +5672,7 @@ class Trainer:
                     clone_norm_value=True,
                 )
 
-                progress_bar.set_postfix(**logs)
+                progress_bar.set_postfix(**progress_logs)
 
                 if self.validation is not None:
                     manual_validation_requested = self._consume_manual_validation_request()
@@ -5472,6 +5689,11 @@ class Trainer:
                             force_evaluation=manual_validation_requested,
                         )
                     except Exception as error:
+                        # Re-raise abort exceptions to allow graceful shutdown
+                        from simpletuner.helpers.training.validation import ValidationAbortedException
+
+                        if isinstance(error, ValidationAbortedException):
+                            raise
                         # let's not crash training because of a validation error.
                         root_logger = logging.getLogger()
                         root_logger.error(f"Validation run failed at step {step}: {error}")
@@ -5586,9 +5808,7 @@ class Trainer:
                     text_encoder_lora_layers = None
                     text_encoder_2_lora_layers = None
 
-                from simpletuner.helpers.models.common import PipelineTypes
-
-                self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+                self.model.save_lora_weights(
                     **lora_save_kwargs,
                 )
                 del text_encoder_lora_layers
@@ -5639,6 +5859,15 @@ class Trainer:
                 self._finish_hub_uploads()
             else:
                 self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+            # Mark model_save as completed
+            event = lifecycle_stage_event(
+                key="model_save",
+                label="Saving Final Model",
+                status="completed",
+                message=f"Model saved to {self.config.output_dir}",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(
@@ -6300,11 +6529,13 @@ def run_trainer_job(config):
                 payload["traceback"] = traceback.format_exc()
             except Exception:
                 pass
+            exclude_urls = _webui_callback_exclusions()
             webhook_handler.send_raw(
                 structured_data=payload,
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
+                exclude_webhook_urls=exclude_urls,
             )
             try:
                 APIState.set_state("training_status", "failed")
@@ -6345,11 +6576,13 @@ def run_trainer_job(config):
                 payload["traceback"] = traceback.format_exc()
             except Exception:
                 pass
+            exclude_urls = _webui_callback_exclusions()
             webhook_handler.send_raw(
                 structured_data=payload,
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
+                exclude_webhook_urls=exclude_urls,
             )
             try:
                 APIState.set_state("training_status", "failed")

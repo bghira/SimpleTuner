@@ -379,7 +379,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and (backend.get("conditioning_data", None) is None and backend.get("conditioning", None) is None)
     ):
         raise ValueError(
-            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
+            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://bghira.github.io/SimpleTuner/CONTROLNET/"
         )
 
     if dataset_type not in choices:
@@ -387,7 +387,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
     if "probability" in backend:
-        output["config"]["probability"] = float(backend["probability"]) if backend["probability"] else 1.0
+        probability = backend["probability"]
+        if probability is None or probability == "":
+            output["config"]["probability"] = 1.0
+        else:
+            output["config"]["probability"] = float(probability)
     if "ignore_epochs" in backend:
         logger.error("ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration.")
     if "repeats" in backend:
@@ -445,6 +449,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
     if "conditioning_data" in backend:
         output["config"]["conditioning_data"] = backend["conditioning_data"]
+    if "s2v_datasets" in backend:
+        output["config"]["s2v_datasets"] = backend["s2v_datasets"]
     if "source_dataset_id" in backend:
         output["config"]["source_dataset_id"] = backend["source_dataset_id"]
     if not is_audio_dataset:
@@ -658,7 +664,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 )
             video_config["is_i2v"] = True
         elif "is_i2v" not in video_config:
-            if model_family in ["ltxvideo"]:
+            if model_family in ["ltxvideo", "ltxvideo2"]:
                 warning_log(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."
                 )
@@ -682,6 +688,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
+        if model_family == "ltxvideo2":
+            for frame_value, frame_label in ((min_frames, "min_frames"), (num_frames, "num_frames")):
+                if frame_value % 8 != 1:
+                    raise ValueError(
+                        f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
+                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}. "
+                        f"Note: Individual videos are automatically trimmed to satisfy this constraint. "
+                        f"Videos shorter than min_frames after trimming will be skipped."
+                    )
 
         # Warn about resolution_frames bucket strategy with fixed num_frames
         bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
@@ -1296,6 +1311,27 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _requires_s2v_datasets(self) -> bool:
+        """Return whether the active model requires S2V audio datasets."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.requires_s2v_datasets()
+        except AttributeError:
+            return False
+
+        return result if isinstance(result, bool) else False
+
+    def _supports_audio_inputs(self) -> bool:
+        """Return whether the active model supports audio inputs alongside its primary modality."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.supports_audio_inputs()
+        except AttributeError:
+            return False
+        return result if isinstance(result, bool) else False
+
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
         Validate that Qwen edit models use appropriate conditioning_type values.
@@ -1668,6 +1704,119 @@ class FactoryRegistry:
 
         return data_backend_config
 
+    def _inject_s2v_audio_configs(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Auto-generate audio datasets for S2V (Sound-to-Video) training from video datasets.
+
+        When a video dataset has `audio.auto_split: true`, this method creates an associated
+        audio dataset configuration that extracts audio from the same video files.
+        """
+        if not (self._requires_s2v_datasets() or self._supports_audio_inputs()):
+            return data_backend_config
+
+        auto_audio_configs: List[Dict[str, Any]] = []
+        existing_ids = {cfg.get("id") for cfg in data_backend_config if isinstance(cfg, dict)}
+
+        for backend in data_backend_config:
+            if not isinstance(backend, dict):
+                continue
+            if backend.get("_s2v_audio_autoinjected", False):
+                continue
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+
+            dataset_type = backend.get("dataset_type")
+            if dataset_type != "video":
+                continue
+
+            # Check for audio.auto_split: true
+            audio_config = backend.get("audio", {})
+            if not isinstance(audio_config, dict):
+                continue
+            if "auto_split" not in audio_config:
+                audio_config["auto_split"] = True
+                backend["audio"] = audio_config
+            if not audio_config.get("auto_split"):
+                continue
+
+            # Skip if already has s2v_datasets configured
+            if backend.get("s2v_datasets"):
+                continue
+
+            source_id = backend.get("id")
+            if not source_id:
+                continue
+
+            # Generate unique audio backend ID
+            audio_backend_id_base = f"{source_id}_audio"
+            audio_backend_id = audio_backend_id_base
+            suffix = 1
+            while audio_backend_id in existing_ids:
+                audio_backend_id = f"{audio_backend_id_base}_{suffix}"
+                suffix += 1
+            existing_ids.add(audio_backend_id)
+
+            # Compute audio VAE cache directory
+            source_cache_dir_vae = backend.get("cache_dir_vae")
+            if source_cache_dir_vae:
+                audio_vae_cache = os.path.join(os.path.dirname(source_cache_dir_vae), "audio", audio_backend_id)
+            else:
+                audio_vae_cache = self._default_vae_cache_dir(audio_backend_id, DatasetType.AUDIO)
+
+            # Build the auto-generated audio dataset config
+            default_audio_channels = getattr(self.model, "DEFAULT_AUDIO_CHANNELS", 1)
+            channels = audio_config.get("channels")
+            if channels is None:
+                channels = default_audio_channels
+            audio_dataset_config = {
+                "id": audio_backend_id,
+                "type": backend.get("type", "local"),
+                "dataset_type": "audio",
+                "instance_data_dir": backend.get("instance_data_dir"),
+                "source_dataset_id": source_id,
+                "cache_dir_vae": audio_vae_cache,
+                "probability": 0.0,
+                "audio": {
+                    "source_from_video": True,
+                    "allow_zero_audio": audio_config.get("allow_zero_audio", False),
+                    "sample_rate": audio_config.get("sample_rate", 16000),
+                    "channels": channels,
+                    "bucket_strategy": "duration",
+                    "duration_interval": audio_config.get("duration_interval", 3.0),
+                    "max_duration_seconds": audio_config.get("max_duration_seconds"),
+                    "truncation_mode": audio_config.get("truncation_mode", "beginning"),
+                },
+            }
+
+            # Inherit backend-specific settings for S3/HuggingFace
+            for inherit_key in [
+                "aws_bucket_name",
+                "aws_data_prefix",
+                "aws_region_name",
+                "aws_endpoint_url",
+                "aws_access_key_id",
+                "aws_secret_access_key",
+                "dataset_name",
+                "revision",  # HuggingFace
+            ]:
+                if inherit_key in backend:
+                    audio_dataset_config[inherit_key] = backend[inherit_key]
+
+            auto_audio_configs.append(audio_dataset_config)
+
+            # Mark the source backend and link the audio dataset
+            backend["_s2v_audio_autoinjected"] = True
+            backend["s2v_datasets"] = [audio_backend_id]
+
+            info_log(
+                f"(id={source_id}) Auto-generated S2V audio dataset '{audio_backend_id}' " f"with source_from_video=True"
+            )
+
+        if auto_audio_configs:
+            data_backend_config.extend(auto_audio_configs)
+
+        return data_backend_config
+
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""
         conditioning_datasets = []
@@ -1996,7 +2145,7 @@ class FactoryRegistry:
         if not self.text_embed_backends:
             raise ValueError(
                 "Your dataloader config must contain at least one image dataset AND at least one text_embed dataset."
-                " See this link for more information about dataset_type: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
+                " See this link for more information about dataset_type: https://bghira.github.io/SimpleTuner/DATALOADER/#configuration-options"
             )
 
         if not self.default_text_embed_backend_id and len(self.text_embed_backends) > 1:
@@ -2006,7 +2155,7 @@ class FactoryRegistry:
             self.default_text_embed_backend_id = chosen_id
             warning_log(
                 f"No default text embed was defined, using {chosen_id} as the default."
-                " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
+                " See this page for information about the default text embed backend: https://bghira.github.io/SimpleTuner/DATALOADER/#configuration-options"
             )
 
         info_log("Completed loading text embed services.")
@@ -2255,6 +2404,7 @@ class FactoryRegistry:
         requirement_result = self._evaluate_distiller_requirements(data_backend_config)
         relax_primary_requirement = self._should_relax_primary_dataset_requirement(requirement_result)
         has_conditioning_dataset = self._connect_conditioning_datasets(data_backend_config)
+        has_s2v_dataset = self._connect_s2v_datasets(data_backend_config)
 
         declared_backends = getattr(self, "_declared_data_backends", None)
         if total_data_backends_seen == 0:
@@ -2278,6 +2428,18 @@ class FactoryRegistry:
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         if not has_conditioning_dataset and requires_conditioning_dataset:
             raise ValueError("Model requires a conditioning dataset, but none was found in the data backend config file.")
+
+        requires_s2v_datasets = self._requires_s2v_datasets()
+        if not has_s2v_dataset and requires_s2v_datasets:
+            doc_hint = ""
+            s2v_doc_path = Path("documentation/quickstart/WAN_S2V.md")
+            if s2v_doc_path.is_file():
+                doc_hint = f" See {s2v_doc_path} for setup instructions."
+            raise ValueError(
+                "Model requires S2V audio datasets (s2v_datasets), but none was found in the data backend config file. "
+                "Add s2v_datasets = ['your_audio_dataset_id'] to your video dataset configuration, "
+                f"or use audio.auto_split: true to auto-extract audio from videos.{doc_hint}"
+            )
 
         # Validate conditioning_type for edit models
         self._validate_edit_model_conditioning_type(data_backend_config)
@@ -2425,6 +2587,12 @@ class FactoryRegistry:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
         video_config = init_backend["config"].get("video", {})
+        metadata_cache_root = backend.get(
+            "instance_data_dir",
+            backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+        )
+        metadata_cache_root = metadata_cache_root or ""
+
         init_backend["metadata_backend"] = MetadataBackendCls(
             id=init_backend["id"],
             instance_data_dir=init_backend["instance_data_dir"],
@@ -2441,17 +2609,11 @@ class FactoryRegistry:
             batch_size=self.args.train_batch_size,
             metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
             cache_file=os.path.join(
-                backend.get(
-                    "instance_data_dir",
-                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
-                ),
+                metadata_cache_root,
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                backend.get(
-                    "instance_data_dir",
-                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
-                ),
+                metadata_cache_root,
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=self.args.delete_problematic_images or False,
@@ -2638,7 +2800,10 @@ class FactoryRegistry:
             "video",
             "conditioning_data",
             "conditioning",
+            "start_step",
+            "start_epoch",
             "hash_filenames",  # always enabled, not user-configurable
+            "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
         ]
         _latest_config_version = latest_config_version()
         current_config_version = _latest_config_version
@@ -3234,6 +3399,17 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Skipping VAE cache configuration for dataset_type={dataset_type_enum.value}."
             )
             return
+        if dataset_type_enum is DatasetType.AUDIO:
+            uses_audio_latents = False
+            try:
+                uses_audio_latents = bool(self.model.uses_audio_latents())
+            except AttributeError:
+                uses_audio_latents = False
+            if not uses_audio_latents:
+                info_log(
+                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents."
+                )
+                return
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if not vae_cache_dir:
             vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
@@ -3261,11 +3437,68 @@ class FactoryRegistry:
         move_text_encoders(self.args, self.text_encoders, "cpu")
 
         video_config = init_backend["config"].get("video", {})
+        vae = StateTracker.get_vae()
+        if hasattr(self.model, "get_vae_for_dataset_type"):
+            candidate = self.model.get_vae_for_dataset_type(dataset_type_enum.value)
+            if candidate is not None:
+                vae = candidate
+
+        process_queue_size = backend.get("image_processing_batch_size")
+        read_batch_size = backend.get("read_batch_size")
+        write_batch_size = backend.get("write_batch_size")
+        vae_batch_size = backend.get("vae_batch_size")
+
+        if dataset_type_enum is DatasetType.VIDEO:
+            if process_queue_size is None:
+                process_queue_size = self.args.image_processing_batch_size
+                if process_queue_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set image_processing_batch_size to override."
+                    )
+                process_queue_size = 1
+
+            if read_batch_size is None:
+                read_batch_size = self.args.read_batch_size
+                if read_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set read_batch_size to override."
+                    )
+                read_batch_size = 1
+
+            if write_batch_size is None:
+                write_batch_size = self.args.write_batch_size
+                if write_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set write_batch_size to override."
+                    )
+                write_batch_size = 1
+
+            if vae_batch_size is None:
+                vae_batch_size = self.args.vae_batch_size
+                if vae_batch_size != 1:
+                    info_log(
+                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for video dataset "
+                        "to reduce memory usage. Set vae_batch_size to override."
+                    )
+                vae_batch_size = 1
+        else:
+            if process_queue_size is None:
+                process_queue_size = self.args.image_processing_batch_size
+            if read_batch_size is None:
+                read_batch_size = self.args.read_batch_size
+            if write_batch_size is None:
+                write_batch_size = self.args.write_batch_size
+            if vae_batch_size is None:
+                vae_batch_size = self.args.vae_batch_size
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
             model=self.model,
-            vae=StateTracker.get_vae(),
+            vae=vae,
             accelerator=self.accelerator,
             metadata_backend=init_backend["metadata_backend"],
             image_data_backend=init_backend["data_backend"],
@@ -3273,12 +3506,12 @@ class FactoryRegistry:
             instance_data_dir=init_backend["instance_data_dir"],
             delete_problematic_images=backend.get("delete_problematic_images", self.args.delete_problematic_images),
             num_video_frames=video_config.get("num_frames", None),
-            vae_batch_size=backend.get("vae_batch_size", self.args.vae_batch_size),
-            write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
-            read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
+            vae_batch_size=vae_batch_size,
+            write_batch_size=write_batch_size,
+            read_batch_size=read_batch_size,
             cache_dir=vae_cache_dir,
             max_workers=backend.get("max_workers", self.args.max_workers),
-            process_queue_size=backend.get("image_processing_batch_size", self.args.image_processing_batch_size),
+            process_queue_size=process_queue_size,
             vae_cache_ondemand=self.args.vae_cache_ondemand,
             vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
             hash_filenames=True,  # always enabled
@@ -3392,6 +3625,34 @@ class FactoryRegistry:
                 info_log(f"(id={backend['id']}) Connected conditioning datasets: {backend_conditionings}")
 
         return has_conditioning_dataset
+
+    def _connect_s2v_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
+        """Connect S2V (Speech-to-Video) audio datasets to their main video datasets."""
+        has_s2v_dataset = False
+        available_audio = {
+            backend_id
+            for backend_id, backend_obj in self.data_backends.items()
+            if backend_obj.get("dataset_type") == "audio"
+        }
+        for backend in data_backend_config:
+            dataset_type = backend.get("dataset_type", "image")
+            if dataset_type != "video":
+                continue
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            backend_s2v = backend.get("s2v_datasets", [])
+            if isinstance(backend_s2v, str):
+                backend_s2v = [backend_s2v]
+            for x in backend_s2v:
+                if x not in available_audio:
+                    raise ValueError(f"S2V audio dataset {x} not found in available audio backends: {available_audio}.")
+
+            if backend_s2v:
+                has_s2v_dataset = True
+                StateTracker.set_s2v_datasets(backend["id"], backend_s2v)
+                info_log(f"(id={backend['id']}) Connected S2V audio datasets: {backend_s2v}")
+
+        return has_s2v_dataset
 
     def synchronize_conditioning_settings(self) -> None:
         """
@@ -3704,6 +3965,7 @@ class FactoryRegistry:
             data_backend_config = self.load_configuration()
 
         data_backend_config = self._inject_i2v_conditioning_configs(data_backend_config)
+        data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
 
         self.configure_text_embed_backends(data_backend_config)
@@ -3881,29 +4143,21 @@ def configure_multi_databackend_new(
     if data_backend_config is None:
         data_backend_config = factory.load_configuration()
 
-    data_backend_config = factory.process_conditioning_datasets(data_backend_config)
-
-    factory.configure_text_embed_backends(data_backend_config)
-    factory.configure_image_embed_backends(data_backend_config)
-    factory.configure_conditioning_image_embed_backends(data_backend_config)
-    factory.configure_distillation_cache_backends(data_backend_config)
-    factory.configure_data_backends(data_backend_config)
+    result = factory.configure(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
-
-    result = {
-        "data_backends": StateTracker.get_data_backends(),
-        "text_embed_backends": factory.text_embed_backends,
-        "image_embed_backends": factory.image_embed_backends,
-        "conditioning_image_embed_backends": factory.conditioning_image_embed_backends,
-        "distillation_cache_backends": factory.distillation_cache_backends,
-        "default_text_embed_backend_id": factory.default_text_embed_backend_id,
-    }
 
     factory._finalize_metrics()
     total_time = time.time() - start_time
 
-    return result
+    return {
+        "data_backends": result["data_backends"],
+        "text_embed_backends": result["text_embed_backends"],
+        "image_embed_backends": result["image_embed_backends"],
+        "conditioning_image_embed_backends": result["conditioning_image_embed_backends"],
+        "distillation_cache_backends": result["distillation_cache_backends"],
+        "default_text_embed_backend_id": result["default_text_embed_backend_id"],
+    }
 
 
 def check_huggingface_config(backend: dict) -> None:
@@ -4004,18 +4258,31 @@ def get_huggingface_backend(
 
 
 def select_dataloader_index(step, backends):
-    # Generate weights for each backend based on some criteria
+    # Generate weights for each backend based on some criteria, filtering out inactive backends
     weights = []
     backend_ids = []
     for backend_id, backend in backends.items():
         weight = get_backend_weight(backend_id, backend, step)
+        if weight <= 0:
+            continue
         weights.append(weight)
         backend_ids.append(backend_id)
 
+    if not backend_ids:
+        # No active datasets available for sampling
+        # Check if any datasets have been exhausted - if so, this is a normal epoch end
+        # If no datasets have been exhausted, this is a misconfiguration error
+        if StateTracker.exhausted_backends:
+            return None
+        current_epoch = StateTracker.get_epoch()
+        next_step = (StateTracker.get_global_step() or 0) + 1
+        raise ValueError(
+            f"No active datasets available for sampling at epoch {current_epoch}, step {next_step}. "
+            "Adjust start_epoch/start_step so at least one dataset is active."
+        )
+
     weights = torch.tensor(weights, dtype=torch.float32)
     weights /= weights.sum()  # Normalize the weights
-    if weights.sum() == 0:
-        return None
 
     # Sample a backend index based on the weights
     chosen_index = torch.multinomial(weights, 1).item()

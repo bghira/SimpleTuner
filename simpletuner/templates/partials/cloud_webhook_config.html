@@ -1,0 +1,156 @@
+<!-- partials/cloud_webhook_config.html - Webhook URL configuration -->
+<div class="cloud-card mb-3">
+    <div class="cloud-card-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="fas fa-link me-2"></i>Webhook</h6>
+            <a href="{{ docs_url('experimental/cloud/REPLICATE.md#production-deployment') }}"
+               target="_blank"
+               class="text-muted doc-link"
+               style="font-size: 0.7rem;"
+               title="Production deployment guide">
+                <i class="fas fa-question-circle"></i>
+            </a>
+        </div>
+    </div>
+    <div class="cloud-card-body">
+        <!-- Explanation -->
+        <p class="small text-muted mb-2" style="font-size: 0.7rem; line-height: 1.4;">
+            <strong>Optional.</strong> Enables instant job status updates from Replicate.
+            Skip this if you can't expose your server to the internet or prefer simpler setup &mdash;
+            polling works fine and requires no network configuration.
+        </p>
+
+        <div class="mb-2"
+             x-data="{ isLocalhost: ['localhost', '127.0.0.1', '[::1]'].some(h => window.location.hostname === h || window.location.hostname.endsWith('.localhost')) }">
+            <label class="form-label small mb-1" for="cloud-webhook-url">Public URL</label>
+            <div class="input-group input-group-sm">
+                <input type="url"
+                       id="cloud-webhook-url"
+                       class="form-control form-control-sm"
+                       :placeholder="isLocalhost ? 'https://your-public-server.com' : window.location.origin"
+                       x-model="webhookUrl"
+                       @change.stop="saveWebhookConfig()"
+                       @input.stop>
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        x-show="!isLocalhost"
+                        @click="webhookUrl = window.location.origin; saveWebhookConfig()"
+                        title="Use current host">
+                    <i class="fas fa-crosshairs"></i>
+                </button>
+            </div>
+            <template x-if="!isLocalhost">
+                <div class="form-text small" style="font-size: 0.65rem;">
+                    <i class="fas fa-lightbulb text-warning me-1"></i>
+                    Your current host is
+                    <code class="user-select-all" x-text="window.location.origin"></code>
+                </div>
+            </template>
+            <template x-if="isLocalhost">
+                <div class="form-text small text-muted" style="font-size: 0.65rem;">
+                    <i class="fas fa-info-circle me-1"></i>
+                    You're on localhost &mdash; Replicate can't reach this. Use a public URL or skip this.
+                </div>
+            </template>
+        </div>
+
+        <!-- Show full endpoint path when URL is set -->
+        <template x-if="webhookUrl">
+            <div class="mb-2">
+                <div class="small text-muted mb-1">Replicate will POST to:</div>
+                <code class="d-block small px-2 py-1 rounded user-select-all" style="background: rgba(0,0,0,0.2); word-break: break-all; font-size: 0.7rem;"
+                      x-text="webhookUrl.replace(/\/$/, '') + '/api/cloud/webhook/replicate'"></code>
+            </div>
+        </template>
+
+        <!-- Test Webhook Buttons -->
+        <template x-if="webhookUrl">
+            <div class="mb-2">
+                <div class="d-flex gap-2 mb-1">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-info flex-fill"
+                            :disabled="webhookTesting"
+                            @click="testWebhook()"
+                            title="Test from this server (internal)">
+                        <template x-if="webhookTesting && webhookTestMode === 'internal'">
+                            <span><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        </template>
+                        <template x-if="!webhookTesting || webhookTestMode !== 'internal'">
+                            <span><i class="fas fa-server me-1"></i></span>
+                        </template>
+                        <span>Internal</span>
+                    </button>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-warning flex-fill"
+                            :disabled="webhookTesting"
+                            @click="testWebhookExternal()"
+                            title="Test from Replicate's infrastructure (external)">
+                        <template x-if="webhookTesting && webhookTestMode === 'external'">
+                            <span><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        </template>
+                        <template x-if="!webhookTesting || webhookTestMode !== 'external'">
+                            <span><i class="fas fa-cloud me-1"></i></span>
+                        </template>
+                        <span>External</span>
+                    </button>
+                </div>
+                <div class="form-text small text-muted mb-1" style="font-size: 0.6rem;">
+                    <strong>Internal:</strong> Tests from this server.
+                    <strong>External:</strong> Tests from Replicate's cloud (requires API key).
+                </div>
+                <!-- Test Result -->
+                <template x-if="webhookTestResult">
+                    <div class="mt-2 small px-2 py-1 rounded"
+                         :class="webhookTestResult.success ? 'bg-success bg-opacity-10 text-success' : 'bg-danger bg-opacity-10 text-danger'">
+                        <template x-if="webhookTestResult.success">
+                            <span>
+                                <i class="fas fa-check-circle me-1"></i>
+                                <span x-text="webhookTestResult.method === 'replicate_cog' ? 'External check passed' : 'Internal check passed'"></span>
+                                (<span x-text="webhookTestResult.latency_ms"></span>ms)
+                            </span>
+                        </template>
+                        <template x-if="!webhookTestResult.success">
+                            <span>
+                                <i class="fas fa-times-circle me-1"></i>
+                                <span x-text="webhookTestResult.error || 'Connection failed'"></span>
+                            </span>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <!-- Tunnel Setup Hint -->
+        <template x-if="isLocalhost">
+            <div class="mb-2" x-data="{ showTunnelGuide: false }">
+                <button type="button"
+                        class="btn btn-sm btn-link text-muted p-0"
+                        @click="showTunnelGuide = !showTunnelGuide">
+                    <i class="fas me-1" :class="showTunnelGuide ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                    How to expose localhost to the internet
+                </button>
+                <div x-show="showTunnelGuide" x-collapse class="mt-2 small">
+                    <div class="card border-secondary">
+                        <div class="card-body py-2 px-2" style="font-size: 0.7rem;">
+                            <p class="mb-1"><strong>Option 1: ngrok (easiest)</strong></p>
+                            <code class="d-block mb-2">ngrok http 8080</code>
+                            <p class="mb-1"><strong>Option 2: Cloudflare Tunnel</strong></p>
+                            <code class="d-block mb-2">cloudflared tunnel --url localhost:8080</code>
+                            <p class="mb-0 text-muted">Copy the generated URL and paste it above.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <div class="alert py-1 px-2 small mb-0"
+             :class="webhookUrl ? 'alert-success' : 'alert-secondary'">
+            <template x-if="webhookUrl">
+                <span><i class="fas fa-bolt me-1"></i>Live updates enabled &mdash; instant status changes</span>
+            </template>
+            <template x-if="!webhookUrl">
+                <span><i class="fas fa-sync me-1"></i>Polling mode &mdash; status checked every 5s (works fine for most users)</span>
+            </template>
+        </div>
+    </div>
+</div>

@@ -77,9 +77,10 @@ class QwenImage(ImageModelFoundation):
     ZERO_COND_T_FLAVOURS = frozenset({"edit-v2+", "edit-v3"})
 
     # Default model flavor
-    DEFAULT_MODEL_FLAVOUR = "v1.0"
+    DEFAULT_MODEL_FLAVOUR = "v2.0"
     HUGGINGFACE_PATHS = {
         "v1.0": "Qwen/Qwen-Image",
+        "v2.0": "Qwen/Qwen-Image-2512",
         "edit-v1": "Qwen/Qwen-Image-Edit",
         "edit-v2": "Qwen/Qwen-Image-Edit-2509",
         "edit-v2+": "Qwen/Qwen-Image-Edit-2509",
@@ -444,7 +445,7 @@ class QwenImage(ImageModelFoundation):
             image_tensors.append(tensor)
 
         pil_images = [self._tensor_to_pil(tensor) for tensor in image_tensors]
-        if self._is_edit_v2_flavour():
+        if self._is_edit_v2_flavour() or self._is_edit_v2_plus_flavour():
             resized: List[Image.Image] = []
             for img in pil_images:
                 if not isinstance(img, Image.Image):
@@ -847,7 +848,7 @@ class QwenImage(ImageModelFoundation):
         return self._conditioning_image_embedder
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
-        if self._is_edit_v2_flavour():
+        if self._is_edit_v2_flavour() or self._is_edit_v2_plus_flavour():
             conditioning_multi = batch.get("conditioning_pixel_values")
             prepared = super().prepare_batch_conditions(batch, state)
             if conditioning_multi is not None:
@@ -1016,9 +1017,11 @@ class QwenImage(ImageModelFoundation):
             raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         timesteps = raw_timesteps.expand(batch_size) / 1000.0  # Normalize to [0, 1]
 
-        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
-        # but the tensor includes padding that also needs positional encodings
-        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use actual content length per sample from the mask (matching upstream diffusers)
+        if prompt_embeds_mask is not None:
+            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
+        else:
+            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         # Forward pass through transformer
         with self._force_packed_transformer_output(self.model):
@@ -1147,9 +1150,11 @@ class QwenImage(ImageModelFoundation):
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
-        # but the tensor includes padding that also needs positional encodings
-        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use actual content length per sample from the mask (matching upstream diffusers)
+        if prompt_embeds_mask is not None:
+            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
+        else:
+            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         img_shapes = [
             [
@@ -1257,9 +1262,11 @@ class QwenImage(ImageModelFoundation):
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
-        # but the tensor includes padding that also needs positional encodings
-        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use actual content length per sample from the mask (matching upstream diffusers)
+        if prompt_embeds_mask is not None:
+            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
+        else:
+            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         raw_timesteps = prepared_batch["timesteps"]
@@ -1367,9 +1374,9 @@ class QwenImage(ImageModelFoundation):
 
         return sample_latents
 
-    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+    def pre_latent_decode(self, latents: torch.Tensor) -> torch.Tensor:
         """
-        Pre-process latents before passing to validation preview decoder.
+        Pre-process latents before passing to any decoder (VAE or TAE).
 
         Qwen Image uses packed transformer latents that need to be untokenized/unpacked
         to spatial format, and the Wan 2.1 decoder expects rank-5 tensors (video format),

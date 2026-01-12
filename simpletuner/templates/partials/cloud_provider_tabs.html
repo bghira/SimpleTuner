@@ -1,0 +1,88 @@
+<!-- partials/cloud_provider_tabs.html - Provider selector tabs -->
+<div class="cloud-provider-tabs mb-3 mb-lg-4">
+    <ul class="nav nav-tabs">
+        <template x-for="provider in providers" :key="provider.id">
+            <li class="nav-item">
+                <button class="nav-link"
+                        :class="{
+                            'active': activeProvider === provider.id,
+                            'disabled coming-soon': provider.coming_soon
+                        }"
+                        @click="!provider.coming_soon && (activeProvider = provider.id)"
+                        :disabled="provider.coming_soon">
+                    <i class="fas me-1 me-sm-2" :class="provider.coming_soon ? 'fa-clock' : 'fa-cloud'"></i>
+                    <span class="provider-name" x-text="provider.name"></span>
+                    <template x-if="provider.coming_soon">
+                        <span class="provider-badge badge ms-1 ms-sm-2 bg-info bg-opacity-50">
+                            <span class="badge-text">Soon</span>
+                        </span>
+                    </template>
+                    <template x-if="!provider.coming_soon">
+                        <span class="provider-badge badge ms-1 ms-sm-2"
+                              :class="provider.configured ? 'bg-success' : 'bg-secondary'"
+                              :title="provider.configured ? 'Ready' : 'Not Configured'">
+                            <i class="fas d-none d-md-none"
+                               :class="provider.configured ? 'fa-check' : 'fa-cog'"></i>
+                            <span class="badge-text" x-text="provider.configured ? 'Ready' : 'Setup'"></span>
+                        </span>
+                    </template>
+                </button>
+            </li>
+        </template>
+    </ul>
+</div>
+
+<!-- Mobile: Dropdown selector (hidden - using tabs on all sizes) -->
+<div class="cloud-provider-dropdown d-none mb-3">
+    <div class="dropdown">
+        <button class="btn btn-outline-secondary w-100 d-flex justify-content-between align-items-center"
+                type="button"
+                data-bs-toggle="dropdown"
+                aria-expanded="false">
+            <span class="d-flex align-items-center">
+                <i class="fas fa-cloud me-2"></i>
+                <span x-text="providers.find(p => p.id === activeProvider)?.name || 'Select Provider'"></span>
+            </span>
+            <span class="d-flex align-items-center">
+                <span class="badge me-2"
+                      :class="providers.find(p => p.id === activeProvider)?.configured ? 'bg-success' : 'bg-secondary'">
+                    <template x-if="providers.find(p => p.id === activeProvider)?.configured">
+                        <span><i class="fas fa-check me-1"></i>Ready</span>
+                    </template>
+                    <template x-if="!providers.find(p => p.id === activeProvider)?.configured">
+                        <span>Setup</span>
+                    </template>
+                </span>
+                <i class="fas fa-chevron-down"></i>
+            </span>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark w-100">
+            <template x-for="provider in providers" :key="provider.id">
+                <li>
+                    <button class="dropdown-item d-flex justify-content-between align-items-center"
+                            :class="{
+                                'active': activeProvider === provider.id,
+                                'disabled text-muted': provider.coming_soon
+                            }"
+                            :disabled="provider.coming_soon"
+                            @click="!provider.coming_soon && (activeProvider = provider.id)">
+                        <span>
+                            <i class="fas me-2" :class="provider.coming_soon ? 'fa-clock' : 'fa-cloud'"></i>
+                            <span x-text="provider.name"></span>
+                        </span>
+                        <template x-if="provider.coming_soon">
+                            <span class="badge bg-info bg-opacity-50">Soon</span>
+                        </template>
+                        <template x-if="!provider.coming_soon">
+                            <span class="badge"
+                                  :class="provider.configured ? 'bg-success' : 'bg-secondary'">
+                                <span x-text="provider.configured ? 'Ready' : 'Setup'"></span>
+                            </span>
+                        </template>
+                    </button>
+                </li>
+            </template>
+        </ul>
+    </div>
+</div>
+<!-- Styles moved to static/css/cloud.css -->

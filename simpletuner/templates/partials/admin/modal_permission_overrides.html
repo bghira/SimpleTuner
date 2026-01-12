@@ -1,0 +1,95 @@
+<!-- Permission Overrides Modal -->
+<div class="modal fade" :class="{ 'show d-block': permissionOverridesModalOpen }" tabindex="-1"
+     x-show="permissionOverridesModalOpen" @keydown.escape="closePermissionOverridesModal()">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">
+                    <i class="fas fa-user-lock me-2"></i>Permission Overrides:
+                    <span class="text-info" x-text="permissionOverridesUser?.display_name || permissionOverridesUser?.username"></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="closePermissionOverridesModal()"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2 small">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Permission overrides allow granting or denying specific permissions to this user,
+                    independent of their assigned levels. Overrides take priority over level-based permissions.
+                </div>
+
+                <!-- Loading state -->
+                <template x-if="permissionOverridesLoading">
+                    <div class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin me-2"></i>Loading overrides...
+                    </div>
+                </template>
+
+                <template x-if="!permissionOverridesLoading">
+                    <div>
+                        <!-- Current overrides -->
+                        <div class="mb-4">
+                            <h6 class="small text-muted mb-2">Current Overrides</h6>
+                            <template x-if="userPermissionOverrides.length === 0">
+                                <div class="text-muted small py-2">
+                                    <i class="fas fa-check-circle me-2"></i>No permission overrides configured
+                                </div>
+                            </template>
+                            <template x-if="userPermissionOverrides.length > 0">
+                                <div class="list-group list-group-flush">
+                                    <template x-for="override in userPermissionOverrides" :key="override.permission_name">
+                                        <div class="list-group-item bg-dark border-secondary d-flex justify-content-between align-items-center py-2">
+                                            <div>
+                                                <code class="me-2" x-text="override.permission_name"></code>
+                                                <span class="badge"
+                                                      :class="override.granted ? 'bg-success' : 'bg-danger'"
+                                                      x-text="override.granted ? 'Granted' : 'Denied'"></span>
+                                            </div>
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @click="removePermissionOverride(override.permission_name)"
+                                                    title="Remove override">
+                                                <i class="fas fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Add new override -->
+                        <h6 class="small text-muted mb-2">Add Override</h6>
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                        x-model="newOverride.permission">
+                                    <option value="">Select permission...</option>
+                                    <template x-for="perm in getAvailablePermissionsForOverride()" :key="perm.name">
+                                        <option :value="perm.name" x-text="perm.name + (perm.description ? ' - ' + perm.description : '')"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                        x-model="newOverride.granted">
+                                    <option :value="true">Grant</option>
+                                    <option :value="false">Deny</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <button class="btn btn-sm btn-primary w-100"
+                                        @click="addPermissionOverride()"
+                                        :disabled="saving || !newOverride.permission">
+                                    <i class="fas" :class="saving ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                                    <span class="ms-1">Add</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="closePermissionOverridesModal()">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="permissionOverridesModalOpen" @click="closePermissionOverridesModal()"></div>

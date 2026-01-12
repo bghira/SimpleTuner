@@ -1,0 +1,75 @@
+<!-- Scheduling Settings Body -->
+<div class="modal-section-body">
+    <!-- Dataset Activation Scheduling -->
+    <div class="section-group" x-show="matchesParamFilter('schedule', 'start', 'epoch', 'step', 'delay', 'activation')">
+        <h6 class="modal-section-title">Dataset Activation</h6>
+        <div class="form-text small text-muted mb-3">
+            Control when this dataset becomes active during training. By default, datasets are active from the start.
+        </div>
+
+        <div class="row g-2">
+            <!-- Schedule Mode Selector -->
+            <div class="col-md-4">
+                <label class="form-label small">Delay Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#scheduling') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset._scheduleMode"
+                        @change="
+                            if (editingDataset._scheduleMode === 'none') {
+                                editingDataset.start_epoch = undefined;
+                                editingDataset.start_step = undefined;
+                            } else if (editingDataset._scheduleMode === 'epoch') {
+                                editingDataset.start_step = undefined;
+                                if (!editingDataset.start_epoch || editingDataset.start_epoch < 2) editingDataset.start_epoch = 2;
+                            } else if (editingDataset._scheduleMode === 'step') {
+                                editingDataset.start_epoch = undefined;
+                                if (!editingDataset.start_step || editingDataset.start_step < 1) editingDataset.start_step = 1;
+                            }
+                            markAsUnsaved()
+                        ">
+                    <option value="none">Immediate</option>
+                    <option value="epoch">By Epoch</option>
+                    <option value="step">By Step</option>
+                </select>
+            </div>
+
+            <!-- Epoch-based scheduling -->
+            <div class="col-md-4" x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
+                <label class="form-label small">Start Epoch <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_epoch') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.start_epoch"
+                       @input="markAsUnsaved()"
+                       placeholder="2">
+                <div class="form-text small">Activates at this epoch</div>
+            </div>
+
+            <!-- Step-based scheduling -->
+            <div class="col-md-4" x-show="editingDataset._scheduleMode === 'step'" x-cloak>
+                <label class="form-label small">Start Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.start_step"
+                       @input="markAsUnsaved()"
+                       placeholder="100">
+                <div class="form-text small">Activates at this step</div>
+            </div>
+        </div>
+
+        <!-- Status indicator - no row wrapper, flows naturally -->
+        <div class="alert alert-info small py-2 px-3 mb-0 mt-2">
+            <span x-show="editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode">
+                <i class="fas fa-check-circle me-1"></i> This dataset is available from the start of training
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
+                <i class="fas fa-clock me-1"></i> This dataset will be skipped until epoch <strong x-text="editingDataset.start_epoch || 2"></strong>
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'step'" x-cloak>
+                <i class="fas fa-clock me-1"></i> This dataset will be skipped until step <strong x-text="editingDataset.start_step || 1"></strong>
+            </span>
+        </div>
+    </div>
+</div>

@@ -330,6 +330,50 @@ class TestDataloaderIterator(unittest.TestCase):
         with self.assertRaises((IndexError, KeyError, ValueError)):
             select_dataloader_index(step=100, backends=backends)
 
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    def test_select_dataloader_index_no_active_misconfig(self, mock_state_tracker):
+        """Test select_dataloader_index raises error when no active backends and no exhausted backends"""
+        # Set up mock to indicate no exhausted backends (misconfiguration)
+        mock_state_tracker.exhausted_backends = []
+        mock_state_tracker.get_epoch.return_value = 1
+        mock_state_tracker.get_global_step.return_value = 0
+        mock_state_tracker.get_data_backend_config.return_value = {"start_epoch": 5}
+
+        # Backend with start_epoch in the future
+        backend_config = {"start_epoch": 5}
+        backends = {"future_backend": backend_config}
+
+        with self.assertRaises(ValueError) as context:
+            select_dataloader_index(step=100, backends=backends)
+
+        self.assertIn("No active datasets available", str(context.exception))
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    def test_select_dataloader_index_no_active_with_exhausted(self, mock_state_tracker):
+        """Test select_dataloader_index returns None when no active backends but some exhausted"""
+        # Set up mock to indicate some exhausted backends (normal epoch end)
+        mock_state_tracker.exhausted_backends = ["exhausted_backend1"]
+        mock_state_tracker.get_data_backend_config.return_value = {"start_epoch": 5}
+
+        # Backend with start_epoch in the future
+        backend_config = {"start_epoch": 5}
+        backends = {"future_backend": backend_config}
+
+        result = select_dataloader_index(step=100, backends=backends)
+        self.assertIsNone(result)
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    def test_random_dataloader_iterator_returns_false_on_no_active(self, mock_state_tracker, mock_select):
+        """Test random_dataloader_iterator returns False when select_dataloader_index returns None"""
+        mock_select.return_value = None
+        mock_state_tracker.get_args.return_value = Mock(gradient_accumulation_steps=1)
+        backends = {"backend1": self.mock_backend1}
+
+        result = random_dataloader_iterator(step=100, backends=backends)
+
+        self.assertFalse(result)
+
     @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
     def test_random_dataloader_iterator_single_backend(self, mock_select):
         """Test random_dataloader_iterator with single backend"""
@@ -597,6 +641,242 @@ class TestRuntimePerformance(unittest.TestCase):
 
         # Weight calculation should be very fast
         self.assertLess(elapsed_time, 0.2)
+
+
+class TestContextParallelBatchSynchronizer(unittest.TestCase):
+    """Test the ContextParallelBatchSynchronizer for context-parallel training."""
+
+    def test_sync_without_cp_returns_batch_unchanged(self):
+        """Test that sync returns the batch unchanged when CP is not enabled."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        # Mock accelerator without parallelism_config
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        batch = {"data": [1, 2, 3], "labels": [0, 1, 0]}
+        result = synchronizer.sync(batch)
+
+        self.assertEqual(result, batch)
+        self.assertFalse(synchronizer.is_cp_enabled)
+
+    def test_sync_with_cp_disabled(self):
+        """Test that sync returns batch unchanged when cp_size <= 1."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 1
+        mock_parallelism_config.cp_enabled = False
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        batch = {"data": [1, 2, 3]}
+        result = synchronizer.sync(batch)
+
+        self.assertEqual(result, batch)
+        self.assertFalse(synchronizer.is_cp_enabled)
+
+    def test_get_cp_info_no_parallelism_config(self):
+        """Test get_cp_info returns defaults when no parallelism config."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        cp_enabled, cp_group, cp_rank, cp_size = get_cp_info(mock_accelerator)
+
+        self.assertFalse(cp_enabled)
+        self.assertIsNone(cp_group)
+        self.assertEqual(cp_rank, 0)
+        self.assertEqual(cp_size, 1)
+
+    def test_get_cp_info_cp_size_none(self):
+        """Test get_cp_info returns defaults when cp_size is None."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = None
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+
+        cp_enabled, cp_group, cp_rank, cp_size = get_cp_info(mock_accelerator)
+
+        self.assertFalse(cp_enabled)
+        self.assertIsNone(cp_group)
+        self.assertEqual(cp_rank, 0)
+        self.assertEqual(cp_size, 1)
+
+    def test_synchronizer_caches_cp_info(self):
+        """Test that the synchronizer caches CP info after first call."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        # First call initializes
+        self.assertFalse(synchronizer._initialized)
+        _ = synchronizer.is_cp_enabled
+        self.assertTrue(synchronizer._initialized)
+
+        # Subsequent calls use cached info
+        _ = synchronizer.cp_rank
+        _ = synchronizer.cp_size
+        self.assertTrue(synchronizer._initialized)
+
+    def test_synchronizer_properties(self):
+        """Test synchronizer property accessors."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        self.assertFalse(synchronizer.is_cp_enabled)
+        self.assertTrue(synchronizer.is_cp_leader)  # rank 0 is always leader
+        self.assertEqual(synchronizer.cp_rank, 0)
+        self.assertEqual(synchronizer.cp_size, 1)
+
+    def test_fetch_batch_without_cp(self):
+        """Test fetch_batch calls iterator normally when CP is disabled."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = None
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+        result = synchronizer.fetch_batch(mock_iterator, 10, "arg1", "arg2")
+
+        mock_iterator.assert_called_once_with(10, "arg1", "arg2")
+        self.assertEqual(result, {"data": [1, 2, 3]})
+
+    def test_fetch_batch_cp_leader_calls_iterator(self):
+        """Test fetch_batch on CP leader calls the iterator."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 0  # CP leader
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 2
+        mock_accelerator.process_index = 0
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+
+        # Note: sync would normally broadcast, but we can't test that without
+        # actual distributed setup. Just verify iterator is called for leader.
+        with patch("simpletuner.helpers.data_backend.runtime.context_parallel_sync.dist") as mock_dist:
+            mock_dist.broadcast_object_list = MagicMock(side_effect=lambda batch_list, **kwargs: None)
+            result = synchronizer.fetch_batch(mock_iterator, 10)
+            mock_iterator.assert_called_once_with(10)
+            self.assertEqual(result, {"data": [1, 2, 3]})
+
+    def test_fetch_batch_cp_non_leader_skips_iterator(self):
+        """Test fetch_batch on non-CP-leader skips the iterator."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+            CP_SKIP_SAMPLING_SENTINEL,
+            ContextParallelBatchSynchronizer,
+        )
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 1  # Non-leader
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 2
+        mock_accelerator.process_index = 1
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+
+        # Verify iterator is NOT called for non-leader
+        with patch("simpletuner.helpers.data_backend.runtime.context_parallel_sync.dist") as mock_dist:
+            # Simulate broadcast replacing sentinel with real data
+            def mock_broadcast(batch_list, **kwargs):
+                batch_list[0] = {"broadcasted": True}
+
+            mock_dist.broadcast_object_list = mock_broadcast
+            result = synchronizer.fetch_batch(mock_iterator, 10)
+            mock_iterator.assert_not_called()
+            self.assertEqual(result, {"broadcasted": True})
+
+
+class TestContextParallelDataParallelInfo(unittest.TestCase):
+    """Test CP-aware DP sharding uses data-parallel ranks from the accelerator."""
+
+    def test_get_cp_aware_dp_info_uses_dp_ranks(self):
+        """Ensure dp_rank derives from DP dims, not global rank ordering."""
+        from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+        mock_parallelism_config.dp_replicate_size = 2
+        mock_parallelism_config.dp_shard_size = 2
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 0
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 6
+        mock_accelerator.data_parallel_rank = 1
+        mock_accelerator.data_parallel_shard_rank = 0
+
+        effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(mock_accelerator)
+
+        self.assertEqual(effective_dp_size, 4)
+        self.assertEqual(dp_rank, 2)
+        self.assertEqual(cp_size, 2)
+
+    def test_get_cp_aware_dp_info_disables_without_mesh(self):
+        """CP sharding stays disabled when mesh is missing."""
+        from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = None
+        mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 3
+
+        effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(mock_accelerator)
+
+        self.assertEqual(effective_dp_size, 8)
+        self.assertEqual(dp_rank, 3)
+        self.assertEqual(cp_size, 1)
 
 
 if __name__ == "__main__":

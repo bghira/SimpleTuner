@@ -7,6 +7,11 @@
 <!-- Load design tokens first -->
 <link href="/static/css/tokens.css" rel="stylesheet" id="css-tokens">
 <script>document.getElementById('css-tokens').href = '/static/css/tokens.css?t=' + cssTimestamp;</script>
+<!-- Theme overrides - loaded after tokens so they can override variables -->
+<link href="/static/css/themes/tron.css" rel="stylesheet" id="css-theme-tron">
+<script>document.getElementById('css-theme-tron').href = '/static/css/themes/tron.css?t=' + cssTimestamp;</script>
+<link href="/static/css/themes/light.css" rel="stylesheet" id="css-theme-light">
+<script>document.getElementById('css-theme-light').href = '/static/css/themes/light.css?t=' + cssTimestamp;</script>
 <!-- Load existing trainer CSS for consistency -->
 <link href="/static/css/trainer.css" rel="stylesheet" id="css-trainer-extra">
 <script>document.getElementById('css-trainer-extra').href = '/static/css/trainer.css?t=' + cssTimestamp;</script>
@@ -96,6 +101,11 @@ document.addEventListener('alpine:init', () => {
         loaded: false,
         loading: false,
 
+        // Alias for backwards compatibility
+        get list() {
+            return this.configs;
+        },
+
         async load(force = false) {
             if (this.loading) return;
             if (this.loaded && !force) return;
@@ -131,7 +141,221 @@ document.addEventListener('alpine:init', () => {
             }));
         }
     });
+
+    // Cloud auth store for app-wide authentication
+    Alpine.store('cloudAuth', {
+        currentUser: null,
+        loaded: false,
+        authStatus: {
+            checked: false,
+            inUse: false,
+            userCount: 0,
+            hasProviders: false,
+        },
+        // Login form state
+        loginForm: {
+            username: '',
+            password: '',
+            rememberMe: false,
+            showPassword: false,
+            submitting: false,
+            error: null,
+        },
+        get isAdmin() {
+            return this.currentUser?.is_admin === true;
+        },
+        get needsLogin() {
+            // Login required if: auth is in use, status checked, and no current user
+            return this.authStatus.checked && this.authStatus.inUse && !this.currentUser;
+        },
+        get isAuthChecking() {
+            // True while we're still checking auth status
+            return !this.authStatus.checked;
+        },
+        get isReady() {
+            // True when auth check is complete and we know what to show
+            return this.authStatus.checked;
+        },
+        get shouldShowApp() {
+            // Show the app when auth check is complete AND login is not required
+            return this.authStatus.checked && !this.needsLogin;
+        },
+        get shouldShowAdminTab() {
+            // Show admin tab if:
+            // 1. Auth is not configured (single-user mode, everyone has admin access), OR
+            // 2. Auth is configured AND current user is an admin
+            if (!this.authStatus.checked) return false; // Wait for status check
+            if (!this.authStatus.inUse) return true; // No auth = show to everyone
+            return this.isAdmin; // Auth in use = only show to admins
+        },
+        async loadAuthStatus() {
+            try {
+                const response = await fetch('/api/users/meta/auth-status');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.authStatus.inUse = data.in_use || false;
+                    this.authStatus.userCount = data.user_count || 0;
+                    this.authStatus.hasProviders = data.has_external_providers || false;
+                }
+            } catch (error) {
+                // Auth API not available - assume no auth configured
+                this.authStatus.inUse = false;
+            }
+            this.authStatus.checked = true;
+        },
+        async loadCurrentUser() {
+            if (this.loaded) return;
+            try {
+                const response = await fetch('/api/users/me');
+                if (response.ok) {
+                    this.currentUser = await response.json();
+                }
+            } catch (error) {
+                // Auth not configured or user not logged in - that's fine
+            }
+            this.loaded = true;
+        },
+        async submitLogin() {
+            if (!this.loginForm.username || !this.loginForm.password) {
+                this.loginForm.error = 'Username and password are required';
+                return;
+            }
+
+            this.loginForm.submitting = true;
+            this.loginForm.error = null;
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: this.loginForm.username,
+                        password: this.loginForm.password,
+                        remember_me: this.loginForm.rememberMe,
+                    }),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        this.currentUser = data.user;
+                        this.loginForm.username = '';
+                        this.loginForm.password = '';
+                        this.loginForm.error = null;
+                        if (window.showToast) {
+                            window.showToast(`Welcome, ${data.user.display_name || data.user.username}!`, 'success');
+                        }
+                        // Dispatch login success event for components to reinitialize
+                        window.dispatchEvent(new CustomEvent('auth-login-success', { detail: { user: data.user } }));
+                        // Reload the page to properly initialize all components
+                        // This is cleaner than trying to manually reinitialize everything
+                        window.location.reload();
+                    }
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    this.loginForm.error = window.UIHelpers?.extractErrorMessage(data, 'Invalid username or password') || data.detail || 'Invalid username or password';
+                }
+            } catch (error) {
+                console.error('Login failed:', error);
+                this.loginForm.error = 'Network error. Please try again.';
+            } finally {
+                this.loginForm.submitting = false;
+            }
+        },
+        async logout() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+                this.currentUser = null;
+                if (window.showToast) {
+                    window.showToast('Logged out successfully', 'info');
+                }
+            } catch (error) {
+                console.error('Logout failed:', error);
+            }
+        },
+        init() {
+            // Load auth status and current user on store initialization
+            this.loadAuthStatus();
+            this.loadCurrentUser();
+        },
+        /**
+         * Wait for auth status to be checked.
+         * Returns true if the app should be shown (user is authenticated or auth is not required).
+         * Returns false if user needs to login (API calls should be skipped).
+         * @param {number} timeout - Maximum wait time in ms (default 5000)
+         * @returns {Promise<boolean>}
+         */
+        async waitForAuthReady(timeout = 5000) {
+            let waitTime = 0;
+            while (!this.authStatus.checked && waitTime < timeout) {
+                await new Promise(r => setTimeout(r, 50));
+                waitTime += 50;
+            }
+            if (!this.authStatus.checked && waitTime >= timeout) {
+                console.warn(
+                    `waitForAuthReady: timed out after ${waitTime}ms before auth status was checked. ` +
+                    'Components may have skipped initialization due to unknown auth state.'
+                );
+            }
+            return this.shouldShowApp;
+        },
+        handleSessionExpired(message) {
+            // Only handle if auth is in use and user was logged in
+            if (!this.authStatus.inUse) return;
+
+            // Clear current user to show login form
+            this.currentUser = null;
+            this.loaded = false;
+
+            // Show message to user
+            if (window.showToast) {
+                window.showToast(message || 'Your session has expired. Please log in again.', 'warning', 5000);
+            }
+
+            // Reset login form
+            this.loginForm.error = null;
+            this.loginForm.username = '';
+            this.loginForm.password = '';
+            this.loginForm.submitting = false;
+        }
+    });
+
+    // Global handler for session expiration (called from HTMX error handler and SSE)
+    window.handleSessionExpired = function(message) {
+        const store = Alpine.store('cloudAuth');
+        if (store) {
+            store.handleSessionExpired(message);
+        }
+    };
 });
+
+/**
+ * Global helper to wait for auth and check if API calls should proceed.
+ * Returns true if authenticated (or auth not required), false if login is needed.
+ * @param {number} timeout - Maximum wait time in ms (default 5000)
+ * @returns {Promise<boolean>}
+ */
+window.waitForAuthReady = async function(timeout = 5000) {
+    // Wait for Alpine to be initialized if it hasn't been yet
+    if (typeof Alpine === 'undefined' || typeof Alpine.store !== 'function') {
+        await new Promise(resolve => {
+            document.addEventListener('alpine:init', resolve, { once: true });
+            // Also set a short timeout in case alpine:init already fired
+            setTimeout(resolve, 100);
+        });
+    }
+    // Check again after waiting
+    if (typeof Alpine === 'undefined' || typeof Alpine.store !== 'function') {
+        // Alpine not available, proceed without auth check
+        return true;
+    }
+    const authStore = Alpine.store('cloudAuth');
+    if (!authStore) {
+        // No auth store = no auth configured, proceed with API calls
+        return true;
+    }
+    return authStore.waitForAuthReady(timeout);
+};
 
 const sanitizeConfigName = (name) => {
     if (typeof name !== 'string') {
@@ -246,7 +470,33 @@ function trainerComponent() {
             }
             return parts.join(' • ');
         },
-        init() {
+        _cleanupEventHandlers() {
+            if (this._defaultsUpdateHandler) {
+                window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
+            }
+            if (this._systemStatusTimer) {
+                window.clearInterval(this._systemStatusTimer);
+                this._systemStatusTimer = null;
+            }
+            this.stopServerUptimeTicker();
+            if (this._visibilityChangeHandler) {
+                document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
+                this._visibilityChangeHandler = null;
+            }
+        },
+        _setupBeforeUnloadHandler() {
+            this._beforeUnloadHandler = () => this._cleanupEventHandlers();
+            window.addEventListener('beforeunload', this._beforeUnloadHandler);
+        },
+        async init() {
+            // Wait for auth before making any API calls
+            const canProceed = await window.waitForAuthReady();
+            if (!canProceed) {
+                // User needs to login - skip API-dependent initialization
+                this._setupBeforeUnloadHandler();
+                return;
+            }
+
             this.loadVersionInfo().catch((error) => {
                 console.debug('Version info fetch failed:', error);
             });
@@ -265,23 +515,10 @@ function trainerComponent() {
             };
             this._defaultsUpdateHandler = handler;
             window.addEventListener('webui-defaults-updated', handler);
-            const beforeUnloadHandler = () => {
-                if (this._defaultsUpdateHandler) {
-                    window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
-                }
-                if (this._systemStatusTimer) {
-                    window.clearInterval(this._systemStatusTimer);
-                    this._systemStatusTimer = null;
-                }
-                if (this._visibilityChangeHandler) {
-                    document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
-                    this._visibilityChangeHandler = null;
-                }
-            };
-            this._beforeUnloadHandler = beforeUnloadHandler;
-            window.addEventListener('beforeunload', beforeUnloadHandler);
+            this._setupBeforeUnloadHandler();
 
             this.refreshSystemStatus();
+            this.startServerUptimeTicker();
             this._systemStatusTimer = window.setInterval(() => {
                 if (this.isDocumentVisible()) {
                     this.refreshSystemStatus();
@@ -333,6 +570,10 @@ function trainerComponent() {
                 auto_preserve_defaults: preserveFlag,
             };
         },
+        generateBackupFilename(filename) {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            return `${filename}.backup-${timestamp}`;
+        },
          // Tab management
          activeTab: window.location.hash.slice(1) || localStorage.getItem('activeTab') || 'basic',
 
@@ -347,6 +588,8 @@ function trainerComponent() {
                 trainerStore.captureFormValues();
                 // Set flag to restore form values after tab loads
                 trainerStore._preservingFormState = true;
+                // Suppress dirty tracking during tab initialization
+                trainerStore._suppressDirtyTracking = true;
             }
 
             this.activeTab = tabName;
@@ -373,6 +616,22 @@ function trainerComponent() {
             if (tabButton) {
                 tabButton.click();
                 this.switchTab(tabName, updateHash);
+            } else {
+                // Button not found (e.g., admin button not rendered yet)
+                // Make the HTMX request directly
+                const tabContent = document.getElementById('tab-content');
+                if (tabContent) {
+                    htmx.ajax('GET', `/web/trainer/tabs/${tabName}`, {
+                        target: '#tab-content',
+                        swap: 'innerHTML'
+                    }).then(() => {
+                        this.switchTab(tabName, updateHash);
+                    }).catch(() => {
+                        // Tab not accessible, fall back to basic tab
+                        console.warn(`Tab "${tabName}" not accessible, falling back to basic`);
+                        this.activateTab('basic', updateHash);
+                    });
+                }
             }
         },
         async updateConfigSelectors() {
@@ -400,7 +659,7 @@ function trainerComponent() {
 
          // Form and training state
          formData: {},
-         validationErrors: {},
+        validationErrors: {},
          isTraining: false,
          showTrainingProgress: false,
         trainingProgress: {},
@@ -475,6 +734,9 @@ function trainerComponent() {
         originalFormData: {},
         formValueStore: {},
         changedFieldNames: new Set(),
+        get hasValidationErrors() {
+            return this.validationErrors && Object.keys(this.validationErrors).length > 0;
+        },
 
          // Config save dialog state
          showConfigSaveDialog: false,
@@ -1111,7 +1373,7 @@ function trainerComponent() {
             ].map((value) => (typeof value === 'string' ? value.toLowerCase() : ''));
             const isVideoType = typeHints.some((value) => ['video', 'video_model', 'video-diffusion', 'video_diffusion'].includes(value));
             const family = typeof info?.modelFamily === 'string' ? info.modelFamily.toLowerCase() : '';
-            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'ltxvideo2', 'cosmos2image']);
             const isVideoFamily = knownVideoFamilies.has(family);
             const isVideoModel = Boolean((hasVideoFlag || isVideoType || isVideoFamily) && isVideoFamily);
             const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) && isVideoFamily);
@@ -1127,7 +1389,7 @@ function trainerComponent() {
                 return result;
             }
             const familyKey = typeof modelFamily === 'string' ? modelFamily.trim().toLowerCase() : '';
-            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'ltxvideo2', 'cosmos2image']);
             const isKnownVideoFamily = knownVideoFamilies.has(familyKey);
             const strictFlavoursRaw = Array.isArray(capabilities.strict_i2v_flavours)
                 ? capabilities.strict_i2v_flavours
@@ -2769,7 +3031,11 @@ function trainerComponent() {
         systemStatus: null,
         systemStatusLoading: false,
         systemStatusError: null,
+        serverUptimeSeconds: null,
+        serverUptimeCapturedAt: null,
+        serverUptimeTick: Date.now(),
         _systemStatusTimer: null,
+        _serverUptimeTimer: null,
         _beforeUnloadHandler: null,
         _visibilityChangeHandler: null,
         async refreshSystemStatus() {
@@ -2783,8 +3049,13 @@ function trainerComponent() {
                     throw new Error(`Request failed with status ${response.status}`);
                 }
                 const payload = await response.json();
-                this.systemStatus = this.normalizeSystemStatus(payload);
+                const normalized = this.normalizeSystemStatus(payload);
+                this.systemStatus = normalized;
                 this.systemStatusError = null;
+                if (normalized && Number.isFinite(normalized.uptime_seconds)) {
+                    this.serverUptimeSeconds = normalized.uptime_seconds;
+                    this.serverUptimeCapturedAt = Date.now();
+                }
             } catch (error) {
                 console.error('Failed to load system status:', error);
                 if (!this.systemStatus) {
@@ -2803,6 +3074,10 @@ function trainerComponent() {
             const memoryValue =
                 typeof data.memory_percent === 'number' && Number.isFinite(data.memory_percent)
                     ? Number(data.memory_percent)
+                    : null;
+            const uptimeValue =
+                typeof data.uptime_seconds === 'number' && Number.isFinite(data.uptime_seconds)
+                    ? Number(data.uptime_seconds)
                     : null;
             const gpus = Array.isArray(data.gpus)
                 ? data.gpus.map((gpu, index) => {
@@ -2853,6 +3128,7 @@ function trainerComponent() {
                 gpus,
                 deepspeed_offload: offload,
                 timestamp: typeof data.timestamp === 'number' && Number.isFinite(data.timestamp) ? data.timestamp : null,
+                uptime_seconds: uptimeValue,
             };
         },
         formatBytes(bytes, precision = 1) {
@@ -2875,6 +3151,78 @@ function trainerComponent() {
                 typeof document.visibilityState === 'undefined' ||
                 document.visibilityState === 'visible'
             );
+        },
+        startServerUptimeTicker() {
+            if (this._serverUptimeTimer) {
+                return;
+            }
+            this.serverUptimeTick = Date.now();
+            this._serverUptimeTimer = window.setInterval(() => {
+                this.serverUptimeTick = Date.now();
+            }, 1000);
+        },
+        stopServerUptimeTicker() {
+            if (this._serverUptimeTimer) {
+                window.clearInterval(this._serverUptimeTimer);
+                this._serverUptimeTimer = null;
+            }
+        },
+        formatDurationClock(seconds) {
+            const totalSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : null;
+            if (totalSeconds === null) {
+                return '--:--:--';
+            }
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const secs = totalSeconds % 60;
+            const timePart = [
+                String(hours).padStart(2, '0'),
+                String(minutes).padStart(2, '0'),
+                String(secs).padStart(2, '0'),
+            ].join(':');
+            if (days > 0) {
+                return `${days}d ${timePart}`;
+            }
+            return timePart;
+        },
+        get connectionStatusLabel() {
+            if (this.connectionStatus === 'connected') {
+                return 'Connected';
+            }
+            if (this.connectionStatus === 'disconnected') {
+                return 'Disconnected';
+            }
+            if (this.connectionStatus === 'reconnecting') {
+                return 'Reconnecting';
+            }
+            return this.connectionStatus || 'Unknown';
+        },
+        get connectionUptimeSeconds() {
+            if (this.connectionStatus !== 'connected') {
+                return null;
+            }
+            if (!Number.isFinite(this.serverUptimeSeconds) || !Number.isFinite(this.serverUptimeCapturedAt)) {
+                return null;
+            }
+            const deltaSeconds = (this.serverUptimeTick - this.serverUptimeCapturedAt) / 1000;
+            if (!Number.isFinite(deltaSeconds)) {
+                return this.serverUptimeSeconds;
+            }
+            return this.serverUptimeSeconds + deltaSeconds;
+        },
+        get connectionUptimeLabel() {
+            const uptimeSeconds = this.connectionUptimeSeconds;
+            if (!Number.isFinite(uptimeSeconds)) {
+                return '';
+            }
+            return `Server uptime: ${this.formatDurationClock(uptimeSeconds)}`;
+        },
+        get connectionStatusTitle() {
+            if (this.connectionStatus === 'connected' && this.connectionUptimeLabel) {
+                return null;
+            }
+            return this.connectionMessage || null;
         },
         get systemStatusItems() {
             if (!this.systemStatus) {
@@ -3987,7 +4335,12 @@ function trainerComponent() {
         },
 
         // Form change tracking methods
+        _suppressDirtyTracking: false,  // Set during tab initialization to prevent false dirty marking
+
         markFormDirty() {
+            if (this._suppressDirtyTracking) {
+                return;
+            }
             this.formDirty = true;
             this._skipNextClean = true;
         },
@@ -4006,6 +4359,14 @@ function trainerComponent() {
             // Capture current values for cross-tab persistence
             this.captureFormValues();
             // Store current form data as original
+            this.updateBaselineFormData();
+            window.dispatchEvent(new CustomEvent('trainer-form-values-applied'));
+        },
+
+        // Update the baseline form data without clearing dirty state
+        // Called after tab switch to reset what checkFormDirty compares against
+        updateBaselineFormData() {
+            const formElement = document.getElementById('trainer-form');
             if (formElement) {
                 const formData = new FormData(formElement);
                 this.originalFormData = {};
@@ -4017,6 +4378,10 @@ function trainerComponent() {
 
         // Check if form has changed
         checkFormDirty() {
+            if (this._suppressDirtyTracking) {
+                return;
+            }
+
             const formElement = document.getElementById('trainer-form');
             if (!formElement) return;
 
@@ -4032,14 +4397,24 @@ function trainerComponent() {
             }
 
             // Check for removed fields
-            for (const key in this.originalFormData) {
-                if (!formData.has(key)) {
-                    isDirty = true;
-                    break;
+            if (!isDirty) {
+                for (const key in this.originalFormData) {
+                    if (!formData.has(key)) {
+                        isDirty = true;
+                        break;
+                    }
                 }
             }
 
-            this.formDirty = isDirty;
+            // If _skipNextClean is set (from markFormDirty), preserve dirty state
+            // when FormData comparison says clean. This handles fields that are
+            // managed outside the form (e.g., Easy Mode selects without name attrs).
+            if (this._skipNextClean && !isDirty) {
+                // Keep formDirty as-is and clear the flag
+                this._skipNextClean = false;
+            } else {
+                this.formDirty = isDirty;
+            }
         },
 
         cssEscape(name) {
@@ -4212,6 +4587,8 @@ function trainerComponent() {
                     });
                 }
             });
+
+            window.dispatchEvent(new CustomEvent('trainer-form-values-applied'));
         },
 
         handleFieldInput(event) {
@@ -4621,11 +4998,21 @@ function trainerComponent() {
             const resolve = this.configSaveDialogResolve;
             this.configSaveDialogResolve = null;
 
+            // Include Easy Mode modified fields as forceFields so config values override stale DOM
+            const easyModeFields = this._easyModeModifiedFields
+                ? Array.from(this._easyModeModifiedFields)
+                : [];
+
             // Call the actual save
             this.doSaveConfig({
                 createBackup: this.createConfigBackupOption,
-                preserveDefaults: this.preserveDefaultsOption
+                preserveDefaults: this.preserveDefaultsOption,
+                forceFields: easyModeFields
             }).then(() => {
+                // Clear the tracked fields after successful save
+                if (this._easyModeModifiedFields) {
+                    this._easyModeModifiedFields.clear();
+                }
                 if (resolve) resolve();
             });
         },
@@ -4846,27 +5233,39 @@ function trainerComponent() {
                         this.markFormClean();
                         window.showToast('Configuration saved', 'success');
 
-                        const feedbackTarget = document.getElementById('htmx-save-feedback');
-                        if (feedbackTarget) {
-                            feedbackTarget.innerHTML = responseText || '<div class="text-success">Configuration saved</div>';
-                            feedbackTarget.classList.remove('visually-hidden');
-                            if (!feedbackTarget.dataset.persist) {
-                                setTimeout(() => {
-                                    feedbackTarget.classList.add('visually-hidden');
-                                }, 3500);
-                            }
-                        }
-
                         // Dispatch event for other components (e.g., publishing tab)
                         window.dispatchEvent(new CustomEvent('config-saved'));
 
                         try {
+                            // Suppress dirty tracking during post-save refresh to prevent form being marked dirty
+                            this._suppressDirtyTracking = true;
                             await this.fetchActiveEnvironmentConfig();
                             if (this.showConfigJsonModal) {
                                 this.resetConfigJsonDraft();
                             }
+                            // CRITICAL: Wait for Alpine's reactive DOM updates to complete before
+                            // updating baseline and clearing suppression. Without this, Alpine may
+                            // update form inputs AFTER we clear _suppressDirtyTracking, causing
+                            // input/change events to flip formDirty back to true.
+                            await new Promise(resolve => {
+                                this.$nextTick(() => {
+                                    // Double nextTick to ensure all reactive effects have settled
+                                    this.$nextTick(() => {
+                                        requestAnimationFrame(() => {
+                                            resolve();
+                                        });
+                                    });
+                                });
+                            });
+                            // Update baseline to match refreshed values so checkFormDirty() sees no changes
+                            this.updateBaselineFormData();
+                            // Ensure form is still clean after refresh
+                            this.formDirty = false;
+                            this._skipNextClean = false;
                         } catch (refreshError) {
                             console.error('Failed to refresh configuration after save:', refreshError);
+                        } finally {
+                            this._suppressDirtyTracking = false;
                         }
                     } else {
                         let detail = null;
@@ -4909,11 +5308,145 @@ function trainerComponent() {
 }
 </script>
 
+<!-- Loading Screen - shown while checking auth status -->
+<div class="login-screen"
+     x-data
+     x-show="$store.cloudAuth.isAuthChecking"
+     x-cloak>
+    <div class="login-container">
+        <div class="login-card text-center">
+            <div class="login-header">
+                <i class="fas fa-cog fa-spin login-icon"></i>
+                <h1>SimpleTuner</h1>
+                <p class="text-muted">Loading...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Login Screen - shown when auth is required but user not logged in -->
+<div class="login-screen"
+     x-data
+     x-show="$store.cloudAuth.needsLogin"
+     x-cloak>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <i class="fas fa-cog fa-spin-slow login-icon"></i>
+                <h1>SimpleTuner</h1>
+                <p class="text-muted">Sign in to continue</p>
+            </div>
+            <form @submit.prevent="$store.cloudAuth.submitLogin()">
+                <div class="mb-3">
+                    <label class="form-label" for="login-username">Username or Email</label>
+                    <input type="text"
+                           id="login-username"
+                           class="form-control"
+                           x-model="$store.cloudAuth.loginForm.username"
+                           placeholder="username"
+                           required
+                           autofocus
+                           :disabled="$store.cloudAuth.loginForm.submitting">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="login-password">Password</label>
+                    <div class="input-group">
+                        <input :type="$store.cloudAuth.loginForm.showPassword ? 'text' : 'password'"
+                               id="login-password"
+                               class="form-control"
+                               x-model="$store.cloudAuth.loginForm.password"
+                               required
+                               :disabled="$store.cloudAuth.loginForm.submitting">
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                @click="$store.cloudAuth.loginForm.showPassword = !$store.cloudAuth.loginForm.showPassword"
+                                tabindex="-1">
+                            <i class="fas" :class="$store.cloudAuth.loginForm.showPassword ? 'fa-eye-slash' : 'fa-eye'"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="login-remember"
+                               x-model="$store.cloudAuth.loginForm.rememberMe"
+                               :disabled="$store.cloudAuth.loginForm.submitting">
+                        <label class="form-check-label" for="login-remember">
+                            Remember me for 30 days
+                        </label>
+                    </div>
+                </div>
+                <template x-if="$store.cloudAuth.loginForm.error">
+                    <div class="alert alert-danger py-2 small mb-3">
+                        <i class="fas fa-exclamation-circle me-1"></i>
+                        <span x-text="$store.cloudAuth.loginForm.error"></span>
+                    </div>
+                </template>
+                <button type="submit"
+                        class="btn btn-primary w-100"
+                        :disabled="$store.cloudAuth.loginForm.submitting || !$store.cloudAuth.loginForm.username || !$store.cloudAuth.loginForm.password">
+                    <template x-if="$store.cloudAuth.loginForm.submitting">
+                        <span><i class="fas fa-spinner fa-spin me-2"></i>Signing in...</span>
+                    </template>
+                    <template x-if="!$store.cloudAuth.loginForm.submitting">
+                        <span><i class="fas fa-sign-in-alt me-2"></i>Sign In</span>
+                    </template>
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Main App - shown when auth check complete and login not required -->
 <div class="dashboard-wrapper"
      x-data="trainerComponent()"
-     x-init="(() => {
+     x-show="$store.cloudAuth.shouldShowApp"
+     x-cloak
+     x-init="(async () => {
          // Store reference to Alpine component for external access
          Alpine.store('trainer', $data);
+
+         // Wait for auth before loading tab content
+         const canProceed = await window.waitForAuthReady();
+         if (!canProceed) {
+             // User needs to login - don't load tabs yet
+             return;
+         }
+
+         // Set up HTMX afterSwap listener BEFORE loading initial tab
+         // to ensure _suppressDirtyTracking gets cleared
+         document.body.addEventListener('htmx:afterSwap', (evt) => {
+             if (evt.detail.target.id !== 'tab-content') {
+                 return;
+             }
+             setTimeout(() => {
+                 requestAnimationFrame(() => {
+                     if ($data._preservingFormState) {
+                         console.log('Applying stored form values after tab switch');
+                         $data.applyStoredValues();
+                         $data.updateBaselineFormData();
+                     } else if (!$data._skipNextClean) {
+                         $data.markFormClean();
+                     }
+                     delete $data._preservingFormState;
+                     $data._skipNextClean = false;
+                     $data._suppressDirtyTracking = false;
+                 });
+             }, 150);
+         });
+
+         document.body.addEventListener('htmx:afterSettle', (evt) => {
+             if (evt.detail.target.id !== 'tab-content') {
+                 return;
+             }
+             if ($data._preservingFormState) {
+                 console.log('Applying stored values on afterSettle');
+                 $data.applyStoredValues();
+                 $data.updateBaselineFormData();
+                 delete $data._preservingFormState;
+             }
+         });
 
          // Load initial tab content
          $nextTick(() => {
@@ -5067,6 +5600,13 @@ function trainerComponent() {
 
          // Initialize other components
          $nextTick(async () => {
+             // Wait for auth before making any API calls
+             const canProceed = await window.waitForAuthReady();
+             if (!canProceed) {
+                 // User needs to login - skip API-dependent initialization
+                 return;
+             }
+
              await $data.initializeWebUIState();
              await $data.loadEnvironmentConfigs();
 
@@ -5093,44 +5633,8 @@ function trainerComponent() {
 
                 form.addEventListener('input', handleFormChange);
                 form.addEventListener('change', handleFormChange);
-
-                // Listen for HTMX after swap events to reapply listeners
-                document.body.addEventListener('htmx:afterSwap', (evt) => {
-                    if (evt.detail.target.id !== 'tab-content') {
-                        return;
-                    }
-
-                    // Use a longer delay and requestAnimationFrame to ensure DOM is fully updated
-                    setTimeout(() => {
-                        requestAnimationFrame(() => {
-                            if ($data._preservingFormState) {
-                                console.log('Applying stored form values after tab switch');
-                                $data.applyStoredValues();
-                                // Do NOT call markFormClean() here - if the user had unsaved changes
-                                // before the tab switch, formDirty should remain true so they can save
-                            } else if (!$data._skipNextClean) {
-                                $data.markFormClean();
-                            }
-
-                            delete $data._preservingFormState;
-                            $data._skipNextClean = false;
-                        });
-                    }, 150);
-                });
-
-                // Also listen for afterSettle event which fires after all animations complete
-                document.body.addEventListener('htmx:afterSettle', (evt) => {
-                    if (evt.detail.target.id !== 'tab-content') {
-                        return;
-                    }
-
-                    // Double-check if we still need to preserve form state
-                    if ($data._preservingFormState) {
-                        console.log('Applying stored values on afterSettle');
-                        $data.applyStoredValues();
-                        delete $data._preservingFormState;
-                    }
-                });
+                // Note: htmx:afterSwap and htmx:afterSettle listeners are set up earlier
+                // in the x-init block to ensure they're ready before the initial tab load
              }
 
             await $data.loadDatasetsAfterEnvironmentChange();
@@ -5165,9 +5669,20 @@ function trainerComponent() {
     .dashboard-wrapper {
         position: relative;
     }
+    /* All these elements must use fixed positioning to prevent flex layout shifts when visible */
+    #save-config-indicator,
+    #htmx-save-feedback {
+        position: fixed !important;
+        top: 1rem;
+        right: 1rem;
+        z-index: 1055;
+    }
+    #htmx-save-feedback {
+        top: 3rem; /* Offset below save-config-indicator */
+    }
     .save-config-loading-banner {
         display: none;
-        position: absolute;
+        position: fixed !important; /* Must be fixed, not relative/absolute - prevents flex layout shift */
         top: 1rem;
         right: 1rem;
         z-index: 1055;
@@ -5187,26 +5702,92 @@ function trainerComponent() {
     <div class="onboarding-overlay"
          x-show="overlayVisible"
          x-transition.opacity.duration.150ms>
-        <div class="onboarding-modal">
-            <h2 x-text="activeOnboardingStep ? activeOnboardingStep.title : 'Welcome to SimpleTuner'"></h2>
-            <p class="onboarding-prompt" x-text="activeOnboardingStep ? activeOnboardingStep.prompt : ''"></p>
+        <div class="onboarding-modal onboarding-modal--hero">
+            <!-- Hero Header -->
+            <div class="onboarding-hero-header">
+                <div class="onboarding-hero-icon">
+                    <i class="fas fa-cog fa-spin-slow"></i>
+                </div>
+                <h2 class="onboarding-hero-title">Welcome to SimpleTuner</h2>
+                <p class="onboarding-hero-subtitle">Let's get you set up in just a few steps</p>
+            </div>
+
+            <!-- Step Progress -->
+            <div class="onboarding-step-progress" x-show="onboardingSteps.length > 0">
+                <template x-for="(step, idx) in onboardingSteps" :key="step.id">
+                    <div class="step-dot"
+                         :class="{
+                             'completed': step.is_complete,
+                             'active': activeOnboardingStep && step.id === activeOnboardingStep.id
+                         }"
+                         :title="step.title">
+                        <template x-if="step.is_complete">
+                            <i class="fas fa-check"></i>
+                        </template>
+                        <template x-if="!step.is_complete">
+                            <span x-text="idx + 1"></span>
+                        </template>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Current Step Content -->
+            <div class="onboarding-step-content">
+                <div class="step-header">
+                    <span class="step-badge"
+                          x-text="activeOnboardingStep ? 'Step ' + (onboardingSteps.findIndex(s => s.id === activeOnboardingStep.id) + 1) + ' of ' + onboardingSteps.length : ''"></span>
+                    <h3 class="step-title" x-text="activeOnboardingStep ? activeOnboardingStep.title : ''"></h3>
+                </div>
+                <p class="step-description" x-text="activeOnboardingStep ? activeOnboardingStep.prompt : ''"></p>
+            </div>
+
             <form @submit.prevent="submitOnboardingStep">
-                <div class="mb-3" x-show="activeOnboardingStep && activeOnboardingStep.input_type === 'directory'">
-                    <label class="form-label" x-text="activeOnboardingStep ? activeOnboardingStep.title : ''"></label>
-                    <input type="text"
-                           id="onboarding-input"
-                           name="onboarding_input"
-                           class="form-control"
-                           x-model="onboardingForm.value"
-                           :placeholder="(activeOnboardingStep && activeOnboardingStep.applies_to_default && defaults[activeOnboardingStep.applies_to_default]) || '/path/to/output'"
-                           x-ref="onboardingInput">
-                    <div class="form-text">
-                        Example: /home/you/simpletuner-output
+                <!-- Directory Input -->
+                <div class="onboarding-form-section" x-show="activeOnboardingStep && activeOnboardingStep.input_type === 'directory'">
+                    <div class="mb-3">
+                        <label for="onboarding-input" class="form-label fw-semibold" x-text="activeOnboardingStep ? activeOnboardingStep.title : 'Directory'"></label>
+                        <input type="text"
+                               id="onboarding-input"
+                               name="onboarding_input"
+                               class="form-control form-control-lg"
+                               x-model="onboardingForm.value"
+                               :placeholder="(activeOnboardingStep && activeOnboardingStep.applies_to_default && defaults[activeOnboardingStep.applies_to_default]) || '/path/to/directory'"
+                               x-ref="onboardingInput">
+                    </div>
+                    <!-- Step 1: Configurations Directory -->
+                    <div class="form-hint" x-show="activeOnboardingStep && activeOnboardingStep.id === 'default_configs_dir'">
+                        <i class="fas fa-lightbulb text-warning me-2 flex-shrink-0"></i>
+                        <div>
+                            <p class="mb-2">This is where your training configurations will be saved. Each config contains model settings, dataset references, and training parameters.</p>
+                            <p class="mb-2"><strong>Already using SimpleTuner CLI?</strong> Point this to your existing configs directory and the UI will auto-discover your configurations.</p>
+                            <p class="mb-0 text-muted small">Example: <code>/home/you/simpletuner/configs</code></p>
+                        </div>
+                    </div>
+                    <!-- Step 2: Output Directory -->
+                    <div class="form-hint" x-show="activeOnboardingStep && activeOnboardingStep.id === 'default_output_dir'">
+                        <i class="fas fa-lightbulb text-warning me-2 flex-shrink-0"></i>
+                        <div>
+                            <p class="mb-2">Training outputs include: validation images, data caches, checkpoints, LoRAs, optimizer states, dataloader status, random states, and model cards.</p>
+                            <p class="mb-2"><strong>Disk space:</strong> LoRA training requires modest space (a few GB). Full model checkpoints require significantly more (10-50+ GB per checkpoint).</p>
+                            <p class="mb-2"><strong>Multi-node users:</strong> Use network-shared storage accessible from all nodes at the same path.</p>
+                            <p class="mb-0 text-muted small">Example: <code>/home/you/simpletuner/output</code></p>
+                        </div>
+                    </div>
+                    <!-- Step 3: Datasets Directory -->
+                    <div class="form-hint" x-show="activeOnboardingStep && activeOnboardingStep.id === 'default_datasets_dir'">
+                        <i class="fas fa-lightbulb text-warning me-2 flex-shrink-0"></i>
+                        <div>
+                            <p class="mb-2">Training datasets will be stored here. The dataset browser in the UI is restricted to this path for security.</p>
+                            <p class="mb-2"><strong>Uploading datasets:</strong> If you plan to upload datasets through the web interface, they will land in this directory.</p>
+                            <p class="mb-2"><strong>Disk space:</strong> Datasets can be large (multiple GB to TB). Ensure sufficient space for your training images.</p>
+                            <p class="mb-2">Leave blank to allow selecting datasets from anywhere on the filesystem (less secure).</p>
+                            <p class="mb-0 text-muted small">Example: <code>/home/you/datasets</code></p>
+                        </div>
                     </div>
                 </div>
                 <template x-if="activeOnboardingStep && activeOnboardingStep.input_type === 'accelerate_auto'">
-                    <div class="mb-3">
-                        <label class="form-label">GPU launch strategy</label>
+                    <div class="onboarding-form-section">
+                        <h6 class="mb-3"><i class="fas fa-microchip text-info me-2"></i>GPU Launch Strategy</h6>
                         <div class="form-check">
                             <input class="form-check-input"
                                    type="radio"
@@ -5311,32 +5892,260 @@ function trainerComponent() {
                     </div>
                 </template>
                 <template x-if="activeOnboardingStep && activeOnboardingStep.input_type === 'environment'">
-                    <div class="environment-onboarding">
-                        <div x-data="createEnvironmentFormComponent({ resetOnSuccess: false, autoLoad: false })"
-                             x-ref="onboardingEnvironmentForm"
-                             @environment-created="handleOnboardingEnvironmentCreated($event.detail)">
-                            <template x-if="loadingInitialData">
-                                <div class="alert alert-info d-flex align-items-center gap-2">
-                                    <i class="fas fa-spinner fa-spin"></i>
-                                    <span>Loading environment templates...</span>
+                    <div class="environment-onboarding onboarding-form-section"
+                         x-data="{ envCreated: false, createdEnvName: null }">
+                        <!-- Environment Creation Form - Onboarding Layout -->
+                        <template x-if="!envCreated">
+                            <div x-data="createEnvironmentFormComponent({ resetOnSuccess: false, autoLoad: false })"
+                                 x-ref="onboardingEnvironmentForm"
+                                 @environment-created="envCreated = true; createdEnvName = $event.detail?.environment?.name || $event.detail?.payload?.name; handleOnboardingEnvironmentCreated($event.detail)">
+                                <template x-if="loadingInitialData">
+                                    <div class="alert alert-info d-flex align-items-center gap-2">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                        <span>Loading environment templates...</span>
+                                    </div>
+                                </template>
+                                <div class="onboarding-env-form" :class="loadingInitialData ? 'opacity-50 pointer-events-none' : ''">
+                                    <!-- Two-column grid layout -->
+                                    <div class="env-form-grid">
+                                        <!-- Row 1: Environment Name (required, full width) -->
+                                        <div class="env-form-field env-form-field--full">
+                                            <label class="form-label">
+                                                <span class="field-badge">1</span>
+                                                Environment Name <span class="text-danger">*</span>
+                                            </label>
+                                            <div class="input-group">
+                                                <input type="text"
+                                                       class="form-control"
+                                                       :class="{'is-invalid': !newEnvironment.name}"
+                                                       :value="newEnvironment.name"
+                                                       placeholder="my-first-project"
+                                                       required
+                                                       @input="updateNewEnvironmentName($event.target.value)">
+                                                <button type="button"
+                                                        class="btn btn-outline-secondary"
+                                                        title="Generate random name"
+                                                        @click="generateProjectName()">
+                                                    <i class="fas fa-random"></i>
+                                                </button>
+                                            </div>
+                                            <small class="text-muted">A unique identifier for your training configuration</small>
+                                        </div>
+
+                                        <!-- Row 2: Bootstrap From Example (full width, moved up for visibility) -->
+                                        <div class="env-form-field env-form-field--full">
+                                            <label class="form-label">
+                                                <span class="field-badge">2</span>
+                                                Bootstrap From Example
+                                            </label>
+                                            <select class="form-select"
+                                                    x-model="newEnvironment.example"
+                                                    @change="handleExampleSelection($event.target.value)">
+                                                <option value="">Start fresh (manual configuration)</option>
+                                                <template x-for="example in examples" :key="example.name">
+                                                    <option :value="example.name" x-text="example.name"></option>
+                                                </template>
+                                            </select>
+                                            <div class="form-hint mt-2" x-show="examples.length > 0">
+                                                <i class="fas fa-lightbulb text-warning me-2 flex-shrink-0"></i>
+                                                <div>
+                                                    <strong>Highly recommended:</strong> Examples provide working configurations with a demo dataset
+                                                    (image, edit, controlnet, or video) that complete quickly so you can verify everything works.
+                                                    <span class="text-warning-emphasis">These aren't optimal settings</span>—you'll want to adjust
+                                                    learning rate, batch size, and dataset for your actual use case. Think of them as
+                                                    "this will work, see?" starting points.
+                                                </div>
+                                            </div>
+                                            <div class="alert alert-info py-2 mt-2" x-show="examples.length === 0 && !loadingInitialData">
+                                                <i class="fas fa-info-circle me-2"></i>
+                                                No example configurations found. You'll configure settings manually.
+                                            </div>
+                                        </div>
+
+                                        <!-- Row 3: Model Family + Model Flavour (side by side) -->
+                                        <div class="env-form-field">
+                                            <label class="form-label">
+                                                <span class="field-badge">3</span>
+                                                Model Family <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select"
+                                                    :class="{'is-invalid': !newEnvironment.model_family}"
+                                                    x-model="newEnvironment.model_family"
+                                                    required
+                                                    :disabled="exampleLocked"
+                                                    @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour=null;">
+                                                <option value="" disabled>Select model...</option>
+                                                <template x-for="family in modelFamilies" :key="family">
+                                                    <option :value="family" x-text="family"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div class="env-form-field">
+                                            <label class="form-label">
+                                                <span class="field-badge field-badge--optional">3b</span>
+                                                Model Flavour
+                                            </label>
+                                            <select class="form-select" x-model="newEnvironment.model_flavour" :disabled="exampleLocked">
+                                                <option value="">Default</option>
+                                                <template x-for="flavour in modelFlavours" :key="flavour">
+                                                    <option :value="flavour" x-text="flavour"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+
+                                        <!-- Row 4: Model Type + LoRA Type (side by side) -->
+                                        <div class="env-form-field">
+                                            <label class="form-label">
+                                                <span class="field-badge">4</span>
+                                                Training Type
+                                            </label>
+                                            <select class="form-select"
+                                                    x-model="newEnvironment.model_type"
+                                                    :disabled="exampleLocked"
+                                                    @change="handleModelTypeChange($event.target.value)">
+                                                <template x-for="type in modelTypes" :key="type.value">
+                                                    <option :value="type.value" x-text="type.label"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div class="env-form-field" x-show="newEnvironment.model_type === 'lora'">
+                                            <label class="form-label">
+                                                <span class="field-badge field-badge--optional">4b</span>
+                                                LoRA Type
+                                            </label>
+                                            <select class="form-select" x-model="newEnvironment.lora_type" :disabled="exampleLocked">
+                                                <template x-for="lora in loraTypes" :key="lora.value">
+                                                    <option :value="lora.value" :disabled="lora.disabled" x-text="lora.label"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+
+                                        <!-- Row 5: Dataset Configuration (full width) -->
+                                        <div class="env-form-field env-form-field--full">
+                                            <label class="form-label">
+                                                <span class="field-badge">5</span>
+                                                Dataset Configuration
+                                            </label>
+
+                                            <!-- Radio option: Use example's demo dataset (disabled until example selected) -->
+                                            <div class="form-check mb-2" :class="{ 'opacity-50': !exampleHasDataloader }">
+                                                <input class="form-check-input" type="radio" name="onb-dataset-choice" id="onb-dataset-example"
+                                                       value="example"
+                                                       :checked="getDatasetChoice() === 'example'"
+                                                       :disabled="!exampleHasDataloader"
+                                                       @change="setDatasetChoice('example')">
+                                                <label class="form-check-label" for="onb-dataset-example">
+                                                    <strong>Use example's demo dataset</strong>
+                                                    <span x-show="exampleHasDataloader" class="text-success">(recommended for first run)</span>
+                                                    <span x-show="!exampleHasDataloader" class="text-muted">(select an example above)</span>
+                                                </label>
+                                                <div class="text-muted small ms-4" x-show="getDatasetChoice() === 'example'">
+                                                    The example includes a small demo dataset for quick testing. Will be copied to
+                                                    <code x-text="computeDefaultDataloaderPath() || 'multidatabackend.json'"></code>.
+                                                </div>
+                                            </div>
+
+                                            <!-- Radio option: Create new config -->
+                                            <div class="form-check mb-2">
+                                                <input class="form-check-input" type="radio" name="onb-dataset-choice" id="onb-dataset-new"
+                                                       value="new"
+                                                       :checked="getDatasetChoice() === 'new'"
+                                                       @change="setDatasetChoice('new')">
+                                                <label class="form-check-label" for="onb-dataset-new">
+                                                    Create new dataset configuration
+                                                </label>
+                                                <div class="ms-4 mt-1" x-show="getDatasetChoice() === 'new'">
+                                                    <input type="text"
+                                                           class="form-control form-control-sm"
+                                                           placeholder="Leave blank for default path"
+                                                           :value="newEnvironment.dataloader_path"
+                                                           @input="markEnvironmentPathTouched(); newEnvironment.dataloader_path = $event.target.value">
+                                                    <small class="text-muted">Path relative to configs directory</small>
+                                                </div>
+                                            </div>
+
+                                            <!-- Radio option: Use existing config -->
+                                            <div class="form-check mb-2" x-show="dataloaderConfigs.length > 0">
+                                                <input class="form-check-input" type="radio" name="onb-dataset-choice" id="onb-dataset-existing"
+                                                       value="existing"
+                                                       :checked="getDatasetChoice() === 'existing'"
+                                                       @change="setDatasetChoice('existing')">
+                                                <label class="form-check-label" for="onb-dataset-existing">
+                                                    Use existing dataset configuration
+                                                </label>
+                                                <div class="ms-4 mt-1" x-show="getDatasetChoice() === 'existing'">
+                                                    <select class="form-select form-select-sm"
+                                                            x-model="selectedDataloaderPath"
+                                                            @change="selectExistingDataloader($event.target.value)">
+                                                        <template x-for="config in dataloaderConfigs" :key="config.path">
+                                                            <option :value="config.path"
+                                                                    x-text="config.dataset_count !== undefined ? `${config.name} (${config.dataset_count} datasets)` : config.name"></option>
+                                                        </template>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <!-- No options hint when no example and no existing configs -->
+                                            <div class="text-muted small" x-show="!exampleHasDataloader && dataloaderConfigs.length === 0">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                A new dataset configuration will be created for this environment.
+                                            </div>
+                                        </div>
+
+                                        <!-- Row 6: Description (full width, optional) -->
+                                        <div class="env-form-field env-form-field--full">
+                                            <label class="form-label">
+                                                <span class="field-badge field-badge--optional">6</span>
+                                                Description
+                                            </label>
+                                            <textarea class="form-control" rows="2" x-model="newEnvironment.description" placeholder="Optional: describe what this environment is for"></textarea>
+                                        </div>
+                                    </div>
                                 </div>
-                            </template>
-                            <div :class="loadingInitialData ? 'opacity-50 pointer-events-none' : ''">
-                                {% include "partials/create_environment_form_fields.html" %}
+                                <template x-if="error">
+                                    <div class="alert alert-danger mt-3 mb-0 py-2 px-3" x-text="error"></div>
+                                </template>
+                                <div class="d-flex justify-content-end gap-2 mt-3">
+                                    <button type="button"
+                                            class="btn btn-primary btn-lg"
+                                            :disabled="submitting || loadingInitialData || !newEnvironment.name || !newEnvironment.model_family"
+                                            @click="submit()">
+                                        <span x-show="!submitting"><i class="fas fa-rocket me-2"></i>Create Environment</span>
+                                        <span x-show="submitting"><i class="fas fa-spinner fa-spin me-2"></i>Creating...</span>
+                                    </button>
+                                </div>
                             </div>
-                            <template x-if="error">
-                                <div class="alert alert-danger mt-3 mb-0 py-2 px-3" x-text="error"></div>
-                            </template>
-                            <div class="d-flex justify-content-end gap-2 mt-3">
-                                <button type="button"
-                                        class="btn btn-primary"
-                                        :disabled="submitting || loadingInitialData"
-                                        @click="submit()">
-                                    <span x-show="!submitting">Create environment</span>
-                                    <span x-show="submitting"><i class="fas fa-spinner fa-spin"></i> Creating...</span>
-                                </button>
+                        </template>
+
+                        <!-- Success State: Environment Created -->
+                        <template x-if="envCreated">
+                            <div class="environment-created-success text-center py-4">
+                                <div class="success-icon mb-3">
+                                    <i class="fas fa-check-circle fa-3x text-success"></i>
+                                </div>
+                                <h5 class="mb-2">Environment Created!</h5>
+                                <p class="text-muted mb-4">
+                                    <strong x-text="createdEnvName"></strong> is ready.
+                                    Would you like to configure your training settings now?
+                                </p>
+                                <div class="d-flex flex-column gap-2" style="max-width: 300px; margin: 0 auto;">
+                                    <button type="button"
+                                            class="btn btn-primary btn-lg"
+                                            @click="overlayVisible = false; $nextTick(() => $dispatch('open-training-wizard'))">
+                                        <i class="fas fa-magic me-2"></i>Launch Training Wizard
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            @click="overlayVisible = false">
+                                        <i class="fas fa-arrow-right me-2"></i>Continue to Dashboard
+                                    </button>
+                                </div>
+                                <p class="small text-muted mt-3 mb-0">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    You can always open the wizard later from the sidebar.
+                                </p>
                             </div>
-                        </div>
+                        </template>
                     </div>
                 </template>
                 <template x-if="overlayError">
@@ -5344,9 +6153,13 @@ function trainerComponent() {
                 </template>
                 <div class="onboarding-actions">
                     <template x-if="activeOnboardingStep && activeOnboardingStep.input_type !== 'environment'">
-                        <button type="submit" class="btn btn-primary" :disabled="overlaySaving">
-                            <span x-show="!overlaySaving">Save and continue</span>
-                            <span x-show="overlaySaving">Saving...</span>
+                        <button type="submit" class="btn btn-primary btn-lg" :disabled="overlaySaving">
+                            <span x-show="!overlaySaving">
+                                <i class="fas fa-arrow-right me-2"></i>Save &amp; Continue
+                            </span>
+                            <span x-show="overlaySaving">
+                                <i class="fas fa-spinner fa-spin me-2"></i>Saving...
+                            </span>
                         </button>
                     </template>
                     <button type="button"
@@ -5354,10 +6167,26 @@ function trainerComponent() {
                             @click="resetOnboarding"
                             :disabled="overlaySaving"
                             title="Start onboarding from the beginning">
-                        Reset
+                        <i class="fas fa-redo me-1"></i>Reset
                     </button>
                 </div>
             </form>
+
+            <!-- Footer links -->
+            <div class="onboarding-footer">
+                <a href="https://github.com/bghira/SimpleTuner"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="onboarding-link">
+                    <i class="fab fa-github me-1"></i>GitHub
+                </a>
+                <span class="onboarding-link-separator">|</span>
+                <a href="{{ docs_url('') }}"
+                   target="_blank"
+                   class="onboarding-link">
+                    <i class="fas fa-book me-1"></i>Documentation
+                </a>
+            </div>
         </div>
     </div>
 
@@ -5497,12 +6326,85 @@ function trainerComponent() {
                                 console.log('Saving form values before HTMX request');
                                 trainer.captureFormValues();
                                 trainer._preservingFormState = true;
+                                trainer._suppressDirtyTracking = true;
                             }
                         "
                         @click="switchTab('{{ tab.name }}'); closeSidebar()">
                     <i class="{{ tab.icon }}"></i> {{ tab.title }}
                 </button>
                 {% endfor %}
+            </div>
+
+            <!-- Admin Section (at bottom of sidebar) -->
+            <!-- Shows when: no auth configured (single-user mode) OR auth configured and user is admin -->
+            <div class="nav-section nav-section-bottom" x-show="$store.cloudAuth.shouldShowAdminTab" x-cloak>
+                <div class="nav-section-title">Administration</div>
+                <button type="button"
+                        class="tab-btn users-btn"
+                        data-tab="users"
+                        :class="{ 'active': activeTab === 'users' }"
+                        hx-get="/web/trainer/tabs/users"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('users'); closeSidebar()"
+                        title="Manage users, levels, rules, and access control">
+                    <i class="fas fa-users-cog"></i> Manage Users
+                </button>
+                <button type="button"
+                        class="tab-btn notifications-btn"
+                        data-tab="notifications"
+                        :class="{ 'active': activeTab === 'notifications' }"
+                        hx-get="/web/trainer/tabs/notifications"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('notifications'); closeSidebar()"
+                        title="Configure notification channels and event routing">
+                    <i class="fas fa-bell"></i> Notifications
+                </button>
+                <button type="button"
+                        class="tab-btn quotas-btn"
+                        data-tab="quotas"
+                        :class="{ 'active': activeTab === 'quotas' }"
+                        hx-get="/web/trainer/tabs/quotas"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('quotas'); closeSidebar()"
+                        title="Manage spending limits and job quotas">
+                    <i class="fas fa-tachometer-alt"></i> Quotas
+                </button>
+                <button type="button"
+                        class="tab-btn workers-btn"
+                        data-tab="workers"
+                        :class="{ 'active': activeTab === 'workers' }"
+                        hx-get="/web/trainer/tabs/workers"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('workers'); closeSidebar()"
+                        title="Manage GPU workers for distributed training">
+                    <i class="fas fa-server"></i> GPU Workers
+                </button>
+                <button type="button"
+                        class="tab-btn audit-btn"
+                        data-tab="audit"
+                        :class="{ 'active': activeTab === 'audit' }"
+                        hx-get="/web/trainer/tabs/audit"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('audit'); closeSidebar()"
+                        title="View security events and audit trail">
+                    <i class="fas fa-scroll"></i> Audit Log
+                </button>
+                <button type="button"
+                        class="tab-btn metrics-btn"
+                        data-tab="metrics"
+                        :class="{ 'active': activeTab === 'metrics' }"
+                        hx-get="/web/trainer/tabs/metrics"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('metrics'); closeSidebar()"
+                        title="Configure Prometheus metrics export">
+                    <i class="fas fa-chart-line"></i> Metrics
+                </button>
             </div>
         </nav>
     </aside>
@@ -5739,7 +6641,11 @@ function trainerComponent() {
             </script>
             <div class="config-selector"
                  x-data="configSelectorComponent()"
-                 x-init="(() => {
+                 x-init="(async () => {
+                    // Wait for auth before making any API calls
+                    const canProceed = await window.waitForAuthReady();
+                    if (!canProceed) return;
+
                     loadConfigs();
                     $watch('$store.trainer.activeEnvironment', (value) => { activeConfig = value; loadConfigs(); });
                     $watch('$store.trainer.formDirty', (value) => { hasChanges = Boolean(value); });
@@ -5806,7 +6712,7 @@ function trainerComponent() {
                     <div x-show="open"
                          x-transition
                          class="dropdown-menu show config-selector__menu"
-                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px; transform: translateX(calc(50% - var(--spacing-xl)));">
+                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px;">
 
                         <div class="dropdown-header">Configurations</div>
 
@@ -5892,8 +6798,8 @@ function trainerComponent() {
 
                     <button type="button"
                             class="trainer-action-btn btn btn-outline-secondary"
-                            :class="formDirty ? 'is-active' : ''"
-                            :disabled="!formDirty"
+                            :class="formDirty && !$store.trainer.hasValidationErrors ? 'is-active' : ''"
+                            :disabled="!formDirty || $store.trainer.hasValidationErrors"
                             @click="saveConfig()"
                             aria-label="Save configuration">
                         <i class="fas fa-save"></i>
@@ -5904,13 +6810,59 @@ function trainerComponent() {
                         {% include 'components/action_buttons_htmx.html' %}
                     {% endwith %}
                 </div>
-                <div class="training-status-pill" x-show="isTraining" x-transition>
-                    <i class="fas fa-cog fa-spin"></i>
-                    <span>Training</span>
-                    <span class="badge bg-info text-dark" x-text="`${trainingProgress.percent || 0}%`"></span>
-                    <span class="text-muted"
-                          x-text="`Step ${trainingProgress.step || 0}`"></span>
+
+                <!-- User Profile Dropdown (visible when auth is enabled and user logged in) -->
+                <div class="user-profile-dropdown dropdown ms-3"
+                     x-show="$store.cloudAuth.authStatus.inUse && $store.cloudAuth.currentUser"
+                     x-cloak>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-2 dropdown-toggle"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                            title="Account menu">
+                        <!-- Avatar or Initials -->
+                        <template x-if="$store.cloudAuth.currentUser?.avatar_url">
+                            <img :src="$store.cloudAuth.currentUser.avatar_url" alt="Avatar" class="rounded-circle" style="width: 24px; height: 24px; object-fit: cover;">
+                        </template>
+                        <template x-if="!$store.cloudAuth.currentUser?.avatar_url">
+                            <span class="user-avatar-initials rounded-circle d-flex align-items-center justify-content-center"
+                                  style="width: 24px; height: 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); font-size: 0.65rem; color: white; font-weight: 600;"
+                                  x-text="($store.cloudAuth.currentUser?.display_name || $store.cloudAuth.currentUser?.username || 'U').substring(0, 2).toUpperCase()"></span>
+                        </template>
+                        <span class="btn-text d-none d-md-inline" x-text="$store.cloudAuth.currentUser?.display_name || $store.cloudAuth.currentUser?.username || 'Account'"></span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                        <li>
+                            <div class="dropdown-header">
+                                <div class="fw-bold" x-text="$store.cloudAuth.currentUser?.display_name || $store.cloudAuth.currentUser?.username"></div>
+                                <small class="text-muted" x-text="$store.cloudAuth.currentUser?.email"></small>
+                            </div>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#userProfileModal">
+                                <i class="fas fa-user me-2"></i>Profile
+                            </button>
+                        </li>
+                        <li>
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#apiKeysModal">
+                                <i class="fas fa-key me-2"></i>API Keys
+                            </button>
+                        </li>
+                        <li x-show="$store.cloudAuth.currentUser?.auth_provider === 'local'">
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#changePasswordModal">
+                                <i class="fas fa-lock me-2"></i>Change Password
+                            </button>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <button type="button" class="dropdown-item text-danger" @click="$store.cloudAuth.logout()">
+                                <i class="fas fa-sign-out-alt me-2"></i>Sign Out
+                            </button>
+                        </li>
+                    </ul>
                 </div>
+
             </div>
         </div>
 
@@ -6073,8 +7025,7 @@ function trainerComponent() {
                 </label>
                 <div class="text-muted small mt-2" x-show="createBackupOption">
                     Backup will be saved as:<br>
-                    <code x-text="'multidatabackend.json.backup-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)"></code>
-                </div>
+                                                        <code x-text="generateBackupFilename('multidatabackend.json')"></code>                </div>
             </div>
 
             <div class="d-flex justify-content-end gap-2">
@@ -6112,8 +7063,7 @@ function trainerComponent() {
                 </label>
                 <div class="text-muted small mt-2" x-show="createConfigBackupOption">
                     Backup will be saved as:<br>
-                    <code x-text="'config.json.backup-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)"></code>
-                </div>
+                                                        <code x-text="generateBackupFilename('config.json')"></code>                </div>
             </div>
 
             <div class="form-check mb-4">
@@ -6158,16 +7108,20 @@ function trainerComponent() {
                 <div class="event-dock-title">
                     <i class="fas fa-terminal"></i>
                     <span>Training Events</span>
-                    <span class="badge ms-2"
+                    <span class="badge ms-2 connection-status-badge"
                           :class="{
                               'bg-success': connectionStatus === 'connected',
                               'bg-danger': connectionStatus === 'disconnected',
                               'bg-warning text-dark': connectionStatus === 'reconnecting',
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
-                          :title="connectionMessage || ''"
-                          :aria-label="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"
-                          x-text="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"></span>
+                          :title="connectionStatusTitle"
+                          :aria-label="connectionStatusLabel">
+                        <span x-text="connectionStatusLabel"></span>
+                        <span class="connection-uptime-tooltip"
+                              x-show="connectionUptimeLabel"
+                              x-text="connectionUptimeLabel"></span>
+                    </span>
                 </div>
                 <div class="event-dock-sysstat">
                     <template x-if="hasSystemStatus">
@@ -6568,9 +7522,16 @@ window.triggerManualCheckpoint = async function() {
 <script src="/static/js/modules/search.js?v={{ asset_version }}"></script>
 
 <!-- Load tab-specific modules early so they're available when tabs load -->
+<!-- Markdown rendering dependencies (for checkpoints tab) -->
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="/static/js/services/markdown-service.js?v={{ asset_version }}"></script>
+
 <script src="/static/js/modules/publishing.js?v={{ asset_version }}"></script>
 <script src="/static/js/modules/webhooks.js?v={{ asset_version }}"></script>
 <script src="/static/js/modules/checkpoints.js?v={{ asset_version }}"></script>
+<script src="/static/js/modules/job_queue.js?v={{ asset_version }}"></script>
 <script src="/static/js/modules/streaming-validation-lightbox.js?v={{ asset_version }}"></script>
 <script src="/static/js/lycoris-configurator.js?v={{ asset_version }}"></script>
 <script src="/static/js/prompt-library-manager.js?v={{ asset_version }}" defer></script>
@@ -6611,5 +7572,8 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 {% include 'partials/training_wizard_modal.html' %}
 {% include 'partials/deepspeed_builder_modal.html' %}
 {% include 'partials/memory_presets_modal.html' %}
+{% include 'partials/user_profile_modal.html' %}
+{% include 'partials/api_keys_modal.html' %}
+{% include 'partials/change_password_modal.html' %}
 
 {% endblock %}

@@ -107,6 +107,7 @@ default_models = {
     "sana": "terminusresearch/sana-1.6b-1024px",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "wan_s2v": "tolgacangoz/Wan2.2-S2V-14B-Diffusers",
     "hidream": "HiDream-ai/HiDream-I1-Full",
     "auraflow": "terminusresearch/auraflow-v0.3",
     "deepfloyd": "DeepFloyd/DeepFloyd-IF-I-XL-v1.0",
@@ -123,6 +124,7 @@ default_cfg = {
     "ltxvideo": 4.0,
     "hidream": 2.5,
     "wan": 4.0,
+    "wan_s2v": 4.5,
     "sana": 3.8,
     "omnigen": 3.2,
     "deepfloyd": 6.0,
@@ -141,6 +143,7 @@ model_labels = {
     "sd1x": "Stable Diffusion",
     "ltxvideo": "LTX Video",
     "wan": "WanX",
+    "wan_s2v": "WanS2V",
     "hidream": "HiDream I1",
     "sana": "Sana",
 }

@@ -133,7 +133,7 @@ class PortAssignmentTestCase(unittest.TestCase):
     """Document expected CLI defaults for server ports."""
 
     def test_default_ports_by_mode(self) -> None:
-        from simpletuner.cli import cmd_server  # Local import to avoid circulars
+        from simpletuner.cli import server as cmd_server  # Local import to avoid circulars
 
         trainer_args = SimpleNamespace(mode="trainer", host="0.0.0.0", port=None, reload=False)
         callback_args = SimpleNamespace(mode="callback", host="0.0.0.0", port=None, reload=False)

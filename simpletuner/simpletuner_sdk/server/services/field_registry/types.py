@@ -112,6 +112,7 @@ class ConfigField:
     webui_onboarding: bool = False
     webui_only: bool = False  # True if this field is WebUI-specific and should not be passed to the trainer
     disabled: bool = False
+    required: bool = False
     aliases: Optional[List[str]] = None
     parser_type: Optional[ParserType] = None
     allow_empty: bool = False  # True if empty strings should be preserved instead of replaced with default_value

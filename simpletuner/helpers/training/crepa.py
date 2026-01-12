@@ -1,18 +1,32 @@
+import logging
 import math
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+if TYPE_CHECKING:
+    from simpletuner.helpers.models.common import ModelFoundation
+
+logger = logging.getLogger(__name__)
+
 
 class CrepaRegularizer:
     """Implements Cross-frame Representation Alignment (CREPA) as defined in Eq. (6) of the paper."""
 
-    def __init__(self, config, accelerator, hidden_size: int):
+    def __init__(
+        self,
+        config,
+        accelerator,
+        hidden_size: int,
+        *,
+        model_foundation: Optional["ModelFoundation"] = None,
+    ):
         self.config = config
         self.device = accelerator.device
         self.hidden_size = hidden_size
+        self.model_foundation = model_foundation
 
         self.enabled = bool(getattr(config, "crepa_enabled", False))
         self.block_index = getattr(config, "crepa_block_index", None)
@@ -38,10 +52,20 @@ class CrepaRegularizer:
         self.cumulative_neighbors = bool(getattr(config, "crepa_cumulative_neighbors", False))
 
         self.use_backbone_features = bool(getattr(config, "crepa_use_backbone_features", False))
+        self.use_tae = bool(getattr(config, "crepa_use_tae", False))
         self.teacher_block_index = getattr(config, "crepa_teacher_block_index", None)
         self.encoder: Optional[torch.nn.Module] = None
         self.encoder_dim: Optional[int] = None
         self.projector: Optional[torch.nn.Module] = None
+
+        # Validate TAE availability if requested
+        if self.use_tae and self.enabled and not self.use_backbone_features:
+            if model_foundation is not None and not model_foundation.supports_validation_preview():
+                logger.warning(
+                    f"crepa_use_tae=True but {model_foundation.NAME} does not support TAE. "
+                    "Falling back to full VAE decoding."
+                )
+                self.use_tae = False
 
     # --------------------------- public helpers ---------------------------
     def attach_to_model(self, model: nn.Module):
@@ -80,7 +104,7 @@ class CrepaRegularizer:
         self,
         hidden_states: Optional[torch.Tensor],
         latents: Optional[torch.Tensor],
-        vae: Optional[nn.Module],
+        vae: Optional[nn.Module] = None,
         *,
         frame_features: Optional[torch.Tensor] = None,
     ) -> Tuple[Optional[torch.Tensor], Optional[dict]]:
@@ -91,7 +115,8 @@ class CrepaRegularizer:
         if not self.use_backbone_features:
             if latents is None:
                 raise ValueError("CREPA requires access to clean latents for decoding.")
-            if vae is None:
+            # Only require VAE if not using unified decode via model_foundation
+            if self.model_foundation is None and vae is None:
                 raise ValueError("CREPA requires a VAE to decode latents back to pixel space.")
         else:
             if frame_features is None:
@@ -102,7 +127,7 @@ class CrepaRegularizer:
             return None, None
 
         if not self.use_backbone_features:
-            video_pixels = self._decode_latents(latents, vae)
+            video_pixels = self._decode_latents_unified(latents, vae)
             frame_features = self._encode_frames(video_pixels)  # (B, T_pixel, N_enc, D_enc)
         else:
             frame_features = self._normalize_frame_features(frame_features)
@@ -286,7 +311,26 @@ class CrepaRegularizer:
             raise ValueError(f"Unexpected encoder token shape: {tokens.shape}")
         return tokens
 
-    def _decode_latents(self, latents: torch.Tensor, vae: nn.Module) -> torch.Tensor:
+    def _decode_latents_unified(self, latents: torch.Tensor, vae: Optional[nn.Module]) -> torch.Tensor:
+        """
+        Decode latents to pixel space using either the unified model interface or legacy VAE path.
+
+        Uses model_foundation.decode_latents_to_pixels when available, which handles
+        TAE vs VAE selection and all normalization concerns. Falls back to direct VAE
+        decode for backward compatibility when model_foundation is not set.
+
+        Returns:
+            Video pixels in (B, T, C, H, W) format, [0, 1] range.
+        """
+        if self.model_foundation is not None:
+            # Use unified decode interface - handles TAE/VAE and normalization
+            return self.model_foundation.decode_latents_to_pixels(latents, use_tae=self.use_tae)
+
+        # Legacy fallback: direct VAE decode (for backward compatibility)
+        return self._decode_latents_legacy(latents, vae)
+
+    def _decode_latents_legacy(self, latents: torch.Tensor, vae: nn.Module) -> torch.Tensor:
+        """Legacy VAE decode path for backward compatibility."""
         vae_dtype = next(vae.parameters()).dtype
         latents = latents.to(device=self.device, dtype=vae_dtype)
         scaling_factor = getattr(getattr(vae, "config", None), "scaling_factor", 1.0)
@@ -325,8 +369,14 @@ class CrepaRegularizer:
         std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
         frames = (frames - mean) / std
 
-        frames_batches = list(torch.split(frames, self.encoder_frames_batch_size, dim=0)) if self.encoder_frames_batch_size > 0 else [frames]
-        tokens = torch.cat([self._forward_encoder(frames_batch) for frames_batch in frames_batches], dim=0)  # (BT, N_tokens, D)
+        frames_batches = (
+            list(torch.split(frames, self.encoder_frames_batch_size, dim=0))
+            if self.encoder_frames_batch_size > 0
+            else [frames]
+        )
+        tokens = torch.cat(
+            [self._forward_encoder(frames_batch) for frames_batch in frames_batches], dim=0
+        )  # (BT, N_tokens, D)
         tokens = tokens.view(b, t, tokens.shape[1], -1)
         return tokens
 

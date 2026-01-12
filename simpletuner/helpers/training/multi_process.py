@@ -1,17 +1,23 @@
 import os
 from typing import Iterable, List, Optional, TypeVar
 
-import torch.distributed as dist
+# Skip torch import in CLI mode for fast startup
+_SKIP_TORCH = os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() in ("1", "true", "yes")
+
+if not _SKIP_TORCH:
+    import torch.distributed as dist
+else:
+    dist = None  # type: ignore
 
 
 def _get_rank() -> int:
-    if dist.is_available() and dist.is_initialized():
+    if dist is not None and dist.is_available() and dist.is_initialized():
         return dist.get_rank()
     return int(os.environ.get("RANK", 0))
 
 
 def _get_world_size() -> int:
-    if dist.is_available() and dist.is_initialized():
+    if dist is not None and dist.is_available() and dist.is_initialized():
         return dist.get_world_size()
     return int(os.environ.get("WORLD_SIZE", 1))
 
@@ -34,7 +40,7 @@ def broadcast_object_from_main(obj: T, *, src: int = 0) -> T:
     """
     Broadcast an arbitrary Python object from the source rank to every process.
     """
-    if not dist.is_available() or not dist.is_initialized() or _get_world_size() == 1:
+    if dist is None or not dist.is_available() or not dist.is_initialized() or _get_world_size() == 1:
         return obj
     payload: List[Optional[T]]
     if _get_rank() == src:
@@ -64,7 +70,7 @@ def gather_across_processes(obj: T) -> list[T]:
     """
     Gather a picklable object from every process and return the non-null payloads.
     """
-    if not dist.is_available() or not dist.is_initialized() or _get_world_size() == 1:
+    if dist is None or not dist.is_available() or not dist.is_initialized() or _get_world_size() == 1:
         return [obj]
     gathered: List[Optional[T]] = [None for _ in range(_get_world_size())]
     dist.all_gather_object(gathered, obj)

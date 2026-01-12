@@ -1,6 +1,8 @@
 <!-- templates/environments_tab.html - Configuration management tab -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-environments">
-<script>document.getElementById('css-form-sections-environments').href = '/static/css/form-sections.css?t=' + Date.now();</script>
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-environments">
 <script>
 window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
 </script>
@@ -167,79 +169,100 @@ window.environmentsTabComponent = function environmentsTabComponent() {
          mobilePanelMenuOpen: false,
          mobileConfigMenuOpen: false,
          mobileMoreMenuOpen: false,
-        dataloaderConfigs: [],
-        expandedEnvironments: {},
-        dataloaderModal: {
-            open: false,
-            environment: '',
-            path: '',
-            loading: false
+
+         // Unified Hint Management (includes hero CTA and inline hints)
+         ...window.HintMixin.createMultiHint({
+             useApi: false,
+             storageKey: 'st_environments_hints',
+             hintKeys: ['hero', 'default_env']
+         }),
+         // Convenience methods for hero CTA compatibility
+         // Note: Must use method, not getter - getters are evaluated once when spread
+         showHeroCTA() { return this.hints.hero; },
+         dismissHeroCTA() { this.dismissHint('hero'); },
+         restoreHeroCTA() { this.showHint('hero'); },
+         dataloaderConfigs: [],
+         expandedEnvironments: {},
+         dataloaderModal: {
+             open: false,
+             environment: '',
+             path: '',
+             loading: false
+         },
+         lycorisEditor: {
+             open: false,
+             loading: false,
+             selectedEnvironment: null
+         },
+         lycorisEditorMode: 'environment',
+         lycorisLibraryName: null,
+         lycorisLibraryIsNew: false,
+         lycorisConfig: {
+             algo: 'lora',
+             multiplier: 1.0,
+             linear_dim: 64,
+             linear_alpha: 32,
+             factor: null,
+             block_size: null,
+             apply_preset: {}
+         },
+         lycorisMetadata: null,
+         lycorisMetadataLoading: false,
+         lycorisPresetSelection: '',
+         lycorisModuleOverrides: [
+             { key: '', algo: '', options: [{ key: '', value: '' }] }
+         ],
+         lycorisNameOverrides: [
+             { key: '', algo: '', options: [{ key: '', value: '' }] }
+         ],
+         lycorisPresetLists: {
+             target_module: '',
+             target_name: '',
+             unet_target_module: '',
+             unet_target_name: '',
+             text_encoder_target_module: '',
+             text_encoder_target_name: '',
+             exclude_name: '',
+         },
+         lycorisCollapsedSections: buildLycorisCollapsedDefaults(),
+         // Webhook editor state
+         webhookEditor: {
+             open: false,
+             loading: false,
+             isNew: true,
+             editingName: null
+         },
+         webhookConfig: {
+             webhook_type: 'discord',
+             webhook_url: '',
+             callback_url: '',
+             message_prefix: '',
+             log_level: 'info'
+         },
+         promptLibraries: Array.isArray(window.__initialPromptLibraries)
+             ? window.__initialPromptLibraries.slice()
+             : [],
+         promptLibrariesLoading: false,
+         promptLibrariesListener: null,
+         gitReady: false,
+         gitStatus: null,
+         gitHistoryModal: {
+             open: false,
+             target: null,
+             commits: [],
+             diff: null,
+             workingDiff: null,
+             loading: false,
+             error: '',
+         },
+
+        formatDate(isoString) {
+            if (!isoString) return '';
+            return new Date(isoString).toLocaleDateString();
         },
-        lycorisEditor: {
-            open: false,
-            loading: false,
-            selectedEnvironment: null
-        },
-        lycorisEditorMode: 'environment',
-        lycorisLibraryName: null,
-        lycorisLibraryIsNew: false,
-        lycorisConfig: {
-            algo: 'lora',
-            multiplier: 1.0,
-            linear_dim: 64,
-            linear_alpha: 32,
-            factor: null,
-            block_size: null,
-            apply_preset: {}
-        },
-        lycorisMetadata: null,
-        lycorisMetadataLoading: false,
-        lycorisPresetSelection: '',
-        lycorisModuleOverrides: [
-            { key: '', algo: '', options: [{ key: '', value: '' }] }
-        ],
-        lycorisNameOverrides: [
-            { key: '', algo: '', options: [{ key: '', value: '' }] }
-        ],
-        lycorisPresetLists: {
-            target_module: '',
-            target_name: '',
-            unet_target_module: '',
-            unet_target_name: '',
-            text_encoder_target_module: '',
-            text_encoder_target_name: '',
-            exclude_name: '',
-        },
-        lycorisCollapsedSections: buildLycorisCollapsedDefaults(),
-        // Webhook editor state
-        webhookEditor: {
-            open: false,
-            loading: false,
-            isNew: true,
-            editingName: null
-        },
-        webhookConfig: {
-            webhook_type: 'discord',
-            webhook_url: '',
-            callback_url: '',
-            message_prefix: '',
-            log_level: 'info'
-        },
-        promptLibraries: Array.isArray(window.__initialPromptLibraries)
-            ? window.__initialPromptLibraries.slice()
-            : [],
-        promptLibrariesLoading: false,
-        promptLibrariesListener: null,
-        gitReady: false,
-        gitStatus: null,
-        gitHistoryModal: {
-            open: false,
-            target: null,
-            commits: [],
-            diff: null,
-            workingDiff: null,
-            loading: false,
-            error: '',
+        formatCommitDate(timestamp) {
+            if (!timestamp) return '';
+            return new Date(timestamp * 1000).toLocaleString();
         },
 
         hasDataloader(config) {
@@ -2083,7 +2106,71 @@ window.environmentsTabComponent = function environmentsTabComponent() {
      id="environments-tab-content"
      data-tab-name="environments"
      x-data="environmentsTabComponent()"
-     x-init="loadConfigs(); loadTemplates(); registerPromptLibraryListener(); loadGitStatus()">
+     x-init="loadHints(); loadConfigs(); loadTemplates(); registerPromptLibraryListener(); loadGitStatus()">
+
+    <!-- Hero CTA - Full page introduction -->
+    {% call hero_cta(
+        theme='indigo',
+        icon_class='fa-layer-group',
+        icon_shape='rounded',
+        title='Training Environments',
+        description='The welcome wizard helped you create your first environment. This page lets you manage all your environments, dataloaders, prompt libraries, and caption filters.',
+        features=[
+            {'icon': 'fa-cog', 'color': 'text-primary', 'label': 'Model Configs'},
+            {'icon': 'fa-database', 'color': 'text-success', 'label': 'Dataloaders'},
+            {'icon': 'fa-book', 'color': 'text-warning', 'label': 'Prompt Libraries'},
+            {'icon': 'fa-filter', 'color': 'text-info', 'label': 'Caption Filters'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Dismiss', 'icon': 'fa-check', 'action': 'dismissHeroCTA()'},
+        tip_text='The <strong>Default</strong> environment provides base settings inherited by other environments when "Merge defaults" is enabled.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-cog text-primary me-2"></i>Model Configurations</h6>
+                    <p class="small text-muted mb-0">
+                        Define which base model to fine-tune (SDXL, Flux, SD3, etc.), training parameters like
+                        learning rate and batch size, LoRA/LyCORIS settings, and optimizer configurations.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-database text-success me-2"></i>Dataloader Configs</h6>
+                    <p class="small text-muted mb-0">
+                        Configure your training datasets, including image paths, caption handling, bucketing
+                        strategies, and preprocessing options. Each environment can have its own dataloader.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-book text-warning me-2"></i>Prompt Libraries</h6>
+                    <p class="small text-muted mb-0">
+                        Create reusable collections of prompts for validation during training. Libraries can
+                        be shared across environments and used for consistent quality checks.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-filter text-info me-2"></i>Caption Filters</h6>
+                    <p class="small text-muted mb-0">
+                        Define text processing rules for captions - remove unwanted phrases, replace terms,
+                        or apply regex patterns. Filters are applied during dataloader preprocessing.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <!-- Main Content (hidden when hero CTA is shown) -->
+    <template x-if="!showHeroCTA()">
+    <div>
 
     <!-- Main Card -->
     <div class="card mb-4">
@@ -2176,6 +2263,9 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                         <i class="fas fa-ellipsis-v"></i>
                     </button>
                     <div class="dropdown-menu dropdown-menu-end" :class="{ 'show': mobileMoreMenuOpen }">
+                        <button class="dropdown-item" @click="restoreAllHints(); mobileMoreMenuOpen = false" x-show="!showHeroCTA() || anyHintsDismissed()">
+                            <i class="fas fa-question-circle me-2"></i>Help
+                        </button>
                         <button class="dropdown-item" @click="document.getElementById('import-file').click(); mobileMoreMenuOpen = false">
                             <i class="fas fa-upload me-2"></i>Import
                         </button>
@@ -2189,11 +2279,21 @@ window.environmentsTabComponent = function environmentsTabComponent() {
 
         <!-- Desktop Card Header - hidden on mobile -->
         <div class="card-header env-desktop-only">
-            <h5 class="mb-1"><i class="fas fa-folder-open me-2"></i>Configuration Environments</h5>
-            <p class="text-muted mb-3">Manage training configurations and caption filters</p>
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <h5 class="mb-1"><i class="fas fa-folder-open me-2"></i>Configuration Environments</h5>
+                    <p class="text-muted mb-0 small">Manage training configurations and caption filters</p>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary"
+                        x-show="!showHeroCTA() || anyHintsDismissed()"
+                        @click="restoreAllHints()"
+                        title="Show getting started guide and hints">
+                    <i class="fas fa-question-circle me-1"></i>Help
+                </button>
+            </div>
 
             <!-- Panel Switcher -->
-            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3">
             <div class="btn-group" role="group">
                 <button type="button" class="btn btn-sm"
                         :class="activePanel === 'configs' ? 'btn-primary' : 'btn-outline-secondary'"
@@ -2219,155 +2319,176 @@ window.environmentsTabComponent = function environmentsTabComponent() {
             </div>
         </div>
 
-        <div class="card-body">
-    <div x-show="activePanel === 'configs'">
-    <!-- Config Type Tabs - desktop only -->
-    <div class="btn-group mb-3 env-desktop-only" role="group">
-        <button type="button" class="btn"
-                :class="configType === 'model' ? 'btn-primary' : 'btn-outline-secondary'"
-                @click="switchConfigType('model')">
-            <i class="fas fa-cog me-1"></i>Model
-        </button>
-        <button type="button" class="btn"
-                :class="configType === 'dataloader' ? 'btn-primary' : 'btn-outline-secondary'"
-                @click="switchConfigType('dataloader')">
-            <i class="fas fa-database me-1"></i>Dataloader
-        </button>
-        <button type="button" class="btn"
-                :class="configType === 'webhook' ? 'btn-primary' : 'btn-outline-secondary'"
-                @click="switchConfigType('webhook')">
-            <i class="fas fa-plug me-1"></i>Webhook
-        </button>
-        <button type="button" class="btn"
-                :class="configType === 'lycoris' ? 'btn-primary' : 'btn-outline-secondary'"
-                @click="switchConfigType('lycoris')">
-            <i class="fas fa-brain me-1"></i>LyCORIS
-        </button>
-    </div>
-
-    <!-- Header - desktop only -->
-    <div class="d-flex justify-content-between align-items-center mb-4 env-desktop-only">
-        <h5>
-            <i class="fas fa-folder-open"></i>
-            <span x-text="configType === 'lycoris' ? 'LyCORIS Configuration Library' : 'Configuration Environments'"></span>
-        </h5>
-
-        <div class="d-flex align-items-center gap-3">
-            <!-- Search -->
-            <div class="input-group input-group-sm" style="width: 250px;">
-                <input type="text"
-                       class="form-control"
-                       placeholder="Search configurations..."
-                       x-model="searchTerm">
-                <span class="input-group-text">
-                    <i class="fas fa-search"></i>
-                </span>
-            </div>
-
-            <!-- View Mode -->
-            <div class="btn-group btn-group-sm">
-                <button type="button"
-                        class="btn"
-                        :class="viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="setViewMode('cards')"
-                        title="Card view"
-                        aria-label="Card view">
-                    <i class="fas fa-th-large"></i>
-                </button>
-                <button type="button"
-                        class="btn"
-                        :class="viewMode === 'list' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="setViewMode('list')"
-                        title="List view"
-                        aria-label="List view">
-                    <i class="fas fa-list"></i>
-                </button>
-            </div>
-
-            <!-- Actions -->
-            <button type="button"
-                    class="btn btn-sm btn-success"
-                    x-show="configType === 'model'"
-                    @click="openCreateEnvironmentModal()"
-                    title="Create Environment"
-                    aria-label="Create Environment">
-                <i class="fas fa-plus"></i><span class="btn-text"> New</span>
-            </button>
-            <button type="button"
-                    class="btn btn-sm btn-success"
-                    x-show="configType === 'lycoris'"
-                    @click="openLycorisLibraryCreator()"
-                    title="New LyCORIS Config"
-                    aria-label="New LyCORIS Config">
-                <i class="fas fa-plus"></i><span class="btn-text"> New</span>
-            </button>
-            <button type="button"
-                    class="btn btn-sm btn-success"
-                    x-show="configType === 'webhook'"
-                    @click="openWebhookEditor()"
-                    title="New Webhook Config"
-                    aria-label="New Webhook Config">
-                <i class="fas fa-plus"></i><span class="btn-text"> New</span>
-            </button>
-            <button type="button"
-                    class="btn btn-sm btn-primary"
-                    onclick="document.getElementById('import-file').click()"
-                    title="Import configuration"
-                    aria-label="Import configuration">
-                <i class="fas fa-upload"></i><span class="btn-text"> Import</span>
-            </button>
-            <input type="file"
-                   id="import-file"
-                   style="display: none;"
-                   accept=".json"
-                   @change="importConfig($event)">
-
-            <button type="button"
-                    class="btn btn-sm btn-danger"
-                    @click="deleteSelected()"
-                    :disabled="selectedConfigs.length === 0"
-                    title="Delete selected"
-                    aria-label="Delete selected">
-                <i class="fas fa-trash"></i><span class="btn-text"> Delete</span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Templates Section -->
-    <div class="mb-4" x-show="configType === 'model' && templates.length > 0">
-        <h6 class="text-muted mb-3">
-            <i class="fas fa-magic"></i> Quick Start Templates
-        </h6>
-        <div class="row g-3">
-            <template x-for="template in templates" :key="template.name">
-                <div class="col-md-3">
-                    <div class="card template-card">
-                        <div class="card-body p-3">
-                            <h6 class="card-title" x-text="template.name"></h6>
-                            <p class="card-text small text-muted" x-text="template.description"></p>
-                            <button class="btn btn-sm btn-outline-primary w-100"
-                                    @click="createFromTemplate(template.name)">
-                                <i class="fas fa-plus"></i> Use Template
-                            </button>
+        <!-- Default Environment Hint -->
+        <div class="cta-hint"
+             x-show="activePanel === 'configs' && configType === 'model' && hints.default_env"
+             x-transition
+             x-cloak>
+            <div class="cta-hint-content">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="d-flex gap-3">
+                        <i class="fas fa-info-circle text-info mt-1" style="font-size: 1.2rem;"></i>
+                        <div>
+                            <h6 class="mb-1 text-white">Default Environment Inheritance</h6>
+                            <p class="small mb-0 text-muted" style="line-height: 1.5;">
+                                The <strong>Default</strong> environment provides base settings that are optionally inherited by other environments.
+                                When <em>"Merge active environment defaults"</em> is enabled in Basic Config → Project Settings, values from the Default
+                                environment are used as fallbacks for any settings not explicitly configured in the active environment.
+                            </p>
                         </div>
                     </div>
+                    <button type="button"
+                            class="cta-hint-close"
+                            @click="dismissHint('default_env')"
+                            title="Dismiss hint">
+                        <i class="fas fa-times"></i>
+                    </button>
                 </div>
-            </template>
+            </div>
         </div>
-    </div>
 
-    <!-- Configurations Grid/List -->
-    <div class="configurations-container">
-        <div class="alert alert-info d-flex align-items-start gap-2 small" x-show="configType === 'model'" x-cloak>
-            <i class="fas fa-info-circle mt-1"></i>
-            <span>
-                The <strong>Default</strong> environment is optionally merged with the active environment when training begins.<br />
-                You can enable or disable this from <strong>Basic Config → Project Settings → "Merge active environment defaults"</strong>.
-            </span>
-        </div>
-        <!-- Cards View -->
-        <div x-show="viewMode === 'cards'" class="row g-3">
-            <template x-for="config in filteredConfigs()" :key="config.name">
+        <div class="card-body">
+            <div x-show="activePanel === 'configs'">
+                <!-- Config Type Tabs - desktop only -->
+                <div class="btn-group mb-3 env-desktop-only" role="group">
+                    <button type="button" class="btn"
+                            :class="configType === 'model' ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="switchConfigType('model')">
+                        <i class="fas fa-cog me-1"></i>Model
+                    </button>
+                    <button type="button" class="btn"
+                            :class="configType === 'dataloader' ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="switchConfigType('dataloader')">
+                        <i class="fas fa-database me-1"></i>Dataloader
+                    </button>
+                    <button type="button" class="btn"
+                            :class="configType === 'webhook' ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="switchConfigType('webhook')">
+                        <i class="fas fa-plug me-1"></i>Webhook
+                    </button>
+                    <button type="button" class="btn"
+                            :class="configType === 'lycoris' ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="switchConfigType('lycoris')">
+                        <i class="fas fa-brain me-1"></i>LyCORIS
+                    </button>
+                </div>
+
+                <!-- Header - desktop only -->
+                <div class="d-flex justify-content-between align-items-center mb-4 env-desktop-only">
+                    <h5>
+                        <i class="fas fa-folder-open"></i>
+                        <span x-text="configType === 'lycoris' ? 'LyCORIS Configuration Library' : 'Configuration Environments'"></span>
+                    </h5>
+
+                    <div class="d-flex align-items-center gap-3">
+                        <!-- Search -->
+                        <div class="input-group input-group-sm" style="width: 250px;">
+                            <input type="text"
+                                   class="form-control"
+                                   placeholder="Search configurations..."
+                                   x-model="searchTerm">
+                            <span class="input-group-text">
+                                <i class="fas fa-search"></i>
+                            </span>
+                        </div>
+
+                        <!-- View Mode -->
+                        <div class="btn-group btn-group-sm">
+                            <button type="button"
+                                    class="btn"
+                                    :class="viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary'"
+                                    @click="setViewMode('cards')"
+                                    title="Card view"
+                                    aria-label="Card view">
+                                <i class="fas fa-th-large"></i>
+                            </button>
+                            <button type="button"
+                                    class="btn"
+                                    :class="viewMode === 'list' ? 'btn-primary' : 'btn-outline-secondary'"
+                                    @click="setViewMode('list')"
+                                    title="List view"
+                                    aria-label="List view">
+                                <i class="fas fa-list"></i>
+                            </button>
+                        </div>
+
+                        <!-- Actions -->
+                        <button type="button"
+                                class="btn btn-sm btn-success"
+                                x-show="configType === 'model'"
+                                @click="openCreateEnvironmentModal()"
+                                title="Create Environment"
+                                aria-label="Create Environment">
+                            <i class="fas fa-plus"></i><span class="btn-text"> New</span>
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-success"
+                                x-show="configType === 'lycoris'"
+                                @click="openLycorisLibraryCreator()"
+                                title="New LyCORIS Config"
+                                aria-label="New LyCORIS Config">
+                            <i class="fas fa-plus"></i><span class="btn-text"> New</span>
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-success"
+                                x-show="configType === 'webhook'"
+                                @click="openWebhookEditor()"
+                                title="New Webhook Config"
+                                aria-label="New Webhook Config">
+                            <i class="fas fa-plus"></i><span class="btn-text"> New</span>
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-primary"
+                                onclick="document.getElementById('import-file').click()"
+                                title="Import configuration"
+                                aria-label="Import configuration">
+                            <i class="fas fa-upload"></i><span class="btn-text"> Import</span>
+                        </button>
+                        <input type="file"
+                               id="import-file"
+                               style="display: none;"
+                               accept=".json"
+                               @change="importConfig($event)">
+
+                        <button type="button"
+                                class="btn btn-sm btn-danger"
+                                @click="deleteSelected()"
+                                :disabled="selectedConfigs.length === 0"
+                                title="Delete selected"
+                                aria-label="Delete selected">
+                            <i class="fas fa-trash"></i><span class="btn-text"> Delete</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Templates Section -->
+                <div class="mb-4" x-show="configType === 'model' && templates.length > 0">
+                    <h6 class="text-muted mb-3">
+                        <i class="fas fa-magic"></i> Quick Start Templates
+                    </h6>
+                    <div class="row g-3">
+                        <template x-for="template in templates" :key="template.name">
+                            <div class="col-md-3">
+                                <div class="card template-card">
+                                    <div class="card-body p-3">
+                                        <h6 class="card-title" x-text="template.name"></h6>
+                                        <p class="card-text small text-muted" x-text="template.description"></p>
+                                        <button class="btn btn-sm btn-outline-primary w-100"
+                                                @click="createFromTemplate(template.name)">
+                                            <i class="fas fa-plus"></i> Use Template
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Configurations Grid/List -->
+                <div class="configurations-container">
+                    <!-- Cards View -->
+                    <div x-show="viewMode === 'cards'" class="row g-3">
+                        <template x-for="config in filteredConfigs()" :key="config.name">
                 <div class="col-md-4">
                     <div class="card config-card"
                          :class="{
@@ -2438,7 +2559,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         </span>
                                     </template>
                                 </small>
-                                <small class="text-muted" x-text="new Date(config.modified_at).toLocaleDateString()"></small>
+                                <small class="text-muted" x-text="formatDate(config.modified_at)"></small>
                             </div>
 
                             <div class="btn-group btn-group-sm w-100">
@@ -2676,7 +2797,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                     </span>
                                 </template>
                             </td>
-                            <td x-text="new Date(config.modified_at).toLocaleDateString()"></td>
+                            <td x-text="formatDate(config.modified_at)"></td>
                             <td>
                                 <div class="btn-group btn-group-sm">
                                     <button type="button"
@@ -3606,7 +3727,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         @click="loadDiffForCommit(commit.commit)">
                                     <div class="d-flex justify-content-between">
                                         <span class="fw-semibold" x-text="commit.abbrev"></span>
-                                        <small class="text-muted" x-text="commit.timestamp ? new Date(commit.timestamp * 1000).toLocaleString() : ''"></small>
+                                        <small class="text-muted" x-text="formatCommitDate(commit.timestamp)"></small>
                                     </div>
                                     <div class="small" x-text="commit.subject"></div>
                                     <div class="text-muted small" x-text="commit.author"></div>
@@ -3651,8 +3772,10 @@ window.environmentsTabComponent = function environmentsTabComponent() {
     </div>
 
 </div>
-    </div>
 
+    </div>
+    </template>
+    <!-- End main content template -->
 
 <!-- End tab fragment -->
 </div>

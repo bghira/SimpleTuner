@@ -1,6 +1,11 @@
 import atexit
 import json
 import logging
+from os import environ
+from pathlib import Path
+
+# Import WebhookLogger setup FIRST before creating any loggers
+from simpletuner.helpers.logging import get_logger
 
 # Quiet down, you.
 ds_logger1 = logging.getLogger("DeepSpeed")
@@ -12,16 +17,13 @@ import logging.config
 logging.config.dictConfig(
     {
         "version": 1,
-        "disable_existing_loggers": True,
+        "disable_existing_loggers": False,  # Changed from True to preserve WebhookLogger
     }
 )
-from os import environ
-from pathlib import Path
 
 environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from simpletuner.helpers import log_format
-from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -183,7 +185,7 @@ if __name__ == "__main__":
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
             )
-        print(e)
-        print(traceback.format_exc())
-    if trainer is not None:
-        trainer.cleanup()
+        raise
+    finally:
+        if trainer is not None:
+            trainer.cleanup()

@@ -1,0 +1,166 @@
+{#
+Hero CTA - Reusable onboarding/introduction component
+
+Usage:
+{% from 'partials/hero_cta.html' import hero_cta %}
+
+{{ hero_cta(
+    theme='amber',
+    icon_class='fa-shield-alt',
+    icon_shape='circle',
+    title='Security Audit Log',
+    description='Track every action in your training environment.',
+    features=[
+        {'icon': 'fa-fingerprint', 'color': 'text-warning', 'label': 'Tamper-proof chain'},
+        {'icon': 'fa-search', 'color': 'text-info', 'label': 'Advanced filtering'},
+    ],
+    show_condition='showHeroCTA',
+    dismiss_method='dismissHeroCTA()',
+    show_dismiss=true
+) }}
+
+For complex content (integrations, setup steps), use the call block:
+{% call hero_cta(...) %}
+    <div class="hero-integrations">...</div>
+{% endcall %}
+#}
+
+{% macro hero_cta(
+    theme='indigo',
+    icon_class='fa-info-circle',
+    icon_shape='circle',
+    title='',
+    description='',
+    features=none,
+    show_condition='showHeroCTA',
+    dismiss_method='dismissHeroCTA()',
+    show_dismiss=true,
+    cta_primary=none,
+    cta_secondary=none,
+    tip_text=none
+) %}
+<div class="hero-cta hero-cta--{{ theme }}"
+     data-theme="{{ theme }}"
+     data-icon-shape="{{ icon_shape }}"
+     x-show="{{ show_condition }}"
+     x-transition:leave="transition ease-in duration-200"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0">
+
+    {% if show_dismiss %}
+    <button type="button" class="hero-dismiss-btn" @click="{{ dismiss_method }}" title="Dismiss">
+        <i class="fas fa-times"></i>
+    </button>
+    {% endif %}
+
+    <div class="hero-content">
+        <div class="hero-icon hero-icon--{{ icon_shape }}">
+            <i class="fas {{ icon_class }}"></i>
+        </div>
+
+        {% if title %}
+        <h2 class="hero-title">{{ title }}</h2>
+        {% endif %}
+
+        {% if description %}
+        <p class="hero-description">{{ description }}</p>
+        {% endif %}
+
+        {% if features %}
+        <div class="hero-features">
+            {% for feature in features %}
+            <div class="hero-feature">
+                <i class="fas {{ feature.icon }} {{ feature.color|default('') }}"></i>
+                <span>{{ feature.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {# Caller content for custom sections (integrations, steps, etc.) #}
+        {{ caller() if caller else '' }}
+
+        {% if cta_primary or cta_secondary %}
+        <div class="hero-actions">
+            {% if cta_primary %}
+            <button type="button" class="btn btn-primary" @click="{{ cta_primary.action }}">
+                {% if cta_primary.icon %}<i class="fas {{ cta_primary.icon }} me-2"></i>{% endif %}
+                {{ cta_primary.label }}
+            </button>
+            {% endif %}
+            {% if cta_secondary %}
+            <button type="button" class="btn btn-outline-secondary" @click="{{ cta_secondary.action }}">
+                {% if cta_secondary.icon %}<i class="fas {{ cta_secondary.icon }} me-2"></i>{% endif %}
+                {{ cta_secondary.label }}
+            </button>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if tip_text %}
+        <div class="hero-tip">
+            <i class="fas fa-info-circle me-2"></i>
+            <span>{{ tip_text|safe }}</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}
+
+
+{# Helper macro for integration cards #}
+{% macro integration_card(icon, title, description, link_text=none, link_url=none, button_text=none, button_action=none) %}
+<div class="integration-card">
+    <div class="d-flex gap-3">
+        <div class="integration-icon" style="font-size: 1.5rem; color: #94a3b8;">
+            <i class="fas {{ icon }}"></i>
+        </div>
+        <div class="integration-info flex-1">
+            <h6 class="mb-1">{{ title }}</h6>
+            <p class="text-muted small mb-2">{{ description }}</p>
+            {% if link_url %}
+            <a href="{{ link_url }}" target="_blank" rel="noopener noreferrer" class="small">
+                <i class="fas fa-external-link-alt me-1"></i>{{ link_text or 'Learn more' }}
+            </a>
+            {% elif button_text %}
+            <button type="button" class="btn btn-sm btn-outline-primary" @click="{{ button_action }}">
+                {{ button_text }}
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+
+{# Helper macro for template buttons (metrics style) #}
+{% macro template_buttons(buttons) %}
+<div class="hero-templates">
+    <div class="template-buttons">
+        {% for btn in buttons %}
+        <button type="button"
+                class="btn btn-sm {{ btn.class|default('btn-outline-primary') }}"
+                @click="{{ btn.action }}"
+                title="{{ btn.title|default('') }}">
+            {% if btn.icon %}<i class="fas {{ btn.icon }} me-1"></i>{% endif %}
+            {{ btn.label }}
+        </button>
+        {% endfor %}
+    </div>
+</div>
+{% endmacro %}
+
+
+{# Helper macro for setup steps (cloud onboarding style) #}
+{% macro setup_step(number, title, description='') %}
+<div class="setup-step">
+    <div class="step-number">{{ number }}</div>
+    <div class="step-content">
+        <h6>{{ title }}</h6>
+        {% if description %}
+        <p>{{ description }}</p>
+        {% endif %}
+        {{ caller() if caller else '' }}
+    </div>
+</div>
+{% endmacro %}

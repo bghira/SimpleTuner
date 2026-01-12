@@ -1,0 +1,96 @@
+<!-- partials/cloud_metrics_panel.html - Dashboard metrics cards -->
+
+<!-- Credit Balance Card -->
+<div class="cloud-card mb-3 mb-lg-4">
+    <div class="cloud-card-header py-2">
+        <h6 class="mb-0"><i class="fas fa-wallet me-2"></i>Balance</h6>
+    </div>
+    <div class="cloud-card-body text-center py-3">
+        <template x-if="isActiveProviderConfigured()">
+            <div>
+                <a href="https://replicate.com/account/billing" target="_blank" class="btn btn-sm btn-outline-info">
+                    <i class="fas fa-external-link-alt me-1"></i>View on Replicate
+                </a>
+                <div class="text-muted small mt-2" style="font-size: 0.65rem;">Billing requires browser login</div>
+            </div>
+        </template>
+        <template x-if="!isActiveProviderConfigured()">
+            <div class="text-muted small">Configure provider first</div>
+        </template>
+    </div>
+</div>
+
+<!-- Time Period Selector + Stats Cards -->
+<div class="cloud-card mb-3 mb-lg-4">
+    <div class="cloud-card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-chart-bar me-2"></i>Statistics</h6>
+        <div class="btn-group btn-group-sm" role="group">
+            <button type="button"
+                    class="btn py-0 px-2"
+                    :class="metricsPeriod === 7 ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="setMetricsPeriod(7)"
+                    style="font-size: 0.65rem;">7d</button>
+            <button type="button"
+                    class="btn py-0 px-2"
+                    :class="metricsPeriod === 30 ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="setMetricsPeriod(30)"
+                    style="font-size: 0.65rem;">30d</button>
+            <button type="button"
+                    class="btn py-0 px-2"
+                    :class="metricsPeriod === 90 ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="setMetricsPeriod(90)"
+                    style="font-size: 0.65rem;">90d</button>
+        </div>
+    </div>
+    <div class="cloud-card-body py-2">
+        <div class="row g-2">
+            <div class="col-6 text-center">
+                <div class="metric-value-sm" x-text="metrics.job_count"></div>
+                <div class="metric-label-sm text-muted">Jobs</div>
+            </div>
+            <div class="col-6 text-center">
+                <div class="metric-value-sm" x-text="formatCost(metrics.total_cost)"></div>
+                <div class="metric-label-sm text-muted">Spent</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Job Status Distribution -->
+<div class="cloud-card mb-3 mb-lg-4">
+    <div class="cloud-card-header py-2">
+        <h6 class="mb-0"><i class="fas fa-chart-pie me-2"></i>Status</h6>
+    </div>
+    <div class="cloud-card-body py-2">
+        <template x-if="Object.keys(metrics.jobs_by_status).length === 0">
+            <div class="text-center text-muted small py-1">No data</div>
+        </template>
+        <template x-if="Object.keys(metrics.jobs_by_status).length > 0">
+            <div class="status-bars">
+                <template x-for="(count, status) in metrics.jobs_by_status" :key="status">
+                    <div class="status-bar-item mb-1">
+                        <div class="d-flex justify-content-between small" style="font-size: 0.7rem;">
+                            <span class="text-capitalize" x-text="status"></span>
+                            <span x-text="count"></span>
+                        </div>
+                        <div class="progress" style="height: 4px;">
+                            <div class="progress-bar"
+                                 :class="'bg-' + statusColor(status)"
+                                 :style="'width: ' + (metrics.job_count > 0 ? (count / metrics.job_count * 100) : 0) + '%'"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- Average Duration -->
+<div class="cloud-card">
+    <div class="cloud-card-header py-2">
+        <h6 class="mb-0"><i class="fas fa-clock me-2"></i>Avg Duration</h6>
+    </div>
+    <div class="cloud-card-body text-center py-2">
+        <div class="metric-value-sm" x-text="formatDuration(metrics.avg_job_duration_seconds)"></div>
+    </div>
+</div>

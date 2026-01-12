@@ -13,6 +13,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from simpletuner.helpers.configuration.cli_utils import normalize_lr_scheduler_value
+
 from ..services.field_registry_wrapper import lazy_field_registry
 
 logger = logging.getLogger(__name__)
@@ -381,22 +383,28 @@ class ValidationService:
             )
 
         # Learning rate scheduler validations
-        scheduler = str(self._get_config_value(config, "lr_scheduler") or "")
-        if scheduler == "polynomial" and not self._get_config_value(config, "lr_scheduler_polynomial_power"):
+        scheduler_raw = self._get_config_value(config, "lr_scheduler")
+        warmup_raw = self._get_config_value(config, "lr_warmup_steps") or 0
+        warmup_value, warmup_error = _to_int(warmup_raw)
+        scheduler = normalize_lr_scheduler_value(
+            scheduler_raw,
+            None if warmup_error else warmup_value,
+        )
+
+        if scheduler != scheduler_raw and scheduler is not None:
+            for key in ("lr_scheduler", "--lr_scheduler"):
+                if key in config:
+                    config[key] = scheduler
+
+        scheduler_str = str(scheduler or "")
+        if scheduler_str == "polynomial" and not self._get_config_value(config, "lr_scheduler_polynomial_power"):
             result.add_warning(
                 "lr_scheduler_polynomial_power",
                 "Polynomial power not specified, defaulting to 1.0",
             )
 
-        warmup_raw = self._get_config_value(config, "lr_warmup_steps") or 0
-        warmup_value, warmup_error = _to_int(warmup_raw)
         if warmup_error:
             result.add_error("lr_warmup_steps", "Warmup steps must be a whole number.")
-        elif scheduler == "constant" and warmup_value and warmup_value > 0:
-            result.add_error(
-                "lr_warmup_steps",
-                "Warmup steps are not supported with the 'constant' learning rate scheduler. Use 'constant_with_warmup' or set warmup steps to 0.",
-            )
 
     @staticmethod
     def _get_config_value(config: Dict[str, Any], field_name: str) -> Any:

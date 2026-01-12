@@ -1,0 +1,81 @@
+<!-- Admin - Rules Tab -->
+<div x-show="activeTab === 'rules'" x-transition>
+    <!-- Rules Hint -->
+    <div class="admin-hint admin-hint-inline" x-show="hints.rules" x-transition>
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="small">
+                <i class="fas fa-lightbulb text-warning me-2"></i>
+                <strong>Resource Rules:</strong>
+                Control which resources users can access using glob patterns. Types: <code>config</code> (training configs),
+                <code>hardware</code> (GPU types), <code>provider</code> (cloud providers), <code>output_path</code> (output directories).
+                Rules are <strong>allow</strong> or <strong>deny</strong>. Assign rules to levels to apply them to users.
+                Example: <code>team-x-*</code> matches all configs starting with "team-x-".
+            </div>
+            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('rules')"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+    <div class="admin-toolbar">
+        <div class="d-flex gap-2">
+            <select class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;"
+                    x-model="ruleTypeFilter" @change="filterRules()">
+                <option value="">All Types</option>
+                <option value="config">Config</option>
+                <option value="hardware">Hardware</option>
+                <option value="provider">Provider</option>
+                <option value="output_path">Output Path</option>
+            </select>
+            <button class="btn btn-sm btn-primary" @click="showCreateRuleForm()">
+                <i class="fas fa-plus me-1"></i>Add Rule
+            </button>
+        </div>
+    </div>
+
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Rule</th>
+                    <th style="width: 100px;">Type</th>
+                    <th style="width: 80px;">Action</th>
+                    <th class="d-none d-md-table-cell">Pattern</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="rulesLoading">
+                    <tr><td colspan="5" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading...</td></tr>
+                </template>
+                <template x-if="!rulesLoading && filteredRules.length === 0">
+                    <tr>
+                        <td colspan="5" class="text-center py-4 text-muted">
+                            <i class="fas fa-shield-alt me-2"></i>No resource rules defined
+                            <div class="mt-2">
+                                <button class="btn btn-sm btn-outline-primary" @click="showCreateRuleForm()">
+                                    <i class="fas fa-plus me-1"></i>Create First Rule
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="rule in filteredRules" :key="rule.id">
+                    <tr>
+                        <td>
+                            <div class="fw-medium" x-text="rule.name"></div>
+                            <div class="text-muted small" x-text="rule.description || ''"></div>
+                        </td>
+                        <td><span class="badge" :class="getTypeBadgeClass(rule.resource_type)" x-text="rule.resource_type"></span></td>
+                        <td><span class="badge" :class="getActionBadgeClass(rule.action)" x-text="rule.action"></span></td>
+                        <td class="d-none d-md-table-cell"><code class="small" x-text="rule.pattern"></code></td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @click="showEditRuleForm(rule)" title="Edit"><i class="fas fa-edit"></i></button>
+                                <button class="btn btn-outline-danger" @click="deleteRule(rule)" title="Delete"><i class="fas fa-trash"></i></button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</div>

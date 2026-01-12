@@ -15,6 +15,7 @@
      */
     function debounce(func, wait, immediate) {
         var timeout;
+        var pendingResolvers = [];
 
         return function debounced() {
             var context = this;
@@ -22,20 +23,30 @@
 
             var later = function() {
                 timeout = null;
-                if (!immediate) func.apply(context, args);
+                var result;
+                if (!immediate) {
+                    result = func.apply(context, args);
+                }
+                // Resolve all pending promises with the result
+                var resolvers = pendingResolvers;
+                pendingResolvers = [];
+                resolvers.forEach(function(resolve) { resolve(result); });
             };
 
             var callNow = immediate && !timeout;
             clearTimeout(timeout);
             timeout = setTimeout(later, wait);
 
-            if (callNow) func.apply(context, args);
+            var result;
+            if (callNow) {
+                result = func.apply(context, args);
+                // Resolve immediately for immediate mode
+                return Promise.resolve(result);
+            }
 
-            // Return a promise for async operations
+            // Return a promise that resolves when the debounced call executes
             return new Promise(function(resolve) {
-                setTimeout(function() {
-                    resolve(func.apply(context, args));
-                }, wait);
+                pendingResolvers.push(resolve);
             });
         };
     }
@@ -136,15 +147,48 @@
                 // Add loading state
                 element.classList.add('debouncing');
 
-                // If element has HTMX attributes, trigger HTMX
-                if (window.htmx && element.hasAttribute('hx-trigger')) {
-                    htmx.trigger(element, eventType);
+                // Suppress dirty tracking during debounced HTMX validation requests
+                var trainerStore = window.Alpine && window.Alpine.store ? window.Alpine.store('trainer') : null;
+                var wasSuppressed = trainerStore && trainerStore._suppressDirtyTracking;
+                var hasHtmx = window.htmx
+                    && element.hasAttribute('hx-trigger')
+                    && (
+                        element.hasAttribute('hx-post')
+                        || element.hasAttribute('hx-get')
+                        || element.hasAttribute('hx-put')
+                        || element.hasAttribute('hx-patch')
+                        || element.hasAttribute('hx-delete')
+                    );
+                var htmxEventType = eventType;
+                if (hasHtmx) {
+                    var trigger = (element.getAttribute('hx-trigger') || '').split(',')[0].trim();
+                    if (trigger) {
+                        var triggerEvent = trigger.split(/\s+/)[0];
+                        if (triggerEvent) {
+                            htmxEventType = triggerEvent;
+                        }
+                    }
                 }
 
-                // Custom event for other handlers
+                if (hasHtmx && trainerStore && !wasSuppressed) {
+                    trainerStore._suppressDirtyTracking = true;
+                    var restoreHandler = function() {
+                        trainerStore._suppressDirtyTracking = false;
+                    };
+                    element.addEventListener('htmx:afterRequest', restoreHandler, { once: true });
+                    element.addEventListener('htmx:sendError', restoreHandler, { once: true });
+                    element.addEventListener('htmx:responseError', restoreHandler, { once: true });
+                }
+
+                // If element has HTMX attributes, trigger HTMX
+                if (hasHtmx) {
+                    htmx.trigger(element, htmxEventType);
+                }
+
+                // Custom event for other handlers - use non-bubbling to avoid form handlers
                 var customEvent = new CustomEvent('debounced-' + eventType, {
                     detail: { originalEvent: event },
-                    bubbles: true,
+                    bubbles: false,  // Don't bubble to form handlers
                     cancelable: true
                 });
                 element.dispatchEvent(customEvent);

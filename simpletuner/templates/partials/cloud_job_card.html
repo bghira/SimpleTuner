@@ -1,0 +1,95 @@
+<!-- partials/cloud_job_card.html - Individual job card in list -->
+<div class="job-list-item"
+     role="option"
+     :aria-selected="selectedJob && selectedJob.job_id === job.job_id ? 'true' : 'false'"
+     :class="{
+         'active': selectedJob && selectedJob.job_id === job.job_id,
+         'job-running': job.status === 'running',
+         'job-failed': job.status === 'failed'
+     }"
+     @click="selectJob(job)"
+     @keydown.enter="selectJob(job)"
+     @keydown.space.prevent="selectJob(job)"
+     tabindex="0">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+        <div class="flex-grow-1 min-w-0">
+            <!-- Job name with type icon -->
+            <div class="d-flex align-items-center">
+                <span class="job-type-indicator me-2"
+                      :class="'job-type-' + (job.job_type || 'cloud')">
+                    <i class="fas" :class="jobTypeIcon(job.job_type)" style="font-size: 0.7rem;"></i>
+                </span>
+                <span class="text-truncate fw-medium job-name" style="max-width: 140px;"
+                      x-text="jobDisplayName(job)"></span>
+            </div>
+            <!-- Timestamp -->
+            <div class="small text-muted" style="font-size: 0.7rem;" x-text="formatDate(job.created_at)"></div>
+            <!-- Queue position for pending/queued jobs -->
+            <template x-if="jobIsQueued(job) && job.queue_position !== undefined">
+                <div class="queue-position-badge mt-1" style="font-size: 0.65rem;">
+                    <i class="fas fa-list-ol me-1"></i>
+                    <span class="text-warning">Queue #<span x-text="job.queue_position + 1"></span></span>
+                </div>
+            </template>
+            <!-- Running indicator with inline progress -->
+            <template x-if="jobIsRunning(job)">
+                <div class="running-progress mt-1">
+                    <div class="d-flex align-items-center" style="font-size: 0.65rem;">
+                        <span class="status-pulse me-1"></span>
+                        <span class="text-info" x-text="job.inline_stage || 'Running...'"></span>
+                    </div>
+                    <!-- Latest log line preview -->
+                    <div class="log-preview text-muted text-truncate"
+                         x-show="job.inline_log"
+                         x-text="job.inline_log"
+                         :title="job.inline_log"></div>
+                    <!-- Progress bar if available -->
+                    <div class="inline-progress-bar"
+                         x-show="job.inline_progress !== undefined && job.inline_progress !== null">
+                        <div class="progress" style="height: 3px;">
+                            <div class="progress-bar bg-info"
+                                 :style="'width: ' + (job.inline_progress || 0) + '%'"></div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <!-- Snapshot badge (only show for non-running) -->
+            <template x-if="!jobIsRunning(job) && jobHasSnapshot(job)">
+                <div class="d-flex align-items-center mt-1" style="font-size: 0.65rem;">
+                    <i class="fas fa-code-branch text-info me-1" style="font-size: 0.6rem;"></i>
+                    <code class="text-muted" x-text="job.metadata.snapshot.abbrev"></code>
+                </div>
+            </template>
+            <!-- Error preview for failed jobs -->
+            <template x-if="jobIsFailed(job) && job.error_message">
+                <div class="small text-danger text-truncate mt-1"
+                     style="font-size: 0.65rem; max-width: 160px;"
+                     :title="job.error_message"
+                     x-text="job.error_message"></div>
+            </template>
+        </div>
+        <div class="d-flex flex-column align-items-end gap-1">
+            <!-- Status badge with icon -->
+            <span class="status-badge" :class="'status-' + job.status">
+                <i class="fas me-1" :class="statusIcon(job.status)" style="font-size: 0.55rem;"></i>
+                <span x-text="job.status"></span>
+            </span>
+            <!-- Cost (if available) -->
+            <template x-if="job.cost_usd">
+                <span class="text-muted" style="font-size: 0.6rem;">
+                    $<span x-text="job.cost_usd.toFixed(2)"></span>
+                </span>
+            </template>
+            <!-- Delete button for terminal states -->
+            <template x-if="jobIsTerminal(job)">
+                <button type="button"
+                        class="btn btn-sm btn-link text-danger p-0 opacity-50 job-delete-btn"
+                        @click.stop="deleteJob(job.job_id)"
+                        title="Remove from history"
+                        style="font-size: 0.65rem; line-height: 1;">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+            </template>
+        </div>
+    </div>
+</div>

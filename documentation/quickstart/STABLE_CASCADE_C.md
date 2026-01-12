@@ -37,7 +37,7 @@ Follow the standard SimpleTuner installation (pip or source). For a typical CUDA
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install simpletuner[cuda]
+pip install 'simpletuner[cuda]'
 ```
 
 For contributors or anyone hacking on the repo directly, install from source and then run `pip install -e .[cuda,dev]`.
@@ -218,8 +218,8 @@ During the first epoch, monitor:
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
-*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
-*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training Stable Cascade with a Flow Matching objective.
+*   **[Scheduled Sampling (Rollout)](../experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](../experimental/DIFF2FLOW.md):** allows training Stable Cascade with a Flow Matching objective.
 
 > ⚠️ These features increase the computational overhead of training.
 

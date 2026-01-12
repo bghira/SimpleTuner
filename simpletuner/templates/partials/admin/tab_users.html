@@ -1,0 +1,116 @@
+<!-- Admin - Users Tab -->
+<div x-show="activeTab === 'users'" x-transition>
+    <!-- Toolbar -->
+    <div class="admin-toolbar">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <div class="input-group input-group-sm" style="max-width: 300px;">
+                <span class="input-group-text bg-dark border-secondary">
+                    <i class="fas fa-search text-muted"></i>
+                </span>
+                <input type="text"
+                       class="form-control bg-dark text-light border-secondary"
+                       placeholder="Search users..."
+                       x-model="userSearch"
+                       @input="filterUsers()">
+            </div>
+            <button class="btn btn-sm btn-outline-warning"
+                    @click="checkAllUsersStaleCredentials()"
+                    :disabled="bulkStaleCheckLoading"
+                    title="Check all users for stale credentials">
+                <i class="fas" :class="bulkStaleCheckLoading ? 'fa-spinner fa-spin' : 'fa-key'"></i>
+                <span class="d-none d-md-inline ms-1">Check Stale</span>
+            </button>
+            <button class="btn btn-sm btn-primary" @click="showCreateUserForm()">
+                <i class="fas fa-plus me-1"></i>Add User
+            </button>
+        </div>
+    </div>
+
+    <!-- Users Table -->
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 50px;">Status</th>
+                    <th>User</th>
+                    <th class="d-none d-md-table-cell">Auth</th>
+                    <th class="d-none d-md-table-cell">Levels</th>
+                    <th class="d-none d-lg-table-cell">Last Login</th>
+                    <th style="width: 120px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="usersLoading">
+                    <tr>
+                        <td colspan="6" class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin me-2"></i>Loading users...
+                        </td>
+                    </tr>
+                </template>
+                <template x-if="!usersLoading && filteredUsers.length === 0">
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            <i class="fas fa-users-slash me-2"></i>No users found
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="user in filteredUsers" :key="user.id">
+                    <tr>
+                        <td>
+                            <span class="badge" :class="user.is_active ? 'bg-success' : 'bg-secondary'"
+                                  :title="user.is_active ? 'Active' : 'Inactive'">
+                                <i class="fas" :class="user.is_active ? 'fa-check' : 'fa-pause'"></i>
+                            </span>
+                        </td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div>
+                                    <div class="fw-medium" x-text="user.display_name || user.username"></div>
+                                    <div class="text-muted small" x-text="user.email"></div>
+                                </div>
+                                <span class="badge bg-warning ms-2" x-show="user.is_admin" title="Administrator">
+                                    <i class="fas fa-crown"></i>
+                                </span>
+                                <span class="badge bg-danger ms-2" x-show="user.has_stale_credentials"
+                                      :title="user.stale_credential_count + ' stale credential(s)'">
+                                    <i class="fas fa-key"></i>
+                                    <span x-text="user.stale_credential_count"></span>
+                                </span>
+                            </div>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <span class="badge" :class="user.auth_provider === 'local' ? 'bg-secondary' : 'bg-info'"
+                                  x-text="user.auth_provider || 'local'"></span>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <template x-for="level in (user.level_names || [])" :key="level">
+                                <span class="badge bg-primary me-1" x-text="level"></span>
+                            </template>
+                            <span class="text-muted small" x-show="!user.level_names || user.level_names.length === 0">-</span>
+                        </td>
+                        <td class="d-none d-lg-table-cell text-muted small">
+                            <span x-text="user.last_login_at ? formatDate(user.last_login_at) : 'Never'"></span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @click="showEditUserForm(user)" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-info" @click="openCredentialsModal(user)" title="Cloud Provider Credentials">
+                                    <i class="fas fa-cloud"></i>
+                                </button>
+                                <button class="btn btn-outline-warning" @click="openPermissionOverridesModal(user)" title="Permission Overrides">
+                                    <i class="fas fa-user-lock"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" @click="confirmDeleteUser(user)" title="Delete"
+                                        :disabled="user.id === currentUser?.id">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</div>

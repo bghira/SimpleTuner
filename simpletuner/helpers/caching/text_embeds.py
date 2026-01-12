@@ -150,12 +150,10 @@ class TextEmbeddingCache(WebhookMixin):
 
         if self._requires_path_based_keys:
             prompt_identifier = prompt_record.get("prompt")
-            message = (
+            raise ValueError(
                 "Prompt record is missing 'key' but model requires filename-based text embeddings. "
                 f"Record metadata: {prompt_record.get('metadata')} prompt={prompt_identifier}"
             )
-            logger.error(f"{self.rank_info}{message}")
-            raise ValueError(message)
 
         # Check if 'prompt' exists in the record (not just if it's truthy)
         # Empty strings are valid values for dropout captions

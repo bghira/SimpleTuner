@@ -1,0 +1,357 @@
+<!-- partials/cloud_quick_actions.html - Quick actions panel -->
+
+<!-- Publishing Target Status -->
+<div class="cloud-card mb-3 mb-lg-4">
+    <div class="cloud-card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-upload me-2"></i>Publishing</h6>
+        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1"
+                @click="loadPublishingStatus()"
+                :disabled="publishingStatus.loading"
+                title="Refresh">
+            <i class="fas fa-sync" :class="{ 'fa-spin': publishingStatus.loading }" style="font-size: 0.7rem;"></i>
+        </button>
+    </div>
+    <div class="cloud-card-body">
+        <!-- Loading state -->
+        <template x-if="publishingStatus.loading">
+            <div class="text-center py-2 text-muted">
+                <i class="fas fa-spinner fa-spin"></i>
+            </div>
+        </template>
+
+        <!-- HF configured and push_to_hub enabled -->
+        <template x-if="!publishingStatus.loading && publishingStatus.push_to_hub && publishingStatus.hf_configured">
+            <div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-check-circle text-success me-2"></i>
+                    <span class="small">HuggingFace Hub</span>
+                </div>
+                <div class="small text-muted mb-1" style="font-size: 0.7rem;">
+                    <i class="fas fa-user me-1"></i><span x-text="publishingStatus.hf_username || 'Connected'"></span>
+                </div>
+                <template x-if="publishingStatus.hub_model_id">
+                    <div class="small text-muted" style="font-size: 0.7rem;">
+                        <i class="fas fa-cube me-1"></i><code x-text="publishingStatus.hub_model_id"></code>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <!-- HF logged in with hub_model_id, but push_to_hub not enabled - can enable directly -->
+        <template x-if="!publishingStatus.loading && publishingStatus.hf_token_valid && publishingStatus.hub_model_id && !publishingStatus.push_to_hub">
+            <div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-pause-circle text-warning me-2"></i>
+                    <span class="small">Publishing disabled</span>
+                </div>
+                <div class="small text-muted mb-1" style="font-size: 0.7rem;">
+                    <i class="fas fa-user me-1"></i><span x-text="publishingStatus.hf_username"></span>
+                </div>
+                <div class="small text-muted mb-2" style="font-size: 0.7rem;">
+                    <i class="fas fa-cube me-1"></i><code x-text="publishingStatus.hub_model_id"></code>
+                </div>
+                <p class="small text-muted mb-2" style="font-size: 0.65rem;">
+                    Enable recommended settings:
+                </p>
+                <div class="mb-2" style="font-size: 0.7rem;">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="fas fa-check text-info me-2" style="width: 12px;"></i>
+                        <span class="text-info">Push to Hugging Face Hub</span>
+                    </div>
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="fas fa-check text-info me-2" style="width: 12px;"></i>
+                        <span class="text-info">Push Intermediate Checkpoints</span>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-check text-info me-2" style="width: 12px;"></i>
+                        <span class="text-info">Upload In Background</span>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-primary w-100"
+                        @click="enableRecommendedPublishing()"
+                        :disabled="publishingStatus.loading">
+                    <i class="fas fa-toggle-on me-1"></i>Enable Publishing
+                </button>
+            </div>
+        </template>
+
+        <!-- HF logged in but no hub_model_id set -->
+        <template x-if="!publishingStatus.loading && publishingStatus.hf_token_valid && !publishingStatus.hub_model_id">
+            <div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-exclamation-circle text-warning me-2"></i>
+                    <span class="small">Repository not set</span>
+                </div>
+                <div class="small text-muted mb-2" style="font-size: 0.7rem;">
+                    <i class="fas fa-user me-1"></i><span x-text="publishingStatus.hf_username"></span>
+                </div>
+                <p class="small text-muted mb-2" style="font-size: 0.65rem;">
+                    Set a Repository ID in the Publishing tab (e.g., username/model-name).
+                </p>
+                <button type="button" class="btn btn-sm btn-outline-primary w-100"
+                        @click="document.querySelector('[data-tab=publishing]')?.click()">
+                    <i class="fas fa-cog me-1"></i>Configure Repository
+                </button>
+            </div>
+        </template>
+
+        <!-- Not logged in to HuggingFace -->
+        <template x-if="!publishingStatus.loading && !publishingStatus.hf_token_valid">
+            <div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-exclamation-circle text-warning me-2"></i>
+                    <span class="small">Not logged in</span>
+                </div>
+                <p class="small text-muted mb-2" style="font-size: 0.65rem;">
+                    Log in to HuggingFace in the Publishing tab to save trained models.
+                </p>
+                <div class="mb-2" style="font-size: 0.7rem;">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="fas fa-check text-info me-2" style="width: 12px;"></i>
+                        <span class="text-info">Push to Hugging Face Hub</span>
+                    </div>
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="fas fa-check text-info me-2" style="width: 12px;"></i>
+                        <span class="text-info">Push Intermediate Checkpoints</span>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-check text-info me-2" style="width: 12px;"></i>
+                        <span class="text-info">Upload In Background</span>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary w-100"
+                        @click="document.querySelector('[data-tab=publishing]')?.click()">
+                    <i class="fas fa-sign-in-alt me-1"></i>Set Up Publishing
+                </button>
+            </div>
+        </template>
+
+        <!-- S3 configured -->
+        <template x-if="!publishingStatus.loading && publishingStatus.s3_configured">
+            <div class="mt-2 pt-2 border-top border-secondary">
+                <div class="d-flex align-items-center">
+                    <i class="fas fa-check-circle text-success me-2"></i>
+                    <span class="small">S3/Cloud Storage</span>
+                </div>
+            </div>
+        </template>
+
+        <!-- Local upload available (webhook set, no other publishing) -->
+        <template x-if="!publishingStatus.loading && publishingStatus.local_upload_available && !publishingStatus.push_to_hub && !publishingStatus.s3_configured">
+            <div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-check-circle text-success me-2"></i>
+                    <span class="small">Local Upload</span>
+                </div>
+                <p class="small text-muted mb-1" style="font-size: 0.7rem;">
+                    Results will upload directly to this machine via your webhook URL.
+                </p>
+                <div class="small text-muted" style="font-size: 0.65rem;">
+                    <i class="fas fa-folder me-1"></i>
+                    <code x-text="publishingStatus.local_upload_dir || '~/.simpletuner/cloud_outputs'"></code>
+                </div>
+            </div>
+        </template>
+
+        <!-- No publishing configured and no webhook -->
+        <template x-if="!publishingStatus.loading && !publishingStatus.push_to_hub && !publishingStatus.s3_configured && !publishingStatus.local_upload_available && !publishingStatus.hf_token_valid">
+            <div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-info-circle text-info me-2"></i>
+                    <span class="small">No output destination</span>
+                </div>
+                <p class="small text-muted mb-2" style="font-size: 0.7rem;">
+                    Set a webhook URL to receive results locally, or configure HuggingFace/S3 in Publishing tab.
+                </p>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="cloud-card mb-3 mb-lg-4">
+    <div class="cloud-card-header">
+        <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>Actions</h6>
+    </div>
+    <div class="cloud-card-body">
+        <div class="d-flex gap-2 mb-2">
+            <button type="button"
+                    class="btn btn-outline-primary flex-fill"
+                    id="cloud-validate-btn"
+                    hx-post="/api/training/validate"
+                    hx-include="#trainer-form"
+                    hx-target="#validation-results"
+                    hx-swap="innerHTML"
+                    hx-indicator="#cloud-validate-spinner">
+                <i class="fas fa-check-circle me-1"></i>Validate
+                <span id="cloud-validate-spinner" class="htmx-indicator">
+                    <span class="spinner-border spinner-border-sm ms-1" role="status"></span>
+                </span>
+            </button>
+            <button type="button"
+                    class="btn btn-primary flex-fill"
+                    :disabled="!isActiveProviderConfigured() || submitting"
+                    @click="openPreSubmitModal()">
+                <i class="fas me-1" :class="submitting ? 'fa-spinner fa-spin' : 'fa-cloud-upload-alt'"></i>
+                <span x-text="submitting ? 'Submitting...' : 'Submit Job'"></span>
+            </button>
+        </div>
+
+        <!-- Upload Progress -->
+        <template x-if="uploadProgress.active || uploadProgress.error">
+            <div class="mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="small" x-text="uploadProgress.message || 'Uploading...'"></span>
+                    <span class="small text-muted" x-text="uploadProgress.percent + '%'"></span>
+                </div>
+                <div class="progress" style="height: 6px;">
+                    <div class="progress-bar"
+                         :class="uploadProgress.error ? 'bg-danger' : 'bg-primary'"
+                         :style="'width: ' + uploadProgress.percent + '%'"
+                         role="progressbar"></div>
+                </div>
+                <template x-if="uploadProgress.error">
+                    <div class="small text-danger mt-1" style="font-size: 0.7rem;" x-text="uploadProgress.error"></div>
+                </template>
+            </div>
+        </template>
+
+        <template x-if="submitError">
+            <div class="alert alert-danger py-1 px-2 small mb-2" style="font-size: 0.7rem;" x-text="submitError"></div>
+        </template>
+        <p class="small text-muted mb-0 d-none d-sm-block" style="font-size: 0.7rem;">
+            <i class="fas fa-info-circle me-1"></i>Validate config, then submit to cloud
+        </p>
+    </div>
+</div>
+
+<!-- Hardware - Progressive disclosure pattern -->
+<div class="cloud-card mb-3 mb-lg-4" x-data="{ hardwareExpanded: false }">
+    <div class="cloud-card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-server me-2"></i>Hardware</h6>
+        <a href="{{ docs_url('experimental/cloud/REPLICATE.md#hardware-options') }}"
+           target="_blank"
+           class="text-muted doc-link"
+           style="font-size: 0.7rem;"
+           title="Hardware options guide">
+            <i class="fas fa-question-circle"></i>
+        </a>
+    </div>
+    <div class="cloud-card-body cloud-hardware-details">
+        <!-- Loading state -->
+        <template x-if="!providers || providers.length === 0">
+            <div class="text-center py-2">
+                <i class="fas fa-spinner fa-spin text-muted"></i>
+                <div class="small text-muted mt-1">Loading...</div>
+            </div>
+        </template>
+
+        <!-- Hardware info -->
+        <template x-for="provider in providers.filter(p => p.id === activeProvider)" :key="provider.id">
+            <div>
+                <!-- Current hardware display (always visible) -->
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="text-muted small">GPU</span>
+                    <span class="fw-medium small text-info" x-text="provider.hardware || 'N/A'"></span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-muted small">Cost</span>
+                    <span class="fw-medium small" x-text="provider.cost_per_hour ? ('$' + provider.cost_per_hour.toFixed(2) + '/hr') : 'N/A'"></span>
+                </div>
+
+                <!-- Collapsed: Show version status + change link -->
+                <template x-if="!hardwareExpanded">
+                    <div class="mt-2 pt-2 border-top border-secondary">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="small text-muted" style="font-size: 0.7rem;">
+                                <template x-if="providerConfig.version_override">
+                                    <span><i class="fas fa-check-circle text-success me-1"></i>Custom version</span>
+                                </template>
+                                <template x-if="!providerConfig.version_override">
+                                    <span><i class="fas fa-check-circle text-info me-1"></i>Latest version</span>
+                                </template>
+                            </div>
+                            <button type="button"
+                                    class="btn btn-link btn-sm p-0"
+                                    style="font-size: 0.75rem;"
+                                    @click="hardwareExpanded = true; if (versions.length === 0) loadVersions()">
+                                Change
+                            </button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Expanded: Version picker -->
+                <template x-if="hardwareExpanded">
+                    <div class="mt-2 pt-2 border-top border-secondary" x-transition>
+                        <p class="small text-muted mb-2" style="font-size: 0.7rem;">
+                            Select a model version. Different versions may use different hardware.
+                        </p>
+
+                        <!-- Loading versions -->
+                        <template x-if="versionsLoading">
+                            <div class="text-center py-2">
+                                <i class="fas fa-spinner fa-spin text-muted"></i>
+                                <span class="small text-muted ms-2">Loading versions...</span>
+                            </div>
+                        </template>
+
+                        <!-- Version dropdown -->
+                        <template x-if="!versionsLoading && versions.length > 0">
+                            <div>
+                                <select class="form-select form-select-sm bg-dark text-light border-secondary mb-2"
+                                        style="font-size: 0.75rem;"
+                                        @change.stop="saveVersionOverride($event.target.value)"
+                                        :disabled="configSaving">
+                                    <option value="">Latest (default)</option>
+                                    <template x-for="v in versions" :key="v.id">
+                                        <option :value="v.full_version"
+                                                :selected="providerConfig.version_override === v.full_version"
+                                                x-text="v.id.substring(0, 12) + ' (' + formatDate(v.created_at, true) + ')'">
+                                        </option>
+                                    </template>
+                                </select>
+                            </div>
+                        </template>
+
+                        <!-- Error state -->
+                        <template x-if="!versionsLoading && versionsError">
+                            <div class="alert alert-warning py-1 px-2 small mb-2" style="font-size: 0.7rem;">
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                <span x-text="versionsError"></span>
+                                <button type="button" class="btn btn-link btn-sm p-0 ms-2" @click="loadVersions()">Retry</button>
+                            </div>
+                        </template>
+
+                        <!-- Empty versions (shouldn't happen but handle gracefully) -->
+                        <template x-if="!versionsLoading && !versionsError && versions.length === 0">
+                            <div class="d-flex align-items-center gap-2 mb-2">
+                                <input type="text"
+                                       class="form-control form-control-sm bg-dark text-light border-secondary flex-grow-1"
+                                       style="font-size: 0.7rem;"
+                                       placeholder="owner/model:version"
+                                       :value="providerConfig.version_override || ''"
+                                       @change.stop="saveVersionOverride($event.target.value)"
+                                       @input.stop
+                                       :disabled="configSaving">
+                                <button type="button"
+                                        class="btn btn-outline-secondary btn-sm"
+                                        @click="loadVersions()"
+                                        title="Load versions">
+                                    <i class="fas fa-sync" style="font-size: 0.65rem;"></i>
+                                </button>
+                            </div>
+                        </template>
+
+                        <!-- Done button -->
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary w-100"
+                                @click="hardwareExpanded = false">
+                            <i class="fas fa-check me-1"></i>Done
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </template>
+    </div>
+</div>

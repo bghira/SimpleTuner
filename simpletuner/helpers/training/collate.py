@@ -519,8 +519,9 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch, is_condition
             raise ValueError(error_msg)
         if torch.isnan(latent).any() or torch.isinf(latent).any():
             data_backend = StateTracker.get_data_backend(data_backend_id)
-            data_backend["vaecache"].cache_data_backend.delete(filepaths[idx])
-            raise ValueError(f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values")
+            cache_filepath, _ = data_backend["vaecache"].generate_vae_cache_filename(filepaths[idx])
+            data_backend["vaecache"].cache_data_backend.delete(cache_filepath)
+            raise ValueError(f"(id={data_backend_id}) Deleted cache file {cache_filepath}: contains NaN or Inf values")
 
         # For conditioning latents, allow different shapes
         if not is_conditioning:
@@ -580,6 +581,7 @@ def collate_fn(batch):
             example["drop_conditioning"] = False
 
     assert isinstance(data_backend_id, str)
+    batch_backend_id = data_backend_id
     debug_log("Collect luminance values")
     if "luminance" in examples[0]:
         batch_luminance = [example.get("luminance", 0) for example in examples]
@@ -589,12 +591,12 @@ def collate_fn(batch):
     batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
-    data_backend = StateTracker.get_data_backend(data_backend_id)
+    data_backend = StateTracker.get_data_backend(batch_backend_id)
     training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
     debug_log("Compute latents")
     model = StateTracker.get_model()
-    batch_data = compute_latents(filepaths, data_backend_id, model)
+    batch_data = compute_latents(filepaths, batch_backend_id, model)
     latent_metadata = None
     if isinstance(batch_data[0], dict):
         latent_metadata = []
@@ -616,7 +618,7 @@ def collate_fn(batch):
                 latent_metadata.append(meta)
     if "deepfloyd" not in StateTracker.get_args().model_family:
         debug_log("Check latents")
-        latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
+        latent_batch = check_latent_shapes(latent_batch, filepaths, batch_backend_id, examples)
 
     conditioning_image_embeds = None
     conditioning_captions = [
@@ -920,14 +922,14 @@ def collate_fn(batch):
     for idx, caption in enumerate(captions):
         example = examples[idx]
         example_path = example.get("image_path")
-        data_backend_id = example.get("data_backend_id")
-        backend_config = StateTracker.get_data_backend_config(data_backend_id) if data_backend_id else {}
+        example_backend_id = example.get("data_backend_id")
+        backend_config = StateTracker.get_data_backend_config(example_backend_id) if example_backend_id else {}
         backend_config = backend_config or {}
         dataset_root = backend_config.get("instance_data_dir")
         normalized_identifier = normalize_data_path(example_path, dataset_root)
         metadata = {
             "image_path": example_path,
-            "data_backend_id": data_backend_id,
+            "data_backend_id": example_backend_id,
             "prompt": caption,
             "dataset_relative_path": normalized_identifier,
         }
@@ -941,8 +943,8 @@ def collate_fn(batch):
             pixel_value = _conditioning_pixel_value_for_example(idx)
             if pixel_value is not None:
                 metadata["conditioning_pixel_values"] = pixel_value
-        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and data_backend_id and example_path:
-            key_value = f"{data_backend_id}:{normalized_identifier}"
+        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
+            key_value = f"{example_backend_id}:{normalized_identifier}"
         elif key_type is TextEmbedCacheKey.FILENAME and example_path:
             key_value = normalize_data_path(example_path, None)
         else:
@@ -968,6 +970,101 @@ def collate_fn(batch):
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
 
+    # Extract S2V audio paths for speech-to-video models
+    s2v_audio_paths = []
+    s2v_audio_backend_ids = []
+    for example in examples:
+        audio_path = None
+        audio_backend_id = None
+        if isinstance(example, dict):
+            audio_path = example.get("s2v_audio_path")
+            audio_backend_id = example.get("s2v_audio_backend_id")
+        elif hasattr(example, "image_metadata") and example.image_metadata:
+            audio_path = example.image_metadata.get("s2v_audio_path")
+            audio_backend_id = example.image_metadata.get("s2v_audio_backend_id")
+        elif hasattr(example, "_s2v_audio_path"):
+            audio_path = example._s2v_audio_path
+            audio_backend_id = getattr(example, "_s2v_audio_backend_id", None)
+        s2v_audio_paths.append(audio_path)
+        s2v_audio_backend_ids.append(audio_backend_id)
+
+    if not any(s2v_audio_paths):
+        backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
+        dataset_type = backend_config.get("dataset_type")
+        if dataset_type == "video":
+            s2v_datasets = StateTracker.get_s2v_datasets(batch_backend_id)
+            if len(s2v_datasets) == 1:
+                s2v_config = s2v_datasets[0].get("config", {})
+                audio_config = s2v_config.get("audio", {})
+                if audio_config.get("source_from_video", False):
+                    audio_backend_id = s2v_datasets[0].get("id")
+                    if audio_backend_id is not None:
+                        metadata_backend = s2v_datasets[0].get("metadata_backend")
+                        if metadata_backend is None:
+                            s2v_audio_paths = list(filepaths)
+                            s2v_audio_backend_ids = [audio_backend_id] * len(s2v_audio_paths)
+                        else:
+                            s2v_audio_paths = []
+                            s2v_audio_backend_ids = []
+                            for path in filepaths:
+                                if metadata_backend.get_metadata_by_filepath(path) is None:
+                                    s2v_audio_paths.append(None)
+                                    s2v_audio_backend_ids.append(None)
+                                else:
+                                    s2v_audio_paths.append(path)
+                                    s2v_audio_backend_ids.append(audio_backend_id)
+
+    audio_latent_batch = None
+    audio_latent_mask = None
+    uses_audio_latents = False
+    if model is not None:
+        try:
+            uses_audio_latents = bool(model.uses_audio_latents())
+        except AttributeError:
+            uses_audio_latents = False
+    if uses_audio_latents and any(s2v_audio_paths):
+        backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
+        dataset_type = backend_config.get("dataset_type")
+        if dataset_type == "video":
+            s2v_datasets = StateTracker.get_s2v_datasets(batch_backend_id)
+            default_audio_backend_id = s2v_datasets[0]["id"] if len(s2v_datasets) == 1 else None
+            grouped: dict[str, list[int]] = {}
+            for idx, path in enumerate(s2v_audio_paths):
+                if path is None:
+                    continue
+                backend_id = s2v_audio_backend_ids[idx] or default_audio_backend_id
+                if backend_id is None:
+                    raise ValueError(
+                        f"Missing s2v audio backend id for {path}. Ensure the audio dataset is linked via s2v_datasets."
+                    )
+                grouped.setdefault(backend_id, []).append(idx)
+
+            audio_latents_by_index: list[torch.Tensor | None] = [None] * len(s2v_audio_paths)
+            for backend_id, indices in grouped.items():
+                audio_paths = [s2v_audio_paths[i] for i in indices]
+                latents = compute_latents(audio_paths, backend_id, model)
+                for offset, latent in zip(indices, latents):
+                    if isinstance(latent, dict):
+                        latent = latent.get("latents")
+                    audio_latents_by_index[offset] = latent
+
+            first_latent = next((latent for latent in audio_latents_by_index if torch.is_tensor(latent)), None)
+            if first_latent is not None:
+                filled = []
+                for latent in audio_latents_by_index:
+                    if latent is None:
+                        filled.append(torch.zeros_like(first_latent))
+                    else:
+                        if latent.shape != first_latent.shape:
+                            raise ValueError(
+                                f"S2V audio latent shape mismatch. Expected {first_latent.shape} but got {latent.shape}."
+                            )
+                        filled.append(latent)
+                audio_latent_batch = torch.stack(filled, dim=0)
+                audio_latent_mask = torch.tensor(
+                    [1 if path is not None else 0 for path in s2v_audio_paths], dtype=torch.float32
+                )
+
     return {
         "latent_batch": latent_batch,
         "latent_metadata": latent_metadata,
@@ -985,4 +1082,8 @@ def collate_fn(batch):
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,
+        "audio_latent_batch": audio_latent_batch,
+        "audio_latent_mask": audio_latent_mask,
+        "s2v_audio_paths": s2v_audio_paths if any(s2v_audio_paths) else None,
+        "s2v_audio_backend_ids": s2v_audio_backend_ids if any(s2v_audio_backend_ids) else None,
     }
