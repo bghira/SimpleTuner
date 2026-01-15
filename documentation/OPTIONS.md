@@ -171,6 +171,16 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Path to the pretrained Gemma model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training Gemma-based models (for example LTX-2, Sana, or Lumina2), you can point at a shared Gemma checkpoint without changing the base diffusion model path.
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **What**: Override which hidden state layers to extract from the text encoder for FLUX.2 models.
+- **Format**: JSON array of layer indices, e.g., `[10, 20, 30]`
+- **Default**: Model-specific defaults are used when not set:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **Why**: Allows experimentation with different text encoder hidden state combinations for custom alignment or research purposes.
+- **Note**: This option is experimental and only applies to FLUX.2 models. Changing layer indices will invalidate cached text embeddings and require regenerating them. The number of layers must match the model's expected input (3 layers).
+
 ### `--gradient_checkpointing`
 
 - **What**: During training, gradients will be calculated layerwise and accumulated to save on peak VRAM requirements at the cost of slower training.

@@ -171,6 +171,16 @@ simpletuner configure config/foo/config.json
 - **What**: pretrained Gemma model का path या <https://huggingface.co/models> से उसका identifier.
 - **Why**: Gemma‑based models (जैसे LTX-2, Sana, Lumina2) ट्रेन करते समय आप base diffusion model path बदले बिना Gemma weights का source specify कर सकते हैं।
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **What**: FLUX.2 models के लिए text encoder से extract होने वाली hidden state layers को override करें।
+- **Format**: Layer indices का JSON array, जैसे `[10, 20, 30]`
+- **Default**: सेट न होने पर model-specific defaults उपयोग होते हैं:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **Why**: Custom alignment या research के लिए विभिन्न text encoder hidden state combinations के साथ experiment करने की सुविधा देता है।
+- **Note**: यह option experimental है और केवल FLUX.2 models पर लागू होता है। Layer indices बदलने से cached text embeddings invalid हो जाएंगे और regenerate करने होंगे। Layers की संख्या model की expected input (3 layers) से match होनी चाहिए।
+
 ### `--gradient_checkpointing`
 
 - **What**: Training के दौरान gradients layerwise compute होकर accumulate होते हैं ताकि peak VRAM कम हो, लेकिन training धीमी होती है।

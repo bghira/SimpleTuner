@@ -493,12 +493,38 @@ class Flux2(ImageModelFoundation):
             return self._encode_prompts_qwen3(prompts, is_negative_prompt)
         return self._encode_prompts_mistral(prompts, is_negative_prompt)
 
+    def _get_text_encoder_layers(self) -> tuple:
+        """Get the layer indices to extract from text encoder hidden states.
+
+        Returns configured custom layers if set, otherwise model defaults.
+        """
+        custom_layers = getattr(self.config, "custom_text_encoder_intermediary_layers", None)
+        if custom_layers is not None:
+            # Parse JSON array if it's a string
+            if isinstance(custom_layers, str):
+                import json
+
+                try:
+                    custom_layers = json.loads(custom_layers)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Invalid custom_text_encoder_intermediary_layers format: {custom_layers}, using defaults"
+                    )
+                    custom_layers = None
+            if custom_layers is not None:
+                return tuple(custom_layers)
+
+        # Return model-specific defaults
+        if self._is_klein_flavour():
+            return KLEIN_OUTPUT_LAYERS
+        return tuple(OUTPUT_LAYERS)
+
     def _encode_prompts_qwen3(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode prompts using Qwen3 for Klein models.
 
         Returns:
-            prompt_embeds: (B, L, 7680 or 12288) - stacked outputs from layers 9, 18, 27
+            prompt_embeds: (B, L, 7680 or 12288) - stacked outputs from configured layers
             attention_mask: (B, L)
         """
         device = self.accelerator.device
@@ -540,8 +566,9 @@ class Flux2(ImageModelFoundation):
                 use_cache=False,
             )
 
-        # Stack outputs from layers 9, 18, 27
-        out = torch.stack([output.hidden_states[k] for k in KLEIN_OUTPUT_LAYERS], dim=1)
+        # Stack outputs from configured layers
+        output_layers = self._get_text_encoder_layers()
+        out = torch.stack([output.hidden_states[k] for k in output_layers], dim=1)
         prompt_embeds = rearrange(out, "b c l d -> b l (c d)")
 
         return prompt_embeds, attention_mask
@@ -551,7 +578,7 @@ class Flux2(ImageModelFoundation):
         Encode prompts using Mistral-3 for dev models.
 
         Returns:
-            prompt_embeds: (B, L, 15360) - stacked outputs from layers 10, 20, 30
+            prompt_embeds: (B, L, 15360) - stacked outputs from configured layers
             attention_mask: (B, L)
         """
         device = self.accelerator.device
@@ -586,8 +613,9 @@ class Flux2(ImageModelFoundation):
                 use_cache=False,
             )
 
-        # Stack outputs from layers 10, 20, 30
-        out = torch.stack([output.hidden_states[k] for k in OUTPUT_LAYERS], dim=1)
+        # Stack outputs from configured layers
+        output_layers = self._get_text_encoder_layers()
+        out = torch.stack([output.hidden_states[k] for k in output_layers], dim=1)
         prompt_embeds = rearrange(out, "b c l d -> b l (c d)")
 
         return prompt_embeds, attention_mask
