@@ -51,6 +51,10 @@ SYSTEM_MESSAGE = """You are an AI that reasons about image descriptions. You giv
 OUTPUT_LAYERS = [10, 20, 30]
 MAX_SEQUENCE_LENGTH = 512
 
+# FLUX.2-klein constants (uses Qwen3 text encoder with different layer config)
+KLEIN_OUTPUT_LAYERS = (9, 18, 27)
+KLEIN_FLAVOURS = {"klein-4b", "klein-9b"}
+
 # Scheduler configuration for FLUX.2 flow matching
 SCHEDULER_CONFIG = {
     "base_image_seq_len": 256,
@@ -64,11 +68,20 @@ SCHEDULER_CONFIG = {
 
 
 class Flux2(ImageModelFoundation):
+    """FLUX.2 model implementation for SimpleTuner.
+
+    Supports:
+    - dev: Full FLUX.2-dev with Mistral-3 text encoder (56 blocks, 12B params)
+    - klein-9b: FLUX.2-klein 9B with Qwen3 text encoder (32 blocks)
+    - klein-4b: FLUX.2-klein 4B with Qwen3 text encoder (25 blocks)
+
+    Klein models do not have guidance embeddings (guidance_embeds=False).
+    """
+
     SUPPORTS_MUON_CLIP = True
-    """FLUX.2 model implementation for SimpleTuner."""
 
     NAME = "Flux.2"
-    MODEL_DESCRIPTION = "FLUX.2-dev with Mistral-3 text encoder"
+    MODEL_DESCRIPTION = "FLUX.2 with Mistral-3 or Qwen3 text encoder"
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
@@ -114,9 +127,11 @@ class Flux2(ImageModelFoundation):
         PipelineTypes.TEXT2IMG: Flux2Pipeline,
     }
 
-    DEFAULT_MODEL_FLAVOUR = "dev"
+    DEFAULT_MODEL_FLAVOUR = "klein-9b"
     HUGGINGFACE_PATHS = {
         "dev": "black-forest-labs/FLUX.2-dev",
+        "klein-4b": "black-forest-labs/FLUX.2-klein-base-4B",
+        "klein-9b": "black-forest-labs/FLUX.2-klein-base-9B",
     }
     MODEL_LICENSE = "other"
 
@@ -132,9 +147,18 @@ class Flux2(ImageModelFoundation):
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
-        # FLUX.2 has 8 double stream + 48 single stream = 56 transformer blocks
+        # FLUX.2 block counts vary by flavour:
+        # - dev: 8 double + 48 single = 56 blocks
+        # - klein-9b: 8 double + 24 single = 32 blocks
+        # - klein-4b: 5 double + 20 single = 25 blocks
         # Leave at least 1 block on GPU
-        return 55
+        if config is not None:
+            flavour = getattr(config, "model_flavour", None)
+            if flavour == "klein-4b":
+                return 24  # 25 - 1
+            elif flavour == "klein-9b":
+                return 31  # 32 - 1
+        return 55  # dev: 56 - 1
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
@@ -245,8 +269,12 @@ class Flux2(ImageModelFoundation):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Mistral for dev
         self._mistral_model = None
         self._mistral_processor = None
+        # Qwen3 for Klein
+        self._qwen_model = None
+        self._qwen_tokenizer = None
 
     @staticmethod
     def _patchify_latents(latents: Tensor) -> Tensor:
@@ -297,12 +325,82 @@ class Flux2(ImageModelFoundation):
         logger.info("FLUX.2 VAE loaded successfully")
         return vae
 
+    def _is_klein_flavour(self) -> bool:
+        """Check if current model flavour is a Klein variant."""
+        flavour = getattr(self.config, "model_flavour", None)
+        return flavour in KLEIN_FLAVOURS
+
     def load_text_encoder(self, move_to_device: bool = True):
+        """Load the text encoder (Qwen3 for Klein, Mistral-3 for dev)."""
+        if self._is_klein_flavour():
+            return self._load_text_encoder_qwen3(move_to_device)
+        return self._load_text_encoder_mistral(move_to_device)
+
+    def _load_text_encoder_qwen3(self, move_to_device: bool = True):
+        """Load the Qwen3 text encoder for Klein models."""
+        try:
+            from transformers import Qwen2TokenizerFast, Qwen3ForCausalLM
+        except ImportError:
+            logger.error("Qwen3ForCausalLM not found. Please install transformers>=4.45.0")
+            sys.exit(1)
+
+        dtype = self.config.weight_dtype
+        text_encoder_precision = getattr(self.config, "text_encoder_1_precision", "no_change")
+        should_quantize_text_encoder = text_encoder_precision not in (None, "no_change")
+        quantize_via_cpu = getattr(self.config, "quantize_via", None) == "cpu"
+
+        # For Klein models, text encoder is bundled in the model repo under "text_encoder" subfolder
+        model_path = self.config.pretrained_model_name_or_path
+        text_encoder_path = getattr(self.config, "pretrained_text_encoder_model_name_or_path", None)
+        if text_encoder_path is None:
+            text_encoder_path = model_path
+            text_encoder_subfolder = "text_encoder"
+        else:
+            text_encoder_subfolder = None
+
+        revision = getattr(self.config, "text_encoder_revision", None) or getattr(self.config, "revision", None)
+
+        logger.info(f"Loading Qwen3 text encoder from {text_encoder_path}...")
+
+        # Load tokenizer
+        tokenizer_kwargs = {"subfolder": text_encoder_subfolder} if text_encoder_subfolder else {}
+        if revision is not None:
+            tokenizer_kwargs["revision"] = revision
+        self._qwen_tokenizer = Qwen2TokenizerFast.from_pretrained(text_encoder_path, **tokenizer_kwargs)
+
+        # Load model
+        model_kwargs = {
+            "torch_dtype": dtype,
+            "low_cpu_mem_usage": True,
+        }
+        if text_encoder_subfolder:
+            model_kwargs["subfolder"] = text_encoder_subfolder
+        if revision is not None:
+            model_kwargs["revision"] = revision
+        self._qwen_model = Qwen3ForCausalLM.from_pretrained(text_encoder_path, **model_kwargs)
+
+        if move_to_device and not self._ramtorch_text_encoders_requested():
+            target_device = (
+                torch.device("cpu") if quantize_via_cpu and should_quantize_text_encoder else self.accelerator.device
+            )
+            self._qwen_model.to(target_device, dtype=dtype)
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(self._qwen_model, "text_encoder_1")
+        self._qwen_model.requires_grad_(False)
+        self._qwen_model.eval()
+
+        # Store in standard location for compatibility
+        self.text_encoders = [self._qwen_model]
+        self.tokenizers = [self._qwen_tokenizer]
+
+        logger.info("Qwen3 text encoder loaded successfully")
+
+    def _load_text_encoder_mistral(self, move_to_device: bool = True):
         """Load the Mistral-3 text encoder."""
         try:
             from transformers import AutoProcessor, Mistral3ForConditionalGeneration
         except ImportError:
-            logger.error("Mistral3ForConditionalGeneration not found. " "Please install transformers>=4.45.0")
+            logger.error("Mistral3ForConditionalGeneration not found. Please install transformers>=4.45.0")
             sys.exit(1)
 
         dtype = self.config.weight_dtype
@@ -385,10 +483,102 @@ class Flux2(ImageModelFoundation):
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
-        Encode prompts using Mistral-3.
+        Encode prompts using the appropriate text encoder.
 
         Returns:
-            prompt_embeds: (B, L, 15360) - stacked outputs from layers 10, 20, 30
+            prompt_embeds: (B, L, D) - stacked outputs from hidden layers
+            attention_mask: (B, L)
+        """
+        if self._is_klein_flavour():
+            return self._encode_prompts_qwen3(prompts, is_negative_prompt)
+        return self._encode_prompts_mistral(prompts, is_negative_prompt)
+
+    def _get_text_encoder_layers(self) -> tuple:
+        """Get the layer indices to extract from text encoder hidden states.
+
+        Returns configured custom layers if set, otherwise model defaults.
+        """
+        custom_layers = getattr(self.config, "custom_text_encoder_intermediary_layers", None)
+        if custom_layers is not None:
+            # Parse JSON array if it's a string
+            if isinstance(custom_layers, str):
+                import json
+
+                try:
+                    custom_layers = json.loads(custom_layers)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Invalid custom_text_encoder_intermediary_layers format: {custom_layers}, using defaults"
+                    )
+                    custom_layers = None
+            if custom_layers is not None:
+                return tuple(custom_layers)
+
+        # Return model-specific defaults
+        if self._is_klein_flavour():
+            return KLEIN_OUTPUT_LAYERS
+        return tuple(OUTPUT_LAYERS)
+
+    def _encode_prompts_qwen3(self, prompts: list, is_negative_prompt: bool = False):
+        """
+        Encode prompts using Qwen3 for Klein models.
+
+        Returns:
+            prompt_embeds: (B, L, 7680 or 12288) - stacked outputs from configured layers
+            attention_mask: (B, L)
+        """
+        device = self.accelerator.device
+
+        if not isinstance(prompts, list):
+            prompts = [prompts]
+
+        all_input_ids = []
+        all_attention_masks = []
+
+        for single_prompt in prompts:
+            # Format as chat messages (no system message for Klein)
+            messages = [{"role": "user", "content": single_prompt}]
+            text = self._qwen_tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            inputs = self._qwen_tokenizer(
+                text,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=MAX_SEQUENCE_LENGTH,
+            )
+            all_input_ids.append(inputs["input_ids"])
+            all_attention_masks.append(inputs["attention_mask"])
+
+        input_ids = torch.cat(all_input_ids, dim=0).to(device)
+        attention_mask = torch.cat(all_attention_masks, dim=0).to(device)
+
+        # Forward pass
+        with torch.no_grad():
+            output = self._qwen_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+        # Stack outputs from configured layers
+        output_layers = self._get_text_encoder_layers()
+        out = torch.stack([output.hidden_states[k] for k in output_layers], dim=1)
+        prompt_embeds = rearrange(out, "b c l d -> b l (c d)")
+
+        return prompt_embeds, attention_mask
+
+    def _encode_prompts_mistral(self, prompts: list, is_negative_prompt: bool = False):
+        """
+        Encode prompts using Mistral-3 for dev models.
+
+        Returns:
+            prompt_embeds: (B, L, 15360) - stacked outputs from configured layers
             attention_mask: (B, L)
         """
         device = self.accelerator.device
@@ -423,8 +613,9 @@ class Flux2(ImageModelFoundation):
                 use_cache=False,
             )
 
-        # Stack outputs from layers 10, 20, 30
-        out = torch.stack([output.hidden_states[k] for k in OUTPUT_LAYERS], dim=1)
+        # Stack outputs from configured layers
+        output_layers = self._get_text_encoder_layers()
+        out = torch.stack([output.hidden_states[k] for k in output_layers], dim=1)
         prompt_embeds = rearrange(out, "b c l d -> b l (c d)")
 
         return prompt_embeds, attention_mask

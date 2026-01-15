@@ -1,22 +1,61 @@
 # FLUX.2 快速入门
 
-本指南介绍如何在 FLUX.2-dev 上训练 LoRA，这是 Black Forest Labs 最新的图像生成模型，采用 Mistral-3 文本编码器。
+本指南介绍如何在 FLUX.2 上训练 LoRA，这是 Black Forest Labs 最新的图像生成模型系列。
+
+> **注意**：默认模型版本为 `klein-9b`，但本指南以 `dev`（完整的 12B transformer 配合 24B Mistral-3 文本编码器）为重点，因为它的资源需求最高。Klein 模型更易于运行 - 请参阅下方的[模型变体](#模型变体)。
+
+## 模型变体
+
+FLUX.2 有三个变体：
+
+| 变体 | Transformer | 文本编码器 | 总块数 | 默认 |
+|------|-------------|-----------|--------|------|
+| `dev` | 12B 参数 | Mistral-3 (24B) | 56 (8+48) | |
+| `klein-9b` | 9B 参数 | Qwen3（内置） | 32 (8+24) | ✓ |
+| `klein-4b` | 4B 参数 | Qwen3（内置） | 25 (5+20) | |
+
+**主要差异：**
+- **dev**：使用独立的 Mistral-Small-3.1-24B 文本编码器，具有引导嵌入
+- **klein 模型**：使用模型仓库内置的 Qwen3 文本编码器，**无引导嵌入**（引导训练选项将被忽略）
+
+要选择变体，请在配置中设置 `model_flavour`：
+```json
+{
+  "model_flavour": "dev"
+}
+```
 
 ## 模型概述
 
 FLUX.2-dev 相比 FLUX.1 引入了重大架构变化：
 
-- **文本编码器**：使用 Mistral-Small-3.1-24B 替代 CLIP+T5
-- **架构**：8 个 DoubleStreamBlock + 48 个 SingleStreamBlock
+- **文本编码器**：Mistral-Small-3.1-24B（dev）或 Qwen3（klein）
+- **架构**：8 个 DoubleStreamBlock + 48 个 SingleStreamBlock（dev）
 - **潜在通道**：32 个 VAE 通道 → 像素重排后为 128（FLUX.1 为 16）
 - **VAE**：自定义 VAE，带有批归一化和像素重排
-- **嵌入维度**：15,360（从 Mistral 的第 10、20、30 层堆叠而来）
+- **嵌入维度**：dev 为 15,360（3×5,120），klein-9b 为 12,288（3×4,096），klein-4b 为 7,680（3×2,560）
 
 ## 硬件要求
 
-由于 Mistral-3 文本编码器的存在，FLUX.2 对资源有较高要求：
+硬件要求因模型变体而异。
 
-### 显存要求
+### Klein 模型（推荐大多数用户使用）
+
+Klein 模型更易于访问：
+
+| 变体 | bf16 显存 | int8 显存 | 系统内存 |
+|------|-----------|-----------|----------|
+| `klein-4b` | ~12GB | ~8GB | 32GB+ |
+| `klein-9b` | ~22GB | ~14GB | 64GB+ |
+
+**klein-9b 推荐**：单张 24GB GPU（RTX 3090/4090、A5000）
+**klein-4b 推荐**：单张 16GB GPU（RTX 4080、A4000）
+
+### FLUX.2-dev（高级）
+
+由于 Mistral-3 文本编码器的存在，FLUX.2-dev 对资源有较高要求：
+
+#### 显存要求
 
 仅 24B 的 Mistral 文本编码器就需要大量显存：
 
@@ -33,18 +72,18 @@ FLUX.2-dev 相比 FLUX.1 引入了重大架构变化：
 | 全部使用 int8 | ~40GB |
 | int4 文本编码器 + int8 transformer | ~22GB |
 
-### 系统内存
+#### 系统内存
 
 - **最低**：96GB 系统内存（加载 24B 文本编码器需要大量内存）
 - **推荐**：128GB+ 以确保流畅运行
 
-### 推荐硬件
+#### 推荐硬件
 
 - **最低配置**：2 张 48GB GPU（A6000、L40S）配合 FSDP2 或 DeepSpeed
 - **推荐配置**：4 张 H100 80GB 配合 fp8-torchao
 - **重度量化（int4）**：2 张 24GB GPU 可能可行，但属于实验性配置
 
-由于 Mistral-3 文本编码器和 transformer 的总体大小，FLUX.2 基本上需要多 GPU 分布式训练（FSDP2 或 DeepSpeed）。
+由于 Mistral-3 文本编码器和 transformer 的总体大小，FLUX.2-dev 基本上需要多 GPU 分布式训练（FSDP2 或 DeepSpeed）。
 
 ## 前提条件
 
@@ -59,11 +98,17 @@ pip install transformers>=4.45.0
 
 ### 模型访问
 
-FLUX.2-dev 需要在 Hugging Face 上获得访问批准：
+FLUX.2 模型需要在 Hugging Face 上获得访问批准：
 
+**对于 dev：**
 1. 访问 [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)
 2. 接受许可协议
-3. 确保已登录 Hugging Face CLI
+
+**对于 klein 模型：**
+1. 访问 [black-forest-labs/FLUX.2-klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) 或 [black-forest-labs/FLUX.2-klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B)
+2. 接受许可协议
+
+确保已登录 Hugging Face CLI：`huggingface-cli login`
 
 ## 安装
 
@@ -122,7 +167,9 @@ simpletuner server
 
 #### 引导配置
 
-FLUX.2 使用与 FLUX.1 类似的引导嵌入：
+> **注意**：Klein 模型（`klein-4b`、`klein-9b`）没有引导嵌入。以下引导选项仅适用于 `dev`。
+
+FLUX.2-dev 使用与 FLUX.1 类似的引导嵌入：
 
 <details>
 <summary>查看示例配置</summary>
@@ -355,14 +402,14 @@ FLUX.2 LoRA 可以使用 SimpleTuner 推理管道或兼容的工具加载（待�
 
 ## 与 FLUX.1 的区别
 
-| 方面 | FLUX.1 | FLUX.2 |
-|--------|--------|--------|
-| 文本编码器 | CLIP-L/14 + T5-XXL | Mistral-Small-3.1-24B |
-| 嵌入维度 | CLIP: 768, T5: 4096 | 15,360 (3×5,120) |
-| 潜在通道 | 16 | 32 (→像素重排后为 128) |
-| VAE | AutoencoderKL | 自定义（BatchNorm） |
-| VAE 缩放因子 | 8 | 16 (8×2 像素重排) |
-| Transformer 块 | 19 个联合 + 38 个单独 | 8 个双流 + 48 个单流 |
+| 方面 | FLUX.1 | FLUX.2-dev | FLUX.2-klein-9b | FLUX.2-klein-4b |
+|--------|--------|------------|-----------------|-----------------|
+| 文本编码器 | CLIP-L/14 + T5-XXL | Mistral-3 (24B) | Qwen3（内置） | Qwen3（内置） |
+| 嵌入维度 | CLIP: 768, T5: 4096 | 15,360 | 12,288 | 7,680 |
+| 潜在通道 | 16 | 32 (→128) | 32 (→128) | 32 (→128) |
+| VAE | AutoencoderKL | 自定义（BatchNorm） | 自定义（BatchNorm） | 自定义（BatchNorm） |
+| Transformer 块 | 19 个联合 + 38 个单独 | 8 个双流 + 48 个单流 | 8 个双流 + 24 个单流 | 5 个双流 + 20 个单流 |
+| 引导嵌入 | 是 | 是 | 否 | 否 |
 
 ## 故障排除
 

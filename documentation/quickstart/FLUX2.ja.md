@@ -1,22 +1,61 @@
 # FLUX.2 クイックスタート
 
-このガイドでは、Mistral-3テキストエンコーダーを搭載したBlack Forest Labsの最新画像生成モデルであるFLUX.2-devでLoRAをトレーニングする方法を説明します。
+このガイドでは、Black Forest Labsの最新画像生成モデルファミリーであるFLUX.2でLoRAをトレーニングする方法を説明します。
+
+> **注意**: デフォルトのモデルフレーバーは`klein-9b`ですが、このガイドは`dev`(24B Mistral-3テキストエンコーダーを搭載した完全な12Bトランスフォーマー)に焦点を当てています。これはリソース要件が最も高いためです。Kleinモデルはより簡単に実行できます - 下記の[モデルバリアント](#モデルバリアント)を参照してください。
+
+## モデルバリアント
+
+FLUX.2は3つのバリアントがあります:
+
+| バリアント | トランスフォーマー | テキストエンコーダー | 総ブロック数 | デフォルト |
+|---------|-------------|--------------|--------------|---------|
+| `dev` | 12Bパラメータ | Mistral-3 (24B) | 56 (8+48) | |
+| `klein-9b` | 9Bパラメータ | Qwen3 (同梱) | 32 (8+24) | ✓ |
+| `klein-4b` | 4Bパラメータ | Qwen3 (同梱) | 25 (5+20) | |
+
+**主な違い:**
+- **dev**: スタンドアロンのMistral-Small-3.1-24Bテキストエンコーダーを使用、ガイダンスエンベッディングあり
+- **kleinモデル**: モデルリポジトリに同梱されたQwen3テキストエンコーダーを使用、**ガイダンスエンベッディングなし**(ガイダンストレーニングオプションは無視されます)
+
+バリアントを選択するには、設定で`model_flavour`を設定します:
+```json
+{
+  "model_flavour": "dev"
+}
+```
 
 ## モデル概要
 
 FLUX.2-devはFLUX.1から大幅なアーキテクチャ変更を導入しています:
 
-- **テキストエンコーダー**: CLIP+T5の代わりにMistral-Small-3.1-24B
-- **アーキテクチャ**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks
+- **テキストエンコーダー**: Mistral-Small-3.1-24B(dev)またはQwen3(klein)
+- **アーキテクチャ**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks(dev)
 - **潜在チャネル**: 32 VAEチャネル → ピクセルシャッフル後128(FLUX.1の16に対して)
 - **VAE**: バッチ正規化とピクセルシャッフリングを備えたカスタムVAE
-- **エンベッディング次元**: 15,360(Mistralのレイヤー10、20、30からスタック)
+- **エンベッディング次元**: devは15,360(3×5,120)、klein-9bは12,288(3×4,096)、klein-4bは7,680(3×2,560)
 
 ## ハードウェア要件
 
-FLUX.2はMistral-3テキストエンコーダーのため、かなりのリソースを必要とします:
+ハードウェア要件はモデルバリアントによって大きく異なります。
 
-### VRAM要件
+### Kleinモデル(ほとんどのユーザーに推奨)
+
+Kleinモデルはより手軽に利用できます:
+
+| バリアント | bf16 VRAM | int8 VRAM | システムRAM |
+|---------|-----------|-----------|------------|
+| `klein-4b` | ~12GB | ~8GB | 32GB以上 |
+| `klein-9b` | ~22GB | ~14GB | 64GB以上 |
+
+**klein-9b推奨**: シングル24GB GPU(RTX 3090/4090、A5000)
+**klein-4b推奨**: シングル16GB GPU(RTX 4080、A4000)
+
+### FLUX.2-dev(上級者向け)
+
+FLUX.2-devはMistral-3テキストエンコーダーのため、かなりのリソースを必要とします:
+
+#### VRAM要件
 
 24BのMistralテキストエンコーダー単体でかなりのVRAMを必要とします:
 
@@ -33,18 +72,18 @@ FLUX.2はMistral-3テキストエンコーダーのため、かなりのリソ�
 | int8すべて | ~40GB |
 | int4テキストエンコーダー + int8トランスフォーマー | ~22GB |
 
-### システムRAM
+#### システムRAM
 
 - **最小**: 96GBシステムRAM(24Bテキストエンコーダーのロードにかなりのメモリが必要)
 - **推奨**: 快適な動作には128GB以上
 
-### 推奨ハードウェア
+#### 推奨ハードウェア
 
 - **最小**: 2x 48GB GPU(A6000、L40S)でFSDP2またはDeepSpeed
 - **推奨**: 4x H100 80GBでfp8-torchao
 - **重い量子化(int4)**: 2x 24GB GPUでも動作する可能性がありますが、実験的です
 
-Mistral-3テキストエンコーダーとトランスフォーマーの合計サイズのため、FLUX.2にはマルチGPU分散トレーニング(FSDP2またはDeepSpeed)が本質的に必要です。
+Mistral-3テキストエンコーダーとトランスフォーマーの合計サイズのため、FLUX.2-devにはマルチGPU分散トレーニング(FSDP2またはDeepSpeed)が本質的に必要です。
 
 ## 前提条件
 
@@ -59,11 +98,17 @@ pip install transformers>=4.45.0
 
 ### モデルアクセス
 
-FLUX.2-devはHugging Faceでのアクセス承認が必要です:
+FLUX.2モデルはHugging Faceでのアクセス承認が必要です:
 
+**devの場合:**
 1. [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)にアクセス
 2. ライセンス契約に同意
-3. Hugging Face CLIにログインしていることを確認
+
+**kleinモデルの場合:**
+1. [black-forest-labs/FLUX.2-klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B)または[black-forest-labs/FLUX.2-klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B)にアクセス
+2. ライセンス契約に同意
+
+Hugging Face CLIにログインしていることを確認: `huggingface-cli login`
 
 ## インストール
 
@@ -122,7 +167,9 @@ http://localhost:8001にアクセスし、モデルファミリーとしてFLUX.
 
 #### ガイダンス設定
 
-FLUX.2はFLUX.1と同様にガイダンスエンベッディングを使用します:
+> **注意**: Kleinモデル(`klein-4b`、`klein-9b`)にはガイダンスエンベッディングがありません。以下のガイダンスオプションは`dev`にのみ適用されます。
+
+FLUX.2-devはFLUX.1と同様にガイダンスエンベッディングを使用します:
 
 <details>
 <summary>設定例を表示</summary>
@@ -355,14 +402,14 @@ FLUX.2 LoRAは、SimpleTuner推論パイプラインまたはコミュニティ�
 
 ## FLUX.1との違い
 
-| 側面 | FLUX.1 | FLUX.2 |
-|--------|--------|--------|
-| テキストエンコーダー | CLIP-L/14 + T5-XXL | Mistral-Small-3.1-24B |
-| エンベッディング次元 | CLIP: 768、T5: 4096 | 15,360(3×5,120) |
-| 潜在チャネル | 16 | 32(→ピクセルシャッフル後128) |
-| VAE | AutoencoderKL | カスタム(BatchNorm) |
-| VAEスケールファクター | 8 | 16(8×2ピクセルシャッフル) |
-| トランスフォーマーブロック | 19 joint + 38 single | 8 double + 48 single |
+| 側面 | FLUX.1 | FLUX.2-dev | FLUX.2-klein-9b | FLUX.2-klein-4b |
+|--------|--------|------------|-----------------|-----------------|
+| テキストエンコーダー | CLIP-L/14 + T5-XXL | Mistral-3 (24B) | Qwen3 (同梱) | Qwen3 (同梱) |
+| エンベッディング次元 | CLIP: 768、T5: 4096 | 15,360 | 12,288 | 7,680 |
+| 潜在チャネル | 16 | 32(→128) | 32(→128) | 32(→128) |
+| VAE | AutoencoderKL | カスタム(BatchNorm) | カスタム(BatchNorm) | カスタム(BatchNorm) |
+| トランスフォーマーブロック | 19 joint + 38 single | 8 double + 48 single | 8 double + 24 single | 5 double + 20 single |
+| ガイダンスエンベッド | あり | あり | なし | なし |
 
 ## トラブルシューティング
 

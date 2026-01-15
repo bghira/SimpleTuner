@@ -171,6 +171,16 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo Gemma pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Ao treinar modelos baseados em Gemma (por exemplo LTX-2, Sana ou Lumina2), voce pode apontar para um checkpoint Gemma compartilhado sem mudar o caminho do modelo base de difusao.
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **O que**: Sobrescreve quais camadas de estado oculto extrair do encoder de texto para modelos FLUX.2.
+- **Formato**: Array JSON de indices de camadas, ex: `[10, 20, 30]`
+- **Padrao**: Valores padrao especificos do modelo sao usados quando nao definido:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **Por que**: Permite experimentacao com diferentes combinacoes de estados ocultos do encoder de texto para alinhamento personalizado ou propositos de pesquisa.
+- **Nota**: Esta opcao e experimental e aplica-se apenas a modelos FLUX.2. Alterar indices de camadas invalidara embeddings de texto em cache e requer regeneracao. O numero de camadas deve corresponder a entrada esperada pelo modelo (3 camadas).
+
 ### `--gradient_checkpointing`
 
 - **O que**: Durante o treinamento, os gradientes serao calculados por camada e acumulados para economizar VRAM de pico, ao custo de treinos mais lentos.

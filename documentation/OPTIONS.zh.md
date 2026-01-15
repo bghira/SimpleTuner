@@ -172,6 +172,16 @@ simpletuner configure config/foo/config.json
 - **内容**：预训练 Gemma 模型路径或 <https://huggingface.co/models> 上的标识符。
 - **原因**：训练 Gemma 系模型（例如 LTX-2、Sana、Lumina2）时，可单独指定 Gemma 权重来源，而无需更换基础扩散模型路径。
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **内容**：覆盖 FLUX.2 模型中从文本编码器提取的隐藏状态层。
+- **格式**：层索引的 JSON 数组，例如 `[10, 20, 30]`
+- **默认值**：未设置时使用模型特定默认值：
+  - FLUX.2-dev (Mistral-3)：`[10, 20, 30]`
+  - FLUX.2-klein (Qwen3)：`[9, 18, 27]`
+- **原因**：允许尝试不同的文本编码器隐藏状态组合，用于自定义对齐或研究目的。
+- **注意**：此选项为实验性功能，仅适用于 FLUX.2 模型。更改层索引会使已缓存的文本嵌入失效，需要重新生成。层数必须与模型期望的输入一致（3 层）。
+
 ### `--gradient_checkpointing`
 
 - **内容**：训练过程中按层计算并累积梯度，以降低显存峰值，但训练会变慢。

@@ -943,3 +943,25 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             order=33,
         )
     )
+
+    # Custom Text Encoder Intermediary Layers
+    registry._add_field(
+        ConfigField(
+            name="custom_text_encoder_intermediary_layers",
+            arg_name="--custom_text_encoder_intermediary_layers",
+            ui_label="Custom Text Encoder Layers",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=None,
+            placeholder="[10, 20, 30]",
+            dependencies=[FieldDependency(field="model_family", operator="in", values=["flux2"])],
+            help_text="Override which hidden state layers to extract from the text encoder. Provide as JSON array (e.g., [10, 20, 30]). Leave blank to use model defaults.",
+            tooltip="FLUX.2-dev uses layers [10, 20, 30] from Mistral-3, Klein models use [9, 18, 27] from Qwen3. Override for experimentation.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            model_specific=["flux2"],
+            order=34,
+            documentation="OPTIONS.md#--custom_text_encoder_intermediary_layers",
+        )
+    )
