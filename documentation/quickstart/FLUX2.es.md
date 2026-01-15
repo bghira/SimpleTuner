@@ -1,22 +1,61 @@
 # Guía rápida de FLUX.2
 
-Esta guía cubre el entrenamiento de LoRAs en FLUX.2-dev, el modelo de generación de imágenes más reciente de Black Forest Labs con un codificador de texto Mistral-3.
+Esta guía cubre el entrenamiento de LoRAs en FLUX.2, la familia de modelos de generación de imágenes más reciente de Black Forest Labs.
+
+> **Nota**: El flavour predeterminado es `klein-9b`, pero esta guía se centra en `dev` (el transformer completo de 12B con codificador de texto Mistral-3 de 24B) ya que tiene los mayores requisitos de recursos. Los modelos Klein son más fáciles de ejecutar - consulta [Variantes del modelo](#variantes-del-modelo) a continuación.
+
+## Variantes del modelo
+
+FLUX.2 viene en tres variantes:
+
+| Variante | Transformer | Codificador de texto | Bloques totales | Predeterminado |
+|---------|-------------|----------------------|-----------------|----------------|
+| `dev` | 12B parámetros | Mistral-3 (24B) | 56 (8+48) | |
+| `klein-9b` | 9B parámetros | Qwen3 (incluido) | 32 (8+24) | ✓ |
+| `klein-4b` | 4B parámetros | Qwen3 (incluido) | 25 (5+20) | |
+
+**Diferencias clave:**
+- **dev**: Usa codificador de texto Mistral-Small-3.1-24B independiente, tiene embeddings de guía
+- **modelos klein**: Usan codificador de texto Qwen3 incluido en el repositorio del modelo, **sin embeddings de guía** (las opciones de entrenamiento de guía se ignoran)
+
+Para seleccionar una variante, configura `model_flavour` en tu configuración:
+```json
+{
+  "model_flavour": "dev"
+}
+```
 
 ## Resumen del modelo
 
 FLUX.2-dev introduce cambios arquitectónicos significativos respecto a FLUX.1:
 
-- **Codificador de texto**: Mistral-Small-3.1-24B en lugar de CLIP+T5
-- **Arquitectura**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks
+- **Codificador de texto**: Mistral-Small-3.1-24B (dev) o Qwen3 (klein)
+- **Arquitectura**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks (dev)
 - **Canales latentes**: 32 canales VAE → 128 después de pixel shuffle (vs 16 en FLUX.1)
 - **VAE**: VAE personalizado con batch normalization y pixel shuffling
-- **Dimensión de embedding**: 15,360 (apilado de capas 10, 20, 30 de Mistral)
+- **Dimensión de embedding**: 15,360 para dev (3×5,120), 12,288 para klein-9b (3×4,096), 7,680 para klein-4b (3×2,560)
 
 ## Requisitos de hardware
 
-FLUX.2 tiene requisitos de recursos significativos debido al codificador de texto Mistral-3:
+Los requisitos de hardware varían significativamente según la variante del modelo.
 
-### Requisitos de VRAM
+### Modelos Klein (Recomendado para la mayoría de usuarios)
+
+Los modelos Klein son mucho más accesibles:
+
+| Variante | VRAM bf16 | VRAM int8 | RAM del sistema |
+|---------|-----------|-----------|-----------------|
+| `klein-4b` | ~12GB | ~8GB | 32GB+ |
+| `klein-9b` | ~22GB | ~14GB | 64GB+ |
+
+**Recomendado para klein-9b**: GPU única de 24GB (RTX 3090/4090, A5000)
+**Recomendado para klein-4b**: GPU única de 16GB (RTX 4080, A4000)
+
+### FLUX.2-dev (Avanzado)
+
+FLUX.2-dev tiene requisitos de recursos significativos debido al codificador de texto Mistral-3:
+
+#### Requisitos de VRAM
 
 El codificador de texto Mistral 24B por sí solo requiere VRAM significativa:
 
@@ -33,18 +72,18 @@ El codificador de texto Mistral 24B por sí solo requiere VRAM significativa:
 | todo en int8 | ~40GB |
 | codificador int4 + transformer int8 | ~22GB |
 
-### RAM del sistema
+#### RAM del sistema
 
 - **Mínimo**: 96GB de RAM del sistema (cargar el codificador de texto de 24B requiere mucha memoria)
 - **Recomendado**: 128GB+ para un funcionamiento cómodo
 
-### Hardware recomendado
+#### Hardware recomendado
 
 - **Mínimo**: 2x GPUs de 48GB (A6000, L40S) con FSDP2 o DeepSpeed
 - **Recomendado**: 4x H100 80GB con fp8-torchao
 - **Con cuantización agresiva (int4)**: 2x GPUs de 24GB pueden funcionar pero es experimental
 
-El entrenamiento distribuido multi-GPU (FSDP2 o DeepSpeed) es esencialmente requerido para FLUX.2 debido al tamaño combinado del codificador de texto Mistral-3 y el transformer.
+El entrenamiento distribuido multi-GPU (FSDP2 o DeepSpeed) es esencialmente requerido para FLUX.2-dev debido al tamaño combinado del codificador de texto Mistral-3 y el transformer.
 
 ## Requisitos previos
 
@@ -59,11 +98,17 @@ pip install transformers>=4.45.0
 
 ### Acceso al modelo
 
-FLUX.2-dev requiere aprobación de acceso en Hugging Face:
+Los modelos FLUX.2 requieren aprobación de acceso en Hugging Face:
 
+**Para dev:**
 1. Visita [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)
 2. Acepta el acuerdo de licencia
-3. Asegúrate de haber iniciado sesión en Hugging Face CLI
+
+**Para modelos klein:**
+1. Visita [black-forest-labs/FLUX.2-klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) o [black-forest-labs/FLUX.2-klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B)
+2. Acepta el acuerdo de licencia
+
+Asegúrate de haber iniciado sesión en Hugging Face CLI: `huggingface-cli login`
 
 ## Instalación
 
@@ -122,7 +167,9 @@ Crea `config/config.json`:
 
 #### Configuración de guidance
 
-FLUX.2 usa guidance embedding similar a FLUX.1:
+> **Nota**: Los modelos Klein (`klein-4b`, `klein-9b`) no tienen embeddings de guía. Las siguientes opciones de guidance solo aplican a `dev`.
+
+FLUX.2-dev usa guidance embedding similar a FLUX.1:
 
 <details>
 <summary>Ver ejemplo de config</summary>
@@ -355,14 +402,14 @@ Los LoRAs de FLUX.2 pueden cargarse con el pipeline de inferencia de SimpleTuner
 
 ## Diferencias con FLUX.1
 
-| Aspecto | FLUX.1 | FLUX.2 |
-|--------|--------|--------|
-| Codificador de texto | CLIP-L/14 + T5-XXL | Mistral-Small-3.1-24B |
-| Dimensión de embedding | CLIP: 768, T5: 4096 | 15,360 (3×5,120) |
-| Canales latentes | 16 | 32 (→128 después de pixel shuffle) |
-| VAE | AutoencoderKL | Personalizado (BatchNorm) |
-| Factor de escala VAE | 8 | 16 (8×2 pixel shuffle) |
-| Bloques del transformer | 19 joint + 38 single | 8 double + 48 single |
+| Aspecto | FLUX.1 | FLUX.2-dev | FLUX.2-klein-9b | FLUX.2-klein-4b |
+|--------|--------|------------|-----------------|-----------------|
+| Codificador de texto | CLIP-L/14 + T5-XXL | Mistral-3 (24B) | Qwen3 (incluido) | Qwen3 (incluido) |
+| Dimensión de embedding | CLIP: 768, T5: 4096 | 15,360 | 12,288 | 7,680 |
+| Canales latentes | 16 | 32 (→128) | 32 (→128) | 32 (→128) |
+| VAE | AutoencoderKL | Personalizado (BatchNorm) | Personalizado (BatchNorm) | Personalizado (BatchNorm) |
+| Bloques del transformer | 19 joint + 38 single | 8 double + 48 single | 8 double + 24 single | 5 double + 20 single |
+| Guidance embeds | Sí | Sí | No | No |
 
 ## Solución de problemas
 

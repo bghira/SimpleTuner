@@ -1,22 +1,61 @@
 # Guia de Início Rápido do FLUX.2
 
-Este guia cobre o treinamento de LoRAs no FLUX.2-dev, o mais recente modelo de geração de imagens da Black Forest Labs com encoder de texto Mistral-3.
+Este guia cobre o treinamento de LoRAs no FLUX.2, a mais recente família de modelos de geração de imagens da Black Forest Labs.
+
+> **Nota**: O flavour padrão é `klein-9b`, mas este guia foca no `dev` (o transformer completo de 12B com encoder de texto Mistral-3 de 24B) por ter os maiores requisitos de recursos. Os modelos Klein são mais fáceis de executar - veja [Variantes do modelo](#variantes-do-modelo) abaixo.
+
+## Variantes do modelo
+
+O FLUX.2 vem em três variantes:
+
+| Variante | Transformer | Encoder de texto | Total de blocos | Padrão |
+|---------|-------------|------------------|-----------------|--------|
+| `dev` | 12B parâmetros | Mistral-3 (24B) | 56 (8+48) | |
+| `klein-9b` | 9B parâmetros | Qwen3 (incluso) | 32 (8+24) | ✓ |
+| `klein-4b` | 4B parâmetros | Qwen3 (incluso) | 25 (5+20) | |
+
+**Diferenças principais:**
+- **dev**: Usa encoder de texto Mistral-Small-3.1-24B autônomo, possui embeddings de orientação
+- **modelos klein**: Usam encoder de texto Qwen3 incluso no repositório do modelo, **sem embeddings de orientação** (opções de treinamento de orientação são ignoradas)
+
+Para selecionar uma variante, defina `model_flavour` na sua configuração:
+```json
+{
+  "model_flavour": "dev"
+}
+```
 
 ## Visão geral do modelo
 
 O FLUX.2-dev introduz mudanças arquiteturais significativas em relação ao FLUX.1:
 
-- **Encoder de texto**: Mistral-Small-3.1-24B em vez de CLIP+T5
-- **Arquitetura**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks
+- **Encoder de texto**: Mistral-Small-3.1-24B (dev) ou Qwen3 (klein)
+- **Arquitetura**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks (dev)
 - **Canais latentes**: 32 canais no VAE → 128 após pixel shuffle (vs 16 no FLUX.1)
 - **VAE**: VAE customizado com batch normalization e pixel shuffling
-- **Dimensão de embedding**: 15.360 (empilhado das camadas 10, 20, 30 do Mistral)
+- **Dimensão de embedding**: 15.360 para dev (3×5.120), 12.288 para klein-9b (3×4.096), 7.680 para klein-4b (3×2.560)
 
 ## Requisitos de hardware
 
-O FLUX.2 tem requisitos de recursos significativos devido ao encoder de texto Mistral-3:
+Os requisitos de hardware variam significativamente por variante do modelo.
 
-### Requisitos de VRAM
+### Modelos Klein (Recomendado para a maioria dos usuários)
+
+Os modelos Klein são muito mais acessíveis:
+
+| Variante | VRAM bf16 | VRAM int8 | RAM do sistema |
+|---------|-----------|-----------|----------------|
+| `klein-4b` | ~12GB | ~8GB | 32GB+ |
+| `klein-9b` | ~22GB | ~14GB | 64GB+ |
+
+**Recomendado para klein-9b**: GPU única de 24GB (RTX 3090/4090, A5000)
+**Recomendado para klein-4b**: GPU única de 16GB (RTX 4080, A4000)
+
+### FLUX.2-dev (Avançado)
+
+O FLUX.2-dev tem requisitos de recursos significativos devido ao encoder de texto Mistral-3:
+
+#### Requisitos de VRAM
 
 O encoder de texto Mistral 24B sozinho exige VRAM considerável:
 
@@ -33,18 +72,18 @@ O encoder de texto Mistral 24B sozinho exige VRAM considerável:
 | tudo em int8 | ~40GB |
 | encoder de texto int4 + transformer int8 | ~22GB |
 
-### RAM do sistema
+#### RAM do sistema
 
 - **Mínimo**: 96GB de RAM do sistema (carregar o encoder 24B exige memória substancial)
 - **Recomendado**: 128GB+ para operação confortável
 
-### Hardware recomendado
+#### Hardware recomendado
 
 - **Mínimo**: 2x GPUs 48GB (A6000, L40S) com FSDP2 ou DeepSpeed
 - **Recomendado**: 4x H100 80GB com fp8-torchao
 - **Com quantização pesada (int4)**: 2x GPUs 24GB podem funcionar, mas é experimental
 
-Treinamento distribuído multi-GPU (FSDP2 ou DeepSpeed) é essencialmente obrigatório para o FLUX.2 devido ao tamanho combinado do encoder de texto Mistral-3 e do transformer.
+Treinamento distribuído multi-GPU (FSDP2 ou DeepSpeed) é essencialmente obrigatório para o FLUX.2-dev devido ao tamanho combinado do encoder de texto Mistral-3 e do transformer.
 
 ## Pré-requisitos
 
@@ -59,11 +98,17 @@ pip install transformers>=4.45.0
 
 ### Acesso ao modelo
 
-FLUX.2-dev exige aprovação de acesso no Hugging Face:
+Os modelos FLUX.2 exigem aprovação de acesso no Hugging Face:
 
+**Para dev:**
 1. Visite [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)
 2. Aceite o acordo de licença
-3. Garanta que você esteja logado no Hugging Face CLI
+
+**Para modelos klein:**
+1. Visite [black-forest-labs/FLUX.2-klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) ou [black-forest-labs/FLUX.2-klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B)
+2. Aceite o acordo de licença
+
+Garanta que você esteja logado no Hugging Face CLI: `huggingface-cli login`
 
 ## Instalação
 
@@ -122,7 +167,9 @@ Crie `config/config.json`:
 
 #### Configuração de guidance
 
-FLUX.2 usa embedding de guidance semelhante ao FLUX.1:
+> **Nota**: Os modelos Klein (`klein-4b`, `klein-9b`) não possuem embeddings de orientação. As seguintes opções de guidance aplicam-se apenas ao `dev`.
+
+FLUX.2-dev usa embedding de guidance semelhante ao FLUX.1:
 
 <details>
 <summary>Ver exemplo de config</summary>
@@ -355,14 +402,14 @@ LoRAs do FLUX.2 podem ser carregadas com o pipeline de inferência do SimpleTune
 
 ## Diferenças em relação ao FLUX.1
 
-| Aspecto | FLUX.1 | FLUX.2 |
-|--------|--------|--------|
-| Encoder de texto | CLIP-L/14 + T5-XXL | Mistral-Small-3.1-24B |
-| Dimensão de embedding | CLIP: 768, T5: 4096 | 15.360 (3×5.120) |
-| Canais latentes | 16 | 32 (→128 após pixel shuffle) |
-| VAE | AutoencoderKL | Custom (BatchNorm) |
-| Fator de escala do VAE | 8 | 16 (8×2 pixel shuffle) |
-| Blocos do transformer | 19 joint + 38 single | 8 double + 48 single |
+| Aspecto | FLUX.1 | FLUX.2-dev | FLUX.2-klein-9b | FLUX.2-klein-4b |
+|--------|--------|------------|-----------------|-----------------|
+| Encoder de texto | CLIP-L/14 + T5-XXL | Mistral-3 (24B) | Qwen3 (incluso) | Qwen3 (incluso) |
+| Dimensão de embedding | CLIP: 768, T5: 4096 | 15.360 | 12.288 | 7.680 |
+| Canais latentes | 16 | 32 (→128) | 32 (→128) | 32 (→128) |
+| VAE | AutoencoderKL | Custom (BatchNorm) | Custom (BatchNorm) | Custom (BatchNorm) |
+| Blocos do transformer | 19 joint + 38 single | 8 double + 48 single | 8 double + 24 single | 5 double + 20 single |
+| Guidance embeds | Sim | Sim | Não | Não |
 
 ## Solução de problemas
 
