@@ -902,10 +902,12 @@ class Flux2(ImageModelFoundation):
 
         # For Klein flavours (non-distilled), move validation_guidance to validation_guidance_real
         # The Flux2 pipeline only enables "true" CFG when validation_guidance_real is set
+        # Only do this if validation_guidance_real is at its default (1.0) to avoid overwriting user intent
         flavour = getattr(self.config, "model_flavour", "") or ""
         if self._is_klein_flavour() and "distilled" not in flavour:
             validation_guidance = getattr(self.config, "validation_guidance", None)
-            if validation_guidance is not None:
+            validation_guidance_real = getattr(self.config, "validation_guidance_real", 1.0)
+            if validation_guidance is not None and validation_guidance_real == 1.0:
                 logger.info(
                     f"Klein model detected: moving validation_guidance={validation_guidance} "
                     "to validation_guidance_real for true CFG support"
