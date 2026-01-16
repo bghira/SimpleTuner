@@ -1273,10 +1273,14 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         num_inference_steps: int = 50,
         sigmas: Optional[List[float]] = None,
         guidance_scale: Optional[float] = 4.0,
+        guidance_scale_real: float = 1.0,
+        no_cfg_until_timestep: int = 2,
         num_images_per_prompt: int = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
         prompt_embeds: Optional[torch.Tensor] = None,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        negative_text_ids: Optional[torch.Tensor] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -1367,9 +1371,16 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         )
 
         self._guidance_scale = guidance_scale
+        self._guidance_scale_real = guidance_scale_real
         self._attention_kwargs = attention_kwargs
         self._current_timestep = None
         self._interrupt = False
+
+        # Validate real CFG requirements
+        if guidance_scale_real > 1.0 and negative_prompt_embeds is None:
+            raise ValueError(
+                "guidance_scale_real > 1.0 requires negative_prompt_embeds to be provided for classifier-free guidance."
+            )
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -1494,6 +1505,27 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
                 )[0]
 
                 noise_pred = noise_pred[:, : latents.size(1) :]
+
+                # Real CFG: do a second pass with negative embeddings
+                if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
+                    noise_pred_uncond = self.transformer(
+                        hidden_states=latent_model_input,
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        encoder_hidden_states=negative_prompt_embeds.to(
+                            device=self.transformer.device, dtype=prompt_embeds.dtype
+                        ),
+                        txt_ids=(
+                            negative_text_ids.to(device=self.transformer.device)
+                            if negative_text_ids is not None
+                            else text_ids
+                        ),
+                        img_ids=latent_image_ids,
+                        joint_attention_kwargs=self._attention_kwargs,
+                        return_dict=False,
+                    )[0]
+                    noise_pred_uncond = noise_pred_uncond[:, : latents.size(1) :]
+                    noise_pred = noise_pred_uncond + guidance_scale_real * (noise_pred - noise_pred_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype

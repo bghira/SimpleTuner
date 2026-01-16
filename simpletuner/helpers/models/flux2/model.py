@@ -89,6 +89,7 @@ class Flux2(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKLFlux2
     LATENT_CHANNEL_COUNT = 128  # 32 VAE channels × 4 (2×2 pixel shuffle) = 128 transformer channels
     VAE_SCALE_FACTOR = 16  # 8x spatial + 2x pixel shuffle
+    VALIDATION_USES_NEGATIVE_PROMPT = True  # Required for real CFG support
 
     # LoRA targets for FLUX.2 transformer (diffusers naming)
     DEFAULT_LORA_TARGET = [
@@ -651,24 +652,28 @@ class Flux2(ImageModelFoundation):
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         """Convert cached negative embedding for pipeline use."""
-        # FLUX.2 doesn't use CFG in the traditional sense
-        # Return empty dict if no guidance needed
-        if self.config.validation_guidance is None or self.config.validation_guidance <= 1.0:
+        # Check if real CFG is needed (either via validation_guidance or validation_guidance_real)
+        validation_guidance = getattr(self.config, "validation_guidance", None)
+        validation_guidance_real = getattr(self.config, "validation_guidance_real", 1.0)
+        needs_cfg = (validation_guidance is not None and validation_guidance > 1.0) or validation_guidance_real > 1.0
+        if not needs_cfg:
             return {}
 
         prompt_embeds = text_embedding["prompt_embeds"]
-        attention_mask = text_embedding.get("attention_mask")
+        text_ids = text_embedding.get("text_ids")
 
         # Add batch dimension if missing
         if prompt_embeds.dim() == 2:
             prompt_embeds = prompt_embeds.unsqueeze(0)
-        if attention_mask is not None and attention_mask.dim() == 1:
-            attention_mask = attention_mask.unsqueeze(0)
+        if text_ids is not None and text_ids.dim() == 2:
+            text_ids = text_ids.unsqueeze(0)
 
-        return {
+        result = {
             "negative_prompt_embeds": prompt_embeds,
-            "negative_attention_mask": attention_mask,
         }
+        if text_ids is not None:
+            result["negative_text_ids"] = text_ids
+        return result
 
     def requires_conditioning_latents(self) -> bool:
         """
