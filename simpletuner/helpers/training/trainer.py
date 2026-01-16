@@ -2053,8 +2053,12 @@ class Trainer:
         if candidate_family:
             candidate_family = str(candidate_family).strip()
             model_cls = ModelRegistry.model_families().get(candidate_family)
-            if model_cls and issubclass(model_cls, VideoModelFoundation):
-                return True
+            if model_cls:
+                # Handle LazyModelClass by resolving to real class
+                if not inspect.isclass(model_cls) and hasattr(model_cls, "get_real_class"):
+                    model_cls = model_cls.get_real_class()
+                if inspect.isclass(model_cls) and issubclass(model_cls, VideoModelFoundation):
+                    return True
         return False
 
     def _infer_video_framerate(self, raw_config):
