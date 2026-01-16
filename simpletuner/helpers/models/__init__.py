@@ -3,6 +3,8 @@ import logging
 import os
 from pathlib import Path
 
+from simpletuner.helpers.models.registry import ModelRegistry
+
 model_dir = Path(__file__).parent
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
