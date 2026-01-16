@@ -147,6 +147,198 @@ def _convert_non_diffusers_flux2_lora_to_diffusers(state_dict):
     return converted_state_dict
 
 
+def _convert_diffusers_flux2_lora_to_comfyui(state_dict, adapter_metadata=None):
+    """
+    Convert a Diffusers/PEFT-style Flux2 LoRA state dict to ComfyUI format.
+
+    Key transformations:
+    - Single blocks: to_qkv_mlp_proj -> linear1, to_out -> linear2
+    - Double blocks: Fuse separate to_q/k/v into img_attn.qkv, add_q/k/v_proj into txt_attn.qkv
+    - Rename transformer_blocks -> double_blocks, single_transformer_blocks -> single_blocks
+    - Add diffusion_model. prefix
+    """
+    import re
+
+    from simpletuner.helpers.training.lora_format import _resolve_alpha_for_module
+
+    converted_state_dict = {}
+    alpha_entries = {}
+
+    # Strip transformer. prefix if present
+    original_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("transformer."):
+            original_state_dict[k[len("transformer.") :]] = v
+        else:
+            original_state_dict[k] = v
+
+    # Convert .lora.down/.lora.up to .lora_A/.lora_B format
+    normalized_state_dict = {}
+    for k, v in original_state_dict.items():
+        new_key = k
+        if ".lora.down." in new_key:
+            new_key = new_key.replace(".lora.down.", ".lora_A.")
+        elif ".lora.up." in new_key:
+            new_key = new_key.replace(".lora.up.", ".lora_B.")
+        normalized_state_dict[new_key] = v
+
+    original_state_dict = normalized_state_dict
+
+    # Detect layer counts dynamically from the state dict keys
+    single_block_indices = set()
+    double_block_indices = set()
+    single_pattern = re.compile(r"single_transformer_blocks\.(\d+)\.")
+    double_pattern = re.compile(r"transformer_blocks\.(\d+)\.")
+
+    for key in original_state_dict.keys():
+        match = single_pattern.search(key)
+        if match:
+            single_block_indices.add(int(match.group(1)))
+        match = double_pattern.search(key)
+        if match:
+            double_block_indices.add(int(match.group(1)))
+
+    # Process single blocks: simple key mapping
+    for sl in sorted(single_block_indices):
+        diffusers_prefix = f"single_transformer_blocks.{sl}.attn"
+        comfy_prefix = f"diffusion_model.single_blocks.{sl}"
+
+        for lora_key in ("lora_A", "lora_B"):
+            # to_qkv_mlp_proj -> linear1
+            src_key = f"{diffusers_prefix}.to_qkv_mlp_proj.{lora_key}.weight"
+            dst_key = f"{comfy_prefix}.linear1.{lora_key}.weight"
+            if src_key in original_state_dict:
+                converted_state_dict[dst_key] = original_state_dict.pop(src_key)
+                if lora_key == "lora_A":
+                    alpha_value = _resolve_alpha_for_module(
+                        f"single_transformer_blocks.{sl}.attn.to_qkv_mlp_proj",
+                        converted_state_dict[dst_key],
+                        adapter_metadata,
+                    )
+                    if alpha_value is not None:
+                        alpha_entries[f"{comfy_prefix}.linear1"] = torch.tensor(alpha_value, dtype=torch.float32)
+
+            # to_out -> linear2
+            src_key = f"{diffusers_prefix}.to_out.{lora_key}.weight"
+            dst_key = f"{comfy_prefix}.linear2.{lora_key}.weight"
+            if src_key in original_state_dict:
+                converted_state_dict[dst_key] = original_state_dict.pop(src_key)
+                if lora_key == "lora_A":
+                    alpha_value = _resolve_alpha_for_module(
+                        f"single_transformer_blocks.{sl}.attn.to_out",
+                        converted_state_dict[dst_key],
+                        adapter_metadata,
+                    )
+                    if alpha_value is not None:
+                        alpha_entries[f"{comfy_prefix}.linear2"] = torch.tensor(alpha_value, dtype=torch.float32)
+
+    # Process double blocks: need to fuse Q/K/V
+    for dl in sorted(double_block_indices):
+        diffusers_prefix = f"transformer_blocks.{dl}"
+        comfy_prefix = f"diffusion_model.double_blocks.{dl}"
+
+        # Image attention: fuse to_q, to_k, to_v -> img_attn.qkv
+        for lora_key in ("lora_A", "lora_B"):
+            q_key = f"{diffusers_prefix}.attn.to_q.{lora_key}.weight"
+            k_key = f"{diffusers_prefix}.attn.to_k.{lora_key}.weight"
+            v_key = f"{diffusers_prefix}.attn.to_v.{lora_key}.weight"
+
+            if q_key in original_state_dict and k_key in original_state_dict and v_key in original_state_dict:
+                q_weight = original_state_dict.pop(q_key)
+                k_weight = original_state_dict.pop(k_key)
+                v_weight = original_state_dict.pop(v_key)
+
+                if lora_key == "lora_A":
+                    # For lora_A, they should be identical (shared down projection)
+                    # Just use one of them
+                    fused_weight = q_weight
+                    alpha_value = _resolve_alpha_for_module(f"transformer_blocks.{dl}.attn.to_q", q_weight, adapter_metadata)
+                    if alpha_value is not None:
+                        alpha_entries[f"{comfy_prefix}.img_attn.qkv"] = torch.tensor(alpha_value, dtype=torch.float32)
+                else:
+                    # For lora_B, concatenate along dim 0
+                    fused_weight = torch.cat([q_weight, k_weight, v_weight], dim=0)
+
+                converted_state_dict[f"{comfy_prefix}.img_attn.qkv.{lora_key}.weight"] = fused_weight
+
+        # Text attention: fuse add_q_proj, add_k_proj, add_v_proj -> txt_attn.qkv
+        for lora_key in ("lora_A", "lora_B"):
+            q_key = f"{diffusers_prefix}.attn.add_q_proj.{lora_key}.weight"
+            k_key = f"{diffusers_prefix}.attn.add_k_proj.{lora_key}.weight"
+            v_key = f"{diffusers_prefix}.attn.add_v_proj.{lora_key}.weight"
+
+            if q_key in original_state_dict and k_key in original_state_dict and v_key in original_state_dict:
+                q_weight = original_state_dict.pop(q_key)
+                k_weight = original_state_dict.pop(k_key)
+                v_weight = original_state_dict.pop(v_key)
+
+                if lora_key == "lora_A":
+                    fused_weight = q_weight
+                    alpha_value = _resolve_alpha_for_module(
+                        f"transformer_blocks.{dl}.attn.add_q_proj", q_weight, adapter_metadata
+                    )
+                    if alpha_value is not None:
+                        alpha_entries[f"{comfy_prefix}.txt_attn.qkv"] = torch.tensor(alpha_value, dtype=torch.float32)
+                else:
+                    fused_weight = torch.cat([q_weight, k_weight, v_weight], dim=0)
+
+                converted_state_dict[f"{comfy_prefix}.txt_attn.qkv.{lora_key}.weight"] = fused_weight
+
+        # Output projections
+        proj_mappings = [
+            ("attn.to_out.0", "img_attn.proj"),
+            ("attn.to_add_out", "txt_attn.proj"),
+        ]
+        for diff_proj, comfy_proj in proj_mappings:
+            for lora_key in ("lora_A", "lora_B"):
+                src_key = f"{diffusers_prefix}.{diff_proj}.{lora_key}.weight"
+                dst_key = f"{comfy_prefix}.{comfy_proj}.{lora_key}.weight"
+                if src_key in original_state_dict:
+                    converted_state_dict[dst_key] = original_state_dict.pop(src_key)
+                    if lora_key == "lora_A":
+                        alpha_value = _resolve_alpha_for_module(
+                            f"transformer_blocks.{dl}.{diff_proj}",
+                            converted_state_dict[dst_key],
+                            adapter_metadata,
+                        )
+                        if alpha_value is not None:
+                            alpha_entries[f"{comfy_prefix}.{comfy_proj}"] = torch.tensor(alpha_value, dtype=torch.float32)
+
+        # MLP layers
+        mlp_mappings = [
+            ("ff.linear_in", "img_mlp.0"),
+            ("ff.linear_out", "img_mlp.2"),
+            ("ff_context.linear_in", "txt_mlp.0"),
+            ("ff_context.linear_out", "txt_mlp.2"),
+        ]
+        for diff_mlp, comfy_mlp in mlp_mappings:
+            for lora_key in ("lora_A", "lora_B"):
+                src_key = f"{diffusers_prefix}.{diff_mlp}.{lora_key}.weight"
+                dst_key = f"{comfy_prefix}.{comfy_mlp}.{lora_key}.weight"
+                if src_key in original_state_dict:
+                    converted_state_dict[dst_key] = original_state_dict.pop(src_key)
+                    if lora_key == "lora_A":
+                        alpha_value = _resolve_alpha_for_module(
+                            f"transformer_blocks.{dl}.{diff_mlp}",
+                            converted_state_dict[dst_key],
+                            adapter_metadata,
+                        )
+                        if alpha_value is not None:
+                            alpha_entries[f"{comfy_prefix}.{comfy_mlp}"] = torch.tensor(alpha_value, dtype=torch.float32)
+
+    # Add alpha entries
+    for module_key, alpha_value in alpha_entries.items():
+        converted_state_dict[f"{module_key}.alpha"] = alpha_value
+
+    # Pass through any remaining keys with basic transformation
+    for key, value in original_state_dict.items():
+        # Apply diffusion_model prefix to remaining transformer keys
+        new_key = f"diffusion_model.{key}"
+        converted_state_dict[new_key] = value
+
+    return converted_state_dict
+
+
 def format_text_input(prompts: List[str], system_message: str = None):
     # Remove [IMG] tokens from prompts to avoid Pixtral validation issues
     # when truncation is enabled. The processor counts [IMG] tokens and fails
