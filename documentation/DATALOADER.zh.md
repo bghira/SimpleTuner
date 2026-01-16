@@ -178,6 +178,12 @@
 - textfile 以换行拆分，每行作为一个字幕。
 - parquet 表的字段可以是可迭代类型。
 
+### `disable_multiline_split`
+
+- 当设为 `true` 时，阻止字幕文本文件按换行符拆分为多个字幕变体。
+- 适用于包含有意换行的字幕，希望保持为单一字幕的情况。
+- 默认值: `false`（按换行符拆分字幕）
+
 ### `metadata_backend`
 
 - **取值:** `discovery` | `parquet` | `huggingface`
@@ -663,6 +669,7 @@ s/this/will be found and replaced/
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
     "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "disable_multiline_split": false,
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
     "probability": 1.0,

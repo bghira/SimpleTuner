@@ -47,6 +47,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         is_regularisation_data: bool = False,
         dataset_type: str = "image",
         source_dataset_id: str = None,
+        disable_multiline_split: bool = False,
     ):
         """
         Initializes the sampler with provided settings.
@@ -109,6 +110,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.caption_strategy = caption_strategy
         self.prepend_instance_prompt = prepend_instance_prompt
         self.instance_prompt = instance_prompt
+        self.disable_multiline_split = disable_multiline_split
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.state_manager = BucketStateManager(self.id)
@@ -203,6 +205,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 "prepend_instance_prompt": self.prepend_instance_prompt,
                 "use_captions": self.use_captions,
                 "image_path": image_path,
+                "disable_multiline_split": self.disable_multiline_split,
             }
             if self.source_dataset_id is not None:
                 # we'll retrieve captions from the source dataset.
@@ -217,6 +220,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
                         "use_captions": source_dataset.use_captions,
                         "image_path": training_sample_path,
+                        "disable_multiline_split": source_dataset.disable_multiline_split,
                     }
                 )
             self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
@@ -598,6 +602,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 use_captions=self.use_captions,
                 prepend_instance_prompt=self.prepend_instance_prompt,
                 instance_prompt=self.instance_prompt,
+                disable_multiline_split=self.disable_multiline_split,
             )
             if type(instance_prompt) == list:
                 instance_prompt = random.choice(instance_prompt)
@@ -655,6 +660,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "prepend_instance_prompt": self.prepend_instance_prompt,
             "use_captions": self.use_captions,
             "image_path": full_path,
+            "disable_multiline_split": self.disable_multiline_split,
         }
         if self.source_dataset_id is not None and self.caption_strategy is None:
             # we'll retrieve captions from the source dataset.
@@ -669,6 +675,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
                     "use_captions": source_dataset.use_captions,
                     "image_path": training_sample_path,
+                    "disable_multiline_split": source_dataset.disable_multiline_split,
                 }
             )
         self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")

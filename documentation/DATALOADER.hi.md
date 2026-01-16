@@ -178,6 +178,12 @@ Metadata discovery के दौरान loader प्रत्येक file �
 - textfiles नई पंक्तियों पर split होते हैं। हर नई पंक्ति अलग caption होगी।
 - parquet tables में field iterable type हो सकता है।
 
+### `disable_multiline_split`
+
+- जब `true` पर सेट किया जाता है, तो caption text files को newlines द्वारा multiple caption variants में split होने से रोकता है।
+- उपयोगी जब आपके captions में intentional line breaks हों जिन्हें एक single caption के रूप में संरक्षित रखना हो।
+- Default: `false` (captions newlines द्वारा split होते हैं)
+
 ### `metadata_backend`
 
 - **Values:** `discovery` | `parquet` | `huggingface`
@@ -662,6 +668,7 @@ s/this/will be found and replaced/
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
     "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "disable_multiline_split": false,
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
     "probability": 1.0,

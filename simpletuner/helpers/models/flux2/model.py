@@ -900,6 +900,21 @@ class Flux2(ImageModelFoundation):
         self.config.flux_guidance_mode = "constant"
         self.config.flux_guidance_value = 1.0
 
+        # For Klein flavours (non-distilled), move validation_guidance to validation_guidance_real
+        # The Flux2 pipeline only enables "true" CFG when validation_guidance_real is set
+        # Only do this if validation_guidance_real is at its default (1.0) to avoid overwriting user intent
+        flavour = getattr(self.config, "model_flavour", "") or ""
+        if self._is_klein_flavour() and "distilled" not in flavour:
+            validation_guidance = getattr(self.config, "validation_guidance", None)
+            validation_guidance_real = getattr(self.config, "validation_guidance_real", 1.0)
+            if validation_guidance is not None and validation_guidance_real == 1.0:
+                logger.info(
+                    f"Klein model detected: moving validation_guidance={validation_guidance} "
+                    "to validation_guidance_real for true CFG support"
+                )
+                self.config.validation_guidance_real = validation_guidance
+                self.config.validation_guidance = None
+
     @staticmethod
     def get_lora_target_modules(lora_target: str) -> List[str]:
         """Get LoRA target modules for FLUX.2 (diffusers naming)."""

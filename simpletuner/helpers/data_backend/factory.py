@@ -2971,6 +2971,7 @@ class FactoryRegistry:
             is_regularisation_data=is_regularisation_data,
             dataset_type=backend.get("dataset_type"),
             source_dataset_id=init_backend["config"].get("source_dataset_id", None),
+            disable_multiline_split=backend.get("disable_multiline_split", False),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, self.args, init_backend["data_backend"])
@@ -3080,6 +3081,7 @@ class FactoryRegistry:
                     use_captions=use_captions,
                     caption_strategy=caption_strategy,
                     return_image_paths=True,
+                    disable_multiline_split=backend.get("disable_multiline_split", False),
                 )
             except AttributeError:
                 logger.debug("Skipping text embedding processing due to incomplete StateTracker configuration.")
@@ -3176,6 +3178,7 @@ class FactoryRegistry:
                     use_captions=use_captions,
                     caption_strategy=caption_strategy,
                     return_image_paths=True,
+                    disable_multiline_split=backend.get("disable_multiline_split", False),
                 )
             except AttributeError:
                 logger.debug(
