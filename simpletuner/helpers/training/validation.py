@@ -3260,6 +3260,8 @@ class Validation:
                 # Determine inference parameters (TwinFlow overrides defaults)
                 num_inference_steps = self.config.validation_num_inference_steps
                 guidance_scale = self.config.validation_guidance
+                if guidance_scale is None:
+                    guidance_scale = 1.0
                 if getattr(self.config, "twinflow_enabled", False):
                     # TwinFlow bakes CFG in during training; use zero guidance at inference
                     guidance_scale = 0.0
