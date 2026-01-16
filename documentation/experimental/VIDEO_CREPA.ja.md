@@ -48,6 +48,96 @@ Cross-frame Representation Alignment（CREPA）は動画モデル向けの軽量
 - `crepa_use_backbone_features=true`: 外部エンコーダを使わず、より深い Transformer ブロックへの整合に切り替え。教師は `crepa_teacher_block_index` で指定。
 - エンコーダサイズ: VRAM が厳しければ `dinov2_vits14` + `224` にダウン。品質重視なら `dinov2_vitg14` + `518`。
 
+## 係数スケジューリング
+
+CREPA は訓練中に係数（`crepa_lambda`）をスケジュールする機能をサポートしています。ウォームアップ、減衰、類似度閾値に基づく自動カットオフが利用可能です。これは特に text2video 訓練で有用で、CREPA を強く長く適用しすぎると水平/垂直の縞模様や色褪せた感じが出る場合があります。
+
+### 基本スケジューリング
+
+```json
+{
+  "crepa_enabled": true,
+  "crepa_lambda": 0.5,
+  "crepa_scheduler": "cosine",
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 5000,
+  "crepa_lambda_end": 0.0
+}
+```
+
+この設定では:
+1. 最初の 100 ステップで CREPA 重みを 0 から 0.5 にウォームアップ
+2. 5000 ステップかけてコサインスケジュールで 0.5 から 0.0 に減衰
+3. ステップ 5100 以降、CREPA は実質的に無効
+
+### スケジューラタイプ
+
+- `constant`: 減衰なし、重みは `crepa_lambda` のまま（既定）
+- `linear`: `crepa_lambda` から `crepa_lambda_end` への線形補間
+- `cosine`: 滑らかなコサインアニーリング（ほとんどのケースで推奨）
+- `polynomial`: `crepa_power` で設定可能な累乗による多項式減衰
+
+### ステップベースのカットオフ
+
+特定のステップ以降でハードカットオフする場合:
+
+```json
+{
+  "crepa_cutoff_step": 3000
+}
+```
+
+ステップ 3000 以降、CREPA は完全に無効化されます。
+
+### 類似度ベースのカットオフ
+
+最も柔軟なアプローチです。類似度メトリクスがプラトーに達したときに自動的に CREPA を無効化し、モデルが十分な時間的整合を学習したことを示します:
+
+```json
+{
+  "crepa_similarity_threshold": 0.9,
+  "crepa_similarity_ema_decay": 0.99,
+  "crepa_threshold_mode": "permanent"
+}
+```
+
+- `crepa_similarity_threshold`: 類似度の指数移動平均がこの値に達するとカットオフ
+- `crepa_similarity_ema_decay`: 平滑化係数（0.99 ≈ 100 ステップのウィンドウ）
+- `crepa_threshold_mode`: `permanent`（オフのまま）または `recoverable`（類似度が下がると再有効化）
+
+### 推奨設定
+
+**image2video (i2v) 向け**:
+```json
+{
+  "crepa_scheduler": "constant",
+  "crepa_lambda": 0.5
+}
+```
+参照フレームが一貫性のアンカーになるため、i2v では標準の CREPA でうまく機能します。
+
+**text2video (t2v) 向け**:
+```json
+{
+  "crepa_scheduler": "cosine",
+  "crepa_lambda": 0.5,
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 0,
+  "crepa_lambda_end": 0.1,
+  "crepa_similarity_threshold": 0.85,
+  "crepa_threshold_mode": "permanent"
+}
+```
+訓練中に CREPA を減衰させ、類似度が飽和するとカットオフしてアーティファクトを防ぎます。
+
+**単色背景向け (t2v)**:
+```json
+{
+  "crepa_cutoff_step": 2000
+}
+```
+早期カットオフにより均一な背景での縞模様アーティファクトを防ぎます。
+
 <details>
 <summary>仕組み（実務者向け）</summary>
 

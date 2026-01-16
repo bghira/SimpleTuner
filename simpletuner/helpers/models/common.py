@@ -4728,7 +4728,14 @@ class VideoModelFoundation(ImageModelFoundation):
         if hidden_size is None:
             raise ValueError("CREPA enabled but unable to infer transformer hidden size.")
 
-        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size, model_foundation=self)
+        max_train_steps = int(getattr(self.config, "max_train_steps", 0) or 0)
+        self.crepa_regularizer = CrepaRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size,
+            model_foundation=self,
+            max_train_steps=max_train_steps,
+        )
         model_component = self.get_trained_component(unwrap_model=False)
         if model_component is None:
             raise ValueError("CREPA requires an attached diffusion model to register its projector.")
@@ -4788,11 +4795,14 @@ class VideoModelFoundation(ImageModelFoundation):
                         f"CREPA backbone feature mode could not find layer_{teacher_idx} in the hidden state buffer."
                     )
 
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
             crepa_loss, crepa_logs = crepa.compute_loss(
                 hidden_states=crepa_hidden,
                 latents=prepared_batch.get("latents"),
                 vae=self.get_vae(),
                 frame_features=crepa_frame_features,
+                step=StateTracker.get_global_step(),
             )
             if crepa_loss is not None:
                 loss = loss + crepa_loss

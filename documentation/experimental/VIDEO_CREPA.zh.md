@@ -48,6 +48,96 @@ Cross-frame Representation Alignment（CREPA）是视频模型的轻量正则项
 - `crepa_use_backbone_features=true`：跳过外部编码器，改为对齐更深的 Transformer 块；通过 `crepa_teacher_block_index` 指定教师。
 - 编码器大小：显存紧张可用 `dinov2_vits14` + `224`；追求质量建议 `dinov2_vitg14` + `518`。
 
+## 系数调度
+
+CREPA 支持在训练过程中对系数（`crepa_lambda`）进行调度，包括预热、衰减以及基于相似度阈值的自动截止。这对于 text2video 训练尤其有用，因为如果 CREPA 应用过强或过久，可能会导致水平/垂直条纹或画面发灰。
+
+### 基本调度
+
+```json
+{
+  "crepa_enabled": true,
+  "crepa_lambda": 0.5,
+  "crepa_scheduler": "cosine",
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 5000,
+  "crepa_lambda_end": 0.0
+}
+```
+
+此配置：
+1. 在前 100 步将 CREPA 权重从 0 预热到 0.5
+2. 使用余弦调度在 5000 步内从 0.5 衰减到 0.0
+3. 第 5100 步后，CREPA 实际上已被禁用
+
+### 调度器类型
+
+- `constant`：无衰减，权重保持在 `crepa_lambda`（默认）
+- `linear`：从 `crepa_lambda` 到 `crepa_lambda_end` 的线性插值
+- `cosine`：平滑余弦退火（大多数情况推荐）
+- `polynomial`：多项式衰减，可通过 `crepa_power` 配置幂次
+
+### 基于步数的截止
+
+若需在特定步数后硬截止：
+
+```json
+{
+  "crepa_cutoff_step": 3000
+}
+```
+
+第 3000 步后 CREPA 将完全禁用。
+
+### 基于相似度的截止
+
+这是最灵活的方式——当相似度指标趋于平稳（表明模型已学会足够的时间对齐）时，CREPA 自动禁用：
+
+```json
+{
+  "crepa_similarity_threshold": 0.9,
+  "crepa_similarity_ema_decay": 0.99,
+  "crepa_threshold_mode": "permanent"
+}
+```
+
+- `crepa_similarity_threshold`：当相似度的指数移动平均达到此值时，CREPA 截止
+- `crepa_similarity_ema_decay`：平滑系数（0.99 ≈ 100 步窗口）
+- `crepa_threshold_mode`：`permanent`（保持关闭）或 `recoverable`（相似度下降时可重新启用）
+
+### 推荐配置
+
+**image2video (i2v)**：
+```json
+{
+  "crepa_scheduler": "constant",
+  "crepa_lambda": 0.5
+}
+```
+标准 CREPA 对 i2v 效果良好，因为参考帧可锚定一致性。
+
+**text2video (t2v)**：
+```json
+{
+  "crepa_scheduler": "cosine",
+  "crepa_lambda": 0.5,
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 0,
+  "crepa_lambda_end": 0.1,
+  "crepa_similarity_threshold": 0.85,
+  "crepa_threshold_mode": "permanent"
+}
+```
+在训练过程中衰减 CREPA，并在相似度饱和时截止以防止伪影。
+
+**纯色背景 (t2v)**：
+```json
+{
+  "crepa_cutoff_step": 2000
+}
+```
+早期截止可防止均匀背景上的条纹伪影。
+
 <details>
 <summary>工作原理（实践视角）</summary>
 

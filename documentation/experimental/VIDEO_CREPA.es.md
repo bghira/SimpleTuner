@@ -48,6 +48,96 @@ Agrega lo siguiente a tu `config.json` o args de CLI:
 - `crepa_use_backbone_features=true`: omite el encoder externo y alinea con un bloque transformer más profundo; configura `crepa_teacher_block_index` para elegir el maestro.
 - Tamaño de encoder: baja a `dinov2_vits14` + `224` si la VRAM es ajustada; mantén `dinov2_vitg14` + `518` para la mejor calidad.
 
+## Programación del coeficiente
+
+CREPA soporta programar el coeficiente (`crepa_lambda`) durante el entrenamiento con calentamiento, decaimiento y corte automático basado en umbral de similitud. Esto es particularmente útil para entrenamiento text2video donde CREPA puede causar franjas horizontales/verticales o una apariencia deslavada si se aplica demasiado fuerte durante demasiado tiempo.
+
+### Programación básica
+
+```json
+{
+  "crepa_enabled": true,
+  "crepa_lambda": 0.5,
+  "crepa_scheduler": "cosine",
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 5000,
+  "crepa_lambda_end": 0.0
+}
+```
+
+Esta configuración:
+1. Aumenta el peso de CREPA de 0 a 0.5 durante los primeros 100 pasos
+2. Decae de 0.5 a 0.0 usando un programa coseno durante 5000 pasos
+3. Después del paso 5100, CREPA está efectivamente desactivado
+
+### Tipos de programador
+
+- `constant`: Sin decaimiento, el peso se mantiene en `crepa_lambda` (por defecto)
+- `linear`: Interpolación lineal de `crepa_lambda` a `crepa_lambda_end`
+- `cosine`: Annealing coseno suave (recomendado para la mayoría de casos)
+- `polynomial`: Decaimiento polinomial con potencia configurable mediante `crepa_power`
+
+### Corte basado en pasos
+
+Para un corte duro después de un paso específico:
+
+```json
+{
+  "crepa_cutoff_step": 3000
+}
+```
+
+CREPA se desactiva completamente después del paso 3000.
+
+### Corte basado en similitud
+
+Este es el enfoque más flexible: CREPA se desactiva automáticamente cuando la métrica de similitud se estabiliza, indicando que el modelo ha aprendido suficiente alineación temporal:
+
+```json
+{
+  "crepa_similarity_threshold": 0.9,
+  "crepa_similarity_ema_decay": 0.99,
+  "crepa_threshold_mode": "permanent"
+}
+```
+
+- `crepa_similarity_threshold`: Cuando la media móvil exponencial de similitud alcanza este valor, CREPA se corta
+- `crepa_similarity_ema_decay`: Factor de suavizado (0.99 ≈ ventana de 100 pasos)
+- `crepa_threshold_mode`: `permanent` (permanece apagado) o `recoverable` (puede reactivarse si la similitud baja)
+
+### Configuraciones recomendadas
+
+**Para image2video (i2v)**:
+```json
+{
+  "crepa_scheduler": "constant",
+  "crepa_lambda": 0.5
+}
+```
+CREPA estándar funciona bien para i2v ya que el frame de referencia ancla la consistencia.
+
+**Para text2video (t2v)**:
+```json
+{
+  "crepa_scheduler": "cosine",
+  "crepa_lambda": 0.5,
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 0,
+  "crepa_lambda_end": 0.1,
+  "crepa_similarity_threshold": 0.85,
+  "crepa_threshold_mode": "permanent"
+}
+```
+Decae CREPA durante el entrenamiento y corta cuando la similitud se satura para prevenir artefactos.
+
+**Para fondos sólidos (t2v)**:
+```json
+{
+  "crepa_cutoff_step": 2000
+}
+```
+El corte temprano previene artefactos de franjas en fondos uniformes.
+
 <details>
 <summary>Cómo funciona (practicante)</summary>
 

@@ -964,6 +964,61 @@ CREPA es una técnica de regularización para fine-tuning de modelos de difusió
 - **Por qué**: Los modelos DINOv2 funcionan mejor a su resolución de entrenamiento. El modelo gigante usa 518x518.
 - **Predeterminado**: `518`
 
+### `--crepa_scheduler`
+
+- **Qué**: Programa para el decaimiento del coeficiente CREPA durante el entrenamiento.
+- **Por qué**: Permite reducir la fuerza de regularización CREPA a medida que avanza el entrenamiento, previniendo el sobreajuste en características profundas del encoder.
+- **Opciones**: `constant`, `linear`, `cosine`, `polynomial`
+- **Predeterminado**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **Qué**: Número de pasos para incrementar linealmente el peso CREPA desde 0 hasta `crepa_lambda`.
+- **Por qué**: Un calentamiento gradual puede ayudar a estabilizar el entrenamiento temprano antes de que la regularización CREPA entre en efecto.
+- **Predeterminado**: `0`
+
+### `--crepa_decay_steps`
+
+- **Qué**: Pasos totales para el decaimiento (después del calentamiento). Establece a 0 para decaer durante todo el entrenamiento.
+- **Por qué**: Controla la duración de la fase de decaimiento. El decaimiento comienza después de que se completa el calentamiento.
+- **Predeterminado**: `0` (usa `max_train_steps`)
+
+### `--crepa_lambda_end`
+
+- **Qué**: Peso CREPA final después de que se completa el decaimiento.
+- **Por qué**: Establecerlo a 0 desactiva efectivamente CREPA al final del entrenamiento, útil para text2video donde CREPA puede causar artefactos.
+- **Predeterminado**: `0.0`
+
+### `--crepa_power`
+
+- **Qué**: Factor de potencia para el decaimiento polinomial. 1.0 = lineal, 2.0 = cuadrático, etc.
+- **Por qué**: Valores más altos causan un decaimiento inicial más rápido que se ralentiza hacia el final.
+- **Predeterminado**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **Qué**: Paso de corte duro después del cual CREPA se desactiva.
+- **Por qué**: Útil para desactivar CREPA después de que el modelo ha convergido en el alineamiento temporal.
+- **Predeterminado**: `0` (sin corte basado en pasos)
+
+### `--crepa_similarity_threshold`
+
+- **Qué**: Umbral de EMA de similitud en el cual se activa el corte de CREPA.
+- **Por qué**: Cuando el promedio móvil exponencial de similitud alcanza este valor, CREPA se desactiva para prevenir el sobreajuste en características profundas del encoder. Esto es particularmente útil para entrenamiento text2video.
+- **Predeterminado**: None (desactivado)
+
+### `--crepa_similarity_ema_decay`
+
+- **Qué**: Factor de decaimiento del promedio móvil exponencial para el seguimiento de similitud.
+- **Por qué**: Valores más altos proporcionan un seguimiento más suave (0.99 ≈ ventana de 100 pasos), valores más bajos reaccionan más rápido a los cambios.
+- **Predeterminado**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **Qué**: Comportamiento cuando se alcanza el umbral de similitud.
+- **Opciones**: `permanent` (CREPA permanece desactivado una vez que se alcanza el umbral), `recoverable` (CREPA se reactiva si la similitud cae)
+- **Predeterminado**: `permanent`
+
 ### Ejemplo de configuración
 
 ```toml
@@ -981,6 +1036,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# Programación CREPA (opcional)
+# crepa_scheduler = "cosine"           # Tipo de decaimiento: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Calentamiento antes de que CREPA entre en efecto
+# crepa_decay_steps = 1000             # Pasos para el decaimiento (0 = todo el entrenamiento)
+# crepa_lambda_end = 0.0               # Peso final después del decaimiento
+# crepa_cutoff_step = 5000             # Paso de corte duro (0 = desactivado)
+# crepa_similarity_threshold = 0.9    # Corte basado en similitud
+# crepa_threshold_mode = "permanent"   # permanent o recoverable
 ```
 
 ---
