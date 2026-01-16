@@ -246,6 +246,8 @@ def get_all_field_defaults() -> Dict[str, Any]:
 
     defaults: Dict[str, Any] = {}
     for registry_field in lazy_field_registry.get_all_fields():
+        if registry_field.arg_name is None:
+            continue
         defaults[registry_field.arg_name] = ConfigsService.convert_value_by_type(
             registry_field.default_value,
             registry_field.field_type,
