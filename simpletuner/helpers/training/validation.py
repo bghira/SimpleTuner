@@ -3330,7 +3330,10 @@ class Validation:
                 # TODO: Refactor the rest so that it uses model class to update kwargs more generally.
                 if self.config.validation_guidance_real > 1.0:
                     pipeline_kwargs["guidance_scale_real"] = float(self.config.validation_guidance_real)
-                if isinstance(self.config.validation_no_cfg_until_timestep, int) and self.config.model_family == "flux":
+                if isinstance(self.config.validation_no_cfg_until_timestep, int) and self.config.model_family in (
+                    "flux",
+                    "flux2",
+                ):
                     pipeline_kwargs["no_cfg_until_timestep"] = self.config.validation_no_cfg_until_timestep
 
                 if is_audio and getattr(self.config, "validation_lyrics", None):
