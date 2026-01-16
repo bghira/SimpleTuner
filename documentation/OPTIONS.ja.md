@@ -404,6 +404,30 @@ Accelerate の既定値を使いたい項目は省略してください（例: �
 - **内容**: Hugging Face Hub のモデル名およびローカル結果ディレクトリ名。
 - **理由**: `--output_dir` で指定した場所の配下にこの名前のディレクトリが作成されます。`--push_to_hub` を指定した場合、Hugging Face Hub 上のモデル名になります。
 
+### `--modelspec_comment`
+
+- **内容**: safetensors ファイルのメタデータに `modelspec.comment` として埋め込まれるテキスト
+- **デフォルト**: None（無効）
+- **注記**:
+  - 外部モデルビューア（ComfyUI、モデル情報ツール）で表示可能
+  - 文字列または文字列配列（改行で結合）を受け付けます
+  - 環境変数置換用の `{env:VAR_NAME}` プレースホルダをサポート
+  - 各チェックポイントは保存時の現在の設定値を使用
+
+**例（文字列）**:
+```json
+"modelspec_comment": "カスタムデータセット v2.1 で学習"
+```
+
+**例（配列、複数行）**:
+```json
+"modelspec_comment": [
+  "学習ラン: experiment-42",
+  "データセット: custom-portraits-v2",
+  "メモ: {env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **内容**: step 0 で行う起動時の検証/ベンチマークを無効化します。これらの出力は学習済みモデルの検証画像の左側に連結されます。
@@ -1277,6 +1301,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1947,6 +1972,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL
