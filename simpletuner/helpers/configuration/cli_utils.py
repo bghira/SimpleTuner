@@ -179,9 +179,22 @@ def mapping_to_cli_args(
 
     extras_dict: dict[str, object] = extras if extras is not None else {}
 
+    # Lazy import to avoid circular dependency
+    try:
+        from simpletuner.simpletuner_sdk.server.services.field_registry import field_registry
+    except ImportError:
+        field_registry = None
+
     for key, raw_value in mapping.items():
         if raw_value is None:
             continue
+
+        # Skip fields that are registered with arg_name=None (dataset-level configs, not CLI args)
+        if field_registry is not None:
+            canonical_key = key.lstrip("-") if isinstance(key, str) else key
+            field = field_registry.get_field(canonical_key)
+            if field is not None and getattr(field, "arg_name", "NOT_NONE") is None:
+                continue
 
         value = transform(key, raw_value) if transform else raw_value
 
