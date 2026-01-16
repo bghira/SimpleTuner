@@ -1295,5 +1295,211 @@ class TestFactoryEdgeCases(unittest.TestCase):
             self.fail(f"Non-edit Qwen model should allow any conditioning_type: {e}")
 
 
+class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
+    """Test that empty string metadata_backend is treated like None and defaults appropriately."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.accelerator = MagicMock()
+        self.accelerator.is_main_process = True
+        self.accelerator.is_local_main_process = True
+        self.accelerator.device = "cuda"
+
+        self.model = MagicMock()
+        self.model.requires_conditioning_latents.return_value = False
+        self.model.requires_conditioning_dataset.return_value = False
+
+        self.text_encoders = [MagicMock(), MagicMock()]
+        self.tokenizers = [MagicMock(), MagicMock()]
+
+        self.args = MagicMock()
+        self.args.model_type = "sdxl"
+        self.args.model_family = "sdxl"
+        self.args.resolution = 1024
+        self.args.resolution_type = "area"
+        self.args.minimum_image_size = 0.5
+        self.args.maximum_image_size = 2.0
+        self.args.target_downsample_size = 1.25
+        self.args.caption_dropout_probability = 0.1
+        self.args.cache_dir_text = "/tmp/text_cache"
+        self.args.cache_dir_vae = "/tmp/vae_cache"
+        self.args.cache_dir = "/tmp/cache"
+        self.args.compress_disk_cache = True
+        self.args.delete_problematic_images = False
+        self.args.delete_unwanted_images = False
+        self.args.metadata_update_interval = 60
+        self.args.train_batch_size = 1
+        self.args.aws_max_pool_connections = 128
+        self.args.vae_cache_scan_behaviour = "ignore"
+        self.args.vae_cache_ondemand = False
+        self.args.skip_file_discovery = ""
+        self.args.gradient_accumulation_steps = 1
+        self.args.caption_strategy = "filename"
+        self.args.prepend_instance_prompt = False
+        self.args.instance_prompt = None
+        self.args.only_instance_prompt = False
+        self.args.debug_aspect_buckets = False
+        self.args.vae_batch_size = 4
+        self.args.write_batch_size = 64
+        self.args.read_batch_size = 64
+        self.args.max_workers = 4
+        self.args.image_processing_batch_size = 8
+        self.args.max_train_steps = 0
+        self.args.override_dataset_config = False
+        self.args.cache_file_suffix = None
+        self.args.eval_dataset_id = None
+        self.args.controlnet = False
+
+    def test_empty_string_metadata_backend_defaults_to_discovery_for_local(self):
+        """Empty string metadata_backend should default to 'discovery' for local backends."""
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "test_local",
+            "type": "local",
+            "instance_data_dir": "/tmp/images",
+            "metadata_backend": "",  # Empty string
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state:
+            mock_state.get_args.return_value = self.args
+
+            result = init_backend_config(backend, vars(self.args), self.accelerator)
+
+            # The empty string should be treated as None, defaulting to "discovery"
+            # The backend dict should remain with empty string, but behavior should use discovery
+            # Check that no error was raised about invalid metadata_backend type
+            self.assertIsNotNone(result)
+
+    def test_empty_string_metadata_backend_defaults_to_huggingface_for_hf_backend(self):
+        """Empty string metadata_backend should default to 'huggingface' for HuggingFace backends."""
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "test_hf",
+            "type": "huggingface",
+            "dataset_name": "test/dataset",
+            "metadata_backend": "",  # Empty string
+            "huggingface": {},
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state:
+            mock_state.get_args.return_value = self.args
+
+            result = init_backend_config(backend, vars(self.args), self.accelerator)
+
+            # Empty string should be treated as None, which triggers auto-set to "huggingface"
+            self.assertEqual(backend["metadata_backend"], "huggingface")
+
+    def test_check_huggingface_config_empty_string_defaults_to_huggingface(self):
+        """check_huggingface_config should treat empty string as None and default to 'huggingface'."""
+        from simpletuner.helpers.data_backend.factory import check_huggingface_config
+
+        backend = {
+            "id": "test_hf",
+            "type": "huggingface",
+            "dataset_name": "test/dataset",
+            "metadata_backend": "",  # Empty string
+        }
+
+        # Should not raise - empty string should default to "huggingface"
+        check_huggingface_config(backend)
+
+    def test_none_metadata_backend_defaults_to_discovery_for_local(self):
+        """None metadata_backend should default to 'discovery' for local backends (baseline)."""
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "test_local",
+            "type": "local",
+            "instance_data_dir": "/tmp/images",
+            # metadata_backend not specified (None)
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state:
+            mock_state.get_args.return_value = self.args
+
+            result = init_backend_config(backend, vars(self.args), self.accelerator)
+
+            # Should work without error
+            self.assertIsNotNone(result)
+
+    def test_none_metadata_backend_defaults_to_huggingface_for_hf_backend(self):
+        """None metadata_backend should default to 'huggingface' for HuggingFace backends (baseline)."""
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "test_hf",
+            "type": "huggingface",
+            "dataset_name": "test/dataset",
+            # metadata_backend not specified (None)
+            "huggingface": {},
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state:
+            mock_state.get_args.return_value = self.args
+
+            result = init_backend_config(backend, vars(self.args), self.accelerator)
+
+            # Should auto-set to "huggingface"
+            self.assertEqual(backend["metadata_backend"], "huggingface")
+
+    def test_configure_metadata_backend_empty_string_uses_discovery(self):
+        """_configure_metadata_backend should treat empty string as 'discovery'."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "test_discovery",
+            "type": "local",
+            "metadata_backend": "",  # Empty string
+        }
+        init_backend = {
+            "id": "test_discovery",
+            "config": backend.copy(),
+            "instance_data_dir": "/tmp/images",
+            "data_backend": MagicMock(),
+            "bucket_report": MagicMock(),
+        }
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_backend:
+            mock_backend_instance = MagicMock()
+            mock_backend.return_value = mock_backend_instance
+
+            factory._configure_metadata_backend(backend, init_backend)
+
+            # Should use DiscoveryMetadataBackend when metadata_backend is empty string
+            mock_backend.assert_called_once()
+            self.assertIs(init_backend["metadata_backend"], mock_backend_instance)
+
+    def test_caption_strategy_parquet_validation_with_empty_metadata_backend(self):
+        """caption_strategy=parquet with empty metadata_backend (defaults to discovery) should error."""
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "test_parquet_error",
+            "type": "local",
+            "instance_data_dir": "/tmp/images",
+            "caption_strategy": "parquet",
+            "metadata_backend": "",  # Empty string defaults to discovery
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state:
+            mock_state.get_args.return_value = self.args
+
+            # Should raise because parquet caption_strategy requires parquet metadata_backend
+            with self.assertRaises(ValueError) as context:
+                init_backend_config(backend, vars(self.args), self.accelerator)
+
+            self.assertIn("caption_strategy=parquet", str(context.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

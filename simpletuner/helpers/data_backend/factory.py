@@ -517,7 +517,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["conditioning_config"] = backend["conditioning_config"]
 
     # check if caption_strategy=parquet with metadata_backend=json
-    current_metadata_backend_type = backend.get("metadata_backend", "discovery")
+    current_metadata_backend_type = backend.get("metadata_backend") or "discovery"
     if output["config"]["caption_strategy"] == "parquet" and (
         current_metadata_backend_type == "json" or current_metadata_backend_type == "discovery"
     ):
@@ -538,7 +538,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         )
     if backend.get("type") == "huggingface":
         # huggingface must use metadata backend. if the user defined something else, we'll error. if they are not using anything, we'll override it.
-        if backend.get("metadata_backend", None) is None:
+        if not backend.get("metadata_backend"):
             backend["metadata_backend"] = "huggingface"
         elif backend["metadata_backend"] != "huggingface":
             raise ValueError(
@@ -2553,7 +2553,7 @@ class FactoryRegistry:
         """Configure the metadata backend."""
         info_log(f"(id={init_backend['id']}) Loading bucket manager.")
         metadata_backend_args = {}
-        metadata_backend = backend.get("metadata_backend", "discovery")
+        metadata_backend = backend.get("metadata_backend") or "discovery"
         if metadata_backend == "json" or metadata_backend == "discovery":
             from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 
@@ -4177,7 +4177,7 @@ def check_huggingface_config(backend: dict) -> None:
         if key not in backend:
             raise ValueError(f"Missing required key '{key}' in Hugging Face backend config.")
 
-    metadata_backend = backend.get("metadata_backend", "huggingface")
+    metadata_backend = backend.get("metadata_backend") or "huggingface"
     if metadata_backend not in ["huggingface"]:
         raise ValueError(f"Hugging Face datasets should use metadata_backend='huggingface', not '{metadata_backend}'")
 
