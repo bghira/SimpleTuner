@@ -403,6 +403,30 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 - **What**: The name of the Huggingface Hub model and local results directory.
 - **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
 
+### `--modelspec_comment`
+
+- **What**: Text embedded in safetensors file metadata as `modelspec.comment`
+- **Default**: None (disabled)
+- **Notes**:
+  - Visible in external model viewers (ComfyUI, model info tools)
+  - Accepts a string or array of strings (joined with newlines)
+  - Supports `{env:VAR_NAME}` placeholders for environment variable substitution
+  - Each checkpoint uses the current config value at save time
+
+**Example (string)**:
+```json
+"modelspec_comment": "Trained on my custom dataset v2.1"
+```
+
+**Example (array for multi-line)**:
+```json
+"modelspec_comment": [
+  "Training run: experiment-42",
+  "Dataset: custom-portraits-v2",
+  "Notes: {env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **What**: Disable the startup validation/benchmark that occurs at step 0 on the base model. These outputs are stitchd to the left side of your trained model validation images.
@@ -1273,6 +1297,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1943,6 +1968,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

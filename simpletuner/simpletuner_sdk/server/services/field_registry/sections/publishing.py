@@ -191,3 +191,22 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             order=2,
         )
     )
+
+    registry._add_field(
+        ConfigField(
+            name="modelspec_comment",
+            arg_name="--modelspec_comment",
+            ui_label="Modelspec Comment",
+            field_type=FieldType.TEXTAREA,
+            tab="publishing",
+            section="model_card",
+            default_value=None,
+            allow_empty=True,
+            placeholder="Optional comment embedded in safetensors metadata",
+            help_text="Text embedded in safetensors file metadata, visible in external model viewers. Accepts string, array of strings (joined by newlines), or {env:VAR_NAME} placeholders.",
+            tooltip="Use this to add notes, version info, or training context visible in tools like ComfyUI model info.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+            documentation="OPTIONS.md#--modelspec_comment",
+        )
+    )

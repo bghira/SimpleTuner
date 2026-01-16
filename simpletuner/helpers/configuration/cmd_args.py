@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from collections.abc import Mapping
@@ -203,6 +204,28 @@ def _parse_json_like_option(raw_value, option_name: str):
         return candidate
 
     return raw_value
+
+
+def _process_modelspec_comment(value) -> str | None:
+    """Process modelspec_comment: handle array, env placeholders."""
+    if value is None:
+        return None
+
+    if isinstance(value, list):
+        value = "\n".join(str(item) for item in value)
+    elif not isinstance(value, str):
+        value = str(value)
+
+    value = value.strip()
+    if not value:
+        return None
+
+    def replace_env(match):
+        var_name = match.group(1)
+        return os.environ.get(var_name, "")
+
+    value = re.sub(r"\{env:([^}]+)\}", replace_env, value)
+    return value or None
 
 
 def _contains_ast_markers(candidate: str) -> bool:
@@ -677,6 +700,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if isinstance(getattr(args, "post_upload_script", None), str):
         candidate = args.post_upload_script.strip()
         args.post_upload_script = candidate or None
+
+    if hasattr(args, "modelspec_comment"):
+        args.modelspec_comment = _process_modelspec_comment(args.modelspec_comment)
 
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):

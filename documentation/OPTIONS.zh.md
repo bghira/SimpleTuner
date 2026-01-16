@@ -406,6 +406,30 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：Hugging Face Hub 模型名称与本地结果目录名。
 - **原因**：该值用作 `--output_dir` 下的目录名称。若设置 `--push_to_hub`，这将成为 Hugging Face Hub 上的模型名。
 
+### `--modelspec_comment`
+
+- **内容**：嵌入到 safetensors 文件元数据中的文本，键为 `modelspec.comment`
+- **默认值**：None（禁用）
+- **说明**：
+  - 在外部模型查看器（ComfyUI、模型信息工具）中可见
+  - 接受字符串或字符串数组（用换行符连接）
+  - 支持 `{env:VAR_NAME}` 占位符用于环境变量替换
+  - 每个检查点使用保存时的当前配置值
+
+**示例（字符串）**：
+```json
+"modelspec_comment": "在我的自定义数据集 v2.1 上训练"
+```
+
+**示例（数组，多行）**：
+```json
+"modelspec_comment": [
+  "训练运行：experiment-42",
+  "数据集：custom-portraits-v2",
+  "备注：{env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **内容**：禁用启动时在 step 0 的验证/基准测试。其输出会拼接到训练模型验证图像的左侧。
@@ -1279,6 +1303,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1949,6 +1974,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

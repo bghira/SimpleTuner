@@ -307,6 +307,10 @@ class SaveHookManager:
         trigger_words_metadata = self._build_trigger_words_metadata()
         metadata.update(trigger_words_metadata)
 
+        comment = getattr(self.args, "modelspec_comment", None)
+        if comment:
+            metadata["modelspec.comment"] = str(comment)
+
         return {k: str(v) for k, v in metadata.items() if v is not None}
 
     def _append_metadata_to_safetensors(self, target_path: str, metadata: dict[str, str]) -> bool:
