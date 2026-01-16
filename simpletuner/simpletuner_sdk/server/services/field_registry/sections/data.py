@@ -142,6 +142,23 @@ def register_data_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Disable Multiline Split
+    registry._add_field(
+        ConfigField(
+            name="disable_multiline_split",
+            arg_name=None,
+            ui_label="Disable Multiline Caption Split",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="dataset_defaults",
+            default_value=False,
+            help_text="Keep text file captions as a single string instead of splitting by newlines",
+            tooltip="When enabled, captions from .txt files will not be split into multiple variants by newlines. Useful for captions that contain intentional line breaks.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+        )
+    )
+
     # Parquet Caption Column
     registry._add_field(
         ConfigField(

@@ -212,6 +212,7 @@ class PromptHandler:
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
         instance_prompt: str = None,
+        disable_multiline_split: bool = False,
     ) -> str:
         if not use_captions:
             if not instance_prompt:
@@ -226,8 +227,8 @@ class PromptHandler:
             if type(image_caption) == bytes:
                 image_caption = image_caption.decode("utf-8")
 
-            # any newlines? split into array
-            if "\n" in image_caption:
+            # any newlines? split into array (unless disabled)
+            if not disable_multiline_split and "\n" in image_caption:
                 image_caption = image_caption.split("\n")
                 # Remove any empty strings
                 image_caption = [x for x in image_caption if x]
@@ -321,6 +322,7 @@ class PromptHandler:
         data_backend: BaseDataBackend,
         instance_prompt: str = None,
         sampler_backend_id: str = None,
+        disable_multiline_split: bool = False,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -329,6 +331,7 @@ class PromptHandler:
             caption_strategy (str): Currently, 'filename' or 'textfile'.
             use_captions (bool): If false, the folder containing the image is used as an instance prompt.
             prepend_instance_prompt (bool): If true, the folder name of the image is prepended to the caption.
+            disable_multiline_split (bool): If true, don't split textfile captions by newlines.
 
         Raises:
             ValueError: _description_
@@ -346,13 +349,14 @@ class PromptHandler:
                 instance_prompt=instance_prompt,
             )
         elif caption_strategy == "textfile":
-            # Can return multiple captions, if the file has newlines.
+            # Can return multiple captions, if the file has newlines (unless disabled).
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
                 image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
+                disable_multiline_split=disable_multiline_split,
             )
         elif caption_strategy == "parquet":
             # Can return multiple captions, if the field is a list.
@@ -404,6 +408,7 @@ class PromptHandler:
         caption_strategy: str,
         instance_prompt: str = None,
         return_image_paths: bool = False,
+        disable_multiline_split: bool = False,
     ) -> list:
         logger.debug(
             "Gathering captions for data backend. "
@@ -464,6 +469,7 @@ class PromptHandler:
                         prepend_instance_prompt=prepend_instance_prompt,
                         instance_prompt=instance_prompt,
                         data_backend=data_backend,
+                        disable_multiline_split=disable_multiline_split,
                     )
                 elif caption_strategy == "parquet":
                     caption = PromptHandler.prepare_instance_prompt_from_parquet(
