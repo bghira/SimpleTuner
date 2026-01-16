@@ -350,20 +350,23 @@ class Flux2(ImageModelFoundation):
         quantize_via_cpu = getattr(self.config, "quantize_via", None) == "cpu"
 
         # For Klein models, text encoder is bundled in the model repo under "text_encoder" subfolder
+        # and tokenizer is in a separate "tokenizer" subfolder
         model_path = self.config.pretrained_model_name_or_path
         text_encoder_path = getattr(self.config, "pretrained_text_encoder_model_name_or_path", None)
         if text_encoder_path is None:
             text_encoder_path = model_path
             text_encoder_subfolder = "text_encoder"
+            tokenizer_subfolder = "tokenizer"
         else:
             text_encoder_subfolder = None
+            tokenizer_subfolder = None
 
         revision = getattr(self.config, "text_encoder_revision", None) or getattr(self.config, "revision", None)
 
         logger.info(f"Loading Qwen3 text encoder from {text_encoder_path}...")
 
-        # Load tokenizer
-        tokenizer_kwargs = {"subfolder": text_encoder_subfolder} if text_encoder_subfolder else {}
+        # Load tokenizer (from separate tokenizer subfolder in Klein models)
+        tokenizer_kwargs = {"subfolder": tokenizer_subfolder} if tokenizer_subfolder else {}
         if revision is not None:
             tokenizer_kwargs["revision"] = revision
         self._qwen_tokenizer = Qwen2TokenizerFast.from_pretrained(text_encoder_path, **tokenizer_kwargs)
