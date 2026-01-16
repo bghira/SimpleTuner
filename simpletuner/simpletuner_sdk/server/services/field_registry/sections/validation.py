@@ -492,7 +492,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Use 1.0 for no CFG (distilled models). Higher values for real CFG sampling.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
-            model_specific=["flux"],
+            model_specific=["flux", "flux2"],
         )
     )
 
@@ -511,7 +511,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="For Flux real CFG: skip CFG on these initial timesteps. Default: 2",
             importance=ImportanceLevel.ADVANCED,
             order=3,
-            model_specific=["flux"],
+            model_specific=["flux", "flux2"],
         )
     )
 
