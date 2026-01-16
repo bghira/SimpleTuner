@@ -1393,7 +1393,7 @@ class ConfigsService:
                     excluded_fields.add(f"--{arg_name}")
 
         field_types: Dict[str, FieldType] = {
-            field.arg_name: field.field_type for field in lazy_field_registry.get_all_fields()
+            field.arg_name: field.field_type for field in lazy_field_registry.get_all_fields() if field.arg_name is not None
         }
 
         json_path_fields = {

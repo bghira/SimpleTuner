@@ -206,6 +206,7 @@ class TestPromptHandler(unittest.TestCase):
             prepend_instance_prompt=prepend_instance_prompt,
             instance_prompt=instance_prompt,
             data_backend=self.data_backend,
+            disable_multiline_split=False,
         )
 
     def test_magic_prompt_instanceprompt_trims_whitespace(self):

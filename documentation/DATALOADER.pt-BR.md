@@ -178,6 +178,12 @@ Tanto `textfile` quanto `parquet` suportam multi-captions:
 - textfiles são separadas por novas linhas. Cada nova linha será sua própria caption.
 - tabelas parquet podem ter um tipo iterável no campo.
 
+### `disable_multiline_split`
+
+- Quando definido como `true`, impede que arquivos de texto de caption sejam divididos por novas linhas em múltiplas variantes de caption.
+- Útil quando suas captions contêm quebras de linha intencionais que devem ser preservadas como uma única caption.
+- Padrão: `false` (captions são divididas por novas linhas)
+
 ### `metadata_backend`
 
 - **Valores:** `discovery` | `parquet` | `huggingface`
@@ -662,6 +668,7 @@ Em ordem, as linhas se comportam da seguinte forma:
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
     "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "disable_multiline_split": false,
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
     "probability": 1.0,
