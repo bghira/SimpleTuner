@@ -994,9 +994,53 @@ class ModelFoundation(ABC):
         """
         raise NotImplementedError("model_predict must be implemented in the child class.")
 
+    # -------------------------------------------------------------------------
+    # Conditioning Capability Methods
+    # -------------------------------------------------------------------------
+    # These methods define how a model handles conditioning inputs (reference
+    # images, control signals, etc.). The WebUI and training pipeline use these
+    # to determine what UI elements to show and how to process data.
+    #
+    # There are two categories:
+    #   - "requires_*" methods: Model CANNOT function without this capability.
+    #     Training will fail if the requirement is not met.
+    #   - "supports_*" methods: Model CAN use this capability but doesn't require
+    #     it. The WebUI will show the option, but it's optional.
+    #
+    # Example model patterns:
+    #   - Flux Kontext: requires_conditioning_dataset() = True (always needs refs)
+    #   - Flux2: supports_conditioning_dataset() = True (optional dual T2I/I2I)
+    #   - LTXVideo2: supports_conditioning_dataset() = True (optional I2V)
+    #   - SD with ControlNet: requires_conditioning_dataset() = True (via config)
+    # -------------------------------------------------------------------------
+
     def requires_conditioning_dataset(self) -> bool:
+        """
+        Returns True when the model REQUIRES a conditioning dataset to train.
+
+        Override this to return True when:
+        - The model architecture inherently needs conditioning inputs (e.g., edit models)
+        - A config option like controlnet/control is enabled
+
+        When True, the dataloader will fail if no conditioning dataset is configured.
+        The WebUI will mark conditioning as mandatory.
+        """
         if self.config.controlnet or self.config.control:
             return True
+        return False
+
+    def supports_conditioning_dataset(self) -> bool:
+        """
+        Returns True when the model SUPPORTS optional conditioning datasets.
+
+        Override this to return True when:
+        - The model can operate in both text-to-image AND image-to-image modes
+        - Conditioning is useful but not mandatory (e.g., Flux2, LTXVideo2)
+
+        When True and requires_conditioning_dataset() is False, the WebUI will
+        show conditioning options without making them mandatory. This enables
+        dual T2I/I2I training workflows.
+        """
         return False
 
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
@@ -1014,9 +1058,27 @@ class ModelFoundation(ABC):
         return False
 
     def requires_conditioning_latents(self) -> bool:
+        """
+        Returns True when conditioning inputs should be VAE-encoded latents
+        instead of raw pixel values.
+
+        Override to True when:
+        - The model processes conditioning through the latent space (e.g., Flux, Flux2)
+        - ControlNet-style conditioning uses latent inputs
+
+        When True, collate.py will collect VAE-encoded latents for conditioning
+        instead of pixel tensors.
+        """
         return False
 
     def requires_conditioning_image_embeds(self) -> bool:
+        """
+        Returns True when conditioning requires pre-computed image embeddings
+        (e.g., from CLIP or similar vision encoder).
+
+        Override to True for models that use image embeddings as conditioning
+        signals rather than raw pixels or latents.
+        """
         return False
 
     def supports_audio_inputs(self) -> bool:
@@ -1043,9 +1105,29 @@ class ModelFoundation(ABC):
         return False
 
     def requires_conditioning_validation_inputs(self) -> bool:
+        """
+        Returns True when validation requires conditioning inputs (images/latents).
+
+        Override to True when:
+        - The model needs reference images to generate meaningful validation outputs
+        - Validation without conditioning would produce unusable results
+
+        When True, the validation system will load images from configured
+        validation datasets or use eval_dataset_id to source inputs.
+        """
         return False
 
-    def conditioning_validation_dataset_type(self) -> bool:
+    def conditioning_validation_dataset_type(self) -> str:
+        """
+        Returns the dataset type to use for conditioning during validation.
+
+        Common values:
+        - "conditioning": Use datasets marked as conditioning type (default)
+        - "image": Use standard image datasets (e.g., for edit models like Kontext)
+
+        Override this when the model expects a specific dataset type for its
+        conditioning inputs during validation.
+        """
         return "conditioning"
 
     def validation_image_input_edge_length(self):

@@ -687,6 +687,17 @@ class Flux2(ImageModelFoundation):
         # If controlnet is configured, base class already returns True.
         return True
 
+    def supports_conditioning_dataset(self) -> bool:
+        """
+        FLUX.2 optionally supports reference image conditioning for dual T2I/I2I training.
+
+        Unlike Flux Kontext which *requires* conditioning inputs, FLUX.2 can operate in
+        either text-to-image mode (no conditioning) or image-to-image mode (with reference
+        images). This allows the WebUI to show conditioning dataset options without
+        making them mandatory.
+        """
+        return True
+
     def prepare_batch_conditions(self, batch: dict, state: dict):
         """
         Prepare conditioning inputs for FLUX.2 reference image conditioning.

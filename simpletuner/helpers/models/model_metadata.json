@@ -4,7 +4,19 @@
         "module_path": "simpletuner.helpers.models.flux2.model",
         "name": "Flux.2",
         "flavour_choices": [
-            "dev"
+            "dev",
+            "klein-4b",
+            "klein-9b"
+        ]
+    },
+    "ltxvideo2": {
+        "class_name": "LTXVideo2",
+        "module_path": "simpletuner.helpers.models.ltxvideo2.model",
+        "name": "LTXVideo2",
+        "flavour_choices": [
+            "dev",
+            "dev-fp4",
+            "dev-fp8"
         ]
     },
     "sana": {
@@ -47,6 +59,7 @@
         "name": "Qwen-Image",
         "flavour_choices": [
             "v1.0",
+            "v2.0",
             "edit-v1",
             "edit-v2",
             "edit-v2+",
@@ -154,14 +167,6 @@
         "flavour_choices": [
             "0.9.5",
             "0.9.0"
-        ]
-    },
-    "ltxvideo2": {
-        "class_name": "LTXVideo2",
-        "module_path": "simpletuner.helpers.models.ltxvideo2.model",
-        "name": "LTX-2",
-        "flavour_choices": [
-            "2.0"
         ]
     },
     "longcat_video": {

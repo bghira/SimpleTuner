@@ -644,6 +644,79 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 - **What**: Disable evaluation loss calculation during validation.
 - **Why**: When an eval dataset is configured, loss will automatically be calculated. If CLIP evaluation is also enabled, they will both run. This flag will allow you to selectively disable eval loss while keeping CLIP evaluation enabled.
 
+### `--validation_using_datasets`
+
+- **What**: Use images from training datasets for validation instead of pure text-to-image generation.
+- **Why**: Enables image-to-image (img2img) validation mode where the model partially denoises training images rather than generating from pure noise. This is useful for:
+  - Testing edit/inpainting models that require input images
+  - Evaluating how well the model preserves image structure
+  - Models that support dual text-to-image AND image-to-image workflows (e.g., Flux2, LTXVideo2)
+- **Notes**:
+  - Requires the model to have an `IMG2IMG` pipeline registered (most dual-mode models use the same pipeline for both)
+  - Can be combined with `--eval_dataset_id` to source images from a specific dataset
+  - The denoising strength is controlled by the normal validation timestep settings
+
+### `--eval_dataset_id`
+
+- **What**: Specific dataset ID to use for evaluation/validation image sourcing.
+- **Why**: When using `--validation_using_datasets` or conditioning-based validation, this controls which dataset provides the input images:
+  - Without this option, images are randomly selected from all training datasets
+  - With this option, only the specified dataset is used for validation inputs
+- **Notes**:
+  - The dataset ID must match a configured dataset in your dataloader config
+  - Useful for keeping evaluation consistent by using a dedicated eval dataset
+  - For conditioning models, the dataset's conditioning data (if any) will also be used
+
+---
+
+## Understanding Conditioning and Validation Modes
+
+SimpleTuner supports three main paradigms for models that use conditioning inputs (reference images, control signals, etc.):
+
+### 1. Models that REQUIRE Conditioning
+
+Some models cannot function without conditioning inputs:
+
+- **Flux Kontext**: Always needs reference images for edit-style training
+- **ControlNet training**: Requires control signal images
+
+For these models, a conditioning dataset is mandatory. The WebUI will show conditioning options as required, and training will fail without them.
+
+### 2. Models that SUPPORT Optional Conditioning
+
+Some models can operate in both text-to-image AND image-to-image modes:
+
+- **Flux2**: Supports dual T2I/I2I training with optional reference images
+- **LTXVideo2**: Supports both T2V and I2V (image-to-video) with optional first-frame conditioning
+- **LongCat-Video**: Supports optional frame conditioning
+
+For these models, you CAN add conditioning datasets but don't have to. The WebUI will show conditioning options as optional.
+
+### 3. Validation Modes
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Text-to-Image** | (default) | Generate from text prompts only |
+| **Dataset-based** | `--validation_using_datasets` | Partially denoise images from datasets (img2img) |
+| **Conditioning-based** | (auto when conditioning configured) | Use conditioning inputs during validation |
+
+**Combining modes**: When a model supports conditioning AND `--validation_using_datasets` is enabled:
+- The validation system sources images from datasets
+- If those datasets have conditioning data, it's used automatically
+- Use `--eval_dataset_id` to control which dataset provides inputs
+
+### Conditioning Data Types
+
+Different models expect different conditioning data:
+
+| Type | Models | Dataset Setting |
+|------|--------|-----------------|
+| `conditioning` | ControlNet, Control | `type: conditioning` in dataset config |
+| `image` | Flux Kontext | `type: image` (standard image dataset) |
+| `latents` | Flux, Flux2 | Conditioning is VAE-encoded automatically |
+
+---
+
 ### `--caption_strategy`
 
 - **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
