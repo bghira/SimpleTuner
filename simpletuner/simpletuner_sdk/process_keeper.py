@@ -542,8 +542,16 @@ except Exception as e:
     traceback_str = traceback.format_exc() if log_level == logging.ERROR else ""
     if log_level == logging.ERROR:
         logger.error(traceback_str)
-    send_event("error", {{"message": error_message, "traceback": traceback_str}})
-    send_event("state", {{"status": "failed", "message": error_message}})
+    # Extract log excerpt if available (attached by _summarize_accelerate_failure)
+    log_excerpt = getattr(e, "_simpletuner_log_excerpt", None)
+    recent_lines = getattr(e, "_simpletuner_recent_log_lines", None)
+    error_payload = {{"message": error_message, "traceback": traceback_str}}
+    if log_excerpt:
+        error_payload["log_excerpt"] = log_excerpt
+    if recent_lines:
+        error_payload["recent_lines"] = recent_lines
+    send_event("error", error_payload)
+    send_event("state", {{"status": "failed", "message": error_message, "log_excerpt": log_excerpt}})
     time.sleep(0.2)
 
 logger.info("Subprocess exiting")
@@ -734,6 +742,14 @@ logger.info("Subprocess exiting")
                 if match:
                     signal_name = match.group(1)
                     signal_num = int(match.group(2))
+                    preferred_message = self._format_signal_message(signal_num, signal_name)
+                    break
+            # Also match accelerate's format: "Signal 9 (SIGKILL) received by PID 12345"
+            if "signal" in lowered and "received by pid" in lowered:
+                match = re.search(r"Signal\s+(\d+)\s+\(([A-Z_]+)\)\s+received by PID", line, re.IGNORECASE)
+                if match:
+                    signal_num = int(match.group(1))
+                    signal_name = match.group(2)
                     preferred_message = self._format_signal_message(signal_num, signal_name)
                     break
             if "nccl" in lowered and "warning" in lowered:
@@ -985,6 +1001,41 @@ logger.info("Subprocess exiting")
         first_failure = not self._relayed_failure
         if first_failure:
             self._relayed_failure = True
+
+        # If the message looks generic (like "Accelerate launch exited with status 1"),
+        # try to extract more useful info from logs
+        generic_patterns = [
+            "accelerate launch exited with status",
+            "training failed due to a fatal error",
+            "exited with status",
+            "exit code",
+        ]
+        message_lower = message.lower()
+        is_generic = any(p in message_lower for p in generic_patterns)
+        has_log_excerpt = bool(payload_data.get("log_excerpt"))
+
+        if first_failure and is_generic and not has_log_excerpt:
+            exit_code = payload_data.get("exit_code")
+            if exit_code is None:
+                # Try to extract exit code from message
+                match = re.search(r"status\s+(-?\d+)", message)
+                if match:
+                    try:
+                        exit_code = int(match.group(1))
+                    except ValueError:
+                        pass
+            supplemental = self._extract_error_from_logs(exit_code)
+            if supplemental:
+                # Merge supplemental info into payload
+                if supplemental.get("message") and supplemental["message"] != message:
+                    # Use the more specific message from logs
+                    better_message = supplemental["message"]
+                    if len(better_message) > len(message) or "signal" in better_message.lower():
+                        message = better_message
+                if supplemental.get("log_excerpt"):
+                    payload_data["log_excerpt"] = supplemental["log_excerpt"]
+                if supplemental.get("traceback"):
+                    payload_data.setdefault("traceback", supplemental["traceback"])
 
         payload_data.setdefault("status", "failed")
         normalized_status = str(payload_data.get("status") or "failed").strip().lower() or "failed"

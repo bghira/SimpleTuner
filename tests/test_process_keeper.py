@@ -283,6 +283,28 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         message = payload.get("message", "")
         self.assertTrue("SIGKILL" in message or "signal 9" in message)
 
+    def test_log_extraction_parses_signal_received_by_pid_format(self):
+        """Log extraction should parse accelerate's 'Signal N (SIGNAME) received by PID' format."""
+        job_id = "test_log_signal_pid_format"
+        process = TrainerProcess(job_id)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "stdout.log")
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...\n")
+                handle.write("traceback : Signal 9 (SIGKILL) received by PID 2963915\n")
+                handle.write("RuntimeError: Some wrapper error\n")
+
+            process.log_file = log_path
+            # Exit code is 1 (not -9) because accelerate wraps the signal
+            payload = process._extract_error_from_logs(exit_code=1)
+
+        self.assertIsNotNone(payload)
+        if payload is None:  # Pragmatic guard for static checkers
+            self.fail("Expected payload from log extraction")
+        message = payload.get("message", "")
+        self.assertIn("SIGKILL", message)
+
     @unittest.skip("Requires process fixes")
     def test_force_kill_unresponsive_process(self):
         """Test force killing a process that ignores SIGTERM."""

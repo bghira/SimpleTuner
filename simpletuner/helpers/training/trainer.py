@@ -166,6 +166,13 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
             signal_num = int(match.group(2))
             signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
             break
+        # Also match accelerate's format: "Signal 9 (SIGKILL) received by PID 12345"
+        match = re.search(r"Signal\s+(\d+)\s+\(([A-Z_]+)\)\s+received by PID", candidate_raw, re.IGNORECASE)
+        if match:
+            signal_num = int(match.group(1))
+            signal_name = match.group(2)
+            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
+            break
 
     if signal_fallback is None and signal_exit_message is not None:
         signal_fallback = (max(len(cleaned) - 1, 0), signal_exit_message)
@@ -234,6 +241,18 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
 
     if best_line is not None and _is_wrapper_line(best_line) and signal_fallback is not None:
         best_index, best_line = signal_fallback
+
+    # If we have signal info (SIGKILL, etc) and the best_line is just a generic RuntimeError,
+    # prefer the signal info as it's more useful for diagnosing OOM/killed processes
+    if signal_fallback is not None and best_line is not None:
+        signal_message = signal_fallback[1].lower()
+        best_lower = best_line.lower()
+        has_useful_signal_info = any(sig in signal_message for sig in ("sigkill", "sigterm", "signal"))
+        is_generic_runtime_error = (
+            best_lower.startswith("runtimeerror:") and "cuda" not in best_lower and "memory" not in best_lower
+        )
+        if has_useful_signal_info and is_generic_runtime_error:
+            best_index, best_line = signal_fallback
 
     if best_line is None:
         for idx in range(len(cleaned) - 1, -1, -1):
