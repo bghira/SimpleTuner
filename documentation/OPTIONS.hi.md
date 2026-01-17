@@ -962,6 +962,61 @@ CREPA एक regularization तकनीक है जो video diffusion models
 - **Why**: DINOv2 models अपने training resolution पर बेहतर काम करते हैं। giant model 518x518 उपयोग करता है।
 - **Default**: `518`
 
+### `--crepa_scheduler`
+
+- **What**: training के दौरान CREPA coefficient decay का schedule।
+- **Why**: जैसे-जैसे training आगे बढ़े, CREPA regularization strength को कम करने देता है, deep encoder features पर overfitting रोकता है।
+- **Options**: `constant`, `linear`, `cosine`, `polynomial`
+- **Default**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **What**: CREPA weight को 0 से `crepa_lambda` तक linearly ramp करने के लिए steps की संख्या।
+- **Why**: gradual warmup CREPA regularization शुरू होने से पहले early training को stabilize करने में मदद कर सकता है।
+- **Default**: `0`
+
+### `--crepa_decay_steps`
+
+- **What**: decay के लिए कुल steps (warmup के बाद)। 0 सेट करने पर पूरी training run पर decay होगा।
+- **Why**: decay phase की duration नियंत्रित करता है। warmup पूरा होने के बाद decay शुरू होता है।
+- **Default**: `0` (`max_train_steps` उपयोग होगा)
+
+### `--crepa_lambda_end`
+
+- **What**: decay पूरा होने के बाद final CREPA weight।
+- **Why**: 0 सेट करने पर training के अंत में CREPA प्रभावी रूप से disable हो जाता है, text2video के लिए उपयोगी जहाँ CREPA artifacts पैदा कर सकता है।
+- **Default**: `0.0`
+
+### `--crepa_power`
+
+- **What**: polynomial decay के लिए power factor। 1.0 = linear, 2.0 = quadratic, आदि।
+- **Why**: higher values शुरुआत में तेज decay करते हैं जो अंत की ओर धीमा हो जाता है।
+- **Default**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **What**: hard cutoff step जिसके बाद CREPA disable हो जाता है।
+- **Why**: model temporal alignment पर converge होने के बाद CREPA disable करने के लिए उपयोगी।
+- **Default**: `0` (कोई step-based cutoff नहीं)
+
+### `--crepa_similarity_threshold`
+
+- **What**: similarity EMA threshold जिस पर CREPA cutoff trigger होता है।
+- **Why**: जब similarity का exponential moving average इस मान तक पहुँचता है, तो deep encoder features पर overfitting रोकने के लिए CREPA disable हो जाता है। text2video training के लिए विशेष रूप से उपयोगी।
+- **Default**: None (disabled)
+
+### `--crepa_similarity_ema_decay`
+
+- **What**: similarity tracking के लिए exponential moving average decay factor।
+- **Why**: higher values smoother tracking देते हैं (0.99 ≈ 100-step window), lower values changes पर तेज react करते हैं।
+- **Default**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **What**: similarity threshold पहुँचने पर व्यवहार।
+- **Options**: `permanent` (threshold hit होने पर CREPA permanently off रहता है), `recoverable` (similarity गिरने पर CREPA फिर से enable होता है)
+- **Default**: `permanent`
+
 ### Example Configuration
 
 ```toml
@@ -979,6 +1034,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA Scheduling (optional)
+# crepa_scheduler = "cosine"           # Decay type: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Warmup before CREPA kicks in
+# crepa_decay_steps = 1000             # Steps for decay (0 = entire training)
+# crepa_lambda_end = 0.0               # Final weight after decay
+# crepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
+# crepa_similarity_threshold = 0.9    # Similarity-based cutoff
+# crepa_threshold_mode = "permanent"   # permanent or recoverable
 ```
 
 ---

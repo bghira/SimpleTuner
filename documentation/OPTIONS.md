@@ -962,6 +962,61 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Why**: DINOv2 models work best at their training resolution. The giant model uses 518x518.
 - **Default**: `518`
 
+### `--crepa_scheduler`
+
+- **What**: Schedule for CREPA coefficient decay over training.
+- **Why**: Allows reducing CREPA regularization strength as training progresses, preventing overfitting on deep encoder features.
+- **Options**: `constant`, `linear`, `cosine`, `polynomial`
+- **Default**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **What**: Number of steps to linearly ramp CREPA weight from 0 to `crepa_lambda`.
+- **Why**: Gradual warmup can help stabilize early training before CREPA regularization kicks in.
+- **Default**: `0`
+
+### `--crepa_decay_steps`
+
+- **What**: Total steps for decay (after warmup). Set to 0 to decay over entire training run.
+- **Why**: Controls the duration of the decay phase. Decay starts after warmup completes.
+- **Default**: `0` (uses `max_train_steps`)
+
+### `--crepa_lambda_end`
+
+- **What**: Final CREPA weight after decay completes.
+- **Why**: Setting to 0 effectively disables CREPA at end of training, useful for text2video where CREPA may cause artifacts.
+- **Default**: `0.0`
+
+### `--crepa_power`
+
+- **What**: Power factor for polynomial decay. 1.0 = linear, 2.0 = quadratic, etc.
+- **Why**: Higher values cause faster initial decay that slows down towards the end.
+- **Default**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **What**: Hard cutoff step after which CREPA is disabled.
+- **Why**: Useful for disabling CREPA after model has converged on temporal alignment.
+- **Default**: `0` (no step-based cutoff)
+
+### `--crepa_similarity_threshold`
+
+- **What**: Similarity EMA threshold at which CREPA cutoff triggers.
+- **Why**: When the exponential moving average of similarity reaches this value, CREPA is disabled to prevent overfitting on deep encoder features. This is particularly useful for text2video training.
+- **Default**: None (disabled)
+
+### `--crepa_similarity_ema_decay`
+
+- **What**: Exponential moving average decay factor for similarity tracking.
+- **Why**: Higher values provide smoother tracking (0.99 ≈ 100-step window), lower values react faster to changes.
+- **Default**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **What**: Behavior when similarity threshold is reached.
+- **Options**: `permanent` (CREPA stays off once threshold is hit), `recoverable` (CREPA re-enables if similarity drops)
+- **Default**: `permanent`
+
 ### Example Configuration
 
 ```toml
@@ -979,6 +1034,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA Scheduling (optional)
+# crepa_scheduler = "cosine"           # Decay type: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Warmup before CREPA kicks in
+# crepa_decay_steps = 1000             # Steps for decay (0 = entire training)
+# crepa_lambda_end = 0.0               # Final weight after decay
+# crepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
+# crepa_similarity_threshold = 0.9    # Similarity-based cutoff
+# crepa_threshold_mode = "permanent"   # permanent or recoverable
 ```
 
 ---

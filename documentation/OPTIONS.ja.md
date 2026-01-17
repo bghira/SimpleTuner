@@ -966,12 +966,67 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
 - **理由**: DINOv2 は学習時の解像度で最も良く動作します。巨大モデルは 518x518 を使用します。
 - **既定**: `518`
 
+### `--crepa_scheduler`
+
+- **内容**: 学習中の CREPA 係数減衰スケジュール。
+- **理由**: 学習が進むにつれて CREPA 正則化の強度を下げることで、深層エンコーダ特徴への過学習を防ぎます。
+- **選択肢**: `constant`、`linear`、`cosine`、`polynomial`
+- **既定**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **内容**: CREPA 重みを 0 から `crepa_lambda` まで線形に上昇させるステップ数。
+- **理由**: 段階的なウォームアップにより、CREPA 正則化が有効になる前の初期学習を安定させます。
+- **既定**: `0`
+
+### `--crepa_decay_steps`
+
+- **内容**: 減衰の総ステップ数（ウォームアップ後）。0 に設定すると学習全体で減衰します。
+- **理由**: 減衰フェーズの期間を制御します。減衰はウォームアップ完了後に開始されます。
+- **既定**: `0`（`max_train_steps` を使用）
+
+### `--crepa_lambda_end`
+
+- **内容**: 減衰完了後の最終 CREPA 重み。
+- **理由**: 0 に設定すると学習終了時に CREPA を実質的に無効化できます。text2video で CREPA がアーティファクトを引き起こす場合に有用です。
+- **既定**: `0.0`
+
+### `--crepa_power`
+
+- **内容**: 多項式減衰のべき乗係数。1.0 = 線形、2.0 = 二次など。
+- **理由**: 値が大きいほど初期の減衰が速く、終盤に向けて緩やかになります。
+- **既定**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **内容**: CREPA を無効化するハードカットオフステップ。
+- **理由**: モデルが時間的整合に収束した後に CREPA を無効化するのに有用です。
+- **既定**: `0`（ステップベースのカットオフなし）
+
+### `--crepa_similarity_threshold`
+
+- **内容**: CREPA カットオフをトリガーする類似度 EMA 閾値。
+- **理由**: 類似度の指数移動平均がこの値に達すると、深層エンコーダ特徴への過学習を防ぐために CREPA が無効化されます。text2video 学習に特に有用です。
+- **既定**: なし（無効）
+
+### `--crepa_similarity_ema_decay`
+
+- **内容**: 類似度追跡の指数移動平均減衰係数。
+- **理由**: 値が大きいほど滑らかな追跡（0.99 ≈ 100 ステップウィンドウ）、値が小さいほど変化に素早く反応します。
+- **既定**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **内容**: 類似度閾値に達した際の動作。
+- **選択肢**: `permanent`（閾値に達すると CREPA はオフのまま）、`recoverable`（類似度が下がると CREPA が再有効化）
+- **既定**: `permanent`
+
 ### 設定例
 
 ```toml
-# Enable CREPA for video fine-tuning
+# 動画ファインチューニング用 CREPA を有効化
 crepa_enabled = true
-crepa_block_index = 8          # Adjust based on your model
+crepa_block_index = 8          # モデルに応じて調整
 crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
@@ -983,6 +1038,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA スケジューリング（オプション）
+# crepa_scheduler = "cosine"           # 減衰タイプ: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # CREPA 有効化前のウォームアップ
+# crepa_decay_steps = 1000             # 減衰ステップ数（0 = 学習全体）
+# crepa_lambda_end = 0.0               # 減衰後の最終重み
+# crepa_cutoff_step = 5000             # ハードカットオフステップ（0 = 無効）
+# crepa_similarity_threshold = 0.9    # 類似度ベースのカットオフ
+# crepa_threshold_mode = "permanent"   # permanent または recoverable
 ```
 
 ---

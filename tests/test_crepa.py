@@ -1,9 +1,10 @@
+import math
 import unittest
 from types import SimpleNamespace
 
 import torch
 
-from simpletuner.helpers.training.crepa import CrepaRegularizer
+from simpletuner.helpers.training.crepa import CrepaRegularizer, CrepaScheduler
 
 
 class _DummyVAE(torch.nn.Module):
@@ -107,6 +108,218 @@ class CrepaDecodeTests(unittest.TestCase):
         projected = reg._project_hidden_states(hidden)
         self.assertEqual(projected.dtype, torch.float32)
         self.assertEqual(projected.shape, (1, 2, 3, 4))
+
+
+class CrepaSchedulerTests(unittest.TestCase):
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_scheduler": "constant",
+            "crepa_lambda": 0.5,
+            "crepa_warmup_steps": 0,
+            "crepa_decay_steps": 0,
+            "crepa_lambda_end": 0.0,
+            "crepa_cutoff_step": 0,
+            "crepa_similarity_threshold": None,
+            "crepa_similarity_ema_decay": 0.99,
+            "crepa_threshold_mode": "permanent",
+            "crepa_power": 1.0,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_constant_scheduler_returns_base_weight(self):
+        config = self._make_config(crepa_scheduler="constant", crepa_lambda=0.5)
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(500), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(1000), 0.5)
+
+    def test_warmup_ramps_from_zero(self):
+        config = self._make_config(
+            crepa_scheduler="constant",
+            crepa_lambda=1.0,
+            crepa_warmup_steps=100,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 0.0)
+        self.assertAlmostEqual(scheduler.get_weight(50), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(100), 1.0)
+        self.assertAlmostEqual(scheduler.get_weight(200), 1.0)
+
+    def test_linear_decay(self):
+        config = self._make_config(
+            crepa_scheduler="linear",
+            crepa_lambda=1.0,
+            crepa_lambda_end=0.0,
+            crepa_warmup_steps=0,
+            crepa_decay_steps=100,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
+        self.assertAlmostEqual(scheduler.get_weight(50), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(100), 0.0)
+
+    def test_cosine_decay(self):
+        config = self._make_config(
+            crepa_scheduler="cosine",
+            crepa_lambda=1.0,
+            crepa_lambda_end=0.0,
+            crepa_warmup_steps=0,
+            crepa_decay_steps=100,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
+        expected_midpoint = 0.5  # Cosine decay at 50% should give 0.5
+        self.assertAlmostEqual(scheduler.get_weight(50), expected_midpoint, places=2)
+        self.assertAlmostEqual(scheduler.get_weight(100), 0.0, places=5)
+
+    def test_polynomial_decay_with_power(self):
+        config = self._make_config(
+            crepa_scheduler="polynomial",
+            crepa_lambda=1.0,
+            crepa_lambda_end=0.0,
+            crepa_warmup_steps=0,
+            crepa_decay_steps=100,
+            crepa_power=2.0,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
+        # At 50%: (1 - 0.5)^2 = 0.25
+        expected = (1.0 - 0.0) * ((1 - 0.5) ** 2.0) + 0.0
+        self.assertAlmostEqual(scheduler.get_weight(50), expected, places=5)
+        self.assertAlmostEqual(scheduler.get_weight(100), 0.0, places=5)
+
+    def test_step_cutoff(self):
+        config = self._make_config(
+            crepa_scheduler="constant",
+            crepa_lambda=1.0,
+            crepa_cutoff_step=50,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
+        self.assertAlmostEqual(scheduler.get_weight(49), 1.0)
+        self.assertAlmostEqual(scheduler.get_weight(50), 0.0)
+        self.assertAlmostEqual(scheduler.get_weight(100), 0.0)
+
+    def test_similarity_threshold_permanent_cutoff(self):
+        config = self._make_config(
+            crepa_scheduler="constant",
+            crepa_lambda=1.0,
+            crepa_similarity_threshold=0.9,
+            crepa_similarity_ema_decay=0.0,  # No smoothing for predictable tests
+            crepa_threshold_mode="permanent",
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        # Below threshold - should return weight
+        self.assertAlmostEqual(scheduler.get_weight(0, similarity=0.5), 1.0)
+        self.assertAlmostEqual(scheduler.get_weight(1, similarity=0.8), 1.0)
+
+        # At threshold - should trigger cutoff
+        self.assertAlmostEqual(scheduler.get_weight(2, similarity=0.95), 0.0)
+
+        # Permanent: even if similarity drops, stays cut off
+        self.assertAlmostEqual(scheduler.get_weight(3, similarity=0.5), 0.0)
+        self.assertTrue(scheduler.is_cutoff())
+
+    def test_similarity_threshold_recoverable_cutoff(self):
+        config = self._make_config(
+            crepa_scheduler="constant",
+            crepa_lambda=1.0,
+            crepa_similarity_threshold=0.9,
+            crepa_similarity_ema_decay=0.0,  # No smoothing for predictable tests
+            crepa_threshold_mode="recoverable",
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        # Below threshold
+        self.assertAlmostEqual(scheduler.get_weight(0, similarity=0.5), 1.0)
+
+        # At threshold - should return 0
+        self.assertAlmostEqual(scheduler.get_weight(1, similarity=0.95), 0.0)
+
+        # Recoverable: if similarity drops, CREPA re-enables
+        self.assertAlmostEqual(scheduler.get_weight(2, similarity=0.5), 1.0)
+
+    def test_similarity_ema_tracking(self):
+        config = self._make_config(
+            crepa_scheduler="constant",
+            crepa_lambda=1.0,
+            crepa_similarity_threshold=0.95,
+            crepa_similarity_ema_decay=0.5,  # Fast decay for testing
+            crepa_threshold_mode="permanent",
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        # First call initializes EMA
+        scheduler.get_weight(0, similarity=0.5)
+        self.assertAlmostEqual(scheduler.get_similarity_ema(), 0.5)
+
+        # Second call updates EMA: 0.5 * 0.5 + 0.5 * 0.9 = 0.7
+        scheduler.get_weight(1, similarity=0.9)
+        self.assertAlmostEqual(scheduler.get_similarity_ema(), 0.7)
+
+    def test_warmup_then_decay(self):
+        config = self._make_config(
+            crepa_scheduler="linear",
+            crepa_lambda=1.0,
+            crepa_lambda_end=0.0,
+            crepa_warmup_steps=100,
+            crepa_decay_steps=200,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        # Warmup phase
+        self.assertAlmostEqual(scheduler.get_weight(0), 0.0)
+        self.assertAlmostEqual(scheduler.get_weight(50), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(100), 1.0)
+
+        # Decay phase: starts at step 100, ends at step 200
+        # At step 150: (150-100)/(200-100) = 0.5 progress
+        self.assertAlmostEqual(scheduler.get_weight(150), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(200), 0.0)
+
+    def test_combined_warmup_decay_cutoff(self):
+        config = self._make_config(
+            crepa_scheduler="linear",
+            crepa_lambda=1.0,
+            crepa_lambda_end=0.2,
+            crepa_warmup_steps=50,
+            crepa_decay_steps=150,
+            crepa_cutoff_step=100,
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=1000)
+
+        # Warmup
+        self.assertAlmostEqual(scheduler.get_weight(25), 0.5)
+
+        # After warmup, before cutoff
+        weight_at_75 = scheduler.get_weight(75)
+        self.assertGreater(weight_at_75, 0.2)
+        self.assertLess(weight_at_75, 1.0)
+
+        # After cutoff
+        self.assertAlmostEqual(scheduler.get_weight(100), 0.0)
+
+    def test_decay_steps_zero_uses_max_train_steps(self):
+        config = self._make_config(
+            crepa_scheduler="linear",
+            crepa_lambda=1.0,
+            crepa_lambda_end=0.0,
+            crepa_warmup_steps=0,
+            crepa_decay_steps=0,  # Should use max_train_steps
+        )
+        scheduler = CrepaScheduler(config, max_train_steps=100)
+
+        self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
+        self.assertAlmostEqual(scheduler.get_weight(50), 0.5)
+        self.assertAlmostEqual(scheduler.get_weight(100), 0.0)
 
 
 if __name__ == "__main__":

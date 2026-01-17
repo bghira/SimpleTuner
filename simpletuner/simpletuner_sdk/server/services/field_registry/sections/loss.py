@@ -409,6 +409,200 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # CREPA Scheduling Options
+    registry._add_field(
+        ConfigField(
+            name="crepa_scheduler",
+            arg_name="--crepa_scheduler",
+            ui_label="CREPA Scheduler",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="constant",
+            choices=[
+                {"value": "constant", "label": "Constant"},
+                {"value": "linear", "label": "Linear Decay"},
+                {"value": "cosine", "label": "Cosine Decay"},
+                {"value": "polynomial", "label": "Polynomial Decay"},
+            ],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Schedule for CREPA coefficient decay over training. Constant keeps the weight fixed.",
+            tooltip="Use decay schedules to reduce CREPA regularization strength as training progresses.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=22,
+            documentation="OPTIONS.md#--crepa_scheduler",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_warmup_steps",
+            arg_name="--crepa_warmup_steps",
+            ui_label="CREPA Warmup Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Number of steps to linearly ramp CREPA weight from 0 to crepa_lambda.",
+            tooltip="Gradual warmup can help stabilize early training before CREPA regularization kicks in.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=23,
+            documentation="OPTIONS.md#--crepa_warmup_steps",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_decay_steps",
+            arg_name="--crepa_decay_steps",
+            ui_label="CREPA Decay Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="crepa_enabled", operator="equals", value=True),
+                FieldDependency(field="crepa_scheduler", operator="not_equals", value="constant"),
+            ],
+            help_text="Total steps for decay (after warmup). 0 means decay over entire training run.",
+            tooltip="Controls the duration of the decay phase. Decay starts after warmup completes.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=24,
+            documentation="OPTIONS.md#--crepa_decay_steps",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_lambda_end",
+            arg_name="--crepa_lambda_end",
+            ui_label="CREPA End Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="crepa_enabled", operator="equals", value=True),
+                FieldDependency(field="crepa_scheduler", operator="not_equals", value="constant"),
+            ],
+            help_text="Final CREPA weight after decay completes. 0 effectively disables CREPA at end of training.",
+            tooltip="The coefficient decays from crepa_lambda to this value over decay_steps.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=25,
+            documentation="OPTIONS.md#--crepa_lambda_end",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_power",
+            arg_name="--crepa_power",
+            ui_label="CREPA Polynomial Power",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.1, message="Must be > 0")],
+            dependencies=[
+                FieldDependency(field="crepa_enabled", operator="equals", value=True),
+                FieldDependency(field="crepa_scheduler", operator="equals", value="polynomial"),
+            ],
+            help_text="Power factor for polynomial decay. 1.0 = linear, 2.0 = quadratic, etc.",
+            tooltip="Higher values cause faster initial decay that slows down towards the end.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=26,
+            documentation="OPTIONS.md#--crepa_power",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_cutoff_step",
+            arg_name="--crepa_cutoff_step",
+            ui_label="CREPA Cutoff Step",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Hard cutoff step after which CREPA is disabled. 0 means no step-based cutoff.",
+            tooltip="Useful for disabling CREPA after model has converged on temporal alignment.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=27,
+            documentation="OPTIONS.md#--crepa_cutoff_step",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_similarity_threshold",
+            arg_name="--crepa_similarity_threshold",
+            ui_label="CREPA Similarity Threshold",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
+            ],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Similarity EMA threshold at which CREPA cutoff triggers. Leave empty to disable.",
+            tooltip="When the exponential moving average of similarity reaches this value, CREPA is disabled to prevent overfitting.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=28,
+            documentation="OPTIONS.md#--crepa_similarity_threshold",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_similarity_ema_decay",
+            arg_name="--crepa_similarity_ema_decay",
+            ui_label="CREPA Similarity EMA Decay",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.99,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
+            ],
+            dependencies=[FieldDependency(field="crepa_similarity_threshold", operator="is_set", value=True)],
+            help_text="Exponential moving average decay factor for similarity tracking. Higher = smoother.",
+            tooltip="0.99 provides a ~100 step smoothing window. Lower values react faster to changes.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=29,
+            documentation="OPTIONS.md#--crepa_similarity_ema_decay",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_threshold_mode",
+            arg_name="--crepa_threshold_mode",
+            ui_label="CREPA Threshold Mode",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="permanent",
+            choices=[
+                {"value": "permanent", "label": "Permanent"},
+                {"value": "recoverable", "label": "Recoverable"},
+            ],
+            dependencies=[FieldDependency(field="crepa_similarity_threshold", operator="is_set", value=True)],
+            help_text="Behavior when similarity threshold is reached: permanent disables forever, recoverable allows re-enabling.",
+            tooltip="Permanent: once threshold is hit, CREPA stays off. Recoverable: CREPA re-enables if similarity drops.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=30,
+            documentation="OPTIONS.md#--crepa_threshold_mode",
+        )
+    )
+
     registry._add_field(
         ConfigField(
             name="twinflow_enabled",

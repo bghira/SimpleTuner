@@ -960,6 +960,61 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 - **Por que**: Modelos DINOv2 funcionam melhor na resolucao de treino. O modelo giant usa 518x518.
 - **Padrao**: `518`
 
+### `--crepa_scheduler`
+
+- **O que**: Agendamento para decaimento do coeficiente CREPA durante o treinamento.
+- **Por que**: Permite reduzir a forca da regularizacao CREPA conforme o treinamento progride, prevenindo overfitting nas features profundas do encoder.
+- **Opcoes**: `constant`, `linear`, `cosine`, `polynomial`
+- **Padrao**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **O que**: Numero de passos para aumentar linearmente o peso CREPA de 0 ate `crepa_lambda`.
+- **Por que**: Aquecimento gradual pode ajudar a estabilizar o treinamento inicial antes da regularizacao CREPA entrar em acao.
+- **Padrao**: `0`
+
+### `--crepa_decay_steps`
+
+- **O que**: Total de passos para decaimento (apos warmup). Defina como 0 para decair durante todo o treinamento.
+- **Por que**: Controla a duracao da fase de decaimento. O decaimento comeca apos o warmup completar.
+- **Padrao**: `0` (usa `max_train_steps`)
+
+### `--crepa_lambda_end`
+
+- **O que**: Peso CREPA final apos o decaimento completar.
+- **Por que**: Definir como 0 efetivamente desabilita o CREPA no final do treinamento, util para text2video onde CREPA pode causar artefatos.
+- **Padrao**: `0.0`
+
+### `--crepa_power`
+
+- **O que**: Fator de potencia para decaimento polinomial. 1.0 = linear, 2.0 = quadratico, etc.
+- **Por que**: Valores maiores causam decaimento inicial mais rapido que desacelera no final.
+- **Padrao**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **O que**: Passo de corte rigido apos o qual o CREPA e desabilitado.
+- **Por que**: Util para desabilitar o CREPA apos o modelo convergir no alinhamento temporal.
+- **Padrao**: `0` (sem corte baseado em passo)
+
+### `--crepa_similarity_threshold`
+
+- **O que**: Limiar de EMA de similaridade no qual o corte CREPA e acionado.
+- **Por que**: Quando a media movel exponencial da similaridade atinge este valor, o CREPA e desabilitado para prevenir overfitting nas features profundas do encoder. Isto e particularmente util para treinamento text2video.
+- **Padrao**: None (desabilitado)
+
+### `--crepa_similarity_ema_decay`
+
+- **O que**: Fator de decaimento da media movel exponencial para rastreamento de similaridade.
+- **Por que**: Valores maiores fornecem rastreamento mais suave (0.99 ≈ janela de 100 passos), valores menores reagem mais rapido a mudancas.
+- **Padrao**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **O que**: Comportamento quando o limiar de similaridade e atingido.
+- **Opcoes**: `permanent` (CREPA permanece desligado apos atingir o limiar), `recoverable` (CREPA reabilita se a similaridade cair)
+- **Padrao**: `permanent`
+
 ### Exemplo de configuracao
 
 ```toml
@@ -977,6 +1032,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# Agendamento CREPA (opcional)
+# crepa_scheduler = "cosine"           # Tipo de decaimento: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Warmup antes do CREPA entrar em acao
+# crepa_decay_steps = 1000             # Passos para decaimento (0 = treinamento inteiro)
+# crepa_lambda_end = 0.0               # Peso final apos decaimento
+# crepa_cutoff_step = 5000             # Passo de corte rigido (0 = desabilitado)
+# crepa_similarity_threshold = 0.9    # Corte baseado em similaridade
+# crepa_threshold_mode = "permanent"   # permanent ou recoverable
 ```
 
 ---

@@ -12,6 +12,116 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class CrepaScheduler:
+    """Schedules the CREPA coefficient (crepa_lambda) over training with warmup, decay, and cutoff support."""
+
+    def __init__(self, config, max_train_steps: int):
+        self.scheduler_type = str(getattr(config, "crepa_scheduler", "constant") or "constant").lower()
+        self.base_weight = float(getattr(config, "crepa_lambda", 0.5) or 0.0)
+        self.warmup_steps = int(getattr(config, "crepa_warmup_steps", 0) or 0)
+        raw_decay_steps = getattr(config, "crepa_decay_steps", 0) or 0
+        self.decay_steps = int(raw_decay_steps) if int(raw_decay_steps) > 0 else max_train_steps
+        self.lambda_end = float(getattr(config, "crepa_lambda_end", 0.0) or 0.0)
+        self.cutoff_step = int(getattr(config, "crepa_cutoff_step", 0) or 0)
+        self.similarity_threshold = getattr(config, "crepa_similarity_threshold", None)
+        if self.similarity_threshold is not None:
+            self.similarity_threshold = float(self.similarity_threshold)
+        raw_ema_decay = getattr(config, "crepa_similarity_ema_decay", None)
+        self.similarity_ema_decay = float(raw_ema_decay) if raw_ema_decay is not None else 0.99
+        self.threshold_mode = str(getattr(config, "crepa_threshold_mode", "permanent") or "permanent").lower()
+        self.power = float(getattr(config, "crepa_power", 1.0) or 1.0)
+
+        self._similarity_ema: Optional[float] = None
+        self._cutoff_triggered = False
+
+    def _compute_scheduled_weight(self, step: int) -> float:
+        """Compute the scheduled weight at the given step (without cutoff logic)."""
+        # Warmup phase: linear ramp from 0 to base_weight (applies to all scheduler types)
+        if self.warmup_steps > 0 and step < self.warmup_steps:
+            return self.base_weight * (step / self.warmup_steps)
+
+        # Constant scheduler: no decay after warmup
+        if self.scheduler_type == "constant":
+            return self.base_weight
+
+        # Decay phase: step relative to end of warmup
+        decay_step = step - self.warmup_steps
+        total_decay_steps = max(self.decay_steps - self.warmup_steps, 1)
+        progress = min(decay_step / total_decay_steps, 1.0)
+
+        if self.scheduler_type == "linear":
+            return self.base_weight + (self.lambda_end - self.base_weight) * progress
+        elif self.scheduler_type == "cosine":
+            return self.lambda_end + (self.base_weight - self.lambda_end) * (1 + math.cos(math.pi * progress)) / 2
+        elif self.scheduler_type == "polynomial":
+            return (self.base_weight - self.lambda_end) * ((1 - progress) ** self.power) + self.lambda_end
+        else:
+            return self.base_weight
+
+    def _update_similarity_ema(self, similarity: Optional[float]) -> None:
+        """Update the exponential moving average of similarity."""
+        if similarity is None:
+            return
+        if self._similarity_ema is None:
+            self._similarity_ema = similarity
+        else:
+            self._similarity_ema = (
+                self.similarity_ema_decay * self._similarity_ema + (1 - self.similarity_ema_decay) * similarity
+            )
+
+    def _check_cutoff(self, step: int) -> bool:
+        """Check if cutoff conditions are met."""
+        # Step-based cutoff
+        if self.cutoff_step > 0 and step >= self.cutoff_step:
+            return True
+
+        # Similarity threshold cutoff
+        if self.similarity_threshold is not None and self._similarity_ema is not None:
+            if self._similarity_ema >= self.similarity_threshold:
+                return True
+
+        return False
+
+    def get_weight(self, step: int, similarity: Optional[float] = None) -> float:
+        """
+        Get the scheduled weight for the given step.
+
+        Args:
+            step: Current training step (global step from trainer/accelerator).
+            similarity: Current similarity value for EMA tracking (optional).
+
+        Returns:
+            Scheduled CREPA coefficient weight (0.0 if cutoff is active).
+        """
+        # Update similarity EMA
+        self._update_similarity_ema(similarity)
+
+        # Handle cutoff logic
+        if self._cutoff_triggered and self.threshold_mode == "permanent":
+            return 0.0
+
+        cutoff_active = self._check_cutoff(step)
+
+        if cutoff_active:
+            if self.threshold_mode == "permanent":
+                self._cutoff_triggered = True
+            return 0.0
+
+        # Recoverable mode: reset trigger if cutoff is no longer active
+        if self.threshold_mode == "recoverable" and self._cutoff_triggered:
+            self._cutoff_triggered = False
+
+        return self._compute_scheduled_weight(step)
+
+    def is_cutoff(self) -> bool:
+        """Check if CREPA is currently cut off."""
+        return self._cutoff_triggered
+
+    def get_similarity_ema(self) -> Optional[float]:
+        """Get the current similarity EMA value."""
+        return self._similarity_ema
+
+
 class CrepaRegularizer:
     """Implements Cross-frame Representation Alignment (CREPA) as defined in Eq. (6) of the paper."""
 
@@ -22,6 +132,7 @@ class CrepaRegularizer:
         hidden_size: int,
         *,
         model_foundation: Optional["ModelFoundation"] = None,
+        max_train_steps: int = 0,
     ):
         self.config = config
         self.device = accelerator.device
@@ -38,7 +149,10 @@ class CrepaRegularizer:
         self.tau = 1.0 if raw_tau is None else float(raw_tau)
         if self.tau <= 0:
             raise ValueError("crepa_adjacent_tau must be greater than zero.")
-        self.weight = float(getattr(config, "crepa_lambda", 0.5) or 0.0)
+        self.base_weight = float(getattr(config, "crepa_lambda", 0.5) or 0.0)
+
+        # Initialize scheduler for coefficient scheduling
+        self.scheduler = CrepaScheduler(config, max_train_steps) if self.enabled else None
         # Prefer explicit crepa_model, fall back to legacy crepa_encoder name.
         raw_encoder = getattr(config, "crepa_model", None) or getattr(config, "crepa_encoder", None)
         self.encoder_name = self._resolve_encoder_name(raw_encoder)
@@ -107,6 +221,7 @@ class CrepaRegularizer:
         vae: Optional[nn.Module] = None,
         *,
         frame_features: Optional[torch.Tensor] = None,
+        step: int = 0,
     ) -> Tuple[Optional[torch.Tensor], Optional[dict]]:
         if not self.enabled:
             return None, None
@@ -123,7 +238,7 @@ class CrepaRegularizer:
                 raise ValueError("CREPA backbone feature mode requires frame_features from the model.")
         if self.projector is None:
             raise RuntimeError("CREPA projector was not initialised on the diffusion model.")
-        if self.weight == 0:
+        if self.base_weight == 0:
             return None, None
 
         if not self.use_backbone_features:
@@ -176,12 +291,37 @@ class CrepaRegularizer:
         if self.normalize_by_frames:
             per_video_sum = per_video_sum / float(num_frames)
 
-        align_loss = -per_video_sum.mean() * self.weight
+        # Get current similarity for EMA tracking
+        current_similarity = total_sim.mean().detach().item()
+
+        # Get scheduled weight (handles warmup, decay, and cutoff)
+        if self.scheduler is not None:
+            scheduled_weight = self.scheduler.get_weight(step, similarity=current_similarity)
+        else:
+            scheduled_weight = self.base_weight
+
+        # Early exit if weight is zero (cutoff active or decayed to zero)
+        if scheduled_weight == 0:
+            log_data = {
+                "crepa_loss": 0.0,
+                "crepa_similarity": current_similarity,
+                "crepa_weight": 0.0,
+                "crepa_cutoff": True,
+            }
+            if self.scheduler is not None and self.scheduler.get_similarity_ema() is not None:
+                log_data["crepa_similarity_ema"] = self.scheduler.get_similarity_ema()
+            return None, log_data
+
+        align_loss = -per_video_sum.mean() * scheduled_weight
 
         log_data = {
             "crepa_loss": align_loss.detach().item(),
-            "crepa_similarity": total_sim.mean().detach().item(),
+            "crepa_similarity": current_similarity,
+            "crepa_weight": scheduled_weight,
+            "crepa_cutoff": False,
         }
+        if self.scheduler is not None and self.scheduler.get_similarity_ema() is not None:
+            log_data["crepa_similarity_ema"] = self.scheduler.get_similarity_ema()
         return align_loss, log_data
 
     # --------------------------- private helpers ---------------------------

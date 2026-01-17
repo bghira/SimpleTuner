@@ -48,6 +48,96 @@ Adicione o seguinte ao seu `config.json` ou args da CLI:
 - `crepa_use_backbone_features=true`: pula o encoder externo e alinha com um bloco transformer mais profundo; defina `crepa_teacher_block_index` para escolher o teacher.
 - Tamanho do encoder: reduza para `dinov2_vits14` + `224` se VRAM estiver apertada; mantenha `dinov2_vitg14` + `518` para melhor qualidade.
 
+## Agendamento de coeficiente
+
+O CREPA suporta agendamento do coeficiente (`crepa_lambda`) ao longo do treinamento com warmup, decaimento e corte automatico baseado em limiar de similaridade. Isso e particularmente util para treinamento text2video onde o CREPA pode causar listras horizontais/verticais ou uma aparencia desbotada se aplicado muito forte por muito tempo.
+
+### Agendamento basico
+
+```json
+{
+  "crepa_enabled": true,
+  "crepa_lambda": 0.5,
+  "crepa_scheduler": "cosine",
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 5000,
+  "crepa_lambda_end": 0.0
+}
+```
+
+Esta configuracao:
+1. Aumenta o peso do CREPA de 0 para 0.5 nos primeiros 100 steps
+2. Decai de 0.5 para 0.0 usando um agendamento cosseno em 5000 steps
+3. Apos o step 5100, o CREPA esta efetivamente desabilitado
+
+### Tipos de agendamento
+
+- `constant`: Sem decaimento, o peso permanece em `crepa_lambda` (padrao)
+- `linear`: Interpolacao linear de `crepa_lambda` ate `crepa_lambda_end`
+- `cosine`: Anelamento cosseno suave (recomendado para a maioria dos casos)
+- `polynomial`: Decaimento polinomial com potencia configuravel via `crepa_power`
+
+### Corte baseado em steps
+
+Para um corte rigido apos um step especifico:
+
+```json
+{
+  "crepa_cutoff_step": 3000
+}
+```
+
+O CREPA e completamente desabilitado apos o step 3000.
+
+### Corte baseado em similaridade
+
+Esta e a abordagem mais flexivel: o CREPA desabilita automaticamente quando a metrica de similaridade estabiliza, indicando que o modelo aprendeu alinhamento temporal suficiente:
+
+```json
+{
+  "crepa_similarity_threshold": 0.9,
+  "crepa_similarity_ema_decay": 0.99,
+  "crepa_threshold_mode": "permanent"
+}
+```
+
+- `crepa_similarity_threshold`: Quando a media movel exponencial da similaridade atinge este valor, o CREPA e cortado
+- `crepa_similarity_ema_decay`: Fator de suavizacao (0.99 ≈ janela de 100 steps)
+- `crepa_threshold_mode`: `permanent` (permanece desligado) ou `recoverable` (pode reabilitar se a similaridade cair)
+
+### Configuracoes recomendadas
+
+**Para image2video (i2v)**:
+```json
+{
+  "crepa_scheduler": "constant",
+  "crepa_lambda": 0.5
+}
+```
+O CREPA padrao funciona bem para i2v ja que o frame de referencia ancora a consistencia.
+
+**Para text2video (t2v)**:
+```json
+{
+  "crepa_scheduler": "cosine",
+  "crepa_lambda": 0.5,
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 0,
+  "crepa_lambda_end": 0.1,
+  "crepa_similarity_threshold": 0.85,
+  "crepa_threshold_mode": "permanent"
+}
+```
+Decai o CREPA ao longo do treinamento e corta quando a similaridade satura para prevenir artefatos.
+
+**Para fundos solidos (t2v)**:
+```json
+{
+  "crepa_cutoff_step": 2000
+}
+```
+Corte antecipado previne artefatos de listras em fundos uniformes.
+
 <details>
 <summary>Como funciona (pratico)</summary>
 
