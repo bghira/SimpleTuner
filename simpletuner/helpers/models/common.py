@@ -59,6 +59,7 @@ from simpletuner.helpers.training.quantisation import (
     build_gguf_quantization_config,
     get_pipeline_quantization_builder,
 )
+from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
@@ -4794,8 +4795,6 @@ class VideoModelFoundation(ImageModelFoundation):
                     raise ValueError(
                         f"CREPA backbone feature mode could not find layer_{teacher_idx} in the hidden state buffer."
                     )
-
-            from simpletuner.helpers.training.state_tracker import StateTracker
 
             crepa_loss, crepa_logs = crepa.compute_loss(
                 hidden_states=crepa_hidden,
