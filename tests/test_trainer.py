@@ -881,6 +881,22 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue("SIGKILL" in summary or "signal 9" in summary)
         self.assertIsNotNone(excerpt)
 
+    def test_accelerate_failure_summary_highlights_signal_received_by_pid(self):
+        """Test parsing of accelerate's 'Signal N (SIGNAME) received by PID' format."""
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        lines = [
+            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
+            "traceback : Signal 9 (SIGKILL) received by PID 2963915",
+            "RuntimeError: Some wrapper error",
+        ]
+
+        summary, excerpt = trainer_module._summarize_accelerate_failure(1, lines)
+
+        # Should extract the SIGKILL message even though exit code is 1
+        self.assertIn("SIGKILL", summary)
+        self.assertIsNotNone(excerpt)
+
     def test_launch_with_accelerate_fallback_imports(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
