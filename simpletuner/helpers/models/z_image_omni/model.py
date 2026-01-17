@@ -479,4 +479,4 @@ class ZImageOmni(ImageModelFoundation):
         return {"model_prediction": noise_pred}
 
 
-ModelRegistry.register("z-image-omni", ZImageOmni)
+ModelRegistry.register("z_image_omni", ZImageOmni)

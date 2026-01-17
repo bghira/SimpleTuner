@@ -250,7 +250,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
 
     assistant_dependencies = [
         FieldDependency(field="model_type", value="lora"),
-        FieldDependency(field="model_family", operator="in", values=["flux", "z-image"]),
+        FieldDependency(field="model_family", operator="in", values=["flux", "z_image"]),
         FieldDependency(field="model_flavour", operator="in", values=["schnell", "turbo"]),
     ]
 
