@@ -126,6 +126,7 @@ class Flux2(ImageModelFoundation):
 
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: Flux2Pipeline,
+        PipelineTypes.IMG2IMG: Flux2Pipeline,
     }
 
     DEFAULT_MODEL_FLAVOUR = "klein-9b"
