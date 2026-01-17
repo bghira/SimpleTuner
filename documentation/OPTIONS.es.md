@@ -646,6 +646,79 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 - **Qué**: Desactiva el cálculo de pérdida de evaluación durante la validación.
 - **Por qué**: Cuando se configura un dataset de eval, la pérdida se calcula automáticamente. Si la evaluación CLIP también está habilitada, ambas se ejecutarán. Este flag te permite desactivar selectivamente la pérdida de eval manteniendo la evaluación CLIP habilitada.
 
+### `--validation_using_datasets`
+
+- **Qué**: Usa imágenes de datasets de entrenamiento para validación en lugar de generación pura de texto a imagen.
+- **Por qué**: Habilita el modo de validación imagen-a-imagen (img2img) donde el modelo des-ruido parcialmente imágenes de entrenamiento en lugar de generar desde ruido puro. Útil para:
+  - Probar modelos de edición/inpainting que requieren imágenes de entrada
+  - Evaluar qué tan bien el modelo preserva la estructura de imagen
+  - Modelos que soportan flujos duales texto-a-imagen E imagen-a-imagen (ej., Flux2, LTXVideo2)
+- **Notas**:
+  - Requiere que el modelo tenga un pipeline `IMG2IMG` registrado
+  - Puede combinarse con `--eval_dataset_id` para obtener imágenes de un dataset específico
+  - La fuerza de des-ruido se controla con los ajustes normales de timestep de validación
+
+### `--eval_dataset_id`
+
+- **Qué**: ID de dataset específico a usar para obtener imágenes de evaluación/validación.
+- **Por qué**: Al usar `--validation_using_datasets` o validación basada en conditioning, controla qué dataset provee las imágenes de entrada:
+  - Sin esta opción, las imágenes se seleccionan aleatoriamente de todos los datasets de entrenamiento
+  - Con esta opción, solo se usa el dataset especificado para entradas de validación
+- **Notas**:
+  - El ID de dataset debe coincidir con un dataset configurado en tu config de dataloader
+  - Útil para mantener evaluación consistente usando un dataset de eval dedicado
+  - Para modelos de conditioning, los datos de conditioning del dataset (si existen) también se usarán
+
+---
+
+## Entendiendo Modos de Conditioning y Validación
+
+SimpleTuner soporta tres paradigmas principales para modelos que usan entradas de conditioning (imágenes de referencia, señales de control, etc.):
+
+### 1. Modelos que REQUIEREN Conditioning
+
+Algunos modelos no pueden funcionar sin entradas de conditioning:
+
+- **Flux Kontext**: Siempre necesita imágenes de referencia para entrenamiento estilo edición
+- **Entrenamiento ControlNet**: Requiere imágenes de señal de control
+
+Para estos modelos, un dataset de conditioning es obligatorio. La WebUI mostrará opciones de conditioning como requeridas, y el entrenamiento fallará sin ellas.
+
+### 2. Modelos que SOPORTAN Conditioning Opcional
+
+Algunos modelos pueden operar en modos texto-a-imagen E imagen-a-imagen:
+
+- **Flux2**: Soporta entrenamiento dual T2I/I2I con imágenes de referencia opcionales
+- **LTXVideo2**: Soporta T2V e I2V (imagen-a-video) con conditioning de primer frame opcional
+- **LongCat-Video**: Soporta conditioning de frames opcional
+
+Para estos modelos, PUEDES agregar datasets de conditioning pero no es obligatorio. La WebUI mostrará opciones de conditioning como opcionales.
+
+### 3. Modos de Validación
+
+| Modo | Flag | Comportamiento |
+|------|------|----------------|
+| **Texto-a-Imagen** | (por defecto) | Genera solo desde prompts de texto |
+| **Basado en Dataset** | `--validation_using_datasets` | Des-ruido parcial de imágenes de datasets (img2img) |
+| **Basado en Conditioning** | (auto cuando se configura conditioning) | Usa entradas de conditioning durante validación |
+
+**Combinando modos**: Cuando un modelo soporta conditioning Y `--validation_using_datasets` está habilitado:
+- El sistema de validación obtiene imágenes de datasets
+- Si esos datasets tienen datos de conditioning, se usan automáticamente
+- Usa `--eval_dataset_id` para controlar qué dataset provee entradas
+
+### Tipos de Datos de Conditioning
+
+Diferentes modelos esperan diferentes datos de conditioning:
+
+| Tipo | Modelos | Configuración de Dataset |
+|------|---------|-------------------------|
+| `conditioning` | ControlNet, Control | `type: conditioning` en config de dataset |
+| `image` | Flux Kontext | `type: image` (dataset de imagen estándar) |
+| `latents` | Flux, Flux2 | Conditioning se codifica con VAE automáticamente |
+
+---
+
 ### `--caption_strategy`
 
 - **Qué**: Estrategia para derivar captions de imagen. **Opciones**: `textfile`, `filename`, `parquet`, `instanceprompt`

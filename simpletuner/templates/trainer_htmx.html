@@ -1319,21 +1319,24 @@ function trainerComponent() {
             return normalized;
         },
         computeModelContext(info, config, details) {
+            // Compute conservative defaults from config flags.
+            // Model-specific capabilities (conditioning support, dataset types, etc.)
+            // are provided by the backend via evaluateModelRequirements() and will
+            // override these defaults. This avoids hardcoding model/flavour checks
+            // in the frontend.
             const normalized = this.buildNormalizedConfig(config);
             const controlnetEnabled = this.normalizeBoolean(info.controlnet || normalized.controlnet);
             const controlEnabled = this.normalizeBoolean(info.control || normalized.control);
-            const modelFamily = info.modelFamily || '';
             const modelFlavour = info.modelFlavour || '';
-            const fluxKontext = modelFamily === 'flux' && modelFlavour === 'kontext';
 
-            const requiresDataset = Boolean(controlnetEnabled || controlEnabled || fluxKontext);
-            const requiresLatents = Boolean(controlnetEnabled || controlEnabled || fluxKontext);
-            const requiresValidationInputs = Boolean(controlnetEnabled || fluxKontext);
-            const requiresValidationEditCaptions = Boolean(controlnetEnabled || fluxKontext);
-            const conditioningDatasetType = fluxKontext ? 'image' : 'conditioning';
+            // Only controlnet/control are known from config; other conditioning
+            // capabilities come from backend model class methods.
+            const requiresDataset = Boolean(controlnetEnabled || controlEnabled);
+            const requiresLatents = Boolean(controlnetEnabled || controlEnabled);
+            const requiresValidationInputs = Boolean(controlnetEnabled || controlEnabled);
             const hasControlnetPipeline = Boolean(details?.capabilities?.has_controlnet_pipeline);
             const supportsConditioningGenerators = Boolean(
-                hasControlnetPipeline || controlnetEnabled || controlEnabled || fluxKontext,
+                hasControlnetPipeline || controlnetEnabled || controlEnabled,
             );
 
             return {
@@ -1342,8 +1345,8 @@ function trainerComponent() {
                 requiresConditioningLatents: requiresLatents,
                 requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: requiresValidationInputs,
-                requiresValidationEditCaptions,
-                conditioningDatasetType,
+                requiresValidationEditCaptions: false,
+                conditioningDatasetType: 'conditioning',
                 supportsConditioningGenerators,
                 hasControlnetPipeline,
                 modelFlavour: modelFlavour || null,

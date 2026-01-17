@@ -644,6 +644,79 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - **What**: validation के दौरान evaluation loss गणना disable करें।
 - **Why**: जब eval dataset कॉन्फ़िगर हो, loss स्वतः गणना होता है। यदि CLIP evaluation सक्षम है, तो दोनों चलेंगे। यह flag eval loss को disable करने देता है जबकि CLIP evaluation चालू रहता है।
 
+### `--validation_using_datasets`
+
+- **What**: pure text-to-image generation के बजाय training datasets से images validation के लिए use करें।
+- **Why**: image-to-image (img2img) validation mode enable करता है जहाँ model pure noise से generate करने के बजाय training images को partially denoise करता है। उपयोगी है:
+  - Edit/inpainting models test करने के लिए जिन्हें input images चाहिए
+  - Model image structure को कितना preserve करता है evaluate करने के लिए
+  - Dual text-to-image AND image-to-image workflows support करने वाले models के लिए (जैसे, Flux2, LTXVideo2)
+- **Notes**:
+  - Model में `IMG2IMG` pipeline registered होना चाहिए
+  - `--eval_dataset_id` के साथ combine कर सकते हैं specific dataset से images लेने के लिए
+  - Denoising strength normal validation timestep settings से control होती है
+
+### `--eval_dataset_id`
+
+- **What**: Evaluation/validation image sourcing के लिए specific dataset ID।
+- **Why**: `--validation_using_datasets` या conditioning-based validation use करते समय, यह control करता है कौन सा dataset input images provide करे:
+  - इस option के बिना, images सभी training datasets से randomly select होती हैं
+  - इस option के साथ, केवल specified dataset validation inputs के लिए use होता है
+- **Notes**:
+  - Dataset ID आपके dataloader config में configured dataset से match होना चाहिए
+  - Dedicated eval dataset use करके consistent evaluation maintain करने के लिए useful
+  - Conditioning models के लिए, dataset का conditioning data (यदि हो) भी use होगा
+
+---
+
+## Conditioning और Validation Modes को समझना
+
+SimpleTuner conditioning inputs (reference images, control signals, आदि) use करने वाले models के लिए तीन मुख्य paradigms support करता है:
+
+### 1. Models जो Conditioning REQUIRE करते हैं
+
+कुछ models conditioning inputs के बिना function नहीं कर सकते:
+
+- **Flux Kontext**: Edit-style training के लिए हमेशा reference images चाहिए
+- **ControlNet training**: Control signal images require करता है
+
+इन models के लिए, conditioning dataset mandatory है। WebUI conditioning options को required दिखाएगी, और training इनके बिना fail होगी।
+
+### 2. Models जो Optional Conditioning SUPPORT करते हैं
+
+कुछ models text-to-image AND image-to-image दोनों modes में operate कर सकते हैं:
+
+- **Flux2**: Optional reference images के साथ dual T2I/I2I training support करता है
+- **LTXVideo2**: Optional first-frame conditioning के साथ T2V और I2V (image-to-video) दोनों support करता है
+- **LongCat-Video**: Optional frame conditioning support करता है
+
+इन models के लिए, आप conditioning datasets ADD कर सकते हैं पर जरूरी नहीं। WebUI conditioning options को optional दिखाएगी।
+
+### 3. Validation Modes
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Text-to-Image** | (default) | केवल text prompts से generate |
+| **Dataset-based** | `--validation_using_datasets` | Datasets से images partially denoise (img2img) |
+| **Conditioning-based** | (auto जब conditioning configured हो) | Validation के दौरान conditioning inputs use |
+
+**Modes combine करना**: जब model conditioning support करता है AND `--validation_using_datasets` enabled है:
+- Validation system datasets से images लेता है
+- यदि उन datasets में conditioning data है, तो automatically use होता है
+- `--eval_dataset_id` use करें control करने के लिए कौन सा dataset inputs provide करे
+
+### Conditioning Data Types
+
+Different models different conditioning data expect करते हैं:
+
+| Type | Models | Dataset Setting |
+|------|--------|-----------------|
+| `conditioning` | ControlNet, Control | Dataset config में `type: conditioning` |
+| `image` | Flux Kontext | `type: image` (standard image dataset) |
+| `latents` | Flux, Flux2 | Conditioning automatically VAE-encoded होता है |
+
+---
+
 ### `--caption_strategy`
 
 - **What**: image captions derive करने की रणनीति। **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
