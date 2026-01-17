@@ -172,6 +172,16 @@ simpletuner configure config/foo/config.json
 - **内容**：预训练 Gemma 模型路径或 <https://huggingface.co/models> 上的标识符。
 - **原因**：训练 Gemma 系模型（例如 LTX-2、Sana、Lumina2）时，可单独指定 Gemma 权重来源，而无需更换基础扩散模型路径。
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **内容**：覆盖 FLUX.2 模型中从文本编码器提取的隐藏状态层。
+- **格式**：层索引的 JSON 数组，例如 `[10, 20, 30]`
+- **默认值**：未设置时使用模型特定默认值：
+  - FLUX.2-dev (Mistral-3)：`[10, 20, 30]`
+  - FLUX.2-klein (Qwen3)：`[9, 18, 27]`
+- **原因**：允许尝试不同的文本编码器隐藏状态组合，用于自定义对齐或研究目的。
+- **注意**：此选项为实验性功能，仅适用于 FLUX.2 模型。更改层索引会使已缓存的文本嵌入失效，需要重新生成。层数必须与模型期望的输入一致（3 层）。
+
 ### `--gradient_checkpointing`
 
 - **内容**：训练过程中按层计算并累积梯度，以降低显存峰值，但训练会变慢。
@@ -396,6 +406,30 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：Hugging Face Hub 模型名称与本地结果目录名。
 - **原因**：该值用作 `--output_dir` 下的目录名称。若设置 `--push_to_hub`，这将成为 Hugging Face Hub 上的模型名。
 
+### `--modelspec_comment`
+
+- **内容**：嵌入到 safetensors 文件元数据中的文本，键为 `modelspec.comment`
+- **默认值**：None（禁用）
+- **说明**：
+  - 在外部模型查看器（ComfyUI、模型信息工具）中可见
+  - 接受字符串或字符串数组（用换行符连接）
+  - 支持 `{env:VAR_NAME}` 占位符用于环境变量替换
+  - 每个检查点使用保存时的当前配置值
+
+**示例（字符串）**：
+```json
+"modelspec_comment": "在我的自定义数据集 v2.1 上训练"
+```
+
+**示例（数组，多行）**：
+```json
+"modelspec_comment": [
+  "训练运行：experiment-42",
+  "数据集：custom-portraits-v2",
+  "备注：{env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **内容**：禁用启动时在 step 0 的验证/基准测试。其输出会拼接到训练模型验证图像的左侧。
@@ -613,6 +647,79 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 - **内容**：在验证期间禁用评估损失计算。
 - **原因**：配置评估数据集后会自动计算损失；若启用 CLIP 评估，两者都会运行。此标志可在保留 CLIP 的同时关闭评估损失。
+
+### `--validation_using_datasets`
+
+- **内容**：使用训练数据集中的图像进行验证，而非纯文本到图像生成。
+- **原因**：启用图像到图像（img2img）验证模式，模型部分去噪训练图像而非从纯噪声生成。适用于：
+  - 测试需要输入图像的编辑/修复模型
+  - 评估模型对图像结构的保留程度
+  - 支持双重文本到图像和图像到图像工作流的模型（如 Flux2、LTXVideo2）
+- **注意**：
+  - 需要模型注册 `IMG2IMG` 管线
+  - 可与 `--eval_dataset_id` 结合从特定数据集获取图像
+  - 去噪强度由正常的验证时间步设置控制
+
+### `--eval_dataset_id`
+
+- **内容**：用于评估/验证图像来源的特定数据集 ID。
+- **原因**：使用 `--validation_using_datasets` 或基于条件的验证时，控制哪个数据集提供输入图像：
+  - 无此选项时，从所有训练数据集随机选择图像
+  - 有此选项时，仅使用指定数据集进行验证输入
+- **注意**：
+  - 数据集 ID 必须与数据加载器配置中的已配置数据集匹配
+  - 适用于使用专用评估数据集保持评估一致性
+  - 对于条件模型，数据集的条件数据（如有）也会被使用
+
+---
+
+## 理解条件化和验证模式
+
+SimpleTuner 为使用条件输入（参考图像、控制信号等）的模型支持三种主要范式：
+
+### 1. 需要条件化的模型
+
+部分模型没有条件输入无法运行：
+
+- **Flux Kontext**：编辑式训练始终需要参考图像
+- **ControlNet 训练**：需要控制信号图像
+
+对于这些模型，条件数据集是强制性的。WebUI 将条件选项显示为必需，没有它们训练将失败。
+
+### 2. 支持可选条件化的模型
+
+部分模型可在文本到图像和图像到图像两种模式下运行：
+
+- **Flux2**：支持可选参考图像的双重 T2I/I2I 训练
+- **LTXVideo2**：支持可选首帧条件的 T2V 和 I2V（图像到视频）
+- **LongCat-Video**：支持可选帧条件
+
+对于这些模型，你可以添加条件数据集但不是必需的。WebUI 将条件选项显示为可选。
+
+### 3. 验证模式
+
+| 模式 | 标志 | 行为 |
+|------|------|------|
+| **文本到图像** | （默认） | 仅从文本提示生成 |
+| **基于数据集** | `--validation_using_datasets` | 对数据集中的图像部分去噪（img2img） |
+| **基于条件** | （配置条件时自动） | 验证时使用条件输入 |
+
+**组合模式**：当模型支持条件化且 `--validation_using_datasets` 已启用时：
+- 验证系统从数据集获取图像
+- 如果这些数据集有条件数据，会自动使用
+- 使用 `--eval_dataset_id` 控制哪个数据集提供输入
+
+### 条件数据类型
+
+不同模型期望不同的条件数据：
+
+| 类型 | 模型 | 数据集设置 |
+|------|------|-----------|
+| `conditioning` | ControlNet, Control | 数据集配置中 `type: conditioning` |
+| `image` | Flux Kontext | `type: image`（标准图像数据集） |
+| `latents` | Flux, Flux2 | 条件自动 VAE 编码 |
+
+---
 
 ### `--caption_strategy`
 
@@ -934,12 +1041,67 @@ CREPA 是一种用于视频扩散模型微调的正则化技术，通过将隐�
 - **原因**：DINOv2 在训练分辨率上效果最好。巨型模型使用 518x518。
 - **默认**：`518`
 
+### `--crepa_scheduler`
+
+- **内容**：训练过程中 CREPA 系数的衰减调度方式。
+- **原因**：允许在训练进行时逐渐降低 CREPA 正则化强度，防止对深层编码器特征过拟合。
+- **选项**：`constant`、`linear`、`cosine`、`polynomial`
+- **默认**：`constant`
+
+### `--crepa_warmup_steps`
+
+- **内容**：将 CREPA 权重从 0 线性升至 `crepa_lambda` 的步数。
+- **原因**：渐进预热有助于在 CREPA 正则化生效前稳定早期训练。
+- **默认**：`0`
+
+### `--crepa_decay_steps`
+
+- **内容**：衰减总步数（预热后）。设为 0 则在整个训练过程中衰减。
+- **原因**：灵活控制衰减的时间跨度。
+- **默认**：`0`（使用 `max_train_steps`）
+
+### `--crepa_lambda_end`
+
+- **内容**：衰减完成后的最终 CREPA 权重。
+- **原因**：设为 0 可在训练末期有效禁用 CREPA，适用于 text2video 等可能产生伪影的场景。
+- **默认**：`0.0`
+
+### `--crepa_power`
+
+- **内容**：多项式衰减的幂因子。1.0 = 线性，2.0 = 二次，以此类推。
+- **原因**：控制衰减曲线形状。
+- **默认**：`1.0`
+
+### `--crepa_cutoff_step`
+
+- **内容**：硬截止步数，超过此步后禁用 CREPA。
+- **原因**：适用于模型时序对齐收敛后禁用 CREPA 的场景。
+- **默认**：`0`（无基于步数的截止）
+
+### `--crepa_similarity_threshold`
+
+- **内容**：触发 CREPA 截止的相似度 EMA 阈值。
+- **原因**：当相似度的指数移动平均达到此值时，CREPA 被禁用以防止对深层编码器特征过拟合。对于 text2video 训练尤其有用。
+- **默认**：None（禁用）
+
+### `--crepa_similarity_ema_decay`
+
+- **内容**：相似度跟踪的指数移动平均衰减因子。
+- **原因**：控制相似度指标的平滑程度。
+- **默认**：`0.99`
+
+### `--crepa_threshold_mode`
+
+- **内容**：达到相似度阈值后的行为。
+- **选项**：`permanent`（一旦达到阈值，CREPA 保持关闭）、`recoverable`（若相似度下降，CREPA 重新启用）
+- **默认**：`permanent`
+
 ### 配置示例
 
 ```toml
-# Enable CREPA for video fine-tuning
+# 启用 CREPA 用于视频微调
 crepa_enabled = true
-crepa_block_index = 8          # Adjust based on your model
+crepa_block_index = 8          # 根据模型调整
 crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
@@ -951,6 +1113,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA 调度（可选）
+# crepa_scheduler = "cosine"           # 衰减类型：constant、linear、cosine、polynomial
+# crepa_warmup_steps = 100             # CREPA 生效前的预热步数
+# crepa_decay_steps = 1000             # 衰减步数（0 = 整个训练过程）
+# crepa_lambda_end = 0.0               # 衰减后的最终权重
+# crepa_cutoff_step = 5000             # 硬截止步数（0 = 禁用）
+# crepa_similarity_threshold = 0.9    # 基于相似度的截止
+# crepa_threshold_mode = "permanent"   # permanent 或 recoverable
 ```
 
 ---
@@ -1269,6 +1440,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1939,6 +2111,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

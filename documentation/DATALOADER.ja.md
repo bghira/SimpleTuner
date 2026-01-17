@@ -178,6 +178,12 @@ Hugging Face の音声データセットでは、キャプション（プロン�
 - textfile は改行で分割され、各行が別キャプションになります。
 - parquet テーブルはフィールドに iterable 型を持てます。
 
+### `disable_multiline_split`
+
+- `true` に設定すると、キャプションテキストファイルが改行で複数のキャプションバリアントに分割されなくなります。
+- 意図的な改行を含むキャプションを単一のキャプションとして保持したい場合に便利です。
+- デフォルト: `false`（改行でキャプションを分割）
+
 ### `metadata_backend`
 
 - **値:** `discovery` | `parquet` | `huggingface`
@@ -663,6 +669,7 @@ s/this/will be found and replaced/
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
     "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "disable_multiline_split": false,
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
     "probability": 1.0,

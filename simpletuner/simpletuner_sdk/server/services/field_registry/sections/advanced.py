@@ -854,6 +854,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=False,
             platform_specific=["cuda"],
+            checkbox_label="Use IEEE FP32 (disable TF32)",
             help_text="Force IEEE FP32 precision (disables TF32) via PyTorch's fp32_precision controls",
             tooltip="SimpleTuner enables TF32 by default using PyTorch 2.9+ precision overrides. Disable if TF32 hurts accuracy or determinism.",
             importance=ImportanceLevel.ADVANCED,
@@ -885,12 +886,16 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             name="noise_offset",
             arg_name="--noise_offset",
             ui_label="Noise Offset",
-            field_type=FieldType.CHECKBOX,
+            field_type=FieldType.NUMBER,
             tab="training",
             section="noise_settings",
             default_value=0.1,
-            help_text="Fine-tuning against a modified noise",
-            tooltip="See: https://www.crosslabs.org//blog/diffusion-with-offset-noise for more information.",
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Values above 1.0 are extreme"),
+            ],
+            help_text="Add noise offset to training",
+            tooltip="Helps generate darker/lighter images. Common values: 0.05-0.1. 0 = disabled.",
             importance=ImportanceLevel.ADVANCED,
             order=1,
         )
@@ -1291,6 +1296,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             section="training_data",
             subsection="advanced",
             default_value=False,
+            checkbox_label="Keep undersized buckets",
             help_text="When training on very small datasets, you might not care that the batch sizes will outpace your image count. Setting this option will prevent SimpleTuner from deleting your bucket lists that do not meet the minimum image count requirements. Use at your own risk, it may end up throwing off your statistics or epoch tracking",
             tooltip="When training on very small datasets, you might not care that the batch sizes will outpace your image count. Setting this option will prevent SimpleTuner from deleting your bucket lists that do not meet the minimum image count requirements. Use at your own risk, it may end up throwing off your statistics or epoch tracking.",
             importance=ImportanceLevel.ADVANCED,
@@ -1327,6 +1333,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             section="training_schedule",
             subsection="advanced",
             default_value=False,
+            checkbox_label="Use simple random sampling",
             help_text="By default, the timestep schedule is divided into roughly `train_batch_size` number of segments, and then each of those are sampled from separately. This improves the selection distribution, but may not be desired in certain training scenarios, eg. when limiting the timestep selection range",
             tooltip="By default, the timestep schedule is divided into roughly `train_batch_size` number of segments, and then each of those are sampled from separately. This improves the selection distribution, but may not be desired in certain training scenarios, eg. when limiting the timestep selection range.",
             importance=ImportanceLevel.ADVANCED,
@@ -1449,6 +1456,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             section="data_config",
             subsection="advanced",
             default_value=False,
+            checkbox_label="Skip aspect bucket rebuild",
             help_text="When using a randomised aspect bucket list, the VAE and aspect cache are rebuilt on each epoch. With a large and diverse enough dataset, rebuilding the aspect list may take a long time, and this may be undesirable. This option will not override vae_cache_clear_each_epoch. If both options are provided, only the VAE cache will be rebuilt",
             tooltip="When using a randomised aspect bucket list, the VAE and aspect cache are rebuilt on each epoch. With a large and diverse enough dataset, rebuilding the aspect list may take a long time, and this may be undesirable. This option will not override vae_cache_clear_each_epoch. If both options are provided, only the VAE cache will be rebuilt.",
             importance=ImportanceLevel.ADVANCED,
@@ -2378,149 +2386,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="If provided, will print statistics about the dataset sampler. This is useful for debugging.",
             importance=ImportanceLevel.ADVANCED,
             order=76,
-        )
-    )
-
-    # Mixed Precision
-    registry._add_field(
-        ConfigField(
-            name="mixed_precision",
-            arg_name="--mixed_precision",
-            ui_label="Mixed Precision",
-            field_type=FieldType.SELECT,
-            tab="model",
-            section="memory_optimization",
-            subsection="advanced",
-            default_value="bf16",
-            choices=[
-                {"value": "no", "label": "No (FP32)"},
-                {"value": "fp16", "label": "FP16"},
-                {"value": "bf16", "label": "BF16 (Recommended)"},
-                {"value": "fp8", "label": "FP8 (Experimental)"},
-            ],
-            help_text="Precision for training computations",
-            tooltip="BF16 is recommended for stability. FP16 saves memory but less stable. FP8 is experimental.",
-            importance=ImportanceLevel.IMPORTANT,
-            order=10,
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
-        )
-    )
-
-    # Attention Mechanism
-    attention_mechanisms = [
-        "diffusers",
-        "xformers",
-        "sla",
-        "sageattention",
-        "sageattention-int8-fp16-triton",
-        "sageattention-int8-fp16-cuda",
-        "sageattention-int8-fp8-cuda",
-        "flash-attn",
-        "flash-attn-2",
-        "flash-attn-3",
-        "flash-attn-3-varlen",
-        "flex",
-        "cudnn",
-        "native-efficient",
-        "native-flash",
-        "native-math",
-        "native-npu",
-        "native-xla",
-    ]
-    registry._add_field(
-        ConfigField(
-            name="attention_mechanism",
-            arg_name="--attention_mechanism",
-            ui_label="Attention Implementation",
-            field_type=FieldType.SELECT,
-            tab="model",
-            section="memory_optimization",
-            subsection="advanced",
-            default_value="diffusers",
-            choices=[{"value": a, "label": a} for a in attention_mechanisms],
-            help_text="Attention computation backend",
-            tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
-            importance=ImportanceLevel.ADVANCED,
-            order=10,
-        )
-    )
-
-    # Disable TF32
-    registry._add_field(
-        ConfigField(
-            name="disable_tf32",
-            arg_name="--disable_tf32",
-            ui_label="Disable TF32",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            subsection="advanced",
-            default_value=False,
-            platform_specific=["cuda"],
-            help_text="Force IEEE FP32 precision (disables TF32) via PyTorch's fp32_precision controls",
-            tooltip="SimpleTuner enables TF32 by default using PyTorch 2.9+ precision overrides. Disable if TF32 hurts accuracy or determinism.",
-            importance=ImportanceLevel.ADVANCED,
-            order=11,
-        )
-    )
-
-    # Set Grads to None
-    registry._add_field(
-        ConfigField(
-            name="set_grads_to_none",
-            arg_name="--set_grads_to_none",
-            ui_label="Set Gradients to None",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            subsection="advanced",
-            default_value=False,
-            help_text="Set gradients to None instead of zero",
-            tooltip="Can save memory and improve performance. May cause issues with some optimizers.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=12,
-        )
-    )
-
-    # Noise Offset
-    registry._add_field(
-        ConfigField(
-            name="noise_offset",
-            arg_name="--noise_offset",
-            ui_label="Noise Offset",
-            field_type=FieldType.NUMBER,
-            tab="training",
-            section="noise_settings",
-            default_value=0.1,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative"),
-                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Values above 1.0 are extreme"),
-            ],
-            help_text="Add noise offset to training",
-            tooltip="Helps generate darker/lighter images. Common values: 0.05-0.1. 0 = disabled.",
-            importance=ImportanceLevel.ADVANCED,
-            order=1,
-        )
-    )
-
-    # Noise Offset Probability
-    registry._add_field(
-        ConfigField(
-            name="noise_offset_probability",
-            arg_name="--noise_offset_probability",
-            ui_label="Noise Offset Probability",
-            field_type=FieldType.NUMBER,
-            tab="training",
-            section="noise_settings",
-            default_value=0.25,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
-                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
-            ],
-            help_text="Probability of applying noise offset",
-            tooltip="Apply noise offset this fraction of the time. Default: 25%",
-            importance=ImportanceLevel.ADVANCED,
-            order=2,
         )
     )
 

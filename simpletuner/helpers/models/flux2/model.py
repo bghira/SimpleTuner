@@ -51,6 +51,10 @@ SYSTEM_MESSAGE = """You are an AI that reasons about image descriptions. You giv
 OUTPUT_LAYERS = [10, 20, 30]
 MAX_SEQUENCE_LENGTH = 512
 
+# FLUX.2-klein constants (uses Qwen3 text encoder with different layer config)
+KLEIN_OUTPUT_LAYERS = (9, 18, 27)
+KLEIN_FLAVOURS = {"klein-4b", "klein-9b"}
+
 # Scheduler configuration for FLUX.2 flow matching
 SCHEDULER_CONFIG = {
     "base_image_seq_len": 256,
@@ -64,11 +68,20 @@ SCHEDULER_CONFIG = {
 
 
 class Flux2(ImageModelFoundation):
+    """FLUX.2 model implementation for SimpleTuner.
+
+    Supports:
+    - dev: Full FLUX.2-dev with Mistral-3 text encoder (56 blocks, 12B params)
+    - klein-9b: FLUX.2-klein 9B with Qwen3 text encoder (32 blocks)
+    - klein-4b: FLUX.2-klein 4B with Qwen3 text encoder (25 blocks)
+
+    Klein models do not have guidance embeddings (guidance_embeds=False).
+    """
+
     SUPPORTS_MUON_CLIP = True
-    """FLUX.2 model implementation for SimpleTuner."""
 
     NAME = "Flux.2"
-    MODEL_DESCRIPTION = "FLUX.2-dev with Mistral-3 text encoder"
+    MODEL_DESCRIPTION = "FLUX.2 with Mistral-3 or Qwen3 text encoder"
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
@@ -76,6 +89,7 @@ class Flux2(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKLFlux2
     LATENT_CHANNEL_COUNT = 128  # 32 VAE channels × 4 (2×2 pixel shuffle) = 128 transformer channels
     VAE_SCALE_FACTOR = 16  # 8x spatial + 2x pixel shuffle
+    VALIDATION_USES_NEGATIVE_PROMPT = True  # Required for real CFG support
 
     # LoRA targets for FLUX.2 transformer (diffusers naming)
     DEFAULT_LORA_TARGET = [
@@ -112,11 +126,14 @@ class Flux2(ImageModelFoundation):
 
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: Flux2Pipeline,
+        PipelineTypes.IMG2IMG: Flux2Pipeline,
     }
 
-    DEFAULT_MODEL_FLAVOUR = "dev"
+    DEFAULT_MODEL_FLAVOUR = "klein-9b"
     HUGGINGFACE_PATHS = {
         "dev": "black-forest-labs/FLUX.2-dev",
+        "klein-4b": "black-forest-labs/FLUX.2-klein-base-4B",
+        "klein-9b": "black-forest-labs/FLUX.2-klein-base-9B",
     }
     MODEL_LICENSE = "other"
 
@@ -132,9 +149,18 @@ class Flux2(ImageModelFoundation):
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
-        # FLUX.2 has 8 double stream + 48 single stream = 56 transformer blocks
+        # FLUX.2 block counts vary by flavour:
+        # - dev: 8 double + 48 single = 56 blocks
+        # - klein-9b: 8 double + 24 single = 32 blocks
+        # - klein-4b: 5 double + 20 single = 25 blocks
         # Leave at least 1 block on GPU
-        return 55
+        if config is not None:
+            flavour = getattr(config, "model_flavour", None)
+            if flavour == "klein-4b":
+                return 24  # 25 - 1
+            elif flavour == "klein-9b":
+                return 31  # 32 - 1
+        return 55  # dev: 56 - 1
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
@@ -245,8 +271,12 @@ class Flux2(ImageModelFoundation):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Mistral for dev
         self._mistral_model = None
         self._mistral_processor = None
+        # Qwen3 for Klein
+        self._qwen_model = None
+        self._qwen_tokenizer = None
 
     @staticmethod
     def _patchify_latents(latents: Tensor) -> Tensor:
@@ -297,12 +327,85 @@ class Flux2(ImageModelFoundation):
         logger.info("FLUX.2 VAE loaded successfully")
         return vae
 
+    def _is_klein_flavour(self) -> bool:
+        """Check if current model flavour is a Klein variant."""
+        flavour = getattr(self.config, "model_flavour", None)
+        return flavour in KLEIN_FLAVOURS
+
     def load_text_encoder(self, move_to_device: bool = True):
+        """Load the text encoder (Qwen3 for Klein, Mistral-3 for dev)."""
+        if self._is_klein_flavour():
+            return self._load_text_encoder_qwen3(move_to_device)
+        return self._load_text_encoder_mistral(move_to_device)
+
+    def _load_text_encoder_qwen3(self, move_to_device: bool = True):
+        """Load the Qwen3 text encoder for Klein models."""
+        try:
+            from transformers import Qwen2TokenizerFast, Qwen3ForCausalLM
+        except ImportError:
+            logger.error("Qwen3ForCausalLM not found. Please install transformers>=4.45.0")
+            sys.exit(1)
+
+        dtype = self.config.weight_dtype
+        text_encoder_precision = getattr(self.config, "text_encoder_1_precision", "no_change")
+        should_quantize_text_encoder = text_encoder_precision not in (None, "no_change")
+        quantize_via_cpu = getattr(self.config, "quantize_via", None) == "cpu"
+
+        # For Klein models, text encoder is bundled in the model repo under "text_encoder" subfolder
+        # and tokenizer is in a separate "tokenizer" subfolder
+        model_path = self.config.pretrained_model_name_or_path
+        text_encoder_path = getattr(self.config, "pretrained_text_encoder_model_name_or_path", None)
+        if text_encoder_path is None:
+            text_encoder_path = model_path
+            text_encoder_subfolder = "text_encoder"
+            tokenizer_subfolder = "tokenizer"
+        else:
+            text_encoder_subfolder = None
+            tokenizer_subfolder = None
+
+        revision = getattr(self.config, "text_encoder_revision", None) or getattr(self.config, "revision", None)
+
+        logger.info(f"Loading Qwen3 text encoder from {text_encoder_path}...")
+
+        # Load tokenizer (from separate tokenizer subfolder in Klein models)
+        tokenizer_kwargs = {"subfolder": tokenizer_subfolder} if tokenizer_subfolder else {}
+        if revision is not None:
+            tokenizer_kwargs["revision"] = revision
+        self._qwen_tokenizer = Qwen2TokenizerFast.from_pretrained(text_encoder_path, **tokenizer_kwargs)
+
+        # Load model
+        model_kwargs = {
+            "torch_dtype": dtype,
+            "low_cpu_mem_usage": True,
+        }
+        if text_encoder_subfolder:
+            model_kwargs["subfolder"] = text_encoder_subfolder
+        if revision is not None:
+            model_kwargs["revision"] = revision
+        self._qwen_model = Qwen3ForCausalLM.from_pretrained(text_encoder_path, **model_kwargs)
+
+        if move_to_device and not self._ramtorch_text_encoders_requested():
+            target_device = (
+                torch.device("cpu") if quantize_via_cpu and should_quantize_text_encoder else self.accelerator.device
+            )
+            self._qwen_model.to(target_device, dtype=dtype)
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(self._qwen_model, "text_encoder_1")
+        self._qwen_model.requires_grad_(False)
+        self._qwen_model.eval()
+
+        # Store in standard location for compatibility
+        self.text_encoders = [self._qwen_model]
+        self.tokenizers = [self._qwen_tokenizer]
+
+        logger.info("Qwen3 text encoder loaded successfully")
+
+    def _load_text_encoder_mistral(self, move_to_device: bool = True):
         """Load the Mistral-3 text encoder."""
         try:
             from transformers import AutoProcessor, Mistral3ForConditionalGeneration
         except ImportError:
-            logger.error("Mistral3ForConditionalGeneration not found. " "Please install transformers>=4.45.0")
+            logger.error("Mistral3ForConditionalGeneration not found. Please install transformers>=4.45.0")
             sys.exit(1)
 
         dtype = self.config.weight_dtype
@@ -385,10 +488,102 @@ class Flux2(ImageModelFoundation):
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
-        Encode prompts using Mistral-3.
+        Encode prompts using the appropriate text encoder.
 
         Returns:
-            prompt_embeds: (B, L, 15360) - stacked outputs from layers 10, 20, 30
+            prompt_embeds: (B, L, D) - stacked outputs from hidden layers
+            attention_mask: (B, L)
+        """
+        if self._is_klein_flavour():
+            return self._encode_prompts_qwen3(prompts, is_negative_prompt)
+        return self._encode_prompts_mistral(prompts, is_negative_prompt)
+
+    def _get_text_encoder_layers(self) -> tuple:
+        """Get the layer indices to extract from text encoder hidden states.
+
+        Returns configured custom layers if set, otherwise model defaults.
+        """
+        custom_layers = getattr(self.config, "custom_text_encoder_intermediary_layers", None)
+        if custom_layers is not None:
+            # Parse JSON array if it's a string
+            if isinstance(custom_layers, str):
+                import json
+
+                try:
+                    custom_layers = json.loads(custom_layers)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Invalid custom_text_encoder_intermediary_layers format: {custom_layers}, using defaults"
+                    )
+                    custom_layers = None
+            if custom_layers is not None:
+                return tuple(custom_layers)
+
+        # Return model-specific defaults
+        if self._is_klein_flavour():
+            return KLEIN_OUTPUT_LAYERS
+        return tuple(OUTPUT_LAYERS)
+
+    def _encode_prompts_qwen3(self, prompts: list, is_negative_prompt: bool = False):
+        """
+        Encode prompts using Qwen3 for Klein models.
+
+        Returns:
+            prompt_embeds: (B, L, 7680 or 12288) - stacked outputs from configured layers
+            attention_mask: (B, L)
+        """
+        device = self.accelerator.device
+
+        if not isinstance(prompts, list):
+            prompts = [prompts]
+
+        all_input_ids = []
+        all_attention_masks = []
+
+        for single_prompt in prompts:
+            # Format as chat messages (no system message for Klein)
+            messages = [{"role": "user", "content": single_prompt}]
+            text = self._qwen_tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            inputs = self._qwen_tokenizer(
+                text,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=MAX_SEQUENCE_LENGTH,
+            )
+            all_input_ids.append(inputs["input_ids"])
+            all_attention_masks.append(inputs["attention_mask"])
+
+        input_ids = torch.cat(all_input_ids, dim=0).to(device)
+        attention_mask = torch.cat(all_attention_masks, dim=0).to(device)
+
+        # Forward pass
+        with torch.no_grad():
+            output = self._qwen_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+        # Stack outputs from configured layers
+        output_layers = self._get_text_encoder_layers()
+        out = torch.stack([output.hidden_states[k] for k in output_layers], dim=1)
+        prompt_embeds = rearrange(out, "b c l d -> b l (c d)")
+
+        return prompt_embeds, attention_mask
+
+    def _encode_prompts_mistral(self, prompts: list, is_negative_prompt: bool = False):
+        """
+        Encode prompts using Mistral-3 for dev models.
+
+        Returns:
+            prompt_embeds: (B, L, 15360) - stacked outputs from configured layers
             attention_mask: (B, L)
         """
         device = self.accelerator.device
@@ -423,8 +618,9 @@ class Flux2(ImageModelFoundation):
                 use_cache=False,
             )
 
-        # Stack outputs from layers 10, 20, 30
-        out = torch.stack([output.hidden_states[k] for k in OUTPUT_LAYERS], dim=1)
+        # Stack outputs from configured layers
+        output_layers = self._get_text_encoder_layers()
+        out = torch.stack([output.hidden_states[k] for k in output_layers], dim=1)
         prompt_embeds = rearrange(out, "b c l d -> b l (c d)")
 
         return prompt_embeds, attention_mask
@@ -457,24 +653,28 @@ class Flux2(ImageModelFoundation):
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         """Convert cached negative embedding for pipeline use."""
-        # FLUX.2 doesn't use CFG in the traditional sense
-        # Return empty dict if no guidance needed
-        if self.config.validation_guidance is None or self.config.validation_guidance <= 1.0:
+        # Check if real CFG is needed (either via validation_guidance or validation_guidance_real)
+        validation_guidance = getattr(self.config, "validation_guidance", None)
+        validation_guidance_real = getattr(self.config, "validation_guidance_real", 1.0)
+        needs_cfg = (validation_guidance is not None and validation_guidance > 1.0) or validation_guidance_real > 1.0
+        if not needs_cfg:
             return {}
 
         prompt_embeds = text_embedding["prompt_embeds"]
-        attention_mask = text_embedding.get("attention_mask")
+        text_ids = text_embedding.get("text_ids")
 
         # Add batch dimension if missing
         if prompt_embeds.dim() == 2:
             prompt_embeds = prompt_embeds.unsqueeze(0)
-        if attention_mask is not None and attention_mask.dim() == 1:
-            attention_mask = attention_mask.unsqueeze(0)
+        if text_ids is not None and text_ids.dim() == 2:
+            text_ids = text_ids.unsqueeze(0)
 
-        return {
+        result = {
             "negative_prompt_embeds": prompt_embeds,
-            "negative_attention_mask": attention_mask,
         }
+        if text_ids is not None:
+            result["negative_text_ids"] = text_ids
+        return result
 
     def requires_conditioning_latents(self) -> bool:
         """
@@ -485,6 +685,17 @@ class Flux2(ImageModelFoundation):
         # Always return True because FLUX.2 reference conditioning uses latents.
         # If no conditioning dataset is configured, this has no effect.
         # If controlnet is configured, base class already returns True.
+        return True
+
+    def supports_conditioning_dataset(self) -> bool:
+        """
+        FLUX.2 optionally supports reference image conditioning for dual T2I/I2I training.
+
+        Unlike Flux Kontext which *requires* conditioning inputs, FLUX.2 can operate in
+        either text-to-image mode (no conditioning) or image-to-image mode (with reference
+        images). This allows the WebUI to show conditioning dataset options without
+        making them mandatory.
+        """
         return True
 
     def prepare_batch_conditions(self, batch: dict, state: dict):
@@ -705,6 +916,21 @@ class Flux2(ImageModelFoundation):
         # Guidance is always 1.0 for training (different from inference default of 3.5)
         self.config.flux_guidance_mode = "constant"
         self.config.flux_guidance_value = 1.0
+
+        # For Klein flavours (non-distilled), move validation_guidance to validation_guidance_real
+        # The Flux2 pipeline only enables "true" CFG when validation_guidance_real is set
+        # Only do this if validation_guidance_real is at its default (1.0) to avoid overwriting user intent
+        flavour = getattr(self.config, "model_flavour", "") or ""
+        if self._is_klein_flavour() and "distilled" not in flavour:
+            validation_guidance = getattr(self.config, "validation_guidance", None)
+            validation_guidance_real = getattr(self.config, "validation_guidance_real", 1.0)
+            if validation_guidance is not None and validation_guidance_real == 1.0:
+                logger.info(
+                    f"Klein model detected: moving validation_guidance={validation_guidance} "
+                    "to validation_guidance_real for true CFG support"
+                )
+                self.config.validation_guidance_real = validation_guidance
+                self.config.validation_guidance = None
 
     @staticmethod
     def get_lora_target_modules(lora_target: str) -> List[str]:

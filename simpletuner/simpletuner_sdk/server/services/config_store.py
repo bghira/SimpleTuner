@@ -465,7 +465,9 @@ class ConfigStore:
                                 sidecar = self._load_metadata_sidecar(config_file)
                                 if isinstance(sidecar, dict):
                                     metadata = sidecar.copy()
-                                    metadata.setdefault("name", subdir.name)
+                                    # Ensure name is always a valid non-empty string
+                                    if not metadata.get("name") or not isinstance(metadata.get("name"), str):
+                                        metadata["name"] = subdir.name
                             if metadata is None:
                                 metadata = {
                                     "name": subdir.name,
@@ -510,7 +512,9 @@ class ConfigStore:
                             else:
                                 metadata.setdefault("has_dataloader", False)
 
-                            configs.append(metadata)
+                            # Only append configs with valid non-empty names
+                            if metadata.get("name") and isinstance(metadata["name"], str) and metadata["name"].strip():
+                                configs.append(metadata)
 
             # Also check root-level JSON files for backward compatibility
             # But exclude files that are clearly dataloader configs
@@ -548,7 +552,9 @@ class ConfigStore:
                             sidecar = self._load_metadata_sidecar(config_file)
                             if isinstance(sidecar, dict):
                                 metadata = sidecar.copy()
-                                metadata.setdefault("name", config_file.stem)
+                                # Ensure name is always a valid non-empty string
+                                if not metadata.get("name") or not isinstance(metadata.get("name"), str):
+                                    metadata["name"] = config_file.stem
                         if metadata is None:
                             metadata = {
                                 "name": config_file.stem,
@@ -592,7 +598,9 @@ class ConfigStore:
                         else:
                             metadata.setdefault("has_dataloader", False)
 
-                        configs.append(metadata)
+                        # Only append configs with valid non-empty names
+                        if metadata.get("name") and isinstance(metadata["name"], str) and metadata["name"].strip():
+                            configs.append(metadata)
         elif self.config_type == "dataloader":
             # For dataloader configs, look for multidatabackend.json in the dedicated
             # dataloaders directory as well as alongside trainer configs.

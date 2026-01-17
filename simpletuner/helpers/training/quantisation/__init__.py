@@ -331,7 +331,7 @@ def _quanto_model(
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     weight_quant = _quanto_type_map(model_precision)
     extra_quanto_args = {}
-    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "ltxvideo2", "wan", "wan_s2v"]:
+    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "wan", "wan_s2v"]:
         extra_quanto_args["exclude"] = [
             # Norm layers of all types
             "*norm*",  # catches *.norm, .norm1, .norm2, .norm_q, .norm_k, .norm_out, etc.
@@ -354,6 +354,24 @@ def _quanto_model(
             "*time_text_embed*",
             "*time_proj*",  # time_proj layers
             "*condition_embedder*",  # catches condition_embedder.image_embedder and text_embedder, etc.
+        ]
+    elif StateTracker.get_args().model_family == "ltxvideo2":
+        extra_quanto_args["exclude"] = [
+            # Input/output projection layers
+            "patchify_proj",
+            "audio_patchify_proj",
+            "proj_out",
+            "audio_proj_out",
+            # Timestep embedding layers - int4 tinygemm requires strict bfloat16 input
+            # and these receive float32 sinusoidal embeddings that are cast to bfloat16
+            "*adaln*",
+            "time_proj",
+            "timestep_embedder*",
+            # Caption/text projection layers
+            "caption_projection*",
+            "audio_caption_projection*",
+            # Normalization layers
+            "*norm*",
         ]
     elif StateTracker.get_args().model_family == "flux":
         extra_quanto_args["exclude"] = [

@@ -171,6 +171,16 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo Gemma pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Ao treinar modelos baseados em Gemma (por exemplo LTX-2, Sana ou Lumina2), voce pode apontar para um checkpoint Gemma compartilhado sem mudar o caminho do modelo base de difusao.
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **O que**: Sobrescreve quais camadas de estado oculto extrair do encoder de texto para modelos FLUX.2.
+- **Formato**: Array JSON de indices de camadas, ex: `[10, 20, 30]`
+- **Padrao**: Valores padrao especificos do modelo sao usados quando nao definido:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **Por que**: Permite experimentacao com diferentes combinacoes de estados ocultos do encoder de texto para alinhamento personalizado ou propositos de pesquisa.
+- **Nota**: Esta opcao e experimental e aplica-se apenas a modelos FLUX.2. Alterar indices de camadas invalidara embeddings de texto em cache e requer regeneracao. O numero de camadas deve corresponder a entrada esperada pelo modelo (3 camadas).
+
 ### `--gradient_checkpointing`
 
 - **O que**: Durante o treinamento, os gradientes serao calculados por camada e acumulados para economizar VRAM de pico, ao custo de treinos mais lentos.
@@ -392,6 +402,30 @@ Isso e util para ferramentas de monitoramento que recebem webhooks de varios tre
 - **O que**: Nome do modelo no Huggingface Hub e diretorio local de resultados.
 - **Por que**: Esse valor e usado como nome de diretorio sob `--output_dir`. Se `--push_to_hub` for fornecido, isso vira o nome do modelo no Huggingface Hub.
 
+### `--modelspec_comment`
+
+- **O que**: Texto incorporado nos metadados do arquivo safetensors como `modelspec.comment`
+- **Padrao**: None (desabilitado)
+- **Notas**:
+  - Visivel em visualizadores de modelo externos (ComfyUI, ferramentas de info de modelo)
+  - Aceita uma string ou array de strings (unidas com quebras de linha)
+  - Suporta placeholders `{env:VAR_NAME}` para substituicao de variaveis de ambiente
+  - Cada checkpoint usa o valor de configuracao atual no momento do salvamento
+
+**Exemplo (string)**:
+```json
+"modelspec_comment": "Treinado no meu dataset customizado v2.1"
+```
+
+**Exemplo (array para multiplas linhas)**:
+```json
+"modelspec_comment": [
+  "Execucao de treino: experiment-42",
+  "Dataset: custom-portraits-v2",
+  "Notas: {env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **O que**: Desabilita a validacao/benchmark inicial que ocorre no passo 0 do modelo base. Essas saidas sao costuradas no lado esquerdo das imagens de validacao do modelo treinado.
@@ -607,6 +641,79 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 
 - **O que**: Desabilita o calculo de eval loss durante validacao.
 - **Por que**: Quando um dataset de avaliacao e configurado, a loss sera calculada automaticamente. Se a avaliacao CLIP estiver habilitada, ambos rodam. Este flag permite desabilitar a eval loss mantendo CLIP.
+
+### `--validation_using_datasets`
+
+- **O que**: Usa imagens dos datasets de treinamento para validacao ao inves de geracao pura texto-para-imagem.
+- **Por que**: Habilita modo de validacao imagem-para-imagem (img2img) onde o modelo faz denoise parcial das imagens de treinamento ao inves de gerar de ruido puro. Util para:
+  - Testar modelos de edicao/inpainting que requerem imagens de entrada
+  - Avaliar quao bem o modelo preserva a estrutura da imagem
+  - Modelos que suportam workflows duais texto-para-imagem E imagem-para-imagem (ex., Flux2, LTXVideo2)
+- **Notas**:
+  - Requer que o modelo tenha um pipeline `IMG2IMG` registrado
+  - Pode ser combinado com `--eval_dataset_id` para obter imagens de um dataset especifico
+  - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
+
+### `--eval_dataset_id`
+
+- **O que**: ID especifico do dataset para usar no sourcing de imagens de avaliacao/validacao.
+- **Por que**: Ao usar `--validation_using_datasets` ou validacao baseada em conditioning, controla qual dataset fornece as imagens de entrada:
+  - Sem esta opcao, imagens sao selecionadas aleatoriamente de todos os datasets de treinamento
+  - Com esta opcao, apenas o dataset especificado e usado para entradas de validacao
+- **Notas**:
+  - O ID do dataset deve corresponder a um dataset configurado no seu config do dataloader
+  - Util para manter avaliacao consistente usando um dataset de eval dedicado
+  - Para modelos de conditioning, os dados de conditioning do dataset (se houver) tambem serao usados
+
+---
+
+## Entendendo Modos de Conditioning e Validacao
+
+SimpleTuner suporta tres paradigmas principais para modelos que usam entradas de conditioning (imagens de referencia, sinais de controle, etc.):
+
+### 1. Modelos que REQUEREM Conditioning
+
+Alguns modelos nao funcionam sem entradas de conditioning:
+
+- **Flux Kontext**: Sempre precisa de imagens de referencia para treinamento estilo edicao
+- **Treinamento ControlNet**: Requer imagens de sinal de controle
+
+Para estes modelos, um dataset de conditioning e obrigatorio. A WebUI mostrara opcoes de conditioning como obrigatorias, e o treinamento falhara sem elas.
+
+### 2. Modelos que SUPORTAM Conditioning Opcional
+
+Alguns modelos podem operar em modos texto-para-imagem E imagem-para-imagem:
+
+- **Flux2**: Suporta treinamento dual T2I/I2I com imagens de referencia opcionais
+- **LTXVideo2**: Suporta T2V e I2V (imagem-para-video) com conditioning de primeiro frame opcional
+- **LongCat-Video**: Suporta conditioning de frames opcional
+
+Para estes modelos, voce PODE adicionar datasets de conditioning mas nao e obrigatorio. A WebUI mostrara opcoes de conditioning como opcionais.
+
+### 3. Modos de Validacao
+
+| Modo | Flag | Comportamento |
+|------|------|---------------|
+| **Texto-para-Imagem** | (padrao) | Gera apenas de prompts de texto |
+| **Baseado em Dataset** | `--validation_using_datasets` | Denoise parcial de imagens de datasets (img2img) |
+| **Baseado em Conditioning** | (auto quando conditioning configurado) | Usa entradas de conditioning durante validacao |
+
+**Combinando modos**: Quando um modelo suporta conditioning E `--validation_using_datasets` esta habilitado:
+- O sistema de validacao obtem imagens de datasets
+- Se esses datasets tem dados de conditioning, sao usados automaticamente
+- Use `--eval_dataset_id` para controlar qual dataset fornece entradas
+
+### Tipos de Dados de Conditioning
+
+Diferentes modelos esperam diferentes dados de conditioning:
+
+| Tipo | Modelos | Configuracao do Dataset |
+|------|---------|------------------------|
+| `conditioning` | ControlNet, Control | `type: conditioning` no config do dataset |
+| `image` | Flux Kontext | `type: image` (dataset de imagem padrao) |
+| `latents` | Flux, Flux2 | Conditioning e VAE-encoded automaticamente |
+
+---
 
 ### `--caption_strategy`
 
@@ -926,6 +1033,61 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 - **Por que**: Modelos DINOv2 funcionam melhor na resolucao de treino. O modelo giant usa 518x518.
 - **Padrao**: `518`
 
+### `--crepa_scheduler`
+
+- **O que**: Agendamento para decaimento do coeficiente CREPA durante o treinamento.
+- **Por que**: Permite reduzir a forca da regularizacao CREPA conforme o treinamento progride, prevenindo overfitting nas features profundas do encoder.
+- **Opcoes**: `constant`, `linear`, `cosine`, `polynomial`
+- **Padrao**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **O que**: Numero de passos para aumentar linearmente o peso CREPA de 0 ate `crepa_lambda`.
+- **Por que**: Aquecimento gradual pode ajudar a estabilizar o treinamento inicial antes da regularizacao CREPA entrar em acao.
+- **Padrao**: `0`
+
+### `--crepa_decay_steps`
+
+- **O que**: Total de passos para decaimento (apos warmup). Defina como 0 para decair durante todo o treinamento.
+- **Por que**: Controla a duracao da fase de decaimento. O decaimento comeca apos o warmup completar.
+- **Padrao**: `0` (usa `max_train_steps`)
+
+### `--crepa_lambda_end`
+
+- **O que**: Peso CREPA final apos o decaimento completar.
+- **Por que**: Definir como 0 efetivamente desabilita o CREPA no final do treinamento, util para text2video onde CREPA pode causar artefatos.
+- **Padrao**: `0.0`
+
+### `--crepa_power`
+
+- **O que**: Fator de potencia para decaimento polinomial. 1.0 = linear, 2.0 = quadratico, etc.
+- **Por que**: Valores maiores causam decaimento inicial mais rapido que desacelera no final.
+- **Padrao**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **O que**: Passo de corte rigido apos o qual o CREPA e desabilitado.
+- **Por que**: Util para desabilitar o CREPA apos o modelo convergir no alinhamento temporal.
+- **Padrao**: `0` (sem corte baseado em passo)
+
+### `--crepa_similarity_threshold`
+
+- **O que**: Limiar de EMA de similaridade no qual o corte CREPA e acionado.
+- **Por que**: Quando a media movel exponencial da similaridade atinge este valor, o CREPA e desabilitado para prevenir overfitting nas features profundas do encoder. Isto e particularmente util para treinamento text2video.
+- **Padrao**: None (desabilitado)
+
+### `--crepa_similarity_ema_decay`
+
+- **O que**: Fator de decaimento da media movel exponencial para rastreamento de similaridade.
+- **Por que**: Valores maiores fornecem rastreamento mais suave (0.99 ≈ janela de 100 passos), valores menores reagem mais rapido a mudancas.
+- **Padrao**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **O que**: Comportamento quando o limiar de similaridade e atingido.
+- **Opcoes**: `permanent` (CREPA permanece desligado apos atingir o limiar), `recoverable` (CREPA reabilita se a similaridade cair)
+- **Padrao**: `permanent`
+
 ### Exemplo de configuracao
 
 ```toml
@@ -943,6 +1105,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# Agendamento CREPA (opcional)
+# crepa_scheduler = "cosine"           # Tipo de decaimento: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Warmup antes do CREPA entrar em acao
+# crepa_decay_steps = 1000             # Passos para decaimento (0 = treinamento inteiro)
+# crepa_lambda_end = 0.0               # Peso final apos decaimento
+# crepa_cutoff_step = 5000             # Passo de corte rigido (0 = desabilitado)
+# crepa_similarity_threshold = 0.9    # Corte baseado em similaridade
+# crepa_threshold_mode = "permanent"   # permanent ou recoverable
 ```
 
 ---
@@ -1261,6 +1432,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1931,6 +2103,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

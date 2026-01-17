@@ -48,6 +48,96 @@ Cross-frame Representation Alignment (CREPA) वीडियो मॉडल्�
 - `crepa_use_backbone_features=true`: external encoder छोड़कर deeper transformer block के साथ align करें; teacher चुनने के लिए `crepa_teacher_block_index` सेट करें।
 - Encoder size: VRAM कम हो तो `dinov2_vits14` + `224` पर जाएँ; सर्वोत्तम गुणवत्ता के लिए `dinov2_vitg14` + `518` रखें।
 
+## Coefficient scheduling
+
+CREPA ट्रेनिंग के दौरान coefficient (`crepa_lambda`) को warmup, decay, और similarity threshold आधारित automatic cutoff के साथ schedule करने का समर्थन करता है। यह विशेष रूप से text2video ट्रेनिंग के लिए उपयोगी है जहाँ CREPA बहुत अधिक या बहुत लंबे समय तक लागू करने पर horizontal/vertical stripes या washed-out feel पैदा कर सकता है।
+
+### बेसिक scheduling
+
+```json
+{
+  "crepa_enabled": true,
+  "crepa_lambda": 0.5,
+  "crepa_scheduler": "cosine",
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 5000,
+  "crepa_lambda_end": 0.0
+}
+```
+
+यह कॉन्फ़िगरेशन:
+1. पहले 100 steps में CREPA weight को 0 से 0.5 तक ramp करता है
+2. 5000 steps में cosine schedule से 0.5 से 0.0 तक decay करता है
+3. Step 5100 के बाद, CREPA प्रभावी रूप से disable हो जाता है
+
+### Scheduler types
+
+- `constant`: कोई decay नहीं, weight `crepa_lambda` पर रहता है (डिफ़ॉल्ट)
+- `linear`: `crepa_lambda` से `crepa_lambda_end` तक linear interpolation
+- `cosine`: Smooth cosine annealing (ज़्यादातर मामलों के लिए अनुशंसित)
+- `polynomial`: `crepa_power` के ज़रिए configurable power के साथ polynomial decay
+
+### Step-based cutoff
+
+किसी विशेष step के बाद hard cutoff के लिए:
+
+```json
+{
+  "crepa_cutoff_step": 3000
+}
+```
+
+Step 3000 के बाद CREPA पूरी तरह disable हो जाता है।
+
+### Similarity-based cutoff
+
+यह सबसे flexible approach है—जब similarity metric plateau हो जाता है, तो CREPA स्वचालित रूप से disable हो जाता है, जो दर्शाता है कि मॉडल ने पर्याप्त temporal alignment सीख लिया है:
+
+```json
+{
+  "crepa_similarity_threshold": 0.9,
+  "crepa_similarity_ema_decay": 0.99,
+  "crepa_threshold_mode": "permanent"
+}
+```
+
+- `crepa_similarity_threshold`: जब similarity का exponential moving average इस value तक पहुँचता है, CREPA cut off हो जाता है
+- `crepa_similarity_ema_decay`: Smoothing factor (0.99 ≈ 100-step window)
+- `crepa_threshold_mode`: `permanent` (बंद रहता है) या `recoverable` (similarity गिरे तो फिर से enable हो सकता है)
+
+### अनुशंसित कॉन्फ़िगरेशन
+
+**image2video (i2v) के लिए**:
+```json
+{
+  "crepa_scheduler": "constant",
+  "crepa_lambda": 0.5
+}
+```
+मानक CREPA i2v के लिए अच्छा काम करता है क्योंकि reference frame consistency को anchor करता है।
+
+**text2video (t2v) के लिए**:
+```json
+{
+  "crepa_scheduler": "cosine",
+  "crepa_lambda": 0.5,
+  "crepa_warmup_steps": 100,
+  "crepa_decay_steps": 0,
+  "crepa_lambda_end": 0.1,
+  "crepa_similarity_threshold": 0.85,
+  "crepa_threshold_mode": "permanent"
+}
+```
+ट्रेनिंग के दौरान CREPA को decay करता है और artifacts रोकने के लिए similarity saturate होने पर cut off करता है।
+
+**solid backgrounds (t2v) के लिए**:
+```json
+{
+  "crepa_cutoff_step": 2000
+}
+```
+Early cutoff uniform backgrounds पर stripe artifacts को रोकता है।
+
 <details>
 <summary>कैसे काम करता है (प्रैक्टिशनर)</summary>
 

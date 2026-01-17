@@ -199,31 +199,58 @@ class SaveHookManager:
 
     def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
         """
-        Scan all captions from text embed caches, split into tags, and build frequency dict.
+        Scan all training captions, split into tags, and build frequency dict.
         Returns dict of dataset_id -> {tag: count}.
         """
         import re
 
+        from simpletuner.helpers.prompts import PromptHandler
+
         ss_tag_frequency = {}
 
         for backend_id, backend in StateTracker.get_data_backends().items():
-            text_embed_cache = backend.get("text_embed_cache")
-            if text_embed_cache is None:
+            if backend.get("data_backend") is None:
                 continue
 
-            prompt_records = getattr(text_embed_cache, "prompt_records", [])
-            if not prompt_records:
+            config = backend.get("config", {})
+            caption_strategy = config.get("caption_strategy")
+            if not caption_strategy:
+                continue
+
+            # Get caption config parameters
+            prepend_instance_prompt = config.get(
+                "prepend_instance_prompt", getattr(self.args, "prepend_instance_prompt", False)
+            )
+            instance_prompt = config.get("instance_prompt", getattr(self.args, "instance_prompt", None))
+            use_captions = True
+            if config.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
+                use_captions = False
+            elif caption_strategy == "instanceprompt":
+                use_captions = False
+
+            try:
+                captions, _ = PromptHandler.get_all_captions(
+                    data_backend=backend["data_backend"],
+                    instance_data_dir=backend.get("instance_data_dir", ""),
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
+                    use_captions=use_captions,
+                    caption_strategy=caption_strategy,
+                    return_image_paths=False,
+                    disable_multiline_split=config.get("disable_multiline_split", False),
+                )
+            except Exception as e:
+                logger.debug(f"Could not get captions for backend {backend_id}: {e}")
                 continue
 
             tag_counts = {}
-            for record in prompt_records:
-                prompt = record.get("prompt", "")
-                if not prompt or prompt == "__caption_dropout__":
+            for caption in captions:
+                if not caption or caption == "__caption_dropout__":
                     continue
 
                 # Split by comma for booru-style tags, or keep as single trigger word
                 # Also handle newlines and other common separators
-                tags = re.split(r"[,\n]+", prompt)
+                tags = re.split(r"[,\n]+", str(caption))
                 for tag in tags:
                     tag = tag.strip()
                     if tag:
@@ -279,6 +306,10 @@ class SaveHookManager:
         # Add trigger words metadata for ComfyUI compatibility
         trigger_words_metadata = self._build_trigger_words_metadata()
         metadata.update(trigger_words_metadata)
+
+        comment = getattr(self.args, "modelspec_comment", None)
+        if comment:
+            metadata["modelspec.comment"] = str(comment)
 
         return {k: str(v) for k, v in metadata.items() if v is not None}
 

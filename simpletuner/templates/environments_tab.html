@@ -23,11 +23,16 @@ const localSanitizeConfigEntry = window.sanitizeConfigEntry
     ? window.sanitizeConfigEntry
     : (entry) => {
         if (!entry || typeof entry !== 'object') {
-            return entry;
+            return null;  // Return null for invalid entries
         }
         const clone = { ...entry };
-        if (clone.name) {
+        if (clone.name && typeof clone.name === 'string') {
             clone.name = localSanitizeConfigName(clone.name);
+        }
+        // Return null if name is missing, empty, or not a string after sanitization
+        if (!clone.name || typeof clone.name !== 'string' || !clone.name.trim()) {
+            console.warn('[localSanitizeConfigEntry] Skipping config entry with invalid name:', entry);
+            return null;
         }
         return clone;
     };
@@ -657,7 +662,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 const response = await fetch(`/api/configs/?config_type=${this.configType}`);
                 const data = await response.json();
                 const configs = Array.isArray(data.configs)
-                    ? data.configs.map((entry) => this.normalizeConfigEntry(entry))
+                    ? data.configs.map((entry) => this.normalizeConfigEntry(entry)).filter(Boolean)
                     : [];
                 this.configs = configs;
 

@@ -171,6 +171,16 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Path to the pretrained Gemma model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training Gemma-based models (for example LTX-2, Sana, or Lumina2), you can point at a shared Gemma checkpoint without changing the base diffusion model path.
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **What**: Override which hidden state layers to extract from the text encoder for FLUX.2 models.
+- **Format**: JSON array of layer indices, e.g., `[10, 20, 30]`
+- **Default**: Model-specific defaults are used when not set:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **Why**: Allows experimentation with different text encoder hidden state combinations for custom alignment or research purposes.
+- **Note**: This option is experimental and only applies to FLUX.2 models. Changing layer indices will invalidate cached text embeddings and require regenerating them. The number of layers must match the model's expected input (3 layers).
+
 ### `--gradient_checkpointing`
 
 - **What**: During training, gradients will be calculated layerwise and accumulated to save on peak VRAM requirements at the cost of slower training.
@@ -393,6 +403,30 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 - **What**: The name of the Huggingface Hub model and local results directory.
 - **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
 
+### `--modelspec_comment`
+
+- **What**: Text embedded in safetensors file metadata as `modelspec.comment`
+- **Default**: None (disabled)
+- **Notes**:
+  - Visible in external model viewers (ComfyUI, model info tools)
+  - Accepts a string or array of strings (joined with newlines)
+  - Supports `{env:VAR_NAME}` placeholders for environment variable substitution
+  - Each checkpoint uses the current config value at save time
+
+**Example (string)**:
+```json
+"modelspec_comment": "Trained on my custom dataset v2.1"
+```
+
+**Example (array for multi-line)**:
+```json
+"modelspec_comment": [
+  "Training run: experiment-42",
+  "Dataset: custom-portraits-v2",
+  "Notes: {env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **What**: Disable the startup validation/benchmark that occurs at step 0 on the base model. These outputs are stitchd to the left side of your trained model validation images.
@@ -609,6 +643,79 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 
 - **What**: Disable evaluation loss calculation during validation.
 - **Why**: When an eval dataset is configured, loss will automatically be calculated. If CLIP evaluation is also enabled, they will both run. This flag will allow you to selectively disable eval loss while keeping CLIP evaluation enabled.
+
+### `--validation_using_datasets`
+
+- **What**: Use images from training datasets for validation instead of pure text-to-image generation.
+- **Why**: Enables image-to-image (img2img) validation mode where the model partially denoises training images rather than generating from pure noise. This is useful for:
+  - Testing edit/inpainting models that require input images
+  - Evaluating how well the model preserves image structure
+  - Models that support dual text-to-image AND image-to-image workflows (e.g., Flux2, LTXVideo2)
+- **Notes**:
+  - Requires the model to have an `IMG2IMG` pipeline registered (most dual-mode models use the same pipeline for both)
+  - Can be combined with `--eval_dataset_id` to source images from a specific dataset
+  - The denoising strength is controlled by the normal validation timestep settings
+
+### `--eval_dataset_id`
+
+- **What**: Specific dataset ID to use for evaluation/validation image sourcing.
+- **Why**: When using `--validation_using_datasets` or conditioning-based validation, this controls which dataset provides the input images:
+  - Without this option, images are randomly selected from all training datasets
+  - With this option, only the specified dataset is used for validation inputs
+- **Notes**:
+  - The dataset ID must match a configured dataset in your dataloader config
+  - Useful for keeping evaluation consistent by using a dedicated eval dataset
+  - For conditioning models, the dataset's conditioning data (if any) will also be used
+
+---
+
+## Understanding Conditioning and Validation Modes
+
+SimpleTuner supports three main paradigms for models that use conditioning inputs (reference images, control signals, etc.):
+
+### 1. Models that REQUIRE Conditioning
+
+Some models cannot function without conditioning inputs:
+
+- **Flux Kontext**: Always needs reference images for edit-style training
+- **ControlNet training**: Requires control signal images
+
+For these models, a conditioning dataset is mandatory. The WebUI will show conditioning options as required, and training will fail without them.
+
+### 2. Models that SUPPORT Optional Conditioning
+
+Some models can operate in both text-to-image AND image-to-image modes:
+
+- **Flux2**: Supports dual T2I/I2I training with optional reference images
+- **LTXVideo2**: Supports both T2V and I2V (image-to-video) with optional first-frame conditioning
+- **LongCat-Video**: Supports optional frame conditioning
+
+For these models, you CAN add conditioning datasets but don't have to. The WebUI will show conditioning options as optional.
+
+### 3. Validation Modes
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Text-to-Image** | (default) | Generate from text prompts only |
+| **Dataset-based** | `--validation_using_datasets` | Partially denoise images from datasets (img2img) |
+| **Conditioning-based** | (auto when conditioning configured) | Use conditioning inputs during validation |
+
+**Combining modes**: When a model supports conditioning AND `--validation_using_datasets` is enabled:
+- The validation system sources images from datasets
+- If those datasets have conditioning data, it's used automatically
+- Use `--eval_dataset_id` to control which dataset provides inputs
+
+### Conditioning Data Types
+
+Different models expect different conditioning data:
+
+| Type | Models | Dataset Setting |
+|------|--------|-----------------|
+| `conditioning` | ControlNet, Control | `type: conditioning` in dataset config |
+| `image` | Flux Kontext | `type: image` (standard image dataset) |
+| `latents` | Flux, Flux2 | Conditioning is VAE-encoded automatically |
+
+---
 
 ### `--caption_strategy`
 
@@ -928,6 +1035,61 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Why**: DINOv2 models work best at their training resolution. The giant model uses 518x518.
 - **Default**: `518`
 
+### `--crepa_scheduler`
+
+- **What**: Schedule for CREPA coefficient decay over training.
+- **Why**: Allows reducing CREPA regularization strength as training progresses, preventing overfitting on deep encoder features.
+- **Options**: `constant`, `linear`, `cosine`, `polynomial`
+- **Default**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **What**: Number of steps to linearly ramp CREPA weight from 0 to `crepa_lambda`.
+- **Why**: Gradual warmup can help stabilize early training before CREPA regularization kicks in.
+- **Default**: `0`
+
+### `--crepa_decay_steps`
+
+- **What**: Total steps for decay (after warmup). Set to 0 to decay over entire training run.
+- **Why**: Controls the duration of the decay phase. Decay starts after warmup completes.
+- **Default**: `0` (uses `max_train_steps`)
+
+### `--crepa_lambda_end`
+
+- **What**: Final CREPA weight after decay completes.
+- **Why**: Setting to 0 effectively disables CREPA at end of training, useful for text2video where CREPA may cause artifacts.
+- **Default**: `0.0`
+
+### `--crepa_power`
+
+- **What**: Power factor for polynomial decay. 1.0 = linear, 2.0 = quadratic, etc.
+- **Why**: Higher values cause faster initial decay that slows down towards the end.
+- **Default**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **What**: Hard cutoff step after which CREPA is disabled.
+- **Why**: Useful for disabling CREPA after model has converged on temporal alignment.
+- **Default**: `0` (no step-based cutoff)
+
+### `--crepa_similarity_threshold`
+
+- **What**: Similarity EMA threshold at which CREPA cutoff triggers.
+- **Why**: When the exponential moving average of similarity reaches this value, CREPA is disabled to prevent overfitting on deep encoder features. This is particularly useful for text2video training.
+- **Default**: None (disabled)
+
+### `--crepa_similarity_ema_decay`
+
+- **What**: Exponential moving average decay factor for similarity tracking.
+- **Why**: Higher values provide smoother tracking (0.99 ≈ 100-step window), lower values react faster to changes.
+- **Default**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **What**: Behavior when similarity threshold is reached.
+- **Options**: `permanent` (CREPA stays off once threshold is hit), `recoverable` (CREPA re-enables if similarity drops)
+- **Default**: `permanent`
+
 ### Example Configuration
 
 ```toml
@@ -945,6 +1107,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA Scheduling (optional)
+# crepa_scheduler = "cosine"           # Decay type: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Warmup before CREPA kicks in
+# crepa_decay_steps = 1000             # Steps for decay (0 = entire training)
+# crepa_lambda_end = 0.0               # Final weight after decay
+# crepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
+# crepa_similarity_threshold = 0.9    # Similarity-based cutoff
+# crepa_threshold_mode = "permanent"   # permanent or recoverable
 ```
 
 ---
@@ -1263,6 +1434,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1933,6 +2105,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

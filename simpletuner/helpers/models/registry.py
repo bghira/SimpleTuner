@@ -31,6 +31,15 @@ class LazyModelClass:
             self._real_class = getattr(module, self._metadata["class_name"])
         return getattr(self._real_class, name)
 
+    def get_real_class(self):
+        """Resolve and return the actual model class."""
+        if self._real_class is None:
+            import importlib
+
+            module = importlib.import_module(self._metadata["module_path"])
+            self._real_class = getattr(module, self._metadata["class_name"])
+        return self._real_class
+
 
 class ModelRegistry:
     _registry: Dict[str, Type[Any]] = {}

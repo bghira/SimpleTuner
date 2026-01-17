@@ -60,6 +60,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_schedule",
             default_value=False,
+            checkbox_label="Skip baseline benchmark",
             help_text="Skip generating baseline comparison images before training starts",
             tooltip="Disable if you want to reduce startup time; recommended to keep enabled for qualitative comparisons.",
             importance=ImportanceLevel.ADVANCED,
@@ -290,6 +291,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="evaluation",
             default_value=False,
+            checkbox_label="Skip validation loss",
             help_text="Disable validation loss computation on eval datasets",
             tooltip="Skip computing loss on evaluation datasets during training. CLIP scoring (if enabled) still runs.",
             importance=ImportanceLevel.ADVANCED,
@@ -492,7 +494,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Use 1.0 for no CFG (distilled models). Higher values for real CFG sampling.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
-            model_specific=["flux"],
+            model_specific=["flux", "flux2"],
         )
     )
 
@@ -511,7 +513,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="For Flux real CFG: skip CFG on these initial timesteps. Default: 2",
             importance=ImportanceLevel.ADVANCED,
             order=3,
-            model_specific=["flux"],
+            model_specific=["flux", "flux2"],
         )
     )
 
@@ -601,6 +603,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_schedule",
             default_value=False,
+            checkbox_label="Skip validation images",
             help_text="Completely disable validation image generation",
             tooltip="Saves time and VRAM but you won't see progress during training",
             importance=ImportanceLevel.ADVANCED,
@@ -711,6 +714,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_options",
             default_value=False,
+            checkbox_label="Skip unconditional images",
             help_text="Disable unconditional image generation during validation",
             tooltip="When enabled, only generates conditional images (with prompts) during validation.",
             importance=ImportanceLevel.ADVANCED,

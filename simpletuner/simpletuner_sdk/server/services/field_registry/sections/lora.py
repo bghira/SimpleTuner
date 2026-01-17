@@ -250,7 +250,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
 
     assistant_dependencies = [
         FieldDependency(field="model_type", value="lora"),
-        FieldDependency(field="model_family", operator="in", values=["flux", "z-image"]),
+        FieldDependency(field="model_family", operator="in", values=["flux", "z_image"]),
         FieldDependency(field="model_flavour", operator="in", values=["schnell", "turbo"]),
     ]
 
@@ -319,6 +319,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=False,
             dependencies=assistant_dependencies,
+            checkbox_label="Disable Assistant LoRA",
             help_text="Completely disable assistant LoRA auto-configuration.",
             tooltip="When enabled, assistant LoRA will not be loaded or applied even for supported flavours.",
             importance=ImportanceLevel.ADVANCED,

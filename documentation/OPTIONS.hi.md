@@ -171,6 +171,16 @@ simpletuner configure config/foo/config.json
 - **What**: pretrained Gemma model का path या <https://huggingface.co/models> से उसका identifier.
 - **Why**: Gemma‑based models (जैसे LTX-2, Sana, Lumina2) ट्रेन करते समय आप base diffusion model path बदले बिना Gemma weights का source specify कर सकते हैं।
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **What**: FLUX.2 models के लिए text encoder से extract होने वाली hidden state layers को override करें।
+- **Format**: Layer indices का JSON array, जैसे `[10, 20, 30]`
+- **Default**: सेट न होने पर model-specific defaults उपयोग होते हैं:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **Why**: Custom alignment या research के लिए विभिन्न text encoder hidden state combinations के साथ experiment करने की सुविधा देता है।
+- **Note**: यह option experimental है और केवल FLUX.2 models पर लागू होता है। Layer indices बदलने से cached text embeddings invalid हो जाएंगे और regenerate करने होंगे। Layers की संख्या model की expected input (3 layers) से match होनी चाहिए।
+
 ### `--gradient_checkpointing`
 
 - **What**: Training के दौरान gradients layerwise compute होकर accumulate होते हैं ताकि peak VRAM कम हो, लेकिन training धीमी होती है।
@@ -393,6 +403,30 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - **What**: Huggingface Hub मॉडल और local results directory का नाम।
 - **Why**: यह मान `--output_dir` द्वारा निर्दिष्ट स्थान के अंतर्गत directory नाम के रूप में उपयोग होता है। यदि `--push_to_hub` दिया गया है, तो यही Huggingface Hub पर मॉडल का नाम होगा।
 
+### `--modelspec_comment`
+
+- **What**: safetensors फ़ाइल metadata में `modelspec.comment` के रूप में embedded text
+- **Default**: None (disabled)
+- **Notes**:
+  - बाहरी model viewers (ComfyUI, model info tools) में दिखाई देता है
+  - string या strings की array (newlines से जुड़ी) स्वीकार करता है
+  - environment variable substitution के लिए `{env:VAR_NAME}` placeholders support करता है
+  - प्रत्येक checkpoint save के समय current config value उपयोग करता है
+
+**Example (string)**:
+```json
+"modelspec_comment": "मेरे custom dataset v2.1 पर trained"
+```
+
+**Example (array multi-line के लिए)**:
+```json
+"modelspec_comment": [
+  "Training run: experiment-42",
+  "Dataset: custom-portraits-v2",
+  "Notes: {env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **What**: step 0 पर base model के लिए होने वाली startup validation/benchmark को disable करता है। ये outputs आपकी trained model validation images के बाएँ हिस्से में stitched होते हैं।
@@ -609,6 +643,79 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 
 - **What**: validation के दौरान evaluation loss गणना disable करें।
 - **Why**: जब eval dataset कॉन्फ़िगर हो, loss स्वतः गणना होता है। यदि CLIP evaluation सक्षम है, तो दोनों चलेंगे। यह flag eval loss को disable करने देता है जबकि CLIP evaluation चालू रहता है।
+
+### `--validation_using_datasets`
+
+- **What**: pure text-to-image generation के बजाय training datasets से images validation के लिए use करें।
+- **Why**: image-to-image (img2img) validation mode enable करता है जहाँ model pure noise से generate करने के बजाय training images को partially denoise करता है। उपयोगी है:
+  - Edit/inpainting models test करने के लिए जिन्हें input images चाहिए
+  - Model image structure को कितना preserve करता है evaluate करने के लिए
+  - Dual text-to-image AND image-to-image workflows support करने वाले models के लिए (जैसे, Flux2, LTXVideo2)
+- **Notes**:
+  - Model में `IMG2IMG` pipeline registered होना चाहिए
+  - `--eval_dataset_id` के साथ combine कर सकते हैं specific dataset से images लेने के लिए
+  - Denoising strength normal validation timestep settings से control होती है
+
+### `--eval_dataset_id`
+
+- **What**: Evaluation/validation image sourcing के लिए specific dataset ID।
+- **Why**: `--validation_using_datasets` या conditioning-based validation use करते समय, यह control करता है कौन सा dataset input images provide करे:
+  - इस option के बिना, images सभी training datasets से randomly select होती हैं
+  - इस option के साथ, केवल specified dataset validation inputs के लिए use होता है
+- **Notes**:
+  - Dataset ID आपके dataloader config में configured dataset से match होना चाहिए
+  - Dedicated eval dataset use करके consistent evaluation maintain करने के लिए useful
+  - Conditioning models के लिए, dataset का conditioning data (यदि हो) भी use होगा
+
+---
+
+## Conditioning और Validation Modes को समझना
+
+SimpleTuner conditioning inputs (reference images, control signals, आदि) use करने वाले models के लिए तीन मुख्य paradigms support करता है:
+
+### 1. Models जो Conditioning REQUIRE करते हैं
+
+कुछ models conditioning inputs के बिना function नहीं कर सकते:
+
+- **Flux Kontext**: Edit-style training के लिए हमेशा reference images चाहिए
+- **ControlNet training**: Control signal images require करता है
+
+इन models के लिए, conditioning dataset mandatory है। WebUI conditioning options को required दिखाएगी, और training इनके बिना fail होगी।
+
+### 2. Models जो Optional Conditioning SUPPORT करते हैं
+
+कुछ models text-to-image AND image-to-image दोनों modes में operate कर सकते हैं:
+
+- **Flux2**: Optional reference images के साथ dual T2I/I2I training support करता है
+- **LTXVideo2**: Optional first-frame conditioning के साथ T2V और I2V (image-to-video) दोनों support करता है
+- **LongCat-Video**: Optional frame conditioning support करता है
+
+इन models के लिए, आप conditioning datasets ADD कर सकते हैं पर जरूरी नहीं। WebUI conditioning options को optional दिखाएगी।
+
+### 3. Validation Modes
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Text-to-Image** | (default) | केवल text prompts से generate |
+| **Dataset-based** | `--validation_using_datasets` | Datasets से images partially denoise (img2img) |
+| **Conditioning-based** | (auto जब conditioning configured हो) | Validation के दौरान conditioning inputs use |
+
+**Modes combine करना**: जब model conditioning support करता है AND `--validation_using_datasets` enabled है:
+- Validation system datasets से images लेता है
+- यदि उन datasets में conditioning data है, तो automatically use होता है
+- `--eval_dataset_id` use करें control करने के लिए कौन सा dataset inputs provide करे
+
+### Conditioning Data Types
+
+Different models different conditioning data expect करते हैं:
+
+| Type | Models | Dataset Setting |
+|------|--------|-----------------|
+| `conditioning` | ControlNet, Control | Dataset config में `type: conditioning` |
+| `image` | Flux Kontext | `type: image` (standard image dataset) |
+| `latents` | Flux, Flux2 | Conditioning automatically VAE-encoded होता है |
+
+---
 
 ### `--caption_strategy`
 
@@ -928,6 +1035,61 @@ CREPA एक regularization तकनीक है जो video diffusion models
 - **Why**: DINOv2 models अपने training resolution पर बेहतर काम करते हैं। giant model 518x518 उपयोग करता है।
 - **Default**: `518`
 
+### `--crepa_scheduler`
+
+- **What**: training के दौरान CREPA coefficient decay का schedule।
+- **Why**: जैसे-जैसे training आगे बढ़े, CREPA regularization strength को कम करने देता है, deep encoder features पर overfitting रोकता है।
+- **Options**: `constant`, `linear`, `cosine`, `polynomial`
+- **Default**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **What**: CREPA weight को 0 से `crepa_lambda` तक linearly ramp करने के लिए steps की संख्या।
+- **Why**: gradual warmup CREPA regularization शुरू होने से पहले early training को stabilize करने में मदद कर सकता है।
+- **Default**: `0`
+
+### `--crepa_decay_steps`
+
+- **What**: decay के लिए कुल steps (warmup के बाद)। 0 सेट करने पर पूरी training run पर decay होगा।
+- **Why**: decay phase की duration नियंत्रित करता है। warmup पूरा होने के बाद decay शुरू होता है।
+- **Default**: `0` (`max_train_steps` उपयोग होगा)
+
+### `--crepa_lambda_end`
+
+- **What**: decay पूरा होने के बाद final CREPA weight।
+- **Why**: 0 सेट करने पर training के अंत में CREPA प्रभावी रूप से disable हो जाता है, text2video के लिए उपयोगी जहाँ CREPA artifacts पैदा कर सकता है।
+- **Default**: `0.0`
+
+### `--crepa_power`
+
+- **What**: polynomial decay के लिए power factor। 1.0 = linear, 2.0 = quadratic, आदि।
+- **Why**: higher values शुरुआत में तेज decay करते हैं जो अंत की ओर धीमा हो जाता है।
+- **Default**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **What**: hard cutoff step जिसके बाद CREPA disable हो जाता है।
+- **Why**: model temporal alignment पर converge होने के बाद CREPA disable करने के लिए उपयोगी।
+- **Default**: `0` (कोई step-based cutoff नहीं)
+
+### `--crepa_similarity_threshold`
+
+- **What**: similarity EMA threshold जिस पर CREPA cutoff trigger होता है।
+- **Why**: जब similarity का exponential moving average इस मान तक पहुँचता है, तो deep encoder features पर overfitting रोकने के लिए CREPA disable हो जाता है। text2video training के लिए विशेष रूप से उपयोगी।
+- **Default**: None (disabled)
+
+### `--crepa_similarity_ema_decay`
+
+- **What**: similarity tracking के लिए exponential moving average decay factor।
+- **Why**: higher values smoother tracking देते हैं (0.99 ≈ 100-step window), lower values changes पर तेज react करते हैं।
+- **Default**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **What**: similarity threshold पहुँचने पर व्यवहार।
+- **Options**: `permanent` (threshold hit होने पर CREPA permanently off रहता है), `recoverable` (similarity गिरने पर CREPA फिर से enable होता है)
+- **Default**: `permanent`
+
 ### Example Configuration
 
 ```toml
@@ -945,6 +1107,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA Scheduling (optional)
+# crepa_scheduler = "cosine"           # Decay type: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # Warmup before CREPA kicks in
+# crepa_decay_steps = 1000             # Steps for decay (0 = entire training)
+# crepa_lambda_end = 0.0               # Final weight after decay
+# crepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
+# crepa_similarity_threshold = 0.9    # Similarity-based cutoff
+# crepa_threshold_mode = "permanent"   # permanent or recoverable
 ```
 
 ---
@@ -1263,6 +1434,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1933,6 +2105,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

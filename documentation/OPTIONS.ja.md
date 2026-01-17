@@ -172,6 +172,16 @@ simpletuner configure config/foo/config.json
 - **内容**: 事前学習済み Gemma モデルのパス、または <https://huggingface.co/models> の識別子。
 - **理由**: Gemma 系モデル（例: LTX-2、Sana、Lumina2）を学習する際、ベース拡散モデルのパスを変えずに Gemma 重みの参照先を指定できます。
 
+### `--custom_text_encoder_intermediary_layers`
+
+- **内容**: FLUX.2 モデルでテキストエンコーダーから抽出する隠れ状態レイヤーを上書き指定します。
+- **形式**: レイヤーインデックスの JSON 配列（例: `[10, 20, 30]`）
+- **デフォルト**: 未設定時はモデル固有のデフォルト値を使用:
+  - FLUX.2-dev (Mistral-3): `[10, 20, 30]`
+  - FLUX.2-klein (Qwen3): `[9, 18, 27]`
+- **理由**: カスタムアライメントや研究目的で、異なるテキストエンコーダー隠れ状態の組み合わせを実験できます。
+- **注意**: この設定は実験的で FLUX.2 モデルにのみ適用されます。レイヤーインデックスを変更するとキャッシュ済みテキスト埋め込みが無効になり、再生成が必要です。レイヤー数はモデルの期待入力と一致させる必要があります（3 レイヤー）。
+
 ### `--gradient_checkpointing`
 
 - **内容**: 学習中に勾配をレイヤー単位で計算・蓄積し、ピーク VRAM を削減します（学習速度は低下）。
@@ -394,6 +404,30 @@ Accelerate の既定値を使いたい項目は省略してください（例: �
 - **内容**: Hugging Face Hub のモデル名およびローカル結果ディレクトリ名。
 - **理由**: `--output_dir` で指定した場所の配下にこの名前のディレクトリが作成されます。`--push_to_hub` を指定した場合、Hugging Face Hub 上のモデル名になります。
 
+### `--modelspec_comment`
+
+- **内容**: safetensors ファイルのメタデータに `modelspec.comment` として埋め込まれるテキスト
+- **デフォルト**: None（無効）
+- **注記**:
+  - 外部モデルビューア（ComfyUI、モデル情報ツール）で表示可能
+  - 文字列または文字列配列（改行で結合）を受け付けます
+  - 環境変数置換用の `{env:VAR_NAME}` プレースホルダをサポート
+  - 各チェックポイントは保存時の現在の設定値を使用
+
+**例（文字列）**:
+```json
+"modelspec_comment": "カスタムデータセット v2.1 で学習"
+```
+
+**例（配列、複数行）**:
+```json
+"modelspec_comment": [
+  "学習ラン: experiment-42",
+  "データセット: custom-portraits-v2",
+  "メモ: {env:TRAINING_NOTES}"
+]
+```
+
 ### `--disable_benchmark`
 
 - **内容**: step 0 で行う起動時の検証/ベンチマークを無効化します。これらの出力は学習済みモデルの検証画像の左側に連結されます。
@@ -611,6 +645,79 @@ Accelerate の既定値を使いたい項目は省略してください（例: �
 
 - **内容**: 検証中の評価損失計算を無効化します。
 - **理由**: 評価用データセットを設定すると損失は自動計算されます。CLIP 評価も有効な場合は両方実行されます。このフラグで CLIP を残したまま評価損失だけ無効化できます。
+
+### `--validation_using_datasets`
+
+- **内容**: 純粋なテキストから画像生成の代わりに、学習データセットから画像を検証に使用します。
+- **理由**: 画像から画像 (img2img) 検証モードを有効化し、モデルが純粋なノイズから生成するのではなく学習画像を部分的にデノイズします。以下の場合に便利です：
+  - 入力画像が必要な編集/インペインティングモデルのテスト
+  - モデルが画像構造をどの程度保持するかの評価
+  - テキストから画像と画像から画像の両方のワークフローをサポートするモデル（例：Flux2、LTXVideo2）
+- **注意**:
+  - モデルに `IMG2IMG` パイプラインが登録されている必要があります
+  - `--eval_dataset_id` と組み合わせて特定のデータセットから画像を取得できます
+  - デノイズ強度は通常の検証タイムステップ設定で制御されます
+
+### `--eval_dataset_id`
+
+- **内容**: 評価/検証画像ソーシング用の特定のデータセットID。
+- **理由**: `--validation_using_datasets` またはコンディショニングベースの検証を使用する場合、どのデータセットが入力画像を提供するかを制御します：
+  - このオプションなしでは、すべての学習データセットからランダムに画像が選択されます
+  - このオプションありでは、指定されたデータセットのみが検証入力に使用されます
+- **注意**:
+  - データセットIDはデータローダー設定の設定済みデータセットと一致する必要があります
+  - 専用の評価データセットを使用して一貫した評価を維持するのに便利です
+  - コンディショニングモデルの場合、データセットのコンディショニングデータ（存在する場合）も使用されます
+
+---
+
+## コンディショニングと検証モードの理解
+
+SimpleTunerは、コンディショニング入力（参照画像、制御信号など）を使用するモデル向けに3つの主要なパラダイムをサポートしています：
+
+### 1. コンディショニングを必要とするモデル
+
+一部のモデルはコンディショニング入力なしでは機能しません：
+
+- **Flux Kontext**: 編集スタイルの学習には常に参照画像が必要
+- **ControlNet学習**: 制御信号画像が必要
+
+これらのモデルではコンディショニングデータセットが必須です。WebUIはコンディショニングオプションを必須として表示し、なければ学習は失敗します。
+
+### 2. オプションのコンディショニングをサポートするモデル
+
+一部のモデルはテキストから画像と画像から画像の両方のモードで動作できます：
+
+- **Flux2**: オプションの参照画像でデュアルT2I/I2I学習をサポート
+- **LTXVideo2**: オプションの最初のフレームコンディショニングでT2VとI2V（画像から動画）の両方をサポート
+- **LongCat-Video**: オプションのフレームコンディショニングをサポート
+
+これらのモデルでは、コンディショニングデータセットを追加できますが必須ではありません。WebUIはコンディショニングオプションをオプションとして表示します。
+
+### 3. 検証モード
+
+| モード | フラグ | 動作 |
+|--------|--------|------|
+| **テキストから画像** | (デフォルト) | テキストプロンプトのみから生成 |
+| **データセットベース** | `--validation_using_datasets` | データセットから画像を部分的にデノイズ (img2img) |
+| **コンディショニングベース** | (コンディショニング設定時に自動) | 検証中にコンディショニング入力を使用 |
+
+**モードの組み合わせ**: モデルがコンディショニングをサポートし、かつ `--validation_using_datasets` が有効な場合：
+- 検証システムはデータセットから画像を取得します
+- それらのデータセットにコンディショニングデータがあれば、自動的に使用されます
+- `--eval_dataset_id` を使用してどのデータセットが入力を提供するかを制御できます
+
+### コンディショニングデータタイプ
+
+異なるモデルは異なるコンディショニングデータを期待します：
+
+| タイプ | モデル | データセット設定 |
+|--------|--------|-----------------|
+| `conditioning` | ControlNet, Control | データセット設定で `type: conditioning` |
+| `image` | Flux Kontext | `type: image` (標準画像データセット) |
+| `latents` | Flux, Flux2 | コンディショニングは自動的にVAEエンコードされます |
+
+---
 
 ### `--caption_strategy`
 
@@ -932,12 +1039,67 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
 - **理由**: DINOv2 は学習時の解像度で最も良く動作します。巨大モデルは 518x518 を使用します。
 - **既定**: `518`
 
+### `--crepa_scheduler`
+
+- **内容**: 学習中の CREPA 係数減衰スケジュール。
+- **理由**: 学習が進むにつれて CREPA 正則化の強度を下げることで、深層エンコーダ特徴への過学習を防ぎます。
+- **選択肢**: `constant`、`linear`、`cosine`、`polynomial`
+- **既定**: `constant`
+
+### `--crepa_warmup_steps`
+
+- **内容**: CREPA 重みを 0 から `crepa_lambda` まで線形に上昇させるステップ数。
+- **理由**: 段階的なウォームアップにより、CREPA 正則化が有効になる前の初期学習を安定させます。
+- **既定**: `0`
+
+### `--crepa_decay_steps`
+
+- **内容**: 減衰の総ステップ数（ウォームアップ後）。0 に設定すると学習全体で減衰します。
+- **理由**: 減衰フェーズの期間を制御します。減衰はウォームアップ完了後に開始されます。
+- **既定**: `0`（`max_train_steps` を使用）
+
+### `--crepa_lambda_end`
+
+- **内容**: 減衰完了後の最終 CREPA 重み。
+- **理由**: 0 に設定すると学習終了時に CREPA を実質的に無効化できます。text2video で CREPA がアーティファクトを引き起こす場合に有用です。
+- **既定**: `0.0`
+
+### `--crepa_power`
+
+- **内容**: 多項式減衰のべき乗係数。1.0 = 線形、2.0 = 二次など。
+- **理由**: 値が大きいほど初期の減衰が速く、終盤に向けて緩やかになります。
+- **既定**: `1.0`
+
+### `--crepa_cutoff_step`
+
+- **内容**: CREPA を無効化するハードカットオフステップ。
+- **理由**: モデルが時間的整合に収束した後に CREPA を無効化するのに有用です。
+- **既定**: `0`（ステップベースのカットオフなし）
+
+### `--crepa_similarity_threshold`
+
+- **内容**: CREPA カットオフをトリガーする類似度 EMA 閾値。
+- **理由**: 類似度の指数移動平均がこの値に達すると、深層エンコーダ特徴への過学習を防ぐために CREPA が無効化されます。text2video 学習に特に有用です。
+- **既定**: なし（無効）
+
+### `--crepa_similarity_ema_decay`
+
+- **内容**: 類似度追跡の指数移動平均減衰係数。
+- **理由**: 値が大きいほど滑らかな追跡（0.99 ≈ 100 ステップウィンドウ）、値が小さいほど変化に素早く反応します。
+- **既定**: `0.99`
+
+### `--crepa_threshold_mode`
+
+- **内容**: 類似度閾値に達した際の動作。
+- **選択肢**: `permanent`（閾値に達すると CREPA はオフのまま）、`recoverable`（類似度が下がると CREPA が再有効化）
+- **既定**: `permanent`
+
 ### 設定例
 
 ```toml
-# Enable CREPA for video fine-tuning
+# 動画ファインチューニング用 CREPA を有効化
 crepa_enabled = true
-crepa_block_index = 8          # Adjust based on your model
+crepa_block_index = 8          # モデルに応じて調整
 crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
@@ -949,6 +1111,15 @@ crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518
+
+# CREPA スケジューリング（オプション）
+# crepa_scheduler = "cosine"           # 減衰タイプ: constant, linear, cosine, polynomial
+# crepa_warmup_steps = 100             # CREPA 有効化前のウォームアップ
+# crepa_decay_steps = 1000             # 減衰ステップ数（0 = 学習全体）
+# crepa_lambda_end = 0.0               # 減衰後の最終重み
+# crepa_cutoff_step = 5000             # ハードカットオフステップ（0 = 無効）
+# crepa_similarity_threshold = 0.9    # 類似度ベースのカットオフ
+# crepa_threshold_mode = "permanent"   # permanent または recoverable
 ```
 
 ---
@@ -1267,6 +1438,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
@@ -1937,6 +2109,9 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
+  --modelspec_comment MODELSPEC_COMMENT
+                        Text embedded in safetensors file metadata as
+                        modelspec.comment, visible in external model viewers.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL

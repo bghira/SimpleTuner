@@ -1,22 +1,61 @@
 # FLUX.2 Quickstart
 
-This guide covers training LoRAs on FLUX.2-dev, Black Forest Labs' latest image generation model featuring a Mistral-3 text encoder.
+This guide covers training LoRAs on FLUX.2, Black Forest Labs' latest image generation model family.
+
+> **Note**: The default model flavour is `klein-9b`, but this guide focuses on `dev` (the full 12B transformer with 24B Mistral-3 text encoder) since it has the highest resource requirements. Klein models are easier to run - see [Model Variants](#model-variants) below.
+
+## Model Variants
+
+FLUX.2 comes in three variants:
+
+| Variant | Transformer | Text Encoder | Total Blocks | Default |
+|---------|-------------|--------------|--------------|---------|
+| `dev` | 12B params | Mistral-3 (24B) | 56 (8+48) | |
+| `klein-9b` | 9B params | Qwen3 (bundled) | 32 (8+24) | ✓ |
+| `klein-4b` | 4B params | Qwen3 (bundled) | 25 (5+20) | |
+
+**Key differences:**
+- **dev**: Uses standalone Mistral-Small-3.1-24B text encoder, has guidance embeddings
+- **klein models**: Use Qwen3 text encoder bundled in the model repo, **no guidance embeddings** (guidance training options are ignored)
+
+To select a variant, set `model_flavour` in your config:
+```json
+{
+  "model_flavour": "dev"
+}
+```
 
 ## Model Overview
 
 FLUX.2-dev introduces significant architectural changes from FLUX.1:
 
-- **Text Encoder**: Mistral-Small-3.1-24B instead of CLIP+T5
-- **Architecture**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks
+- **Text Encoder**: Mistral-Small-3.1-24B (dev) or Qwen3 (klein)
+- **Architecture**: 8 DoubleStreamBlocks + 48 SingleStreamBlocks (dev)
 - **Latent Channels**: 32 VAE channels → 128 after pixel shuffle (vs 16 in FLUX.1)
 - **VAE**: Custom VAE with batch normalization and pixel shuffling
-- **Embedding Dimension**: 15,360 (stacked from layers 10, 20, 30 of Mistral)
+- **Embedding Dimension**: 15,360 for dev (3×5,120), 12,288 for klein-9b (3×4,096), 7,680 for klein-4b (3×2,560)
 
 ## Hardware Requirements
 
-FLUX.2 has significant resource requirements due to the Mistral-3 text encoder:
+Hardware requirements vary significantly by model variant.
 
-### VRAM Requirements
+### Klein Models (Recommended for Most Users)
+
+Klein models are much more accessible:
+
+| Variant | bf16 VRAM | int8 VRAM | System RAM |
+|---------|-----------|-----------|------------|
+| `klein-4b` | ~12GB | ~8GB | 32GB+ |
+| `klein-9b` | ~22GB | ~14GB | 64GB+ |
+
+**Recommended for klein-9b**: Single 24GB GPU (RTX 3090/4090, A5000)
+**Recommended for klein-4b**: Single 16GB GPU (RTX 4080, A4000)
+
+### FLUX.2-dev (Advanced)
+
+FLUX.2-dev has significant resource requirements due to the Mistral-3 text encoder:
+
+#### VRAM Requirements
 
 The 24B Mistral text encoder alone requires significant VRAM:
 
@@ -33,18 +72,18 @@ The 24B Mistral text encoder alone requires significant VRAM:
 | int8 everything | ~40GB |
 | int4 text encoder + int8 transformer | ~22GB |
 
-### System RAM
+#### System RAM
 
 - **Minimum**: 96GB system RAM (loading 24B text encoder requires substantial memory)
 - **Recommended**: 128GB+ for comfortable operation
 
-### Recommended Hardware
+#### Recommended Hardware
 
 - **Minimum**: 2x 48GB GPUs (A6000, L40S) with FSDP2 or DeepSpeed
 - **Recommended**: 4x H100 80GB with fp8-torchao
 - **With heavy quantization (int4)**: 2x 24GB GPUs may work but is experimental
 
-Multi-GPU distributed training (FSDP2 or DeepSpeed) is essentially required for FLUX.2 due to the combined size of the Mistral-3 text encoder and transformer.
+Multi-GPU distributed training (FSDP2 or DeepSpeed) is essentially required for FLUX.2-dev due to the combined size of the Mistral-3 text encoder and transformer.
 
 ## Prerequisites
 
@@ -59,11 +98,17 @@ pip install transformers>=4.45.0
 
 ### Model Access
 
-FLUX.2-dev requires access approval on Hugging Face:
+FLUX.2 models require access approval on Hugging Face:
 
+**For dev:**
 1. Visit [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)
 2. Accept the license agreement
-3. Ensure you're logged in to Hugging Face CLI
+
+**For klein models:**
+1. Visit [black-forest-labs/FLUX.2-klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) or [black-forest-labs/FLUX.2-klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B)
+2. Accept the license agreement
+
+Ensure you're logged in to Hugging Face CLI: `huggingface-cli login`
 
 ## Installation
 
@@ -122,7 +167,9 @@ Create `config/config.json`:
 
 #### Guidance Configuration
 
-FLUX.2 uses guidance embedding similar to FLUX.1:
+> **Note**: Klein models (`klein-4b`, `klein-9b`) do not have guidance embeddings. The following guidance options only apply to `dev`.
+
+FLUX.2-dev uses guidance embedding similar to FLUX.1:
 
 <details>
 <summary>View example config</summary>
@@ -355,14 +402,14 @@ FLUX.2 LoRAs can be loaded with the SimpleTuner inference pipeline or compatible
 
 ## Differences from FLUX.1
 
-| Aspect | FLUX.1 | FLUX.2 |
-|--------|--------|--------|
-| Text Encoder | CLIP-L/14 + T5-XXL | Mistral-Small-3.1-24B |
-| Embedding Dim | CLIP: 768, T5: 4096 | 15,360 (3×5,120) |
-| Latent Channels | 16 | 32 (→128 after pixel shuffle) |
-| VAE | AutoencoderKL | Custom (BatchNorm) |
-| VAE Scale Factor | 8 | 16 (8×2 pixel shuffle) |
-| Transformer Blocks | 19 joint + 38 single | 8 double + 48 single |
+| Aspect | FLUX.1 | FLUX.2-dev | FLUX.2-klein-9b | FLUX.2-klein-4b |
+|--------|--------|------------|-----------------|-----------------|
+| Text Encoder | CLIP-L/14 + T5-XXL | Mistral-3 (24B) | Qwen3 (bundled) | Qwen3 (bundled) |
+| Embedding Dim | CLIP: 768, T5: 4096 | 15,360 | 12,288 | 7,680 |
+| Latent Channels | 16 | 32 (→128) | 32 (→128) | 32 (→128) |
+| VAE | AutoencoderKL | Custom (BatchNorm) | Custom (BatchNorm) | Custom (BatchNorm) |
+| Transformer Blocks | 19 joint + 38 single | 8 double + 48 single | 8 double + 24 single | 5 double + 20 single |
+| Guidance Embeds | Yes | Yes | No | No |
 
 ## Troubleshooting
 
