@@ -389,4 +389,4 @@ class ZImage(ImageModelFoundation):
         return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
 
 
-ModelRegistry.register("z-image", ZImage)
+ModelRegistry.register("z_image", ZImage)

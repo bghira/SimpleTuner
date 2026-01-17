@@ -27,7 +27,7 @@ class ZImageModelTests(unittest.TestCase):
         model.accelerator = DummyAccelerator()
         model.config = types.SimpleNamespace(
             weight_dtype=torch.float32,
-            model_family="z-image",
+            model_family="z_image",
             pretrained_model_name_or_path=None,
             pretrained_vae_model_name_or_path=None,
             vae_path=None,

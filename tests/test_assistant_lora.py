@@ -208,7 +208,7 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
 
     def _build_zimage_config(self, flavour: str):
         config = MagicMock()
-        config.model_family = "z-image"
+        config.model_family = "z_image"
         config.model_flavour = flavour
         config.model_type = "lora"
         config.assistant_lora_path = None
@@ -281,7 +281,7 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
 
     def test_disable_flag_skips_requirements(self):
         config = MagicMock()
-        config.model_family = "z-image"
+        config.model_family = "z_image"
         config.model_flavour = "turbo"
         config.model_type = "lora"
         config.assistant_lora_path = None

@@ -18,7 +18,7 @@
     "max_train_steps": 1000,
     "minimum_image_size": 0,
     "mixed_precision": "bf16",
-    "model_family": "z-image",
+    "model_family": "z_image",
     "model_type": "lora",
     "num_eval_images": 25,
     "num_train_epochs": 0,
