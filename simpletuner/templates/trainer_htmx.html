@@ -367,11 +367,16 @@ const sanitizeConfigName = (name) => {
 
 const sanitizeConfigEntry = (entry) => {
     if (!entry || typeof entry !== 'object') {
-        return entry;
+        return null;  // Return null for invalid entries
     }
     const clone = { ...entry };
-    if (clone.name) {
+    if (clone.name && typeof clone.name === 'string') {
         clone.name = sanitizeConfigName(clone.name);
+    }
+    // Return null if name is missing, empty, or not a string after sanitization
+    if (!clone.name || typeof clone.name !== 'string' || !clone.name.trim()) {
+        console.warn('[sanitizeConfigEntry] Skipping config entry with invalid name:', entry);
+        return null;
     }
     return clone;
 };
@@ -757,7 +762,7 @@ function trainerComponent() {
                      return;
                 }
                 const data = await response.json();
-                const configs = Array.isArray(data.configs) ? data.configs.map(sanitizeConfigEntry) : [];
+                const configs = Array.isArray(data.configs) ? data.configs.map(sanitizeConfigEntry).filter(Boolean) : [];
                 const active = sanitizeConfigName(data.active || null);
                 this.environments = configs;
                 this.activeEnvironment = active || (configs.length > 0 ? configs[0].name : null);
@@ -6441,7 +6446,7 @@ function trainerComponent() {
                             }
                             const data = await response.json();
                             const configs = Array.isArray(data.configs)
-                                ? data.configs.map(sanitizeConfigEntry)
+                                ? data.configs.map(sanitizeConfigEntry).filter(Boolean)
                                 : [];
                             const active = sanitizeConfigName(data.active || (configs.length > 0 ? configs[0].name : ''));
                             this.configs = configs;
@@ -6733,7 +6738,7 @@ function trainerComponent() {
                             </div>
                         </div>
 
-                        <template x-for="config in (configs || [])" :key="config.name || $id('config')">
+                        <template x-for="(config, index) in (configs || [])" :key="config.name || `config-fallback-${index}`">
                             <a @click.prevent="Alpine.store('trainer').switchEnvironment(config.name); open = false;"
                                class="dropdown-item"
                                :class="{'active': config.name === activeConfig}"
