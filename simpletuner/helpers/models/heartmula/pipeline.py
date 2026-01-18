@@ -74,7 +74,9 @@ class HeartMuLaGenPipeline:
 
     def _encode_text(self, text: str) -> list[int]:
         token_ids = self.tokenizer.encode(text).ids
-        if not token_ids or token_ids[0] != self.gen_config.text_bos_id:
+        if not token_ids:
+            return [self.gen_config.text_bos_id, self.gen_config.text_eos_id]
+        if token_ids[0] != self.gen_config.text_bos_id:
             token_ids = [self.gen_config.text_bos_id] + token_ids
         if token_ids[-1] != self.gen_config.text_eos_id:
             token_ids = token_ids + [self.gen_config.text_eos_id]
@@ -233,7 +235,11 @@ class HeartMuLaGenPipeline:
         generator: Optional[torch.Generator] = None,
         **kwargs,
     ) -> HeartMuLaPipelineOutput:
-        del kwargs
+        if kwargs:
+            logger.warning(
+                "HeartMuLaGenPipeline.__call__ received unexpected keyword arguments: %s",
+                ", ".join(sorted(kwargs.keys())),
+            )
         if cfg_scale is not None:
             guidance_scale = float(cfg_scale)
         if max_audio_length_ms is None:
@@ -358,7 +364,9 @@ class HeartMuLaGenPipeline:
         torch_dtype: Optional[torch.dtype] = None,
         **kwargs,
     ) -> "HeartMuLaGenPipeline":
-        del kwargs
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs.keys()))
+            raise TypeError(f"{cls.__name__}.from_pretrained() got unexpected keyword argument(s): {unexpected}")
         model_path = cls._resolve_repo_path(pretrained_model_name_or_path)
 
         if transformer is None:

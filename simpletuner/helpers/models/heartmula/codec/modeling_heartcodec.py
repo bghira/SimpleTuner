@@ -13,6 +13,12 @@ from .configuration_heartcodec import HeartCodecConfig
 from .flow_matching import FlowMatching
 from .sq_codec import ScalarModel
 
+CODE_FRAMES_PER_SEC = 12.5
+LATENT_FRAMES_PER_SEC = 25.0
+MIN_DURATION_SEC = 0.08
+HOP_RATIO_NUM = 80
+HOP_RATIO_DEN = 93
+
 
 class HeartCodec(PreTrainedModel):
     config_class = HeartCodecConfig
@@ -66,7 +72,14 @@ class HeartCodec(PreTrainedModel):
     @staticmethod
     def _normalize_codes(codes: torch.Tensor, num_codebooks: int) -> torch.Tensor:
         if codes.ndim != 2:
-            raise ValueError("HeartCodec expects codes with shape [codebooks, frames] or [frames, codebooks].")
+            raise ValueError(
+                f"HeartCodec expects codes with shape [codebooks, frames] or [frames, codebooks], got {codes.shape}."
+            )
+        if codes.shape[0] == num_codebooks and codes.shape[1] == num_codebooks:
+            raise ValueError(
+                f"HeartCodec codes shape {codes.shape} is ambiguous because both dimensions match num_codebooks "
+                f"({num_codebooks}). Provide tokens with distinct frame and codebook dimensions."
+            )
         if codes.shape[0] == num_codebooks:
             return codes
         if codes.shape[1] == num_codebooks:
@@ -113,11 +126,11 @@ class HeartCodec(PreTrainedModel):
 
         original_frames = codes.shape[-1]
         if duration is None:
-            duration = max(original_frames / 12.5, 0.08)
+            duration = max(original_frames / CODE_FRAMES_PER_SEC, MIN_DURATION_SEC)
 
-        min_code_frames = max(int(duration * 12.5), 1)
-        latent_length = max(int(duration * 25), 1)
-        hop_frames = (min_code_frames // 93) * 80
+        min_code_frames = max(int(duration * CODE_FRAMES_PER_SEC), 1)
+        latent_length = max(int(duration * LATENT_FRAMES_PER_SEC), 1)
+        hop_frames = (min_code_frames // HOP_RATIO_DEN) * HOP_RATIO_NUM
         overlap_frames = min_code_frames - hop_frames
 
         codes = self._prepare_segment_codes(codes, min_code_frames, hop_frames, overlap_frames)
@@ -159,9 +172,9 @@ class HeartCodec(PreTrainedModel):
 
         segments = [segment.float() for segment in segments]
 
-        target_len = int(original_frames / 12.5 * self.sample_rate)
+        target_len = int(original_frames / CODE_FRAMES_PER_SEC * self.sample_rate)
         segment_samples = max(int(duration * self.sample_rate), 1)
-        hop_samples = (segment_samples // 93) * 80
+        hop_samples = (segment_samples // HOP_RATIO_DEN) * HOP_RATIO_NUM
         overlap_samples = segment_samples - hop_samples
 
         output = None

@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, Iterable
+from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -250,7 +250,11 @@ class HeartMuLaModel(PreTrainedModel):
         attention_mask: torch.Tensor | None = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
-        del kwargs
+        if kwargs:
+            logger.warning(
+                "HeartMuLaModel.forward received unexpected keyword arguments: %s",
+                ", ".join(sorted(kwargs.keys())),
+            )
         if attention_mask is None:
             attention_mask = tokens_mask.any(dim=-1).to(dtype=torch.long)
         hidden = self._build_backbone_inputs(tokens, tokens_mask)
@@ -266,9 +270,11 @@ class HeartMuLaModel(PreTrainedModel):
 
     def _predict_audio_tokens(self, hidden_states: torch.Tensor, tokens: torch.Tensor):
         if hidden_states.dim() != 3:
-            raise ValueError("HeartMuLa backbone must return [batch, seq_len, hidden] activations.")
+            raise ValueError(
+                f"HeartMuLa backbone must return [batch, seq_len, hidden] activations, got {hidden_states.shape}."
+            )
         if tokens.dim() != 3:
-            raise ValueError("HeartMuLa tokens must have shape [batch, seq_len, num_codebooks+1].")
+            raise ValueError(f"HeartMuLa tokens must have shape [batch, seq_len, num_codebooks+1], got {tokens.shape}.")
 
         codebook0_logits = self.codebook0_head(hidden_states[:, :-1, :])
 

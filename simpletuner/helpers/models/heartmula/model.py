@@ -247,7 +247,7 @@ class HeartMuLa(AudioModelFoundation):
         tokens = prepared_batch["tokens"]
         audio_frame_mask = prepared_batch["audio_frame_mask"]
         if tokens.dim() != 3:
-            raise ValueError("HeartMuLa tokens must have shape [batch, seq_len, num_codebooks+1].")
+            raise ValueError(f"HeartMuLa tokens must have shape [batch, seq_len, num_codebooks+1], got {tokens.shape}.")
         if audio_frame_mask is None:
             raise ValueError("HeartMuLa loss requires audio_frame_mask.")
 
@@ -291,10 +291,10 @@ class HeartMuLa(AudioModelFoundation):
             raise ValueError("HeartMuLa tokenizer was not loaded.")
         token_ids = self.tokenizer.encode(text).ids
         if not token_ids:
-            token_ids = []
-        if not token_ids or token_ids[0] != self.gen_config.text_bos_id:
+            return [self.gen_config.text_bos_id, self.gen_config.text_eos_id]
+        if token_ids[0] != self.gen_config.text_bos_id:
             token_ids = [self.gen_config.text_bos_id] + token_ids
-        if not token_ids or token_ids[-1] != self.gen_config.text_eos_id:
+        if token_ids[-1] != self.gen_config.text_eos_id:
             token_ids = token_ids + [self.gen_config.text_eos_id]
         return token_ids
 
@@ -336,10 +336,17 @@ class HeartMuLa(AudioModelFoundation):
         else:
             tensor = torch.as_tensor(tokens)
         if tensor.ndim != 2:
-            raise ValueError("HeartMuLa audio tokens must have shape [codebooks, frames] or [frames, codebooks].")
+            raise ValueError(
+                f"HeartMuLa audio tokens must have shape [codebooks, frames] or [frames, codebooks], got {tensor.shape}."
+            )
         num_codebooks = self.model.config.audio_num_codebooks
-        if tensor.shape[0] == num_codebooks:
+        if tensor.shape[0] == num_codebooks and tensor.shape[1] != num_codebooks:
             tensor = tensor.transpose(0, 1)
+        elif tensor.shape[0] == num_codebooks and tensor.shape[1] == num_codebooks:
+            raise ValueError(
+                f"Audio token matrix shape {tensor.shape} is ambiguous because both dimensions equal "
+                f"num_codebooks ({num_codebooks}). Provide tokens with distinct frame and codebook dimensions."
+            )
         elif tensor.shape[1] != num_codebooks:
             raise ValueError(f"Audio token matrix does not match expected codebooks ({num_codebooks}): got {tensor.shape}.")
         return tensor.to(dtype=torch.long)
