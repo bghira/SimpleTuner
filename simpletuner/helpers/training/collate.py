@@ -598,7 +598,11 @@ def collate_fn(batch):
     uses_audio_tokens = False
     if model is not None:
         try:
-            uses_audio_tokens = bool(model.uses_audio_tokens())
+            audio_token_flag = model.uses_audio_tokens()
+            if isinstance(audio_token_flag, (bool, np.bool_)):
+                uses_audio_tokens = bool(audio_token_flag)
+            else:
+                uses_audio_tokens = False
         except AttributeError:
             uses_audio_tokens = False
     if uses_audio_tokens:
