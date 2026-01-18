@@ -4549,68 +4549,7 @@ class ModelFoundation(ABC):
         return total_twin_loss, log_payload
 
 
-class ImageModelFoundation(ModelFoundation):
-    """
-    Implements logic common to image-based diffusion models.
-    Handles typical VAE, text encoder loading and a UNet forward pass.
-    """
-
-    SUPPORTS_TEXT_ENCODER_TRAINING = False
-    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
-    DEFAULT_CONTROLNET_LORA_TARGET = [
-        "to_q",
-        "to_k",
-        "to_v",
-        "to_out.0",
-        "ff.net.0.proj",
-        "ff.net.2",
-        "proj_in",
-        "proj_out",
-        "conv",
-        "conv1",
-        "conv2",
-        "conv_in",
-        "conv_shortcut",
-        "linear_1",
-        "linear_2",
-        "time_emb_proj",
-        "controlnet_cond_embedding.conv_in",
-        "controlnet_cond_embedding.blocks.0",
-        "controlnet_cond_embedding.blocks.1",
-        "controlnet_cond_embedding.blocks.2",
-        "controlnet_cond_embedding.blocks.3",
-        "controlnet_cond_embedding.blocks.4",
-        "controlnet_cond_embedding.blocks.5",
-        "controlnet_cond_embedding.conv_out",
-        "controlnet_down_blocks.0",
-        "controlnet_down_blocks.1",
-        "controlnet_down_blocks.2",
-        "controlnet_down_blocks.3",
-        "controlnet_down_blocks.4",
-        "controlnet_down_blocks.5",
-        "controlnet_down_blocks.6",
-        "controlnet_down_blocks.7",
-        "controlnet_down_blocks.8",
-        "controlnet_mid_block",
-    ]
-    SHARED_MODULE_PREFIXES = None
-    DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
-    DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
-    VALIDATION_USES_NEGATIVE_PROMPT = True
-
-    def scale_vae_latents_for_cache(self, latents, vae):
-        if vae is None or not hasattr(vae, "config") or latents is None:
-            return latents
-        shift_factor = getattr(vae.config, "shift_factor", None)
-        scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae.config, "scaling_factor", 1.0))
-        if shift_factor is not None:
-            return (latents - shift_factor) * scaling_factor
-        if isinstance(latents, torch.Tensor) and hasattr(vae.config, "scaling_factor"):
-            scaled = latents * scaling_factor
-            logger.debug("Latents shape after scaling: %s", scaled.shape)
-            return scaled
-        return latents
-
+class PipelineSupportMixin:
     @classmethod
     def _iter_pipeline_classes(cls):
         pipelines = getattr(cls, "PIPELINE_CLASSES", {})
@@ -4660,36 +4599,20 @@ class ImageModelFoundation(ModelFoundation):
                 return True
         return False
 
-    def __init__(self, config: dict, accelerator):
-        super().__init__(config, accelerator)
-        self.has_vae = True
-        self.has_text_encoder = True
-        self.vae = None
-        self.model = None
-        self.controlnet = None
-        self.text_encoders = None
-        self.tokenizers = None
-        self._group_offload_configured = False
 
-    def expand_sigmas(self, batch: dict) -> dict:
-        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
-
-        return batch
-
-    def custom_model_card_schedule_info(self):
-        """
-        Override this in your subclass to add model-specific info.
-
-        See SD3 or Flux classes for an example.
-        """
-        return []
-
-    def custom_model_card_code_example(self, repo_id: str = None) -> str:
-        """
-        Override this to provide custom code examples for model cards.
-        Returns None by default to use the standard template.
-        """
-        return None
+class VaeLatentScalingMixin:
+    def scale_vae_latents_for_cache(self, latents, vae):
+        if vae is None or not hasattr(vae, "config") or latents is None:
+            return latents
+        shift_factor = getattr(vae.config, "shift_factor", None)
+        scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae.config, "scaling_factor", 1.0))
+        if shift_factor is not None:
+            return (latents - shift_factor) * scaling_factor
+        if isinstance(latents, torch.Tensor) and hasattr(vae.config, "scaling_factor"):
+            scaled = latents * scaling_factor
+            logger.debug("Latents shape after scaling: %s", scaled.shape)
+            return scaled
+        return latents
 
 
 class VideoToTensor:
@@ -4722,22 +4645,7 @@ class VideoToTensor:
         return self.__class__.__name__ + "()"
 
 
-class VideoModelFoundation(ImageModelFoundation):
-    """
-    Base class for video models. Provides default 5D handling and optional
-    text encoder instantiation. The actual text encoder classes and their
-    attributes can be stored in a hardcoded dict if needed. This base class
-    does not do it by default.
-    """
-
-    def __init__(self, config, accelerator):
-        """
-        :param config: The training configuration object/dict.
-        """
-        super().__init__(config, accelerator)
-        self.config = config
-        self.crepa_regularizer: Optional[CrepaRegularizer] = None
-
+class VideoTransformMixin:
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
         """
@@ -4779,13 +4687,6 @@ class VideoModelFoundation(ImageModelFoundation):
             ]
         )
 
-    def expand_sigmas(self, batch):
-        if len(batch["latents"].shape) == 5:
-            logger.debug(
-                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
-            )
-            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
-
     def apply_i2v_augmentation(self, batch):
         pass
 
@@ -4797,6 +4698,168 @@ class VideoModelFoundation(ImageModelFoundation):
         You can reshape or permute as needed for the underlying model.
         """
         return tensor
+
+
+class AudioTransformMixin:
+    def supports_audio_inputs(self) -> bool:
+        return True
+
+    def uses_audio_latents(self) -> bool:
+        return True
+
+    def get_transforms(self, dataset_type: str = "image"):
+        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
+
+            def _audio_transform(sample):
+                waveform = sample
+                if isinstance(sample, dict):
+                    waveform = sample.get("waveform")
+                if waveform is None:
+                    raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
+                if isinstance(waveform, np.ndarray):
+                    waveform = torch.from_numpy(waveform)
+                if not torch.is_tensor(waveform):
+                    raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
+                waveform = waveform.detach().clone()
+                if waveform.ndim == 1:
+                    waveform = waveform.unsqueeze(0)
+                return waveform
+
+            return _audio_transform
+        return super().get_transforms(dataset_type=dataset_type)
+
+    @torch.no_grad()
+    def encode_with_vae(self, vae, samples):
+        """
+        Music-focused autoencoders often return both latents and accompanying
+        sequence lengths. Wrap both into a dict so downstream caches retain the metadata.
+        """
+        if samples is None:
+            raise ValueError("Audio VAE received no samples to encode.")
+        audio = samples
+        if not torch.is_tensor(audio):
+            raise ValueError(f"Audio encoder expected a Tensor input, received {type(audio)}.")
+        if audio.ndim == 2:
+            audio = audio.unsqueeze(0)
+        audio = audio.to(device=self.accelerator.device, dtype=torch.float32)
+        result = vae.encode(audio)
+        latent_lengths = None
+        latents = result
+        if isinstance(result, tuple):
+            latents, *extras = result
+            latent_lengths = extras[0] if extras else None
+        elif isinstance(result, dict):
+            latents = result.get("latents")
+            latent_lengths = result.get("latent_lengths")
+        payload = {"latents": latents}
+        if latent_lengths is not None:
+            payload["latent_lengths"] = latent_lengths
+        return payload
+
+
+class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFoundation):
+    """
+    Implements logic common to image-based diffusion models.
+    Handles typical VAE, text encoder loading and a UNet forward pass.
+    """
+
+    SUPPORTS_TEXT_ENCODER_TRAINING = False
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
+        "controlnet_cond_embedding.conv_in",
+        "controlnet_cond_embedding.blocks.0",
+        "controlnet_cond_embedding.blocks.1",
+        "controlnet_cond_embedding.blocks.2",
+        "controlnet_cond_embedding.blocks.3",
+        "controlnet_cond_embedding.blocks.4",
+        "controlnet_cond_embedding.blocks.5",
+        "controlnet_cond_embedding.conv_out",
+        "controlnet_down_blocks.0",
+        "controlnet_down_blocks.1",
+        "controlnet_down_blocks.2",
+        "controlnet_down_blocks.3",
+        "controlnet_down_blocks.4",
+        "controlnet_down_blocks.5",
+        "controlnet_down_blocks.6",
+        "controlnet_down_blocks.7",
+        "controlnet_down_blocks.8",
+        "controlnet_mid_block",
+    ]
+    SHARED_MODULE_PREFIXES = None
+    DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
+    VALIDATION_USES_NEGATIVE_PROMPT = True
+
+    def __init__(self, config: dict, accelerator):
+        super().__init__(config, accelerator)
+        self.has_vae = True
+        self.has_text_encoder = True
+        self.vae = None
+        self.model = None
+        self.controlnet = None
+        self.text_encoders = None
+        self.tokenizers = None
+        self._group_offload_configured = False
+
+    def expand_sigmas(self, batch: dict) -> dict:
+        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+
+        return batch
+
+    def custom_model_card_schedule_info(self):
+        """
+        Override this in your subclass to add model-specific info.
+
+        See SD3 or Flux classes for an example.
+        """
+        return []
+
+    def custom_model_card_code_example(self, repo_id: str = None) -> str:
+        """
+        Override this to provide custom code examples for model cards.
+        Returns None by default to use the standard template.
+        """
+        return None
+
+
+class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
+    """
+    Base class for video models. Provides default 5D handling and optional
+    text encoder instantiation. The actual text encoder classes and their
+    attributes can be stored in a hardcoded dict if needed. This base class
+    does not do it by default.
+    """
+
+    def __init__(self, config, accelerator):
+        """
+        :param config: The training configuration object/dict.
+        """
+        super().__init__(config, accelerator)
+        self.config = config
+        self.crepa_regularizer: Optional[CrepaRegularizer] = None
+
+    def expand_sigmas(self, batch):
+        if len(batch["latents"].shape) == 5:
+            logger.debug(
+                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
+            )
+            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
@@ -4898,7 +4961,7 @@ class VideoModelFoundation(ImageModelFoundation):
         return loss, aux_logs
 
 
-class AudioModelFoundation(ModelFoundation):
+class AudioModelFoundation(AudioTransformMixin, ModelFoundation):
     """
     Base class for audio-first models. Provides minimal audio transform helpers
     and ensures autoencoders that return auxiliary metadata (e.g. sample lengths)
@@ -4907,61 +4970,6 @@ class AudioModelFoundation(ModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
-
-    def supports_audio_inputs(self) -> bool:
-        return True
-
-    def uses_audio_latents(self) -> bool:
-        return True
-
-    def get_transforms(self, dataset_type: str = "image"):
-        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
-
-            def _audio_transform(sample):
-                waveform = sample
-                if isinstance(sample, dict):
-                    waveform = sample.get("waveform")
-                if waveform is None:
-                    raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
-                if isinstance(waveform, np.ndarray):
-                    waveform = torch.from_numpy(waveform)
-                if not torch.is_tensor(waveform):
-                    raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
-                waveform = waveform.detach().clone()
-                if waveform.ndim == 1:
-                    waveform = waveform.unsqueeze(0)
-                return waveform
-
-            return _audio_transform
-        return super().get_transforms(dataset_type=dataset_type)
-
-    @torch.no_grad()
-    def encode_with_vae(self, vae, samples):
-        """
-        Music-focused autoencoders often return both latents and accompanying
-        sequence lengths. Wrap both into a dict so downstream caches retain the metadata.
-        """
-        if samples is None:
-            raise ValueError("Audio VAE received no samples to encode.")
-        audio = samples
-        if not torch.is_tensor(audio):
-            raise ValueError(f"Audio encoder expected a Tensor input, received {type(audio)}.")
-        if audio.ndim == 2:
-            audio = audio.unsqueeze(0)
-        audio = audio.to(device=self.accelerator.device, dtype=torch.float32)
-        result = vae.encode(audio)
-        latent_lengths = None
-        latents = result
-        if isinstance(result, tuple):
-            latents, *extras = result
-            latent_lengths = extras[0] if extras else None
-        elif isinstance(result, dict):
-            latents = result.get("latents")
-            latent_lengths = result.get("latent_lengths")
-        payload = {"latents": latents}
-        if latent_lengths is not None:
-            payload["latent_lengths"] = latent_lengths
-        return payload
 
     def expand_sigmas(self, batch: dict) -> dict:
         """
