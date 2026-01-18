@@ -1936,6 +1936,10 @@ class Trainer:
             return
         from simpletuner.helpers.models.common import PredictionTypes
 
+        if not self.model.uses_noise_schedule():
+            self.config.flow_matching = False
+            self.noise_scheduler = None
+            return
         self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
@@ -4796,12 +4800,13 @@ class Trainer:
     ):
         if custom_timesteps is not None:
             timesteps = custom_timesteps
-        prepared_batch = apply_scheduled_sampling_rollout(
-            self.model,
-            prepared_batch,
-            self.noise_scheduler,
-            self.config,
-        )
+        if self.model.uses_noise_schedule():
+            prepared_batch = apply_scheduled_sampling_rollout(
+                self.model,
+                prepared_batch,
+                self.noise_scheduler,
+                self.config,
+            )
         if not self.config.disable_accelerator:
             if self.config.controlnet:
                 model_pred = self.model.controlnet_predict(
@@ -4814,11 +4819,14 @@ class Trainer:
 
         else:
             # Dummy model prediction for debugging.
+            if not self.model.uses_noise_schedule():
+                raise ValueError("disable_accelerator debug path is not supported for autoregressive models.")
             model_pred = torch.randn_like(prepared_batch["noisy_latents"])
 
         # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
         if (
-            hasattr(self.noise_scheduler, "config")
+            self.model.uses_noise_schedule()
+            and hasattr(self.noise_scheduler, "config")
             and hasattr(self.noise_scheduler.config, "prediction_type")
             and self.noise_scheduler.config.prediction_type == "sample"
         ):
@@ -5202,33 +5210,43 @@ class Trainer:
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
                 with self.accelerator.accumulate(*training_models):
-                    bsz = prepared_batch["latents"].shape[0]
-                    training_logger.debug("Sending latent batch to GPU.")
+                    if self.model.uses_noise_schedule():
+                        batch_label = "latents"
+                        bsz = prepared_batch["latents"].shape[0]
+                        training_logger.debug("Sending latent batch to GPU.")
+                    else:
+                        batch_label = "tokens"
+                        bsz = prepared_batch["tokens"].shape[0]
+                        training_logger.debug("Sending token batch to GPU.")
 
                     if int(bsz) != int(self.config.train_batch_size):
                         logger.error(
-                            f"Received {bsz} latents, but expected {self.config.train_batch_size}. Processing short batch."
+                            f"Received {bsz} {batch_label}, but expected {self.config.train_batch_size}. "
+                            "Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
-                    for timestep in prepared_batch["timesteps"].tolist():
-                        self.timesteps_buffer.append((self.state["global_step"], timestep))
-                    if getattr(self.config, "twinflow_enabled", False):
-                        sigmas = prepared_batch.get("sigmas")
-                        tt = prepared_batch.get("twinflow_tt")
-                        time_sign = prepared_batch.get("twinflow_time_sign")
-                        if sigmas is not None and tt is not None:
-                            try:
-                                sigma_mean = float(sigmas.detach().float().mean().item())
-                                tt_mean = float(tt.detach().float().mean().item())
-                                sign_val = (
-                                    float(time_sign.detach().float().mean().item())
-                                    if time_sign is not None
-                                    else float(torch.sign(sigmas.detach().float()).mean().item())
-                                )
-                                self.twinflow_traj_buffer.append((self.state["global_step"], sigma_mean, tt_mean, sign_val))
-                            except Exception:
-                                training_logger.debug("TwinFlow trajectory logging skipped due to tensor shape issues.")
+                    if self.model.uses_noise_schedule():
+                        for timestep in prepared_batch["timesteps"].tolist():
+                            self.timesteps_buffer.append((self.state["global_step"], timestep))
+                        if getattr(self.config, "twinflow_enabled", False):
+                            sigmas = prepared_batch.get("sigmas")
+                            tt = prepared_batch.get("twinflow_tt")
+                            time_sign = prepared_batch.get("twinflow_time_sign")
+                            if sigmas is not None and tt is not None:
+                                try:
+                                    sigma_mean = float(sigmas.detach().float().mean().item())
+                                    tt_mean = float(tt.detach().float().mean().item())
+                                    sign_val = (
+                                        float(time_sign.detach().float().mean().item())
+                                        if time_sign is not None
+                                        else float(torch.sign(sigmas.detach().float()).mean().item())
+                                    )
+                                    self.twinflow_traj_buffer.append(
+                                        (self.state["global_step"], sigma_mean, tt_mean, sign_val)
+                                    )
+                                except Exception:
+                                    training_logger.debug("TwinFlow trajectory logging skipped due to tensor shape issues.")
 
                     if "encoder_hidden_states" in prepared_batch:
                         encoder_hidden_states = prepared_batch["encoder_hidden_states"]
@@ -5242,7 +5260,7 @@ class Trainer:
 
                     # Predict the noise residual and compute loss
                     is_regularisation_data = prepared_batch.get("is_regularisation_data", False)
-                    if is_regularisation_data and self.config.model_type == "lora":
+                    if is_regularisation_data and self.config.model_type == "lora" and self.model.uses_noise_schedule():
                         training_logger.debug("Predicting parent model residual.")
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
