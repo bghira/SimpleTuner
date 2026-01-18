@@ -1102,6 +1102,12 @@ class ModelFoundation(ABC):
         """
         return False
 
+    def uses_text_embeddings_cache(self) -> bool:
+        """
+        Override to False for models that do not use text encoder embeddings.
+        """
+        return bool(getattr(self, "TEXT_ENCODER_CONFIGURATION", None))
+
     def uses_noise_schedule(self) -> bool:
         """
         Override to False for autoregressive models that do not use diffusion timesteps/sigmas.
