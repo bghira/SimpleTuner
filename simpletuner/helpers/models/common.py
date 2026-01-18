@@ -312,6 +312,7 @@ class PredictionTypes(Enum):
     SAMPLE = "sample"
     V_PREDICTION = "v_prediction"
     FLOW_MATCHING = "flow_matching"
+    AUTOREGRESSIVE_NEXT_TOKEN = "autoregressive_next_token"
 
     @staticmethod
     def from_str(label):
@@ -323,6 +324,8 @@ class PredictionTypes(Enum):
             return PredictionTypes.SAMPLE
         elif label in ("flow", "flow_matching", "flow-matching"):
             return PredictionTypes.FLOW_MATCHING
+        elif label in ("ar", "autoregressive", "autoregressive_next_token"):
+            return PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
         else:
             raise NotImplementedError
 
@@ -1092,6 +1095,19 @@ class ModelFoundation(ABC):
     def uses_audio_latents(self) -> bool:
         return False
 
+    def uses_audio_tokens(self) -> bool:
+        """
+        Override to True for autoregressive audio models that consume discrete token sequences
+        instead of VAE latents.
+        """
+        return False
+
+    def uses_noise_schedule(self) -> bool:
+        """
+        Override to False for autoregressive models that do not use diffusion timesteps/sigmas.
+        """
+        return self.PREDICTION_TYPE is not PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
+
     def get_vae_for_dataset_type(self, dataset_type: str):
         return self.get_vae()
 
@@ -1199,6 +1215,17 @@ class ModelFoundation(ABC):
         Returns a dictionary. If the dictionary is empty, it is ignored and usual collate occurs.
         """
         return {}
+
+    def collate_audio_tokens(self, examples: list[dict]) -> dict:
+        """
+        Optional hook for autoregressive audio models to build token batches.
+
+        Must return a dict containing at least:
+        - tokens: LongTensor [batch, seq_len, num_codebooks + 1]
+        - tokens_mask: BoolTensor [batch, seq_len, num_codebooks + 1]
+        - audio_frame_mask: BoolTensor [batch, seq_len] where True marks audio frames
+        """
+        raise NotImplementedError("collate_audio_tokens must be implemented by the child class.")
 
     @classmethod
     def get_flavour_choices(cls):
@@ -3201,6 +3228,9 @@ class ModelFoundation(ABC):
 
         It's important to note, this is the *training* schedule, not inference.
         """
+        if not self.uses_noise_schedule():
+            self.noise_schedule = None
+            return self.config, None
         flow_matching = False
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             from diffusers import FlowMatchEulerDiscreteScheduler

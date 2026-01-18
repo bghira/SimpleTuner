@@ -83,6 +83,14 @@
             "base"
         ]
     },
+    "heartmula": {
+        "class_name": "HeartMuLa",
+        "module_path": "simpletuner.helpers.models.heartmula.model",
+        "name": "HeartMuLa",
+        "flavour_choices": [
+            "3b"
+        ]
+    },
     "omnigen": {
         "class_name": "OmniGen",
         "module_path": "simpletuner.helpers.models.omnigen.model",

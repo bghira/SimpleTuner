@@ -364,6 +364,7 @@ base_deps = [
     "imageio[pyav]>=2.37.0",
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
+    "vector-quantize-pytorch>=1.27.15",
     "cryptography>=41.0.0",
     "torchcodec>=0.8.1",
     "sdnq>=0.1.2",
