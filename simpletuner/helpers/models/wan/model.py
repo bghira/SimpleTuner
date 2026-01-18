@@ -25,8 +25,8 @@ from simpletuner.helpers.models.common import (
     PipelineTypes,
     PredictionTypes,
     VideoModelFoundation,
-    VideoToTensor,
 )
+from simpletuner.helpers.models.foundation_mixins import VideoToTensor
 from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
 from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
