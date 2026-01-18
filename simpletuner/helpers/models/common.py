@@ -4797,6 +4797,8 @@ class AudioModelFoundation(AudioTransformMixin, ModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+        self.text_encoders = None
+        self.tokenizers = None
 
     def expand_sigmas(self, batch: dict) -> dict:
         """
