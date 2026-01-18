@@ -499,14 +499,6 @@ class TestQwenEmbedRope(TransformerBaseTest):
         self.assertGreater(cache_info_after_first.currsize, cache_info_before.currsize)
         self.assertEqual(cache_info_after_second.currsize, cache_info_after_first.currsize)
 
-    def test_dynamic_expansion_increases_capacity(self):
-        """Dynamic expansion is not available in the reference implementation."""
-        self.skipTest("Dynamic RoPE expansion is not implemented in QwenEmbedRope.")
-
-    def test_long_prompt_warning(self):
-        """Warn about unsupported functionality rather than raising expectations."""
-        self.skipTest("Long prompt warning is not emitted by the current implementation.")
-
     def test_device_handling(self):
         """Test device handling and tensor movement."""
         if torch.cuda.is_available():

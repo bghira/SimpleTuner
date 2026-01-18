@@ -161,7 +161,10 @@ class EntryPointThemeSourceTestCase(unittest.TestCase):
 
     def test_discover_with_no_entry_points(self) -> None:
         """discover() should return empty dict when no entry points are registered."""
-        with patch("importlib.metadata.entry_points", return_value=[]):
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.theme_service.entry_points",
+            return_value=[],
+        ):
             source = EntryPointThemeSource()
             themes = source.discover()
             self.assertEqual(themes, {})

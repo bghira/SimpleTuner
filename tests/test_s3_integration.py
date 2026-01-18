@@ -53,51 +53,7 @@ class TestS3StorageRoutes(APITestCase, unittest.TestCase):
         app = create_app(mode=ServerMode.UNIFIED)
         return TestClient(app)
 
-    @unittest.skip("PUT routes have async context issues with AsyncJobStore in test client")
-    def test_put_object_requires_auth(self):
-        """PUT object should require authentication."""
-        with self._get_client() as client:
-            response = client.put(
-                "/api/cloud/storage/test-bucket/test-file.txt",
-                content=b"test content",
-            )
-            self.assertEqual(response.status_code, 401)
-            self.assertIn("Authentication required", response.json()["detail"])
-
-    @unittest.skip("PUT routes have async context issues with AsyncJobStore in test client")
-    def test_put_object_invalid_token(self):
-        """PUT object should reject invalid tokens."""
-        with self._get_client() as client:
-            response = client.put(
-                "/api/cloud/storage/test-bucket/test-file.txt",
-                content=b"test content",
-                headers={"X-Upload-Token": "invalid-token"},
-            )
-            self.assertEqual(response.status_code, 401)
-            self.assertIn("Invalid upload token", response.json()["detail"])
-
-    @unittest.skip("PUT routes have async context issues with AsyncJobStore in test client")
-    def test_put_object_path_traversal_protection(self):
-        """PUT object should block path traversal attempts."""
-        with self._get_client() as client:
-            # Attempt path traversal in bucket name using URL encoding
-            # (unencoded ../ gets normalized by URL parser before routing)
-            # Auth is checked first, so we may get 401 before path validation
-            response = client.put(
-                "/api/cloud/storage/..%2Fetc/passwd",
-                content=b"malicious",
-                headers={"X-Upload-Token": "test"},
-            )
-            # Either 400 (path validation) or 401 (auth check) blocks the attack
-            self.assertIn(response.status_code, [400, 401])
-
-            # Attempt path traversal in key using URL encoding
-            response = client.put(
-                "/api/cloud/storage/bucket/..%2F..%2Fetc/passwd",
-                content=b"malicious",
-                headers={"X-Upload-Token": "test"},
-            )
-            self.assertIn(response.status_code, [400, 401])
+    # PUT route coverage lives in tests/test_s3_put_async.py to ensure AsyncJobStore runs in a real async context.
 
     def test_get_object_path_traversal_protection(self):
         """GET object should block path traversal attempts."""
