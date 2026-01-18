@@ -120,20 +120,24 @@ class LDAPProvider(AuthProviderBase):
                 auto_bind=False,
             )
 
-            if self._start_tls:
-                conn.start_tls()
+            try:
+                if self._start_tls:
+                    conn.start_tls()
 
-            if not conn.bind():
-                return False, None, "Invalid credentials"
+                if not conn.bind():
+                    return False, None, "Invalid credentials"
 
-            conn.unbind()
+                # Get user groups (pass username for posixGroup support)
+                groups = await self._get_user_groups(user_dn, username)
 
-            # Get user groups (pass username for posixGroup support)
-            groups = await self._get_user_groups(user_dn, username)
-
-            # Create user object
-            user = self._attrs_to_user(user_dn, user_attrs, groups)
-            return True, user, None
+                # Create user object
+                user = self._attrs_to_user(user_dn, user_attrs, groups)
+                return True, user, None
+            finally:
+                try:
+                    conn.unbind()
+                except Exception:
+                    pass
 
         except ImportError as exc:
             return False, None, str(exc)
@@ -148,43 +152,47 @@ class LDAPProvider(AuthProviderBase):
 
             conn = self._get_connection()
 
-            if self._start_tls:
-                conn.start_tls()
+            try:
+                if self._start_tls:
+                    conn.start_tls()
 
-            if self._bind_dn:
-                if not conn.bind():
-                    logger.error("LDAP bind failed: %s", conn.result)
+                if self._bind_dn:
+                    if not conn.bind():
+                        logger.error("LDAP bind failed: %s", conn.result)
+                        return None, {}
+                else:
+                    # Anonymous bind
+                    conn.bind()
+
+                # Search for user
+                search_filter = self._user_search_filter.format(username=ldap3.utils.conv.escape_filter_chars(username))
+
+                conn.search(
+                    search_base=self._user_search_base,
+                    search_filter=search_filter,
+                    search_scope=ldap3.SUBTREE,
+                    attributes=[self._email_attr, self._username_attr, self._display_name_attr],
+                )
+
+                if not conn.entries:
                     return None, {}
-            else:
-                # Anonymous bind
-                conn.bind()
 
-            # Search for user
-            search_filter = self._user_search_filter.format(username=ldap3.utils.conv.escape_filter_chars(username))
+                entry = conn.entries[0]
+                user_dn = entry.entry_dn
 
-            conn.search(
-                search_base=self._user_search_base,
-                search_filter=search_filter,
-                search_scope=ldap3.SUBTREE,
-                attributes=[self._email_attr, self._username_attr, self._display_name_attr],
-            )
+                attrs = {}
+                for attr in [self._email_attr, self._username_attr, self._display_name_attr]:
+                    if hasattr(entry, attr):
+                        val = getattr(entry, attr)
+                        if val:
+                            attrs[attr] = str(val)
 
-            if not conn.entries:
-                conn.unbind()
-                return None, {}
-
-            entry = conn.entries[0]
-            user_dn = entry.entry_dn
-
-            attrs = {}
-            for attr in [self._email_attr, self._username_attr, self._display_name_attr]:
-                if hasattr(entry, attr):
-                    val = getattr(entry, attr)
-                    if val:
-                        attrs[attr] = str(val)
-
-            conn.unbind()
-            return user_dn, attrs
+                return user_dn, attrs
+            finally:
+                try:
+                    conn.unbind()
+                except Exception:
+                    pass
 
         except Exception as exc:
             logger.error("User search failed: %s", exc)
@@ -200,37 +208,42 @@ class LDAPProvider(AuthProviderBase):
 
             conn = self._get_connection()
 
-            if self._start_tls:
-                conn.start_tls()
+            try:
+                if self._start_tls:
+                    conn.start_tls()
 
-            if self._bind_dn:
-                if not conn.bind():
-                    return []
-            else:
-                conn.bind()
+                if self._bind_dn:
+                    if not conn.bind():
+                        return []
+                else:
+                    conn.bind()
 
-            # Support both {user_dn} and {username} placeholders
-            search_filter = self._group_search_filter.format(
-                user_dn=ldap3.utils.conv.escape_filter_chars(user_dn),
-                username=ldap3.utils.conv.escape_filter_chars(username),
-            )
+                # Support both {user_dn} and {username} placeholders
+                search_filter = self._group_search_filter.format(
+                    user_dn=ldap3.utils.conv.escape_filter_chars(user_dn),
+                    username=ldap3.utils.conv.escape_filter_chars(username),
+                )
 
-            conn.search(
-                search_base=self._group_search_base,
-                search_filter=search_filter,
-                search_scope=ldap3.SUBTREE,
-                attributes=[self._group_name_attr],
-            )
+                conn.search(
+                    search_base=self._group_search_base,
+                    search_filter=search_filter,
+                    search_scope=ldap3.SUBTREE,
+                    attributes=[self._group_name_attr],
+                )
 
-            groups = []
-            for entry in conn.entries:
-                if hasattr(entry, self._group_name_attr):
-                    val = getattr(entry, self._group_name_attr)
-                    if val:
-                        groups.append(str(val))
+                groups = []
+                for entry in conn.entries:
+                    if hasattr(entry, self._group_name_attr):
+                        val = getattr(entry, self._group_name_attr)
+                        if val:
+                            groups.append(str(val))
 
-            conn.unbind()
-            return groups
+                return groups
+            finally:
+                try:
+                    conn.unbind()
+                except Exception:
+                    pass
 
         except Exception as exc:
             logger.warning("Group search failed: %s", exc)
@@ -279,17 +292,22 @@ class LDAPProvider(AuthProviderBase):
         try:
             conn = self._get_connection()
 
-            if self._start_tls:
-                conn.start_tls()
+            try:
+                if self._start_tls:
+                    conn.start_tls()
 
-            if self._bind_dn:
-                if not conn.bind():
-                    return False, f"Bind failed: {conn.result}"
-            else:
-                conn.bind()
+                if self._bind_dn:
+                    if not conn.bind():
+                        return False, f"Bind failed: {conn.result}"
+                else:
+                    conn.bind()
 
-            conn.unbind()
-            return True, None
+                return True, None
+            finally:
+                try:
+                    conn.unbind()
+                except Exception:
+                    pass
 
         except ImportError as exc:
             return False, str(exc)
