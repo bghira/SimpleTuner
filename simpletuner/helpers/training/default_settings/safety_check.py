@@ -132,10 +132,7 @@ def safety_check(args, accelerator):
         sys.exit(1)
 
     if args.flow_schedule_shift is not None and args.flow_schedule_shift > 0 and args.flow_schedule_auto_shift:
-        logger.error(
-            f"--flow_schedule_auto_shift cannot be combined with --flow_schedule_shift. Please set --flow_schedule_shift to 0 if you want to train with --flow_schedule_auto_shift."
-        )
-        sys.exit(1)
+        args.flow_schedule_shift = 0
 
     if "sageattention" in args.attention_mechanism:
         usage = AttentionBackendMode.from_raw(getattr(args, "sageattention_usage", AttentionBackendMode.INFERENCE))
