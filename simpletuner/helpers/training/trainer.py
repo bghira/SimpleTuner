@@ -6516,6 +6516,8 @@ def run_trainer_job(config):
             if helper is None:
 
                 def helper(exit_code, lines):
+                    import re
+
                     cleaned = [_strip_ansi(line.rstrip("\n")) for line in lines]
                     # Look for actual trainer [ERROR] messages - these are the meaningful ones
                     error_lines = []
@@ -6527,12 +6529,24 @@ def run_trainer_job(config):
                             if error_msg:
                                 error_lines.append(error_msg)
 
+                    # Also look for Python exceptions (e.g., "FileNotFoundError: ...")
+                    exception_pattern = re.compile(r"^(\w+(?:Error|Exception|Warning)):\s*(.+)$")
+                    exception_line = None
+                    for line in reversed(cleaned):
+                        stripped = line.strip()
+                        match = exception_pattern.match(stripped)
+                        if match:
+                            exception_line = stripped
+                            break
+
                     excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
                     excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
 
-                    # Use the first trainer error as the summary, not the accelerate wrapper error
+                    # Priority: [ERROR] messages first, then Python exceptions
                     if error_lines:
                         summary_text = error_lines[0]
+                    elif exception_line:
+                        summary_text = exception_line
                     else:
                         summary_text = f"Accelerate launch exited with status {exit_code}"
                         if excerpt_lines:
