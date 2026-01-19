@@ -668,6 +668,12 @@ class ParquetMetadataBackend(MetadataBackend):
                 lyrics_value = self._extract_audio_value(database_row, lyrics_column)
                 if lyrics_value:
                     overrides["lyrics"] = lyrics_value
+            for token_field in ("audio_tokens", "audio_tokens_path"):
+                token_value = self._extract_audio_value(database_row, token_field)
+                if token_value is not None:
+                    if hasattr(token_value, "tolist") and not isinstance(token_value, (str, bytes)):
+                        token_value = token_value.tolist()
+                    overrides[token_field] = token_value
 
             audio_metadata = self._build_audio_metadata_entry(
                 sample_path=image_path_str,

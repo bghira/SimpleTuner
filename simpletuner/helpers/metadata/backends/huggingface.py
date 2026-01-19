@@ -563,6 +563,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         norm_lyrics = self._get_nested_value(item, "norm_lyrics")
                         if norm_lyrics:
                             sample_metadata["lyrics"] = str(norm_lyrics)
+                for token_field in ("audio_tokens", "audio_tokens_path"):
+                    token_value = self._get_nested_value(item, token_field)
+                    if token_value is not None:
+                        if hasattr(token_value, "tolist") and not isinstance(token_value, (str, bytes)):
+                            token_value = token_value.tolist()
+                        sample_metadata[token_field] = token_value
 
                 duration_seconds = sample_metadata.get("duration_seconds") or sample_metadata.get("bucket_duration_seconds")
                 if duration_seconds is None:

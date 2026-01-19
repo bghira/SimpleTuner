@@ -63,6 +63,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | Modelo | Parâmetros | Guia |
 |-------|------------|------|
 | **ACE-Step** | 3.5B | [Guia ACE-Step](ACE_STEP.md) |
+| **HeartMuLa** | 3B | [Guia HeartMuLa](HEARTMULA.md) |
 
 ## Como escolher um modelo
 
@@ -85,3 +86,4 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 
 - **Flux Kontext** para edição/condicionamento de imagens
 - **ACE-Step** para texto-para-música
+- **HeartMuLa** para texto-para-audio autoregressivo

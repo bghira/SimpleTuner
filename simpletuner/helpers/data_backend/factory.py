@@ -1332,6 +1332,16 @@ class FactoryRegistry:
             return False
         return result if isinstance(result, bool) else False
 
+    def _uses_text_embeddings_cache(self) -> bool:
+        """Return whether the active model uses text embedding caches."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.uses_text_embeddings_cache()
+        except AttributeError:
+            return bool(getattr(self.model, "TEXT_ENCODER_CONFIGURATION", None))
+        return result if isinstance(result, bool) else bool(result)
+
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
         Validate that Qwen edit models use appropriate conditioning_type values.
@@ -1976,6 +1986,24 @@ class FactoryRegistry:
     def configure_text_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure text embedding backends."""
         self._log_performance_metrics("text_embed_config_start")
+        if not self._uses_text_embeddings_cache():
+            enabled_text_backends = [
+                backend
+                for backend in data_backend_config
+                if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
+                and not backend.get("disabled", False)
+                and not backend.get("disable", False)
+            ]
+            if enabled_text_backends:
+                ids = ", ".join(sorted({backend.get("id", "unknown") for backend in enabled_text_backends}))
+                warning_log(f"Model does not use text embeddings; skipping text embed backends: {ids or 'unknown'}.")
+            self.metrics["backend_counts"]["text_embeds"] = 0
+            self._log_performance_metrics(
+                "text_embed_config_complete",
+                {"text_embed_backends_created": 0, "default_backend_id": None, "skipped": True},
+            )
+            return
+
         text_embed_cache_dir_paths = []
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         text_embed_count = 0
@@ -2142,6 +2170,8 @@ class FactoryRegistry:
 
     def _validate_text_embed_backends(self) -> None:
         """Validate text embed backend configuration."""
+        if not self._uses_text_embeddings_cache():
+            return
         if not self.text_embed_backends:
             raise ValueError(
                 "Your dataloader config must contain at least one image dataset AND at least one text_embed dataset."
@@ -2361,7 +2391,7 @@ class FactoryRegistry:
         """
         self._log_performance_metrics("data_backend_config_start")
         self._prevalidate_backend_ids(data_backend_config)
-        if not self.text_embed_backends:
+        if not self.text_embed_backends and self._uses_text_embeddings_cache():
             self.configure_text_embed_backends(data_backend_config)
         vae_cache_dir_paths = []
         text_embed_cache_dir_paths = [
@@ -2517,6 +2547,8 @@ class FactoryRegistry:
 
     def _assign_text_embed_cache(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Assign a TextEmbeddingCache to this dataset."""
+        if not self._uses_text_embeddings_cache():
+            return
         text_embed_id = backend.get(
             "text_embeds",
             backend.get("text_embed_cache", self.default_text_embed_backend_id),
@@ -3029,6 +3061,8 @@ class FactoryRegistry:
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
         """Process text embeddings for captions."""
+        if not self._uses_text_embeddings_cache():
+            return
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
         # caption_strategy is stored in init_backend["config"], not directly in backend
         caption_strategy = init_backend["config"].get("caption_strategy")
@@ -3128,6 +3162,8 @@ class FactoryRegistry:
         Process text embeddings for backends that were deferred because they require
         image context and needed conditioning datasets to be connected first.
         """
+        if not self._uses_text_embeddings_cache():
+            return
         if not self._deferred_text_embed_backends:
             return
 

@@ -605,6 +605,11 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 num_samples=num_samples,
                 duration_seconds=duration_seconds,
             )
+            existing_metadata = self.image_metadata.get(image_path_str)
+            if isinstance(existing_metadata, dict) and existing_metadata:
+                for key, value in existing_metadata.items():
+                    if key not in audio_metadata or audio_metadata.get(key) in (None, "", [], {}):
+                        audio_metadata[key] = value
 
             max_duration = self.audio_max_duration_seconds
             if max_duration is not None and duration_seconds and duration_seconds > max_duration:

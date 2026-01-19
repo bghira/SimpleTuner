@@ -594,8 +594,27 @@ def collate_fn(batch):
     data_backend = StateTracker.get_data_backend(batch_backend_id)
     training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
-    debug_log("Compute latents")
     model = StateTracker.get_model()
+    uses_audio_tokens = False
+    if model is not None:
+        try:
+            audio_token_flag = model.uses_audio_tokens()
+            if isinstance(audio_token_flag, (bool, np.bool_)):
+                uses_audio_tokens = bool(audio_token_flag)
+            else:
+                uses_audio_tokens = False
+        except AttributeError:
+            uses_audio_tokens = False
+    if uses_audio_tokens:
+        token_payload = model.collate_audio_tokens(examples)
+        if not isinstance(token_payload, dict):
+            raise ValueError("collate_audio_tokens must return a dictionary payload.")
+        token_payload.setdefault("prompts", None)
+        token_payload["is_regularisation_data"] = is_regularisation_data
+        token_payload["is_i2v_data"] = is_i2v_data
+        return token_payload
+
+    debug_log("Compute latents")
     batch_data = compute_latents(filepaths, batch_backend_id, model)
     latent_metadata = None
     if isinstance(batch_data[0], dict):

@@ -63,6 +63,7 @@
 | モデル | パラメータ | ガイド |
 |-------|------------|-------|
 | **ACE-Step** | 3.5B | [ACE-Step ガイド](ACE_STEP.md) |
+| **HeartMuLa** | 3B | [HeartMuLa ガイド](HEARTMULA.md) |
 
 ## モデルの選び方
 
@@ -85,3 +86,4 @@
 
 - 画像編集/コンディショニングには **Flux Kontext**
 - テキストから音楽には **ACE-Step**
+- 自己回帰のテキストから音声には **HeartMuLa**
