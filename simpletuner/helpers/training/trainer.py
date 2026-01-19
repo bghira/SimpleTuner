@@ -6516,12 +6516,27 @@ def run_trainer_job(config):
             if helper is None:
 
                 def helper(exit_code, lines):
-                    cleaned = [line.rstrip("\n") for line in lines]
+                    cleaned = [_strip_ansi(line.rstrip("\n")) for line in lines]
+                    # Look for actual trainer [ERROR] messages - these are the meaningful ones
+                    error_lines = []
+                    for line in cleaned:
+                        if "[ERROR]" in line:
+                            # Extract the error message after [ERROR]
+                            idx = line.find("[ERROR]")
+                            error_msg = line[idx + 7 :].strip()
+                            if error_msg:
+                                error_lines.append(error_msg)
+
                     excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
                     excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
-                    summary_text = f"Accelerate launch exited with status {exit_code}"
-                    if excerpt_lines:
-                        summary_text = f"{summary_text}: {excerpt_lines[-1]}"
+
+                    # Use the first trainer error as the summary, not the accelerate wrapper error
+                    if error_lines:
+                        summary_text = error_lines[0]
+                    else:
+                        summary_text = f"Accelerate launch exited with status {exit_code}"
+                        if excerpt_lines:
+                            summary_text = f"{summary_text}: {excerpt_lines[-1]}"
                     return summary_text[:512], excerpt_text
 
             summary, excerpt = helper(returncode, list(recent_lines))
