@@ -446,65 +446,126 @@ class PromptHandler:
                 return captions, images_missing_captions, caption_image_paths
             return captions, images_missing_captions
 
-        for image_path in tqdm(
-            all_image_files,
-            desc="Loading captions",
-            total=len(all_image_files),
-            disable=True if get_rank() > 0 else False,
-            leave=False,
-            ncols=125,
-        ):
-            try:
-                if caption_strategy == "filename":
-                    caption = PromptHandler.prepare_instance_prompt_from_filename(
-                        image_path=str(image_path),
-                        use_captions=use_captions,
-                        prepend_instance_prompt=prepend_instance_prompt,
-                        instance_prompt=instance_prompt,
-                    )
-                elif caption_strategy == "textfile":
-                    caption = PromptHandler.prepare_instance_prompt_from_textfile(
-                        image_path,
-                        use_captions=use_captions,
-                        prepend_instance_prompt=prepend_instance_prompt,
-                        instance_prompt=instance_prompt,
-                        data_backend=data_backend,
-                        disable_multiline_split=disable_multiline_split,
-                    )
-                elif caption_strategy == "parquet":
-                    caption = PromptHandler.prepare_instance_prompt_from_parquet(
-                        image_path,
-                        use_captions=use_captions,
-                        prepend_instance_prompt=prepend_instance_prompt,
-                        instance_prompt=instance_prompt,
-                        data_backend=data_backend,
-                        sampler_backend_id=data_backend.id,
-                    )
-                elif caption_strategy == "huggingface":
-                    caption = PromptHandler.prepare_instance_prompt_from_huggingface(
-                        image_path,
-                        use_captions=use_captions,
-                        prepend_instance_prompt=prepend_instance_prompt,
-                        instance_prompt=instance_prompt,
-                        data_backend=data_backend,
-                        sampler_backend_id=data_backend.id,
-                    )
-                elif caption_strategy == "csv":
-                    caption = data_backend.get_caption(image_path)
-                else:
-                    raise ValueError(
-                        f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
-                    )
-            except CaptionNotFoundError as e:
-                logger.error(f"Could not load caption for image {image_path}: {e}")
-                images_missing_captions.append(image_path)
-                continue
+        webhook_handler = None
+        should_notify = False
+        stage_key = None
+        stage_label = "Extracting captions"
+        total_files = len(all_image_files)
+        if caption_strategy == "huggingface":
+            webhook_handler = StateTracker.get_webhook_handler()
+            if webhook_handler is not None and get_rank() == 0:
+                should_notify = True
+                backend_id = getattr(data_backend, "id", "dataset")
+                stage_key = f"caption_extract_{backend_id}"
+                webhook_handler.send_lifecycle_stage(
+                    stage_key=stage_key,
+                    stage_label=stage_label,
+                    stage_status="running",
+                    message=f"Extracting captions for {backend_id} (huggingface).",
+                    progress_current=0,
+                    progress_total=total_files,
+                    progress_percent=0,
+                )
 
-            caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
-            for value in caption_values:
-                captions.append(value)
-                if return_image_paths:
-                    caption_image_paths.append(image_path)
+        progress_every = max(total_files // 100, 100) if total_files else 1
+        processed = 0
+        completed = False
+        try:
+            for image_path in tqdm(
+                all_image_files,
+                desc="Loading captions",
+                total=total_files,
+                disable=True if get_rank() > 0 else False,
+                leave=False,
+                ncols=125,
+            ):
+                try:
+                    if caption_strategy == "filename":
+                        caption = PromptHandler.prepare_instance_prompt_from_filename(
+                            image_path=str(image_path),
+                            use_captions=use_captions,
+                            prepend_instance_prompt=prepend_instance_prompt,
+                            instance_prompt=instance_prompt,
+                        )
+                    elif caption_strategy == "textfile":
+                        caption = PromptHandler.prepare_instance_prompt_from_textfile(
+                            image_path,
+                            use_captions=use_captions,
+                            prepend_instance_prompt=prepend_instance_prompt,
+                            instance_prompt=instance_prompt,
+                            data_backend=data_backend,
+                            disable_multiline_split=disable_multiline_split,
+                        )
+                    elif caption_strategy == "parquet":
+                        caption = PromptHandler.prepare_instance_prompt_from_parquet(
+                            image_path,
+                            use_captions=use_captions,
+                            prepend_instance_prompt=prepend_instance_prompt,
+                            instance_prompt=instance_prompt,
+                            data_backend=data_backend,
+                            sampler_backend_id=data_backend.id,
+                        )
+                    elif caption_strategy == "huggingface":
+                        caption = PromptHandler.prepare_instance_prompt_from_huggingface(
+                            image_path,
+                            use_captions=use_captions,
+                            prepend_instance_prompt=prepend_instance_prompt,
+                            instance_prompt=instance_prompt,
+                            data_backend=data_backend,
+                            sampler_backend_id=data_backend.id,
+                        )
+                    elif caption_strategy == "csv":
+                        caption = data_backend.get_caption(image_path)
+                    else:
+                        raise ValueError(
+                            f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
+                        )
+                except CaptionNotFoundError as e:
+                    logger.error(f"Could not load caption for image {image_path}: {e}")
+                    images_missing_captions.append(image_path)
+                else:
+                    caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
+                    for value in caption_values:
+                        captions.append(value)
+                        if return_image_paths:
+                            caption_image_paths.append(image_path)
+                finally:
+                    processed += 1
+                    if should_notify and (processed % progress_every == 0 or processed == total_files):
+                        progress_percent = (processed / total_files) * 100 if total_files else 100
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key=stage_key,
+                            stage_label=stage_label,
+                            stage_status="running",
+                            message=f"Extracting captions ({processed}/{total_files}).",
+                            progress_current=processed,
+                            progress_total=total_files,
+                            progress_percent=progress_percent,
+                        )
+            completed = True
+        except Exception:
+            if should_notify:
+                webhook_handler.send_lifecycle_stage(
+                    stage_key=stage_key,
+                    stage_label=stage_label,
+                    stage_status="failed",
+                    message="Caption extraction failed.",
+                    progress_current=processed,
+                    progress_total=total_files,
+                    progress_percent=(processed / total_files) * 100 if total_files else 0,
+                )
+            raise
+        finally:
+            if should_notify and completed:
+                webhook_handler.send_lifecycle_stage(
+                    stage_key=stage_key,
+                    stage_label=stage_label,
+                    stage_status="completed",
+                    message="Caption extraction completed.",
+                    progress_current=processed,
+                    progress_total=total_files,
+                    progress_percent=(processed / total_files) * 100 if total_files else 100,
+                )
 
         # Deduplicate captions
         # TODO: Investigate why this prevents captions from processing on multigpu systems.
