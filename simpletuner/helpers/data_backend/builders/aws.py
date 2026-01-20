@@ -30,6 +30,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
         aws_endpoint_url = getattr(config, "aws_endpoint_url", None)
         aws_access_key_id = getattr(config, "aws_access_key_id", None)
         aws_secret_access_key = getattr(config, "aws_secret_access_key", None)
+        aws_session_token = getattr(config, "aws_session_token", None)
 
         compress_cache = self._get_compression_setting(config)
         max_pool_connections = self._resolve_max_pool_connections(config)
@@ -42,6 +43,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
             endpoint_url=aws_endpoint_url,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
             compress_cache=compress_cache,
             max_pool_connections=max_pool_connections,
         )

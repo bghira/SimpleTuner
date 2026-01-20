@@ -45,6 +45,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             "aws_endpoint_url",
             "aws_access_key_id",
             "aws_secret_access_key",
+            "aws_session_token",
             "aws_region_name",
         }
         for key in passthrough_keys:
