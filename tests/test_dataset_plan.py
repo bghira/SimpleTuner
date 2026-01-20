@@ -339,5 +339,58 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
         self.assertEqual(len(scheduling_errors), 0)
 
 
+class AudioOnlyDatasetValidationTest(unittest.TestCase):
+    """Tests for audio-only dataset validation in compute_validations."""
+
+    @classmethod
+    def setUpClass(cls):
+        if IMPORT_ERROR is not None:  # pragma: no cover - dependency guard
+            raise unittest.SkipTest(f"compute_validations import failed: {IMPORT_ERROR}")
+        import simpletuner.helpers.models.all  # noqa: F401
+
+    def _base_datasets(self):
+        return [
+            {"id": "text-embeds", "dataset_type": "text_embeds", "type": "local", "default": True},
+        ]
+
+    def _collect_errors(self, validations):
+        return [message.message for message in validations if message.level == "error"]
+
+    def test_ltxvideo2_implicit_audio_only_allows_audio_dataset(self):
+        """LTX-2 with only audio datasets (no video/image) should implicitly be audio-only mode."""
+        datasets = self._base_datasets()
+        datasets.append({"id": "audio", "dataset_type": "audio", "type": "local"})
+        validations = compute_validations(datasets, blueprints=[], model_family="ltxvideo2")
+        errors = self._collect_errors(validations)
+        # Should NOT require video/image when only audio datasets present
+        self.assertFalse(any("image or video" in msg for msg in errors))
+
+    def test_ltxvideo2_explicit_audio_only_allows_audio_dataset(self):
+        """LTX-2 with explicit audio_only flag should not require video or image datasets."""
+        datasets = self._base_datasets()
+        datasets.append({"id": "audio", "dataset_type": "audio", "type": "local", "audio": {"audio_only": True}})
+        validations = compute_validations(datasets, blueprints=[], model_family="ltxvideo2")
+        errors = self._collect_errors(validations)
+        self.assertFalse(any("image or video" in msg for msg in errors))
+
+    def test_ltxvideo2_audio_with_video_passes(self):
+        """LTX-2 with audio AND video datasets should pass (joint training)."""
+        datasets = self._base_datasets()
+        datasets.append({"id": "audio", "dataset_type": "audio", "type": "local"})
+        datasets.append({"id": "video", "dataset_type": "video", "type": "local"})
+        validations = compute_validations(datasets, blueprints=[], model_family="ltxvideo2")
+        errors = self._collect_errors(validations)
+        self.assertFalse(any("image or video" in msg for msg in errors))
+
+    def test_non_audio_model_still_requires_images(self):
+        """Non-audio models should still require image datasets even with audio_only flag."""
+        datasets = self._base_datasets()
+        datasets.append({"id": "audio", "dataset_type": "audio", "type": "local", "audio": {"audio_only": True}})
+        # Using pixart which doesn't support audio-only
+        validations = compute_validations(datasets, blueprints=[], model_family="pixart")
+        errors = self._collect_errors(validations)
+        self.assertTrue(any("image dataset" in msg for msg in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

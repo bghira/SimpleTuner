@@ -207,7 +207,8 @@ class LTXVideo2(VideoModelFoundation):
     def supports_audio_inputs(self) -> bool:
         return True
 
-    def supports_audio_only_training(self) -> bool:
+    @classmethod
+    def supports_audio_only_training(cls) -> bool:
         """LTX-2 supports training on audio-only datasets without video."""
         return True
 
