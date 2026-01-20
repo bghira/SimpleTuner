@@ -6,7 +6,7 @@ SimpleTuner में TwinFlow:
 * Flow-matching केवल तभी, जब तक आप diffusion मॉडल्स को `diff2flow_enabled` + `twinflow_allow_diff2flow` से ब्रिज न करें।
 * EMA teacher डिफ़ॉल्ट है; teacher/CFG passes के आसपास RNG capture/restore **हमेशा चालू** रहता है ताकि reference TwinFlow run जैसा व्यवहार मिले।
 * negative-time semantics के लिए optional sign embeddings transformers पर wired हैं, लेकिन केवल तब उपयोग होते हैं जब `twinflow_enabled` true हो; HF configs में flag न होने पर कोई व्यवहार परिवर्तन नहीं होता।
-* मौजूदा losses केवल RCGM + real-velocity का उपयोग करते हैं (adversarial/fake branch बंद रहता है); guidance `0.0` पर 1–4 step generation अपेक्षित है।
+* डिफ़ॉल्ट losses RCGM + real-velocity का उपयोग करते हैं; वैकल्पिक रूप से `twinflow_adversarial_enabled: true` से पूर्ण self-adversarial training (L_adv और L_rectify losses) सक्षम करें। guidance `0.0` पर 1–4 step generation अपेक्षित है।
 * W&B logging डिबग के लिए experimental TwinFlow trajectory scatter (थ्योरी अभी unverified) emit कर सकता है।
 
 ---
@@ -51,7 +51,7 @@ Diffusion मॉडल्स (epsilon/v prediction) के लिए स्प�
 }
 ```
 
-> TwinFlow जानबूझकर सरल रखा गया है: कोई अतिरिक्त discriminator या fake branch wired नहीं है; केवल RCGM और real-velocity terms उपयोग होते हैं।
+> डिफ़ॉल्ट रूप से, TwinFlow RCGM + real-velocity losses का उपयोग करता है। `twinflow_adversarial_enabled: true` सक्षम करें पूर्ण self-adversarial training के लिए L_adv और L_rectify losses के साथ (कोई बाहरी discriminator आवश्यक नहीं)।
 
 ---
 
@@ -78,6 +78,18 @@ arXiv:2512.05150 (PDF text) से:
 * `twinflow_allow_diff2flow`: epsilon/v-prediction मॉडल्स को ब्रिज करने देता है जब `diff2flow_enabled` भी true हो।
 * RNG capture/restore: reference TwinFlow implementation जैसा व्यवहार पाने के लिए हमेशा सक्षम रहता है। opt-out स्विच नहीं है।
 * Sign embeddings: जब `twinflow_enabled` true होता है, मॉडल `twinflow_time_sign` को उन transformers में पास करते हैं जो `timestep_sign` सपोर्ट करते हैं; अन्यथा कोई अतिरिक्त embedding नहीं।
+
+### Adversarial Branch (पूर्ण TwinFlow)
+
+बेहतर गुणवत्ता के लिए मूल पेपर से self-adversarial training सक्षम करें:
+
+* `twinflow_adversarial_enabled` (डिफ़ॉल्ट false): L_adv और L_rectify losses सक्षम करता है। ये negative time का उपयोग करके "fake" trajectory को train करते हैं, बिना बाहरी discriminator के distribution matching सक्षम करते हैं।
+* `twinflow_adversarial_weight` (डिफ़ॉल्ट 1.0): adversarial loss (L_adv) के लिए weight multiplier।
+* `twinflow_rectify_weight` (डिफ़ॉल्ट 1.0): rectification loss (L_rectify) के लिए weight multiplier।
+
+सक्षम होने पर, training one-step generation के माध्यम से fake samples उत्पन्न करता है, फिर दोनों को train करता है:
+- **L_adv**: Negative time के साथ fake velocity loss—मॉडल को fake samples को वापस noise में map करना सिखाता है।
+- **L_rectify**: Distribution matching loss—straighter paths के लिए real और fake trajectory predictions को align करता है।
 
 ---
 
