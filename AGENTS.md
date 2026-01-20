@@ -3,7 +3,7 @@
 ## Project Dependencies
 
 - Venv location: `.venv`
-- Python version: `3.12`
+- Python version: `3.13`
 - Test framework: `unittest` (NOT `pytest`)
 - Test command: `.venv/bin/python -m unittest -v -f`
 - Test average runtime: ~300 seconds
