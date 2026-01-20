@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from simpletuner.helpers.configuration.cli_utils import normalize_lr_scheduler_value
+from simpletuner.helpers.training.attention_backend import is_sageattention_available, xformers_compute_capability_error
 
 from ..services.field_registry_wrapper import lazy_field_registry
 
@@ -405,6 +406,20 @@ class ValidationService:
 
         if warmup_error:
             result.add_error("lr_warmup_steps", "Warmup steps must be a whole number.")
+
+        # Attention mechanism availability checks
+        attention_mech = str(self._get_config_value(config, "attention_mechanism") or "diffusers")
+        if attention_mech == "xformers":
+            xformers_error = xformers_compute_capability_error()
+            if xformers_error:
+                result.add_error("attention_mechanism", xformers_error)
+
+        if attention_mech.startswith("sage") and not is_sageattention_available():
+            result.add_error(
+                "attention_mechanism",
+                f"SageAttention is not installed but '{attention_mech}' was selected. "
+                "Install it with: pip install sageattention",
+            )
 
     @staticmethod
     def _get_config_value(config: Dict[str, Any], field_name: str) -> Any:
