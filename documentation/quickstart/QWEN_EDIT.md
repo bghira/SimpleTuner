@@ -97,29 +97,29 @@ The main dataset should reference one conditioning dataset **and** a conditionin
 ```jsonc
 [
   {
-    "id": "qwen-edit-images",
+    "id": "my-edited-images",
     "type": "local",
-    "instance_data_dir": "/datasets/qwen-edit/images",
+    "instance_data_dir": "/datasets/edited-images",
     "caption_strategy": "textfile",
     "resolution": 1024,
-    "conditioning_data": ["qwen-edit-reference"],
-    "conditioning_image_embeds": "qwen-edit-ref-embeds",
-    "cache_dir_vae": "cache/vae/qwen-edit-images"
+    "conditioning_data": ["my-reference-images"],
+    "conditioning_image_embeds": "my-reference-embeds",
+    "cache_dir_vae": "cache/vae/edited-images"
   },
   {
-    "id": "qwen-edit-reference",
+    "id": "my-reference-images",
     "type": "local",
     "dataset_type": "conditioning",
-    "instance_data_dir": "/datasets/qwen-edit/reference",
+    "instance_data_dir": "/datasets/reference-images",
     "conditioning_type": "reference_strict",
     "resolution": 1024,
-    "cache_dir_vae": "cache/vae/qwen-edit-reference"
+    "cache_dir_vae": "cache/vae/reference-images"
   },
   {
-    "id": "qwen-edit-ref-embeds",
+    "id": "my-reference-embeds",
     "type": "local",
     "dataset_type": "conditioning_image_embeds",
-    "cache_dir": "cache/conditioning_image_embeds/qwen-edit"
+    "cache_dir": "cache/conditioning_image_embeds/reference"
   }
 ]
 ```
@@ -140,44 +140,44 @@ For `edit-v2`, list every control dataset under `conditioning_data`. Each entry 
 ```jsonc
 [
   {
-    "id": "qwen-edit-plus-images",
+    "id": "my-edited-images",
     "type": "local",
-    "instance_data_dir": "/datasets/qwen-edit-plus/images",
+    "instance_data_dir": "/datasets/edited-images",
     "caption_strategy": "textfile",
     "resolution": 1024,
     "conditioning_data": [
-      "qwen-edit-plus-reference-a",
-      "qwen-edit-plus-reference-b",
-      "qwen-edit-plus-reference-c"
+      "my-reference-images-a",
+      "my-reference-images-b",
+      "my-reference-images-c"
     ],
-    "cache_dir_vae": "cache/vae/qwen-edit-plus/images"
+    "cache_dir_vae": "cache/vae/edited-images"
   },
   {
-    "id": "qwen-edit-plus-reference-a",
+    "id": "my-reference-images-a",
     "type": "local",
     "dataset_type": "conditioning",
-    "instance_data_dir": "/datasets/qwen-edit-plus/reference_a",
+    "instance_data_dir": "/datasets/reference-images-a",
     "conditioning_type": "reference_strict",
     "resolution": 1024,
-    "cache_dir_vae": "cache/vae/qwen-edit-plus/ref_a"
+    "cache_dir_vae": "cache/vae/reference-images-a"
   },
   {
-    "id": "qwen-edit-plus-reference-b",
+    "id": "my-reference-images-b",
     "type": "local",
     "dataset_type": "conditioning",
-    "instance_data_dir": "/datasets/qwen-edit-plus/reference_b",
+    "instance_data_dir": "/datasets/reference-images-b",
     "conditioning_type": "reference_strict",
     "resolution": 1024,
-    "cache_dir_vae": "cache/vae/qwen-edit-plus/ref_b"
+    "cache_dir_vae": "cache/vae/reference-images-b"
   },
   {
-    "id": "qwen-edit-plus-reference-c",
+    "id": "my-reference-images-c",
     "type": "local",
     "dataset_type": "conditioning",
-    "instance_data_dir": "/datasets/qwen-edit-plus/reference_c",
+    "instance_data_dir": "/datasets/reference-images-c",
     "conditioning_type": "reference_strict",
     "resolution": 1024,
-    "cache_dir_vae": "cache/vae/qwen-edit-plus/ref_c"
+    "cache_dir_vae": "cache/vae/reference-images-c"
   }
 ]
 ```
