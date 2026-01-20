@@ -118,6 +118,7 @@ class LTXVideo2(VideoModelFoundation):
         self._connector_lock = threading.Lock()
         self._vocoder_lock = threading.Lock()
         self._warned_missing_audio = False
+        self._warned_missing_video = False
         self._combined_checkpoint_path = None
         self._diffusers_layout_detected = None
 
@@ -186,6 +187,10 @@ class LTXVideo2(VideoModelFoundation):
         return 47
 
     def supports_audio_inputs(self) -> bool:
+        return True
+
+    def supports_audio_only_training(self) -> bool:
+        """LTX-2 supports training on audio-only datasets without video."""
         return True
 
     def uses_audio_latents(self) -> bool:
@@ -832,6 +837,64 @@ class LTXVideo2(VideoModelFoundation):
         shape = (video_latents.shape[0], latent_channels, latent_length, latent_mel_bins)
         return torch.zeros(shape, device=device, dtype=dtype)
 
+    def _build_empty_video_latents(
+        self,
+        batch: dict,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """
+        Build zero video latents for audio-only training.
+        Shape is derived from audio latent duration and configured resolution.
+        """
+        audio_latents = batch.get("audio_latent_batch")
+        if audio_latents is None:
+            raise ValueError("Cannot infer video latent shape without audio latents in audio-only mode.")
+
+        self._load_audio_vae(move_to_device=True)
+        if self.audio_vae is None:
+            raise ValueError("Audio VAE is required to calculate video duration from audio latents.")
+
+        # Calculate duration from audio latent length
+        audio_latent_length = int(audio_latents.shape[2])
+        sampling_rate = getattr(self.audio_vae.config, "sample_rate", 16000)
+        hop_length = getattr(self.audio_vae.config, "mel_hop_length", 160)
+        audio_temporal_compression = getattr(self.audio_vae, "temporal_compression_ratio", 4)
+        latents_per_second = float(sampling_rate) / float(hop_length) / float(audio_temporal_compression)
+        duration_s = audio_latent_length / latents_per_second
+
+        # Calculate video frames from duration
+        frame_rate = self.config.framerate or 25
+        video_frames = max(1, int(duration_s * frame_rate))
+        # Ensure frames satisfy LTX-2 constraint: frames % 8 == 1
+        video_frames = self.adjust_video_frames(video_frames)
+
+        # Calculate video latent shape
+        video_temporal_ratio = getattr(self.get_vae(), "temporal_compression_ratio", 8)
+        video_spatial_ratio = getattr(self.get_vae(), "spatial_compression_ratio", 32)
+        latent_frames = (video_frames - 1) // video_temporal_ratio + 1
+
+        # Get resolution from latent_metadata or config
+        latent_metadata = batch.get("latent_metadata")
+        if latent_metadata and len(latent_metadata) > 0:
+            meta = latent_metadata[0]
+            height = meta.get("latent_height") or meta.get("original_size", (512, 512))[1]
+            width = meta.get("latent_width") or meta.get("original_size", (512, 512))[0]
+            # If these are pixel values, convert to latent dimensions
+            if height > 64:
+                height = height // video_spatial_ratio
+            if width > 64:
+                width = width // video_spatial_ratio
+        else:
+            # Default to a reasonable resolution for audio-only
+            default_res = getattr(self.config, "resolution", 512) or 512
+            height = default_res // video_spatial_ratio
+            width = default_res // video_spatial_ratio
+
+        batch_size = audio_latents.shape[0]
+        shape = (batch_size, self.LATENT_CHANNEL_COUNT, latent_frames, height, width)
+        return torch.zeros(shape, device=device, dtype=dtype)
+
     def _calculate_expected_audio_latent_length(self, batch: dict) -> int:
         """
         Calculate the expected audio latent length based on video duration.
@@ -897,8 +960,29 @@ class LTXVideo2(VideoModelFoundation):
 
         audio_latents = batch.get("audio_latent_batch")
         audio_mask = batch.get("audio_latent_mask")
+        video_mask = batch.get("video_latent_mask")
         target_device = self.accelerator.device
         target_dtype = self.config.weight_dtype
+
+        # Check for audio-only mode: audio latents present but video latents are zeros/masked
+        is_audio_only = batch.get("is_audio_only", False)
+        if is_audio_only and audio_latents is not None:
+            # Audio-only mode: build empty video latents from audio duration
+            if batch.get("latents") is None:
+                video_latents = self._build_empty_video_latents(batch, target_device, target_dtype)
+                batch["latents"] = video_latents
+                batch["noisy_latents"] = video_latents.clone()
+                batch["noise"] = torch.zeros_like(video_latents)
+                batch["input_noise"] = torch.zeros_like(video_latents)
+            if video_mask is None:
+                video_mask = torch.zeros(audio_latents.shape[0], device=target_device, dtype=torch.float32)
+                batch["video_latent_mask"] = video_mask
+            if not self._warned_missing_video and _get_rank() == 0:
+                logger.info(
+                    "LTX-2 audio-only mode: using zero video latents and masking video loss. "
+                    "Only audio generation will be trained."
+                )
+                self._warned_missing_video = True
 
         if audio_latents is None:
             audio_latents = self._build_empty_audio_latents(batch, target_device, torch.float32)
@@ -1158,7 +1242,13 @@ class LTXVideo2(VideoModelFoundation):
             model_output=model_output,
             apply_conditioning_mask=apply_conditioning_mask,
         )
-        logs = {"video_loss": video_loss.detach().item()}
+        # Check if audio-only mode (video masked)
+        video_mask = prepared_batch.get("video_latent_mask")
+        is_audio_only = video_mask is not None and torch.all(video_mask == 0)
+
+        logs = {}
+        if not is_audio_only:
+            logs["video_loss"] = video_loss.detach().item()
         if audio_loss is not None:
             logs["audio_loss"] = audio_loss.detach().item()
             if audio_weight != 1.0:
@@ -1166,7 +1256,15 @@ class LTXVideo2(VideoModelFoundation):
         return total_loss, logs
 
     def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
-        video_loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
+        # Check for video masking (audio-only mode)
+        video_mask = prepared_batch.get("video_latent_mask")
+        is_audio_only = video_mask is not None and torch.all(video_mask == 0)
+
+        if is_audio_only:
+            # Audio-only mode: skip video loss entirely
+            video_loss = torch.tensor(0.0, device=self.accelerator.device, dtype=torch.float32)
+        else:
+            video_loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
 
         audio_pred = model_output.get("audio_prediction")
         if audio_pred is None:

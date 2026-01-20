@@ -317,6 +317,53 @@ Configuração testada em campo que prioriza o menor uso de VRAM no LTX Video 2.
 ```
 </details>
 
+### Treinamento apenas com áudio
+
+O LTX-2 suporta **treinamento apenas com áudio**, onde você treina somente a capacidade de geração de áudio sem arquivos de vídeo. Isso é útil quando você tem datasets de áudio, mas nenhum conteúdo de vídeo correspondente.
+
+No modo apenas áudio:
+- Os latentes de vídeo são automaticamente zerados
+- A perda de vídeo é mascarada (não computada)
+- Apenas a geração de áudio é treinada
+
+#### Configuração do dataset apenas áudio
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "audio_only": true,
+      "sample_rate": 16000,
+      "channels": 1,
+      "min_duration_seconds": 1,
+      "max_duration_seconds": 30,
+      "duration_interval": 3.0
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+A configuração chave é `audio.audio_only: true`, que instrui o SimpleTuner a:
+1. Usar o Audio VAE para cachear os latentes de áudio
+2. Gerar latentes de vídeo zerados correspondendo à duração do áudio
+3. Mascarar a perda de vídeo durante o treinamento
+
+Coloque seus arquivos de áudio (`.wav`, `.flac`, `.mp3`, etc.) no `instance_data_dir` com os arquivos `.txt` de legenda correspondentes.
+
 ### Fluxos de validação (T2V vs I2V)
 
 - **T2V (texto para vídeo)**: Deixe `validation_using_datasets: false` e use `validation_prompt` ou `validation_prompt_library`.

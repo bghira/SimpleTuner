@@ -317,6 +317,53 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 ```
 </details>
 
+### 纯音频训练
+
+LTX-2 支持**纯音频训练**，即仅训练音频生成能力而无需视频文件。当您拥有音频数据集但没有对应视频内容时，此功能非常有用。
+
+在纯音频模式下：
+- 视频 latents 自动置零
+- 视频损失被屏蔽（不计算）
+- 仅训练音频生成
+
+#### 纯音频数据集配置
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "audio_only": true,
+      "sample_rate": 16000,
+      "channels": 1,
+      "min_duration_seconds": 1,
+      "max_duration_seconds": 30,
+      "duration_interval": 3.0
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+关键设置是 `audio.audio_only: true`，它会让 SimpleTuner：
+1. 使用音频 VAE 缓存音频 latents
+2. 生成与音频时长匹配的零视频 latents
+3. 在训练期间屏蔽视频损失
+
+将音频文件（`.wav`、`.flac`、`.mp3` 等）放入 `instance_data_dir`，并提供相应的 `.txt` 字幕文件。
+
 ### 验证流程（T2V vs I2V）
 
 - **T2V（文生视频）**：保持 `validation_using_datasets: false`，使用 `validation_prompt` 或 `validation_prompt_library`。

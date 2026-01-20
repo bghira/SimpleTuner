@@ -334,6 +334,16 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             truncation_mode = "beginning"
         audio_block["truncation_mode"] = truncation_mode
 
+        # Audio-only mode: standalone audio training without video (e.g., LTX-2 audio-only)
+        audio_only_raw = audio_block.get("audio_only") or source.get("audio_only")
+        if audio_only_raw is not None:
+            audio_block["audio_only"] = bool(audio_only_raw)
+
+        # Target resolution for audio-only mode (used to compute video latent dimensions)
+        target_resolution = audio_block.get("target_resolution") or source.get("target_resolution")
+        if target_resolution is not None:
+            audio_block["target_resolution"] = int(target_resolution)
+
         return {key: value for key, value in audio_block.items() if value is not None}
 
     if dataset_type is DatasetType.TEXT_EMBEDS:
@@ -1334,6 +1344,16 @@ class FactoryRegistry:
             return False
         return result if isinstance(result, bool) else False
 
+    def _supports_audio_only_training(self) -> bool:
+        """Return whether the active model supports audio-only training without video."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.supports_audio_only_training()
+        except AttributeError:
+            return False
+        return result if isinstance(result, bool) else False
+
     def _uses_text_embeddings_cache(self) -> bool:
         """Return whether the active model uses text embedding caches."""
         if self.model is None:
@@ -1387,6 +1407,38 @@ class FactoryRegistry:
                     f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose'. "
                     f"Using 'controlnet' or other values will cause dimension mismatches during training. "
                     f"Please update your dataset configuration."
+                )
+
+    def _validate_audio_only_datasets(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Validate audio-only datasets are only used with models that support them.
+        Audio-only mode allows training on audio without video (e.g., LTX-2 audio-only training).
+        """
+        supports_audio_only = self._supports_audio_only_training()
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+
+            dataset_type = backend.get("dataset_type", "image")
+            if dataset_type != "audio":
+                continue
+
+            audio_config = backend.get("audio", {})
+            is_audio_only = audio_config.get("audio_only", False)
+
+            if is_audio_only:
+                backend_id = backend.get("id", "unknown")
+                if not supports_audio_only:
+                    raise ValueError(
+                        f"Audio-only dataset '{backend_id}' is configured with audio.audio_only=true, "
+                        f"but the current model does not support audio-only training. "
+                        f"Audio-only mode is currently only supported by LTX-2. "
+                        f"Either use a compatible model or remove the audio_only setting."
+                    )
+                info_log(
+                    f"(id={backend_id}) Audio-only mode enabled. Video latents will be zeroed and video loss masked. "
+                    f"Only audio generation will be trained."
                 )
 
     def _is_multi_process(self) -> bool:
@@ -2472,6 +2524,9 @@ class FactoryRegistry:
                 "Add s2v_datasets = ['your_audio_dataset_id'] to your video dataset configuration, "
                 f"or use audio.auto_split: true to auto-extract audio from videos.{doc_hint}"
             )
+
+        # Validate audio-only datasets
+        self._validate_audio_only_datasets(data_backend_config)
 
         # Validate conditioning_type for edit models
         self._validate_edit_model_conditioning_type(data_backend_config)

@@ -318,6 +318,53 @@ LTX Video 2 で VRAM 使用量を最小化するための実測済み設定で�
 ```
 </details>
 
+### 音声のみのトレーニング
+
+LTX-2 は**音声のみのトレーニング**をサポートしており、動画ファイルなしで音声生成機能のみをトレーニングできます。動画コンテンツはないが音声データセットがある場合に便利です。
+
+音声のみモードでは:
+- 動画 latents は自動的にゼロに設定
+- 動画損失はマスク（計算されない）
+- 音声生成のみがトレーニングされる
+
+#### 音声のみデータセット設定
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "audio_only": true,
+      "sample_rate": 16000,
+      "channels": 1,
+      "min_duration_seconds": 1,
+      "max_duration_seconds": 30,
+      "duration_interval": 3.0
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+重要な設定は `audio.audio_only: true` で、SimpleTuner に以下を指示します:
+1. Audio VAE を使用して音声 latents をキャッシュ
+2. 音声の長さに合わせたゼロ動画 latents を生成
+3. トレーニング中に動画損失をマスク
+
+音声ファイル（`.wav`、`.flac`、`.mp3` など）を `instance_data_dir` に配置し、対応する `.txt` キャプションファイルを用意してください。
+
 ### 検証ワークフロー (T2V vs I2V)
 
 - **T2V (text-to-video)**: `validation_using_datasets: false` のまま、`validation_prompt` または `validation_prompt_library` を使います。

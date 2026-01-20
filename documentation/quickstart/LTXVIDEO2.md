@@ -317,6 +317,53 @@ Field-tested config that prioritizes minimal VRAM usage on LTX Video 2.
 ```
 </details>
 
+### Audio-Only Training
+
+LTX-2 supports **audio-only training** where you train only the audio generation capability without video files. This is useful when you have audio datasets but no corresponding video content.
+
+In audio-only mode:
+- Video latents are automatically zeroed out
+- Video loss is masked (not computed)
+- Only audio generation is trained
+
+#### Audio-only dataset configuration
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "audio_only": true,
+      "sample_rate": 16000,
+      "channels": 1,
+      "min_duration_seconds": 1,
+      "max_duration_seconds": 30,
+      "duration_interval": 3.0
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+The key setting is `audio.audio_only: true`, which tells SimpleTuner to:
+1. Use the audio VAE to cache audio latents
+2. Generate zero video latents matching the audio duration
+3. Mask video loss during training
+
+Place your audio files (`.wav`, `.flac`, `.mp3`, etc.) in the `instance_data_dir` with corresponding `.txt` caption files.
+
 ### Validation workflows (T2V vs I2V)
 
 - **T2V (text-to-video)**: Leave `validation_using_datasets: false` and use `validation_prompt` or `validation_prompt_library`.
