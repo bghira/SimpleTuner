@@ -18,7 +18,11 @@ from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
 from simpletuner.helpers.logging import get_logger
-from simpletuner.helpers.training.attention_backend import AttentionBackendMode
+from simpletuner.helpers.training.attention_backend import (
+    AttentionBackendMode,
+    is_sageattention_available,
+    xformers_compute_capability_error,
+)
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
@@ -1281,6 +1285,18 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if hasattr(args, "sageattention_usage"):
         args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
+
+    attention_mech = getattr(args, "attention_mechanism", "diffusers")
+    if attention_mech == "xformers":
+        xformers_error = xformers_compute_capability_error()
+        if xformers_error:
+            raise ValueError(xformers_error)
+
+    if attention_mech.startswith("sage") and not is_sageattention_available():
+        raise ValueError(
+            f"SageAttention is not installed but --attention_mechanism={attention_mech} was requested. "
+            "Install it with: pip install sageattention"
+        )
 
     deprecated_options = {
         # how to deprecate options:
