@@ -1338,6 +1338,34 @@ def start_training_job(
 
     process_keeper.submit_job(job_id, run_trainer_job, job_config)
 
+    # Store PID in job metadata for orphan detection on restart
+    pid = process_keeper.get_process_pid(job_id)
+    if pid:
+
+        def _store_pid():
+            from .cloud.storage.job_repository import get_job_repository
+
+            async def _async_store():
+                job_repo = get_job_repository()
+                job = await job_repo.get(job_id)
+                if job:
+                    updated_metadata = (job.metadata or {}).copy()
+                    updated_metadata["pid"] = pid
+                    await job_repo.update(job_id, {"metadata": updated_metadata})
+                    logger.debug("Stored PID %d for job %s", pid, job_id)
+
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(lambda: asyncio.run(_async_store()))
+                    future.result(timeout=10)
+            except RuntimeError:
+                asyncio.run(_async_store())
+
+        _store_pid()
+
     APIState.set_state("current_job_id", job_id)
     return TrainingJobResult(
         job_id=job_id,
