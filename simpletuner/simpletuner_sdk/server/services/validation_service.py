@@ -421,6 +421,27 @@ class ValidationService:
                 "Install it with: pip install sageattention",
             )
 
+        # Disk low space detection validation
+        disk_threshold = self._get_config_value(config, "disk_low_threshold")
+        if disk_threshold not in (None, "", "None"):
+            disk_action = self._get_config_value(config, "disk_low_action")
+            disk_script = self._get_config_value(config, "disk_low_script")
+
+            if disk_action == "script" and disk_script in (None, "", "None"):
+                result.add_error(
+                    "disk_low_script",
+                    "Cleanup script path is required when disk_low_action is 'script'.",
+                )
+            elif disk_action == "script" and disk_script:
+                from pathlib import Path as PathLib
+
+                script_path = PathLib(disk_script).expanduser()
+                if not script_path.exists():
+                    result.add_error(
+                        "disk_low_script",
+                        f"Cleanup script does not exist: {disk_script}",
+                    )
+
     @staticmethod
     def _get_config_value(config: Dict[str, Any], field_name: str) -> Any:
         """Fetch a field value considering CLI-prefixed variants."""

@@ -4967,7 +4967,37 @@ class Trainer:
             for removing_checkpoint in removing_checkpoints:
                 self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
+    def _check_disk_space_before_checkpoint(self) -> None:
+        """Check disk space before saving a checkpoint."""
+        threshold_str = getattr(self.config, "disk_low_threshold", None)
+        if threshold_str in (None, "", "None"):
+            return
+
+        if not self.accelerator.is_main_process:
+            return
+
+        from simpletuner.helpers.training.disk_space import DiskLowAction, check_disk_space, parse_size_threshold
+
+        threshold_bytes = parse_size_threshold(threshold_str)
+        if threshold_bytes is None:
+            return
+
+        action = getattr(self.config, "disk_low_action", DiskLowAction.STOP)
+        if isinstance(action, str):
+            action = DiskLowAction.from_raw(action)
+
+        script_path = getattr(self.config, "disk_low_script", None)
+        output_dir = self.config.output_dir
+
+        check_disk_space(
+            output_dir=output_dir,
+            threshold_bytes=threshold_bytes,
+            action=action,
+            script_path=script_path,
+        )
+
     def checkpoint_state_save(self, output_dir, suffix=None):
+        self._check_disk_space_before_checkpoint()
         print("\n")
 
         save_path = os.path.join(
