@@ -1298,6 +1298,31 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             "Install it with: pip install sageattention"
         )
 
+    # Disk low space detection validation
+    disk_threshold = getattr(args, "disk_low_threshold", None)
+    if disk_threshold not in (None, "", "None"):
+        from simpletuner.helpers.training.disk_space import DiskLowAction, parse_size_threshold
+
+        try:
+            parse_size_threshold(disk_threshold)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+        disk_action = getattr(args, "disk_low_action", None)
+        if disk_action not in (None, "", "None"):
+            args.disk_low_action = DiskLowAction.from_raw(disk_action)
+        else:
+            args.disk_low_action = DiskLowAction.STOP
+
+        if args.disk_low_action == DiskLowAction.SCRIPT:
+            script_value = getattr(args, "disk_low_script", None)
+            if script_value in (None, "", "None"):
+                raise ValueError("--disk_low_script is required when --disk_low_action=script.")
+            script_path = os.path.expanduser(str(script_value).strip())
+            if not os.path.isfile(script_path):
+                raise ValueError(f"Disk cleanup script not found: {script_path}")
+            args.disk_low_script = script_path
+
     deprecated_options = {
         # how to deprecate options:
         # "flux_beta_schedule_alpha": "flow_beta_schedule_alpha",

@@ -1180,6 +1180,30 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 
 > ℹ️ Los modelos transformer como PixArt, SD3 o Hunyuan usan los nombres de subcarpeta `transformer` y `transformer_ema`.
 
+### `--disk_low_threshold`
+
+- **Qué**: Espacio mínimo libre en disco requerido antes de guardar checkpoints.
+- **Por qué**: Previene que el entrenamiento falle por errores de disco lleno al detectar espacio bajo tempranamente y tomar una acción configurada.
+- **Formato**: Cadena de tamaño como `100G`, `50M`, `1T`, `500K`, o bytes simples.
+- **Por defecto**: Ninguno (función desactivada)
+
+### `--disk_low_action`
+
+- **Qué**: Acción a tomar cuando el espacio en disco está por debajo del umbral.
+- **Opciones**: `stop`, `wait`, `script`
+- **Por defecto**: `stop`
+- **Comportamiento**:
+  - `stop`: Termina el entrenamiento inmediatamente con un mensaje de error.
+  - `wait`: Hace bucle cada 30 segundos hasta que el espacio esté disponible. Puede esperar indefinidamente.
+  - `script`: Ejecuta el script especificado por `--disk_low_script` para liberar espacio.
+
+### `--disk_low_script`
+
+- **Qué**: Ruta a un script de limpieza para ejecutar cuando el espacio en disco es bajo.
+- **Por qué**: Permite limpieza automatizada (ej: eliminar checkpoints antiguos, limpiar caché) cuando el espacio en disco es bajo.
+- **Notas**: Solo se usa cuando `--disk_low_action=script`. El script debe ser ejecutable. Si el script falla o no libera suficiente espacio, el entrenamiento se detendrá con un error.
+- **Por defecto**: Ninguno
+
 ---
 
 ## 📊 Registro y monitoreo

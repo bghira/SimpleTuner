@@ -1178,6 +1178,30 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 > ℹ️ Transformer models such as PixArt, SD3, or Hunyuan, use the `transformer` and `transformer_ema` subfolder names.
 
+### `--disk_low_threshold`
+
+- **What**: Minimum free disk space required before checkpoint saves.
+- **Why**: Prevents training from crashing due to disk full errors during checkpoint saves by detecting low space early and taking a configured action.
+- **Format**: Size string like `100G`, `50M`, `1T`, `500K`, or plain bytes.
+- **Default**: None (feature disabled)
+
+### `--disk_low_action`
+
+- **What**: Action to take when disk space is below threshold.
+- **Choices**: `stop`, `wait`, `script`
+- **Default**: `stop`
+- **Behavior**:
+  - `stop`: Ends training immediately with an error message.
+  - `wait`: Loops every 30 seconds until space becomes available. May wait indefinitely.
+  - `script`: Runs the script specified by `--disk_low_script` to free up space.
+
+### `--disk_low_script`
+
+- **What**: Path to a cleanup script to run when disk space is low.
+- **Why**: Allows automated cleanup (e.g., removing old checkpoints, clearing cache) when disk space runs low.
+- **Notes**: Only used when `--disk_low_action=script`. The script must be executable. If the script fails or doesn't free enough space, training will stop with an error.
+- **Default**: None
+
 ---
 
 ## 📊 Logging and Monitoring
