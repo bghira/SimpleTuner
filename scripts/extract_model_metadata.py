@@ -38,10 +38,18 @@ def main():
                     for name, obj in module.__dict__.items():
                         if isinstance(obj, type) and hasattr(obj, "NAME"):
                             # This looks like our model class
+                            # Extract prediction_type if available
+                            prediction_type = None
+                            if hasattr(obj, "PREDICTION_TYPE"):
+                                pt = getattr(obj, "PREDICTION_TYPE")
+                                # Handle both enum and direct value
+                                prediction_type = getattr(pt, "value", pt) if pt else None
+
                             metadata[subdir.name] = {
                                 "class_name": name,
                                 "module_path": module_path,
                                 "name": getattr(obj, "NAME", subdir.name.replace("_", " ").title()),
+                                "prediction_type": prediction_type,
                                 "flavour_choices": (
                                     list(obj.get_flavour_choices()) if hasattr(obj, "get_flavour_choices") else []
                                 ),

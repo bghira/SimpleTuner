@@ -10,7 +10,6 @@ import pandas as pd
 import requests
 import torch
 
-from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
@@ -217,6 +216,8 @@ class CSVDataBackend(BaseDataBackend):
             file_data = self.read(filepath, as_byteIO=True)
             ext = os.path.splitext(filepath)[1].lower().strip(".")
             if ext in audio_file_extensions:
+                from simpletuner.helpers.audio import load_audio
+
                 image = load_audio(file_data)
             elif ext in video_file_extensions:
                 image = load_video(file_data)
