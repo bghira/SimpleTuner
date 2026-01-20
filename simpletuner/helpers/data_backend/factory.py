@@ -2535,6 +2535,37 @@ class FactoryRegistry:
         # (must happen after conditioning datasets are connected)
         self._process_deferred_text_embeddings()
 
+    def _configure_model_data_signals(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Detect data types present in backends and signal the model.
+
+        This allows models to adjust behavior based on what data types are
+        available (e.g., adding audio LoRA targets when audio data is present).
+        """
+        if self.model is None:
+            return
+
+        has_images = False
+        has_video = False
+        has_audio = False
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            dataset_type = _backend_dataset_type(backend)
+            if dataset_type is DatasetType.IMAGE:
+                has_images = True
+            elif dataset_type is DatasetType.VIDEO:
+                has_video = True
+            elif dataset_type is DatasetType.AUDIO:
+                has_audio = True
+
+        self.model.configure_data_signals(
+            has_images=has_images,
+            has_video=has_video,
+            has_audio=has_audio,
+        )
+
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
         dataset_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
@@ -4069,6 +4100,8 @@ class FactoryRegistry:
         self.configure_conditioning_image_embed_backends(data_backend_config)
         self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
+
+        self._configure_model_data_signals(data_backend_config)
 
         result = {
             "data_backends": StateTracker.get_data_backends(),

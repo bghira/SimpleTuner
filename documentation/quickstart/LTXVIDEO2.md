@@ -362,6 +362,18 @@ The key setting is `audio.audio_only: true`, which tells SimpleTuner to:
 2. Generate zero video latents matching the audio duration
 3. Mask video loss during training
 
+#### LoRA targets for audio training
+
+When audio data is detected in your datasets, SimpleTuner automatically adds audio-specific modules to the LoRA targets:
+- `audio_proj_in` - Audio input projection
+- `audio_proj_out` - Audio output projection
+- `audio_caption_projection.linear_1` - Audio caption projection layer 1
+- `audio_caption_projection.linear_2` - Audio caption projection layer 2
+
+This happens automatically for both audio-only training and joint audio+video training.
+
+If you want to override the LoRA targets manually, use `--peft_lora_target_modules` with a JSON list of module names.
+
 Place your audio files (`.wav`, `.flac`, `.mp3`, etc.) in the `instance_data_dir` with corresponding `.txt` caption files.
 
 ### Validation workflows (T2V vs I2V)

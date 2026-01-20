@@ -71,6 +71,13 @@ class LTXVideo2(VideoModelFoundation):
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
     DEFAULT_LORA_EXCLUDE_TARGETS = ".*connector.*|.*embedding.*"
+    # Audio-specific LoRA targets added when audio data is present.
+    AUDIO_LORA_TARGETS = [
+        "audio_proj_in",
+        "audio_proj_out",
+        "audio_caption_projection.linear_1",
+        "audio_caption_projection.linear_2",
+    ]
 
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
@@ -121,6 +128,17 @@ class LTXVideo2(VideoModelFoundation):
         self._warned_missing_video = False
         self._combined_checkpoint_path = None
         self._diffusers_layout_detected = None
+
+    def _get_additional_lora_targets(self) -> list[str]:
+        """
+        Return audio LoRA targets when audio data is present.
+
+        When training with audio data, we need to include the audio-specific
+        projection layers in the LoRA targets to enable learning audio features.
+        """
+        if self._data_has_audio:
+            return list(self.AUDIO_LORA_TARGETS)
+        return []
 
     def _configure_gemma_path(self) -> None:
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)

@@ -362,6 +362,18 @@ A configuração chave é `audio.audio_only: true`, que instrui o SimpleTuner a:
 2. Gerar latentes de vídeo zerados correspondendo à duração do áudio
 3. Mascarar a perda de vídeo durante o treinamento
 
+#### Alvos LoRA para treinamento de áudio
+
+Quando dados de áudio são detectados em seus datasets, o SimpleTuner adiciona automaticamente módulos específicos de áudio aos alvos LoRA:
+- `audio_proj_in` - Projeção de entrada de áudio
+- `audio_proj_out` - Projeção de saída de áudio
+- `audio_caption_projection.linear_1` - Camada de projeção de legenda de áudio 1
+- `audio_caption_projection.linear_2` - Camada de projeção de legenda de áudio 2
+
+Isso acontece automaticamente tanto para treinamento apenas com áudio quanto para treinamento conjunto de áudio+vídeo.
+
+Se você quiser substituir os alvos LoRA manualmente, use `--peft_lora_target_modules` com uma lista JSON de nomes de módulos.
+
 Coloque seus arquivos de áudio (`.wav`, `.flac`, `.mp3`, etc.) no `instance_data_dir` com os arquivos `.txt` de legenda correspondentes.
 
 ### Fluxos de validação (T2V vs I2V)

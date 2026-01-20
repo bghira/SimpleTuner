@@ -779,6 +779,54 @@ class ModelFoundation(ABC):
         return False
 
     # -------------------------------------------------------------------------
+    # Data signal infrastructure
+    # -------------------------------------------------------------------------
+    # These flags are set by the factory after data backend configuration to
+    # inform the model about what data types are present. Models can use these
+    # signals to adjust behavior (e.g., LoRA target modules).
+
+    _data_has_images: bool = False
+    _data_has_video: bool = False
+    _data_has_audio: bool = False
+
+    def configure_data_signals(
+        self,
+        has_images: bool = False,
+        has_video: bool = False,
+        has_audio: bool = False,
+    ) -> None:
+        """
+        Configure data type signals from the dataloader.
+
+        Called by the factory after data backend configuration to inform the
+        model about what data types are present in the training data. Models
+        can override this to take action based on data types, or use the stored
+        flags in other methods like get_lora_target_layers().
+
+        Args:
+            has_images: Whether image data is present
+            has_video: Whether video data is present
+            has_audio: Whether audio data is present
+        """
+        self._data_has_images = has_images
+        self._data_has_video = has_video
+        self._data_has_audio = has_audio
+
+    def _get_additional_lora_targets(self) -> list[str]:
+        """
+        Return additional LoRA target modules based on data signals.
+
+        Models can override this to add extra targets when certain data types
+        are present. For example, a model with audio support might add audio
+        projection layers when audio data is detected.
+
+        Returns:
+            List of additional module name patterns to include in LoRA targets.
+            Empty list by default.
+        """
+        return []
+
+    # -------------------------------------------------------------------------
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
@@ -815,19 +863,32 @@ class ModelFoundation(ABC):
             return manual_targets
 
         lora_type = getattr(self.config, "lora_type", "standard")
+        base_targets = None
         if lora_type.lower() == "standard":
             if getattr(self.config, "slider_lora_target", False):
                 slider_target = getattr(self, "SLIDER_LORA_TARGET", None) or getattr(
                     self, "DEFAULT_SLIDER_LORA_TARGET", None
                 )
                 if slider_target:
-                    return slider_target
-            if getattr(self.config, "controlnet", False):
-                return self.DEFAULT_CONTROLNET_LORA_TARGET
-            return self.DEFAULT_LORA_TARGET
-        if lora_type.lower() == "lycoris":
-            return self.DEFAULT_LYCORIS_TARGET
-        raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+                    base_targets = slider_target
+            if base_targets is None and getattr(self.config, "controlnet", False):
+                base_targets = self.DEFAULT_CONTROLNET_LORA_TARGET
+            if base_targets is None:
+                base_targets = self.DEFAULT_LORA_TARGET
+        elif lora_type.lower() == "lycoris":
+            base_targets = self.DEFAULT_LYCORIS_TARGET
+        else:
+            raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+
+        additional_targets = self._get_additional_lora_targets()
+        if not additional_targets:
+            return base_targets
+
+        combined = list(base_targets) if base_targets else []
+        for target in additional_targets:
+            if target not in combined:
+                combined.append(target)
+        return combined
 
     def add_lora_adapter(self):
         from peft import LoraConfig

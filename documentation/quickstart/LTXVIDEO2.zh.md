@@ -362,6 +362,18 @@ LTX-2 支持**纯音频训练**，即仅训练音频生成能力而无需视频�
 2. 生成与音频时长匹配的零视频 latents
 3. 在训练期间屏蔽视频损失
 
+#### 音频训练的 LoRA 目标
+
+当数据集中检测到音频数据时，SimpleTuner 会自动将音频特定模块添加到 LoRA 目标中：
+- `audio_proj_in` - 音频输入投影
+- `audio_proj_out` - 音频输出投影
+- `audio_caption_projection.linear_1` - 音频字幕投影层 1
+- `audio_caption_projection.linear_2` - 音频字幕投影层 2
+
+这对于纯音频训练和联合音频+视频训练都会自动生效。
+
+如果您想手动覆盖 LoRA 目标，请使用 `--peft_lora_target_modules` 并提供模块名称的 JSON 列表。
+
 将音频文件（`.wav`、`.flac`、`.mp3` 等）放入 `instance_data_dir`，并提供相应的 `.txt` 字幕文件。
 
 ### 验证流程（T2V vs I2V）
