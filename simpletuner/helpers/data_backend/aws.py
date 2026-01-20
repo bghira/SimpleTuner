@@ -13,7 +13,6 @@ from botocore.config import Config
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from torch import Tensor
 
-from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
@@ -293,6 +292,8 @@ class S3DataBackend(BaseDataBackend):
         # Check extension
         ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
         if ext in audio_file_extensions:
+            from simpletuner.helpers.audio import load_audio
+
             return load_audio(buffer)
         if ext in video_file_extensions:
             return load_video(buffer)
@@ -317,6 +318,8 @@ class S3DataBackend(BaseDataBackend):
                 ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
                 buffer = BytesIO(data)
                 if ext in audio_file_extensions:
+                    from simpletuner.helpers.audio import load_audio
+
                     image_data = load_audio(buffer)
                 elif ext in video_file_extensions:
                     image_data = load_video(buffer)

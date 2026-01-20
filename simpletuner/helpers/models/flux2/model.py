@@ -35,6 +35,7 @@ from simpletuner.helpers.models.flux2 import build_flux2_conditioning_inputs, pa
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux2.pipeline import Flux2Pipeline
 from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
+from simpletuner.helpers.models.tae.types import Flux2TAESpec
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class Flux2(ImageModelFoundation):
     LATENT_CHANNEL_COUNT = 128  # 32 VAE channels × 4 (2×2 pixel shuffle) = 128 transformer channels
     VAE_SCALE_FACTOR = 16  # 8x spatial + 2x pixel shuffle
     VALIDATION_USES_NEGATIVE_PROMPT = True  # Required for real CFG support
+    VALIDATION_PREVIEW_SPEC = Flux2TAESpec()
 
     # LoRA targets for FLUX.2 transformer (diffusers naming)
     DEFAULT_LORA_TARGET = [
@@ -301,6 +303,28 @@ class Flux2(ImageModelFoundation):
         bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(latents.device, latents.dtype)
         bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + self.vae.config.batch_norm_eps)
         return (latents - bn_mean) / bn_std
+
+    @staticmethod
+    def _unpatchify_latents(latents: Tensor) -> Tensor:
+        """
+        Reverse pixel-shuffle latents from (B, 4C, H/2, W/2) -> (B, C, H, W).
+        Used to convert 128-channel transformer latents back to 32-channel VAE format.
+        """
+        b, c4, h2, w2 = latents.shape
+        c = c4 // 4
+        latents = latents.view(b, c, 2, 2, h2, w2)
+        latents = latents.permute(0, 1, 4, 2, 5, 3)
+        latents = latents.reshape(b, c, h2 * 2, w2 * 2)
+        return latents
+
+    def pre_latent_decode(self, latents: Tensor) -> Tensor:
+        """
+        Pre-process latents before passing to TAEF2 decoder.
+        Unpatchifies from 128-channel to 32-channel format.
+        """
+        if latents.shape[1] == 128:
+            return self._unpatchify_latents(latents)
+        return latents
 
     def load_vae(self, move_to_device: bool = True):
         """Load the FLUX.2 custom VAE using diffusers from_pretrained."""

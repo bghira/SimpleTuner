@@ -52,7 +52,7 @@ class TestAudioBackendConfig(unittest.TestCase):
         # Should still have global defaults for unspecified
         self.assertEqual(audio_conf.get("max_duration_seconds"), 30.0)
 
-    @patch("simpletuner.helpers.data_backend.factory.load_audio")
+    @patch("simpletuner.helpers.audio.load_audio")
     def test_attach_audio_backend(self, mock_load_audio):
         """Test that FactoryRegistry correctly attaches the runtime backend."""
         factory = FactoryRegistry(self.args, self.accelerator, None, None, MagicMock())

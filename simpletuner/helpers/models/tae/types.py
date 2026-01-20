@@ -23,6 +23,29 @@ class ImageTAESpec:
 
 
 @dataclass(frozen=True)
+class Flux2TAESpec:
+    """
+    Specification for TAEF2 (Tiny AutoEncoder for FLUX.2) decoder weights.
+
+    FLUX.2 uses a 32-channel latent space which requires a specialized TAE
+    that is not compatible with diffusers' AutoencoderTiny.
+
+    Attributes:
+        filename: Name of the checkpoint file to download.
+        base_url: Base URL where the checkpoint can be downloaded.
+        sha256: Optional SHA256 hash for verification.
+    """
+
+    filename: str = "taef2.safetensors"
+    base_url: str = "https://huggingface.co/madebyollin/taef2/resolve/main"
+    sha256: Optional[str] = None
+
+    @property
+    def download_url(self) -> str:
+        return f"{self.base_url.rstrip('/')}/{self.filename}"
+
+
+@dataclass(frozen=True)
 class VideoTAESpec:
     """
     Specification for TAEHV-style video decoders hosted as raw checkpoint files.
