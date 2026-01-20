@@ -114,6 +114,9 @@ Hugging Face CLIにログインしていることを確認: `huggingface-cli log
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 開発セットアップの場合:

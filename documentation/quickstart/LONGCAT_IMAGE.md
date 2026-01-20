@@ -14,7 +14,7 @@ LongCat‑Image is a 6B bilingual (zh/en) text‑to‑image model that uses flow
 
 ## 2) Prerequisites (step‑by‑step)
 
-1. Python 3.10–3.12 verified:
+1. Python 3.10–3.13 verified:
    ```bash
    python --version
    ```
@@ -26,6 +26,7 @@ LongCat‑Image is a 6B bilingual (zh/en) text‑to‑image model that uses flow
 3. Install SimpleTuner with the right extras for your backend:
    ```bash
    pip install "simpletuner[cuda]"   # CUDA
+   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

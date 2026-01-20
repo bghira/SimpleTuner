@@ -28,7 +28,7 @@ Los mismos pasos que en la guía de Wan:
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
-python3.12 -m venv .venv && source .venv/bin/activate
+python3.13 -m venv .venv && source .venv/bin/activate
 
 # Install with automatic platform detection
 pip install -e .

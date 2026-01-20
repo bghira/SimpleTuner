@@ -62,6 +62,9 @@ python --version
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 Veja [INSTALL.md](../INSTALL.md) para opções avançadas de instalação.

@@ -27,7 +27,7 @@ Usar student training com LoRA pode reduzir bastante os requisitos, mas ainda e 
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
-python3.12 -m venv .venv && source .venv/bin/activate
+python3.13 -m venv .venv && source .venv/bin/activate
 
 # Instalar com deteccao automatica de plataforma
 pip install -e .

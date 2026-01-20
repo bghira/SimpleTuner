@@ -43,7 +43,7 @@ python --version
 如果您的 Ubuntu 系统未安装 Python 3.12，可以尝试以下命令：
 
 ```bash
-apt -y install python3.12 python3.12-venv
+apt -y install python3.13 python3.13-venv
 ```
 
 ### 容器镜像依赖
@@ -72,6 +72,9 @@ popd
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 如需手动安装或开发环境设置，请参阅[安装文档](../INSTALL.md)。

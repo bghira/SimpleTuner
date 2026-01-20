@@ -12,8 +12,9 @@
 
 ## 前提条件
 
-- Python 3.10–3.12、Git、および`pip`
+- Python 3.10–3.13、Git、および`pip`
 - 仮想環境にインストールされたSimpleTuner（`pip install 'simpletuner[cuda]'`またはプラットフォームに合わせたバリアント）
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
 - 必要なHugging Faceリポジトリへのアクセス（ゲート付きモデルをプルする前に`huggingface-cli login`）
 - キャプション付きでローカルにステージングされたデータセット（PixArt用のキャプションテキストファイル、Kontext用のペアになった編集/参照フォルダ）
 - `curl`と`jq`を使用できるシェル

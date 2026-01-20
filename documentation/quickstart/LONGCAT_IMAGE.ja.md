@@ -14,7 +14,7 @@ LongCat‑Image は、フローマッチングと Qwen‑2.5‑VL テキスト�
 
 ## 2) 前提条件（手順）
 
-1. Python 3.10〜3.12 を確認:
+1. Python 3.10〜3.13 を確認:
    ```bash
    python --version
    ```
@@ -26,6 +26,7 @@ LongCat‑Image は、フローマッチングと Qwen‑2.5‑VL テキスト�
 3. ハードウェアに合った extras で SimpleTuner をインストール:
    ```bash
    pip install "simpletuner[cuda]"   # CUDA
+   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

@@ -9,7 +9,7 @@ This tutorial will help you get started with the SimpleTuner Web interface.
 For Ubuntu systems, start by installing the required packages:
 
 ```bash
-apt -y install python3.12-venv python3.12-dev
+apt -y install python3.13-venv python3.13-dev
 apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # if you're using DeepSpeed
 apt -y install ffmpeg # if training video models
 ```
@@ -38,7 +38,7 @@ cd $SIMPLETUNER_WORKSPACE
 Create a virtual environment to install dependencies to:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 . .venv/bin/activate
 ```
 
@@ -48,6 +48,8 @@ NVIDIA users will have to use the CUDA extras to pull in all the right dependenc
 
 ```bash
 pip install -e 'simpletuner[cuda]'
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
+# pip install -e 'simpletuner[cuda13]'
 # or, if you've cloned via git:
 # pip install -e '.[cuda]'
 ```

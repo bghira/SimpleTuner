@@ -16,7 +16,7 @@ Siga o guia de instalacao padrao do SimpleTuner [aqui](../INSTALL.md):
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
-python3.12 -m venv .venv && source .venv/bin/activate
+python3.13 -m venv .venv && source .venv/bin/activate
 
 # Instalar com deteccao automatica de plataforma
 pip install -e .

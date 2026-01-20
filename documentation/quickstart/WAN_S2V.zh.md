@@ -31,7 +31,7 @@ python --version
 如果你的 Ubuntu 系统没有安装 Python 3.12，可以尝试以下命令：
 
 ```bash
-apt -y install python3.12 python3.12-venv
+apt -y install python3.13 python3.13-venv
 ```
 
 #### 容器镜像依赖
@@ -48,6 +48,9 @@ apt -y install nvidia-cuda-toolkit
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 如需手动安装或开发设置，请参阅[安装文档](/documentation/INSTALL.md)。
@@ -622,6 +625,9 @@ huggingface-cli login
 **选项 1（推荐 - pip 安装）：**
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 simpletuner train
 ```
 

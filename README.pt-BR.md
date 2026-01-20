@@ -193,6 +193,9 @@ pip install simpletuner
 # Usuarios CUDA (GPUs NVIDIA)
 pip install 'simpletuner[cuda]'
 
+# CUDA 13 / Blackwell (GPUs NVIDIA serie B)
+pip install 'simpletuner[cuda13]'
+
 # Usuarios ROCm (GPUs AMD)
 pip install 'simpletuner[rocm]'
 

@@ -13,6 +13,8 @@
 ```bash
 # for CUDA
 pip install 'simpletuner[cuda]'
+# for CUDA 13 / Blackwell (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 # for ROCm
 pip install 'simpletuner[rocm]'
 # for Apple Silicon
@@ -35,8 +37,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
-# if python --version shows 3.11 will have to upgrade to 3.12.
-python3.12 -m venv .venv
+# if python --version shows 3.11 or 3.12, you may want to upgrade to 3.13.
+python3.13 -m venv .venv
 
 source .venv/bin/activate
 ```
