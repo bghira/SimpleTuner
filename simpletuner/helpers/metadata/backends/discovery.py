@@ -6,7 +6,6 @@ import traceback
 from io import BytesIO
 from typing import Optional
 
-from simpletuner.helpers.audio import generate_zero_audio, load_audio, load_audio_from_video
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
@@ -557,6 +556,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
             if source_from_video and is_video_file:
                 # Extract audio from video file
+                from simpletuner.helpers.audio import generate_zero_audio, load_audio_from_video
+
                 target_sr = self.audio_config.get("sample_rate", 16000)
                 target_channels = self.audio_config.get("channels", 1)
                 try:
@@ -579,6 +580,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         statistics["skipped"]["no_audio"] += 1
                         return aspect_ratio_bucket_indices
             else:
+                from simpletuner.helpers.audio import load_audio
+
                 buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
                 buffer.seek(0)
                 waveform, sample_rate = load_audio(buffer)

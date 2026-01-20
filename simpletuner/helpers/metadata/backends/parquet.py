@@ -9,7 +9,6 @@ from typing import Optional
 import numpy
 from tqdm import tqdm
 
-from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -642,6 +641,8 @@ class ParquetMetadataBackend(MetadataBackend):
                     statistics.setdefault("skipped", {}).setdefault("not_found", 0)
                     statistics["skipped"]["not_found"] += 1
                     return aspect_ratio_bucket_indices
+                from simpletuner.helpers.audio import load_audio
+
                 buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
                 buffer.seek(0)
                 waveform, inferred_sample_rate = load_audio(buffer)

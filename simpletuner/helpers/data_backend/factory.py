@@ -71,7 +71,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from simpletuner.helpers.audio import load_audio
+# Note: load_audio is imported lazily where needed to avoid requiring torchaudio at import time
 from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -1290,6 +1290,8 @@ class FactoryRegistry:
         audio_cache_dir = audio_settings.get("cache_dir", default_cache)
         audio_settings["cache_dir"] = audio_cache_dir
         init_backend.setdefault("config", {}).setdefault("audio", audio_settings)
+
+        from simpletuner.helpers.audio import load_audio
 
         init_backend["audio_data_backend"] = {
             "reader": load_audio,
