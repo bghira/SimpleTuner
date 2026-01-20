@@ -275,6 +275,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Select checkpoint to resume training from",
             tooltip="Checkpoints will be dynamically loaded based on output directory. Use 'latest' to auto-resume from the most recent checkpoint.",
             importance=ImportanceLevel.ADVANCED,
+            allow_empty=True,
             order=11,
             dynamic_choices=True,  # Mark this field as having dynamic choices
             documentation="OPTIONS.md#--resume_from_checkpoint",
@@ -302,6 +303,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="The parameterization type for the diffusion model",
             tooltip="Usually auto-detected from the model. Flow matching is used by Flux, SD3, and similar models.",
             importance=ImportanceLevel.ADVANCED,
+            allow_empty=True,
             order=10,
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
         )

@@ -856,6 +856,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Noise scheduler for validation",
             tooltip="Override the scheduler used for validation renders, otherwise use the model default.",
             importance=ImportanceLevel.ADVANCED,
+            allow_empty=True,
             order=15,
         )
     )

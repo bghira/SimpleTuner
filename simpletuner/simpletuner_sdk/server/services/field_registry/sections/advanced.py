@@ -2044,6 +2044,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
                 FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
             ],
             importance=ImportanceLevel.EXPERIMENTAL,
+            allow_empty=True,
             order=51,
         )
     )
