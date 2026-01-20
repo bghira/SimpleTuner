@@ -397,6 +397,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Method for model distillation",
             tooltip="Select the distillation approach to use when converting models (LCM, DCM, DMD, or PerFlow).",
             importance=ImportanceLevel.ADVANCED,
+            allow_empty=True,
             order=1,
         )
     )
