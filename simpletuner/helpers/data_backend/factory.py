@@ -1354,6 +1354,47 @@ class FactoryRegistry:
             return False
         return result if isinstance(result, bool) else False
 
+    def _compute_implicit_audio_only_mode(self, data_backend_config: List[Dict[str, Any]]) -> bool:
+        """
+        Pre-scan config to determine if we're in implicit audio-only mode.
+
+        Implicit audio-only mode is when:
+        - Model supports audio-only training
+        - There are audio datasets
+        - There are NO video or image datasets
+        """
+        if not self._supports_audio_only_training():
+            return False
+
+        has_audio = False
+        has_video_or_image = False
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            dataset_type = _backend_dataset_type(backend)
+            if dataset_type is DatasetType.AUDIO:
+                has_audio = True
+            elif dataset_type in (DatasetType.VIDEO, DatasetType.IMAGE):
+                has_video_or_image = True
+
+        return has_audio and not has_video_or_image
+
+    def _is_audio_only_mode(self, backend: Dict[str, Any]) -> bool:
+        """
+        Check if a backend is in audio-only mode.
+
+        Audio-only mode can be:
+        1. Explicit: audio.audio_only: true in the backend config
+        2. Implicit: precomputed at start of configure_data_backends
+        """
+        # Check explicit audio_only flag
+        if backend.get("audio", {}).get("audio_only", False):
+            return True
+
+        # Check implicit audio-only mode (precomputed)
+        return getattr(self, "_implicit_audio_only_mode", False)
+
     def _uses_text_embeddings_cache(self) -> bool:
         """Return whether the active model uses text embedding caches."""
         if self.model is None:
@@ -2445,6 +2486,10 @@ class FactoryRegistry:
         """
         self._log_performance_metrics("data_backend_config_start")
         self._prevalidate_backend_ids(data_backend_config)
+
+        # Precompute implicit audio-only mode before processing backends
+        self._implicit_audio_only_mode = self._compute_implicit_audio_only_mode(data_backend_config)
+
         if not self.text_embed_backends and self._uses_text_embeddings_cache():
             self.configure_text_embed_backends(data_backend_config)
         vae_cache_dir_paths = []
@@ -2760,9 +2805,17 @@ class FactoryRegistry:
                 metadata_backend.configure_mock(id=init_backend["id"])
 
     def _handle_bucket_operations(
-        self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
+        self,
+        backend: Dict[str, Any],
+        init_backend: Dict[str, Any],
+        conditioning_type: Optional[str],
+        skip_bucket_split: bool = False,
     ) -> None:
-        """Handle bucket refreshing and validation."""
+        """Handle bucket refreshing and validation.
+
+        Args:
+            skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
+        """
         if (
             not backend.get("auto_generated", False)  # auto-generated datasets have duplicate metadata.
             and "aspect" not in self.args.skip_file_discovery
@@ -2877,7 +2930,9 @@ class FactoryRegistry:
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
-            if not getattr(init_backend["metadata_backend"], "read_only", False):
+            if skip_bucket_split:
+                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
+            elif not getattr(init_backend["metadata_backend"], "read_only", False):
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
                     apply_padding=apply_padding,
@@ -2887,7 +2942,8 @@ class FactoryRegistry:
 
             # Check if this is a conditioning backend and if it has no images after splitting
             if (
-                init_backend.get("dataset_type") == "conditioning"
+                not skip_bucket_split
+                and init_backend.get("dataset_type") == "conditioning"
                 and sum(len(bucket) for bucket in init_backend["metadata_backend"].aspect_ratio_bucket_indices.values()) == 0
             ):
                 if self.accelerator.is_main_process:
@@ -2897,7 +2953,9 @@ class FactoryRegistry:
                         f"Consider using a larger dataset or fewer GPUs."
                     )
         else:
-            if self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
+            if skip_bucket_split:
+                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
+            elif self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
                     apply_padding=apply_padding,
@@ -3993,7 +4051,10 @@ class FactoryRegistry:
             self.data_backends[init_backend["id"]] = init_backend
             return
 
-        self._handle_bucket_operations(backend, init_backend, conditioning_type)
+        # For audio-only datasets, we need to discover files but skip bucket splitting
+        # Audio-only can be explicit (audio.audio_only: true) or implicit (only audio datasets, no video/image)
+        is_audio_only_dataset = dataset_type_enum is DatasetType.AUDIO and self._is_audio_only_mode(backend)
+        self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
