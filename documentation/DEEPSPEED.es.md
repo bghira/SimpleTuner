@@ -24,7 +24,7 @@ En v3.0, este soporte ha mejorado mucho, con un builder de configuración en Web
 |  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
 |        ID   ID                                                   Usage      |
 |=============================================================================|
-|    0   N/A  N/A     11500      C   ...uner/.venv/bin/python3.12     9232MiB |
+|    0   N/A  N/A     11500      C   ...uner/.venv/bin/python3.13     9232MiB |
 +-----------------------------------------------------------------------------+
 ```
 

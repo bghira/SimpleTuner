@@ -114,6 +114,9 @@ Asegúrate de haber iniciado sesión en Hugging Face CLI: `huggingface-cli login
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 Para configuración de desarrollo:

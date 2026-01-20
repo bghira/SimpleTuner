@@ -9,7 +9,7 @@
 Ubuntu システムの場合、まず必要なパッケージをインストールします:
 
 ```bash
-apt -y install python3.12-venv python3.12-dev
+apt -y install python3.13-venv python3.13-dev
 apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # DeepSpeed を使用する場合
 apt -y install ffmpeg # ビデオモデルをトレーニングする場合
 ```
@@ -38,7 +38,7 @@ cd $SIMPLETUNER_WORKSPACE
 依存関係をインストールするための仮想環境を作成します:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 . .venv/bin/activate
 ```
 
@@ -48,6 +48,8 @@ NVIDIA ユーザーは、すべての正しい依存関係を取得するため�
 
 ```bash
 pip install -e 'simpletuner[cuda]'
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
+# pip install -e 'simpletuner[cuda13]'
 # または、git 経由でクローンした場合:
 # pip install -e '.[cuda]'
 ```

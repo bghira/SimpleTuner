@@ -32,7 +32,7 @@ Add the following to your `config.json`:
 
 ## Prerequisites
 
-Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.
+Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.13.
 
 You can check this by running:
 
@@ -40,10 +40,10 @@ You can check this by running:
 python --version
 ```
 
-If you don't have python 3.12 installed on Ubuntu, you can try the following:
+If you don't have python 3.13 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.12 python3.12-venv
+apt -y install python3.13 python3.13-venv
 ```
 
 ### Container image dependencies
@@ -72,6 +72,9 @@ Install SimpleTuner via pip:
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 For manual installation or development setup, see the [installation documentation](../INSTALL.md).

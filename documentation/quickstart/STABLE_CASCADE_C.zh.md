@@ -13,7 +13,7 @@
 
 ## 前提条件
 
-1. Python 3.12（与项目 `.venv` 一致）。
+1. Python 3.13（与项目 `.venv` 一致）。
 2. CUDA 12.1+ 或 ROCm 5.7+ 用于 GPU 加速（或 Apple M 系列的 Metal，但 Stage C 主要在 CUDA 上测试）。
 3. `torchvision`（Stable Cascade 自动编码器所需）以及 `accelerate` 用于启动训练。
 
@@ -26,7 +26,7 @@ python --version
 安装缺失包（Ubuntu 示例）：
 
 ```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv
+sudo apt update && sudo apt install -y python3.13 python3.13-venv
 ```
 
 ## 安装
@@ -34,10 +34,13 @@ sudo apt update && sudo apt install -y python3.12 python3.12-venv
 按标准 SimpleTuner 安装（pip 或源码）。对于典型 CUDA 工作站：
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 如果直接在仓库开发，请从源码安装并执行 `pip install -e .[cuda,dev]`。

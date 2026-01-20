@@ -43,7 +43,7 @@ python --version
 Ubuntuにpython 3.12がインストールされていない場合は、以下を試してください:
 
 ```bash
-apt -y install python3.12 python3.12-venv
+apt -y install python3.13 python3.13-venv
 ```
 
 ### コンテナイメージの依存関係
@@ -72,6 +72,9 @@ pip経由でSimpleTunerをインストール:
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 手動インストールまたは開発セットアップについては、[インストールドキュメント](../INSTALL.md)を参照してください。

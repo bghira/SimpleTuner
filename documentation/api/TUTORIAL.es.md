@@ -12,8 +12,9 @@ Esta guía recorre cómo ejecutar trabajos de entrenamiento de SimpleTuner **com
 
 ## Requisitos previos
 
-- Python 3.10–3.12, Git y `pip`
+- Python 3.10–3.13, Git y `pip`
 - SimpleTuner instalado en un entorno virtual (`pip install 'simpletuner[cuda]'` o la variante que coincida con tu plataforma)
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
 - Acceso a repos requeridos de Hugging Face (`huggingface-cli login` antes de descargar modelos con restricciones)
 - Datasets preparados localmente con captions (archivos de texto de caption para PixArt, carpetas de edición/referencia emparejadas para Kontext)
 - Un shell con `curl` y `jq`

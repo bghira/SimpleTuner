@@ -9,7 +9,7 @@
 Ubuntu सिस्टम पर आवश्यक पैकेज इंस्टॉल करने से शुरू करें:
 
 ```bash
-apt -y install python3.12-venv python3.12-dev
+apt -y install python3.13-venv python3.13-dev
 apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # यदि आप DeepSpeed उपयोग कर रहे हैं
 apt -y install ffmpeg # यदि वीडियो मॉडल ट्रेन कर रहे हैं
 ```
@@ -38,7 +38,7 @@ cd $SIMPLETUNER_WORKSPACE
 Dependencies इंस्टॉल करने के लिए virtual environment बनाएँ:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 . .venv/bin/activate
 ```
 
@@ -48,6 +48,8 @@ NVIDIA उपयोगकर्ताओं को सही dependencies के
 
 ```bash
 pip install -e 'simpletuner[cuda]'
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
+# pip install -e 'simpletuner[cuda13]'
 # या, यदि आपने git से clone किया है:
 # pip install -e '.[cuda]'
 ```

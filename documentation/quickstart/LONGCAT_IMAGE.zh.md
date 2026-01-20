@@ -14,7 +14,7 @@ LongCat‑Image 是一个 6B 双语（zh/en）文生图模型，使用流匹配�
 
 ## 2) 前提条件（逐步）
 
-1. 确认 Python 3.10–3.12：
+1. 确认 Python 3.10–3.13：
    ```bash
    python --version
    ```
@@ -26,6 +26,7 @@ LongCat‑Image 是一个 6B 双语（zh/en）文生图模型，使用流匹配�
 3. 按你的硬件选择 extras 安装 SimpleTuner：
    ```bash
    pip install "simpletuner[cuda]"   # CUDA
+   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

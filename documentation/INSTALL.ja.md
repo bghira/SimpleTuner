@@ -13,6 +13,8 @@ SimpleTuner は pip を使用して簡単にインストールできます。こ
 ```bash
 # CUDA 用
 pip install 'simpletuner[cuda]'
+# CUDA 13 / Blackwell 用 (NVIDIA Bシリーズ GPU)
+pip install 'simpletuner[cuda13]'
 # ROCm 用
 pip install 'simpletuner[rocm]'
 # Apple Silicon 用
@@ -35,8 +37,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
-# python --version が 3.11 を示す場合は 3.12 にアップグレードする必要があります。
-python3.12 -m venv .venv
+# python --version が 3.11 または 3.12 を示す場合は 3.13 にアップグレードすることをお勧めします。
+python3.13 -m venv .venv
 
 source .venv/bin/activate
 ```

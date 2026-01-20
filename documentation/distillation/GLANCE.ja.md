@@ -10,7 +10,8 @@ Glance は本格的な蒸留パイプラインというより、「スケジュ�
 
 ## 前提条件
 
-- Python 3.10–3.12、SimpleTuner をインストール済み（`pip install 'simpletuner[cuda]'`）
+- Python 3.10–3.13、SimpleTuner をインストール済み（`pip install 'simpletuner[cuda]'`）
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
 - 同じベース名の画像とキャプション（例: `data/glance.png` + `data/glance.txt`）
 - flow モデルのチェックポイント（以下の例では `black-forest-labs/FLUX.1-dev`）
 

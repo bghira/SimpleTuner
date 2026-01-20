@@ -10,7 +10,8 @@ Glance e mais um “LoRA de imagem unica com schedule dividido” do que um pipe
 
 ## Pre-requisitos
 
-- Python 3.10–3.12, SimpleTuner instalado (`pip install 'simpletuner[cuda]'`)
+- Python 3.10–3.13, SimpleTuner instalado (`pip install 'simpletuner[cuda]'`)
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
 - Uma imagem e um arquivo de caption com o mesmo basename (ex.: `data/glance.png` + `data/glance.txt`)
 - Um checkpoint de modelo de flow (o exemplo abaixo usa `black-forest-labs/FLUX.1-dev`)
 

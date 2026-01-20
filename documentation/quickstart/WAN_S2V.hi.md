@@ -31,7 +31,7 @@ python --version
 अगर Ubuntu पर Python 3.12 इंस्टॉल नहीं है, तो आप यह आज़मा सकते हैं:
 
 ```bash
-apt -y install python3.12 python3.12-venv
+apt -y install python3.13 python3.13-venv
 ```
 
 #### कंटेनर इमेज डिपेंडेंसीज़
@@ -48,6 +48,9 @@ pip के जरिए SimpleTuner इंस्टॉल करें:
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 मैनुअल इंस्टॉलेशन या डेवलपमेंट सेटअप के लिए [इंस्टॉलेशन डॉक्यूमेंटेशन](/documentation/INSTALL.md) देखें।
@@ -624,6 +627,9 @@ SimpleTuner डायरेक्टरी से, ट्रेनिंग श�
 **विकल्प 1 (अनुशंसित - pip इंस्टॉल):**
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 simpletuner train
 ```
 

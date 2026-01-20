@@ -12,8 +12,9 @@ Este guia mostra como rodar jobs de treinamento do SimpleTuner **inteiramente vi
 
 ## Pre-requisitos
 
-- Python 3.10–3.12, Git e `pip`
+- Python 3.10–3.13, Git e `pip`
 - SimpleTuner instalado em um virtualenv (`pip install 'simpletuner[cuda]'` ou a variante que corresponda a sua plataforma)
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
 - Acesso aos repositorios Hugging Face necessarios (`huggingface-cli login` antes de baixar modelos gated)
 - Datasets preparados localmente com captions (arquivos de caption para PixArt, pastas edit/reference pareadas para Kontext)
 - Um shell com `curl` e `jq`
