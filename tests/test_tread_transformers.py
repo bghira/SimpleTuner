@@ -370,6 +370,31 @@ class TestTREADTransformers(unittest.TestCase):
             self.assertIsNotNone(model._tread_router)
             self.assertIsNotNone(model._tread_routes)
 
+    def test_qwen_image_tread_integration(self):
+        """Test TREAD integration in Qwen Image transformer."""
+        with patch("simpletuner.helpers.models.qwen_image.transformer.TREADRouter"):
+            from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+
+            # Create model with minimal config
+            model = QwenImageTransformer2DModel(
+                patch_size=2,
+                in_channels=16,
+                out_channels=16,
+                num_layers=2,
+                num_attention_heads=12,
+                attention_head_dim=64,
+                joint_attention_dim=2048,
+            )
+
+            # Test set_router method
+            model.set_router(self.mock_router, self.test_routes)
+            self.assertEqual(model._tread_router, self.mock_router)
+            self.assertEqual(model._tread_routes, self.test_routes)
+
+            # Test TREAD attributes exist
+            self.assertIsNotNone(model._tread_router)
+            self.assertIsNotNone(model._tread_routes)
+
 
 class TestTREADModelInitialization(unittest.TestCase):
     """Test TREAD initialization methods in model classes."""
@@ -569,6 +594,29 @@ class TestTREADModelInitialization(unittest.TestCase):
 
                 # Verify TREADRouter was called with correct parameters
                 mock_tread_router.assert_called_once_with(seed=42, device="mps")
+
+    def test_qwen_image_tread_init(self):
+        """Test TREAD initialization in Qwen Image model."""
+        with patch("simpletuner.helpers.training.tread.TREADRouter") as mock_tread_router:
+            with patch("simpletuner.helpers.models.qwen_image.model.logger"):
+                from simpletuner.helpers.models.qwen_image.model import QwenImage
+
+                # Create mock model instance
+                model_instance = Mock()
+                model_instance.config = self.mock_config
+                model_instance.accelerator = Mock()
+                model_instance.accelerator.device = "cuda"
+                model_instance.unwrap_model.return_value = Mock()
+
+                # Test tread_init method exists
+                self.assertTrue(hasattr(QwenImage, "tread_init"))
+
+                # Test successful initialization
+                model_instance.__class__ = QwenImage
+                QwenImage.tread_init(model_instance)
+
+                # Verify TREADRouter was called with correct parameters
+                mock_tread_router.assert_called_once_with(seed=42, device="cuda")
 
 
 if __name__ == "__main__":
