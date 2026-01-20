@@ -197,6 +197,46 @@ def _resolve_ramtorch_dependency() -> str:
     return "ramtorch"
 
 
+def _cuda13_base_url() -> str:
+    """Return the base URL for CUDA 13 PyTorch wheels."""
+    return os.environ.get(
+        "SIMPLETUNER_CUDA13_BASE_URL",
+        "https://download.pytorch.org/whl/cu130",
+    )
+
+
+def build_cuda13_wheel_url(package: str, version: str) -> str:
+    """Build a direct wheel URL for CUDA 13 PyTorch packages."""
+    py_tag = _python_tag()
+    base_url = _cuda13_base_url()
+    platform_tag = os.environ.get("SIMPLETUNER_CUDA13_PLATFORM_TAG", "manylinux_2_28_x86_64")
+    filename = f"{package}-{version}%2Bcu130-{py_tag}-{py_tag}-{platform_tag}.whl"
+    return f"{package} @ {base_url}/{filename}"
+
+
+def get_cuda13_dependencies():
+    """Get CUDA 13 specific dependencies with direct wheel URLs."""
+    ramtorch_dep = _resolve_ramtorch_dependency()
+    torch_version = os.environ.get("SIMPLETUNER_CUDA13_TORCH_VERSION", "2.9.1")
+    torchvision_version = os.environ.get("SIMPLETUNER_CUDA13_TORCHVISION_VERSION", "0.24.1")
+    torchaudio_version = os.environ.get("SIMPLETUNER_CUDA13_TORCHAUDIO_VERSION", "2.9.1")
+
+    return [
+        build_cuda13_wheel_url("torch", torch_version),
+        build_cuda13_wheel_url("torchvision", torchvision_version),
+        build_cuda13_wheel_url("torchaudio", torchaudio_version),
+        "triton>=3.3.0",
+        "deepspeed>=0.17.2",
+        "torchao>=0.14.1",
+        "bitsandbytes>=0.45.0",
+        "nvidia-cudnn-cu13",
+        "nvidia-nccl-cu13",
+        "nvidia-ml-py>=12.555",
+        "lm-eval>=0.4.4",
+        ramtorch_dep,
+    ]
+
+
 def get_cuda_dependencies():
     ramtorch_dep = _resolve_ramtorch_dependency()
     return [
@@ -371,19 +411,28 @@ base_deps = [
     "httpx>=0.28.0",
 ]
 
-platform_deps_for_install = get_platform_dependencies()
-
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
     "dev": [
         "selenium>=4.0.0",
+        "coverage>=7.0.0",
         "black>=23.0.0",
         "isort>=5.12.0",
         "flake8>=6.0.0",
+        "mypy>=1.0.0",
+        "pre-commit>=3.0.0",
     ],
-    # Platform-specific extras for manual override
+    "test": ["selenium>=4.0.0", "coverage>=7.0.0"],
+    "docs": [
+        "mkdocs>=1.6.0",
+        "mkdocs-material>=9.5.0",
+        "mkdocs-static-i18n>=1.2.0",
+        "pymdown-extensions>=10.0",
+    ],
+    # Platform-specific extras - user must choose one
     "cuda": list(PLATFORM_DEPENDENCIES["cuda"]),
+    "cuda13": get_cuda13_dependencies(),
     "rocm": list(PLATFORM_DEPENDENCIES["rocm"]),
     "apple": list(PLATFORM_DEPENDENCIES["apple"]),
     "cpu": list(PLATFORM_DEPENDENCIES["cpu"]),
@@ -392,6 +441,15 @@ extras_require = {
     "state-mysql": ["aiomysql>=0.2.0"],
     "state-redis": ["redis>=5.0.0"],
     "state-all": ["asyncpg>=0.29.0", "aiomysql>=0.2.0", "redis>=5.0.0"],
+    # All non-platform extras combined
+    "all": [
+        "pillow-jxl-plugin>=1.3.1",
+        "selenium>=4.0.0",
+        "coverage>=7.0.0",
+        "black>=23.0.0",
+        "isort>=5.12.0",
+        "flake8>=6.0.0",
+    ],
 }
 
 # Read long description
@@ -420,7 +478,7 @@ setup(
         ),
     },
     python_requires=">=3.12,<3.14",
-    install_requires=base_deps + platform_deps_for_install,
+    install_requires=base_deps,
     extras_require=extras_require,
     entry_points={
         "console_scripts": [
@@ -456,9 +514,9 @@ if __name__ == "__main__":
     print(f"Detected platform: {detect_platform()}")
     print(f"Python version: {sys.version}")
     print(f"Platform: {platform.platform()}")
-
-    # Show what dependencies would be installed
-    platform_deps = get_platform_dependencies()
-    print(f"\nPlatform-specific dependencies ({len(platform_deps)}):")
-    for dep in platform_deps:
-        print(f"  - {dep}")
+    print("\nInstall with a platform extra:")
+    print("  pip install .[cuda]    # CUDA 12")
+    print("  pip install .[cuda13]  # CUDA 13")
+    print("  pip install .[rocm]    # ROCm")
+    print("  pip install .[apple]   # macOS")
+    print("  pip install .[cpu]     # CPU only")
