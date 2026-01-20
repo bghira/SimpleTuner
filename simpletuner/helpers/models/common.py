@@ -3596,6 +3596,10 @@ class ModelFoundation(ABC):
             "clamp_target": float(getattr(self.config, "twinflow_target_clamp", 1.0) or 1.0),
             "require_ema": bool(getattr(self.config, "twinflow_require_ema", True)),
             "use_rng_state": True,
+            # Adversarial branch settings (L_adv + L_rectify)
+            "adversarial_enabled": bool(getattr(self.config, "twinflow_adversarial_enabled", False)),
+            "adversarial_weight": float(getattr(self.config, "twinflow_adversarial_weight", 1.0) or 1.0),
+            "rectify_weight": float(getattr(self.config, "twinflow_rectify_weight", 1.0) or 1.0),
         }
 
     @staticmethod
@@ -3629,6 +3633,114 @@ class ModelFoundation(ABC):
         tt = torch.maximum(tt, torch.zeros_like(tt))
         tt = torch.minimum(tt, sigmas - eps)
         return tt
+
+    def _twinflow_generate_fake_samples(
+        self,
+        prepared_batch: dict,
+        settings: dict,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Generate fake samples via one-step generation (t=1, tt=0).
+
+        Following the TwinFlow reference implementation, we run the model with
+        t=1 (pure noise) and tt=0 (predict to clean) to generate fake samples.
+
+        Returns:
+            (x_fake, z): The generated fake sample and the noise used.
+        """
+        latents = prepared_batch["latents"]
+        z = torch.randn_like(latents)
+
+        ones = torch.ones(z.shape[0], device=z.device, dtype=z.dtype)
+        zeros = torch.zeros_like(ones)
+
+        with torch.no_grad():
+            F_fake = self._twinflow_forward(
+                prepared_batch=prepared_batch,
+                noisy_latents=z,
+                sigmas=ones,
+                tt=zeros,
+                use_grad=False,
+            )
+
+        # Integrate one step: x_fake = z - F_fake (from t=1 to t=0)
+        x_fake = z - F_fake
+        return x_fake.detach(), z
+
+    def _twinflow_compute_adversarial_loss(
+        self,
+        prepared_batch: dict,
+        x_fake: torch.Tensor,
+        z: torch.Tensor,
+        settings: dict,
+    ) -> torch.Tensor:
+        """
+        Compute L_adv: train fake trajectory with negative time.
+
+        From the TwinFlow paper:
+            x_t_fake = t*z + (1-t)*x_fake
+            target_fake = z - x_fake (velocity from fake clean to noise)
+            Forward with -t (negative time signals fake trajectory)
+            L_adv = MSE(F_pred, target_fake)
+        """
+        bsz = x_fake.shape[0]
+        # Sample time for fake trajectory
+        t = torch.rand(bsz, device=x_fake.device, dtype=x_fake.dtype).clamp(min=0.01, max=0.99)
+        t_b = self._twinflow_match_time_shape(t, x_fake)
+
+        # Construct fake trajectory interpolation
+        x_t_fake = t_b * z + (1 - t_b) * x_fake
+
+        # Target velocity for fake trajectory
+        target_fake = z - x_fake
+
+        # Forward with NEGATIVE time (sign embedding handles distinction)
+        neg_t = -t
+        F_pred = self._twinflow_forward(
+            prepared_batch=prepared_batch,
+            noisy_latents=x_t_fake,
+            sigmas=neg_t,
+            tt=None,
+            use_grad=True,
+        )
+
+        return F.mse_loss(F_pred.float(), target_fake.float(), reduction="mean")
+
+    def _twinflow_compute_rectify_loss(
+        self,
+        prepared_batch: dict,
+        base_pred: torch.Tensor,
+        noisy_latents: torch.Tensor,
+        sigmas: torch.Tensor,
+        settings: dict,
+    ) -> torch.Tensor:
+        """
+        Compute L_rectify: align real/fake trajectory predictions.
+
+        From the TwinFlow paper:
+            F_grad = F(x_t, -t) - F(x_t, t)
+            L_rectify = MSE(F(x_t, t), sg(F(x_t, t) - F_grad))
+
+        This aligns the real trajectory predictions with corrections from the
+        fake trajectory, enabling distribution matching without a discriminator.
+        """
+        # Get prediction at negative time (same x_t, opposite trajectory)
+        with torch.no_grad():
+            F_neg = self._twinflow_forward(
+                prepared_batch=prepared_batch,
+                noisy_latents=noisy_latents,
+                sigmas=-sigmas,
+                tt=None,
+                use_grad=False,
+            )
+
+        # F_grad = F(x_t, -t) - F(x_t, t)
+        F_grad = F_neg - base_pred.detach()
+
+        # Target with stop gradient: sg(F(x_t, t) - F_grad)
+        rectify_target = (base_pred.detach() - F_grad).detach()
+
+        return F.mse_loss(base_pred.float(), rectify_target.float(), reduction="mean")
 
     def _prepare_twinflow_metadata(self, batch: dict) -> None:
         """
@@ -4573,18 +4685,41 @@ class ModelFoundation(ABC):
         twin_losses.append(loss_real)
         log_payload["twinflow_realvel"] = loss_real.detach().float().mean().item()
 
-        # NOTE: Self-adversarial branch (L_adv, L_rectify, L_consistency) is disabled.
-        #
-        # The original TwinFlow paper uses an auxiliary time embedding (aux_time_embed) to
-        # distinguish the "fake" trajectory (t ∈ [-1, 0]) from the "real" trajectory (t ∈ [0, 1]).
-        # The model receives |σ| for the main time embedding and the sign via a separate embedding.
-        #
-        # Without modifying transformer architectures to add this dual embedding, the adversarial
-        # losses won't work correctly - the model has no way to distinguish fake from real.
-        #
-        # The RCGM-based consistency training (L_base + L_realvel) still provides significant
-        # few-step generation capability. Full TwinFlow would require architecture changes to
-        # add target_timestep/aux_time_embed support to Flux, SD3, Sana, etc.
+        # 3. Adversarial Loss (L_adv) + Rectification Loss (L_rectify)
+        # These use negative time to train a "fake" trajectory, enabling distribution
+        # matching without an external discriminator. The sign embedding infrastructure
+        # in the transformers distinguishes fake (negative time) from real (positive time).
+        if settings.get("adversarial_enabled", False):
+            # Generate fake samples via one-step generation
+            x_fake, z_fake = self._twinflow_generate_fake_samples(
+                prepared_batch=prepared_batch,
+                settings=settings,
+            )
+
+            # L_adv: fake velocity loss with negative time
+            loss_adv = self._twinflow_compute_adversarial_loss(
+                prepared_batch=prepared_batch,
+                x_fake=x_fake,
+                z=z_fake,
+                settings=settings,
+            )
+            adv_weight = settings.get("adversarial_weight", 1.0)
+            twin_losses.append(adv_weight * loss_adv)
+            log_payload["twinflow_adv"] = loss_adv.detach().float().mean().item()
+
+            # L_rectify: distribution matching via velocity alignment
+            # Use the flat sigmas (not broadcasted) for the rectify loss
+            sigmas_flat = sigmas.view(sigmas.shape[0], -1)[:, 0]
+            loss_rectify = self._twinflow_compute_rectify_loss(
+                prepared_batch=prepared_batch,
+                base_pred=base_pred,
+                noisy_latents=noisy_latents,
+                sigmas=sigmas_flat,
+                settings=settings,
+            )
+            rectify_weight = settings.get("rectify_weight", 1.0)
+            twin_losses.append(rectify_weight * loss_rectify)
+            log_payload["twinflow_rectify"] = loss_rectify.detach().float().mean().item()
 
         total_twin_loss = torch.stack(twin_losses).sum()
         return total_twin_loss, log_payload

@@ -6,7 +6,7 @@ SimpleTuner 中的 TwinFlow：
 * 默认仅支持 flow-matching，除非明确启用 `diff2flow_enabled` + `twinflow_allow_diff2flow` 来桥接扩散模型。
 * 默认使用 EMA 教师；围绕教师/CFG 路径的 RNG 捕获/恢复 **始终开启**，以匹配参考 TwinFlow 行为。
 * 负时间语义的符号嵌入已经接入 Transformer，但仅在 `twinflow_enabled=true` 时启用；HF 配置未启用不会改变行为。
-* 当前损失仅使用 RCGM + real-velocity（对抗/假分支保持禁用）；期望在 guidance `0.0` 下进行 1–4 步生成。
+* 默认损失使用 RCGM + real-velocity；可通过 `twinflow_adversarial_enabled: true` 启用完整的自对抗训练（L_adv 与 L_rectify 损失）。期望在 guidance `0.0` 下进行 1–4 步生成。
 * W&B 日志可输出实验性的 TwinFlow 轨迹散点图（理论未验证）用于调试。
 
 ---
@@ -51,7 +51,7 @@ SimpleTuner 中的 TwinFlow：
 }
 ```
 
-> TwinFlow 有意保持简单：不接入额外判别器或 fake 分支，只使用 RCGM 与 real-velocity 项。
+> 默认情况下，TwinFlow 使用 RCGM + real-velocity 损失。启用 `twinflow_adversarial_enabled: true` 可获得完整的自对抗训练（L_adv 与 L_rectify 损失），无需外部判别器。
 
 ---
 
@@ -78,6 +78,18 @@ SimpleTuner 中的 TwinFlow：
 * `twinflow_allow_diff2flow`: 当 `diff2flow_enabled` 为 true 时启用 epsilon/v-prediction 桥接。
 * RNG 捕获/恢复：始终开启以匹配参考 TwinFlow 实现，没有关闭开关。
 * 符号嵌入：`twinflow_enabled` 为 true 时，向支持 `timestep_sign` 的 Transformer 传递 `twinflow_time_sign`；否则不使用额外嵌入。
+
+### 对抗分支（完整 TwinFlow）
+
+启用原始论文中的自对抗训练以提升质量：
+
+* `twinflow_adversarial_enabled`（默认 false）：启用 L_adv 与 L_rectify 损失。使用负时间训练"假"轨迹，实现无需外部判别器的分布匹配。
+* `twinflow_adversarial_weight`（默认 1.0）：对抗损失（L_adv）的权重乘数。
+* `twinflow_rectify_weight`（默认 1.0）：校正损失（L_rectify）的权重乘数。
+
+启用后，训练会通过单步生成创建假样本，然后训练两个损失：
+- **L_adv**：带负时间的假速度损失——教模型将假样本映射回噪声。
+- **L_rectify**：分布匹配损失——对齐真假轨迹预测以获得更直的路径。
 
 ---
 

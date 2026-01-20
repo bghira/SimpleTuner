@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
-from vector_quantize_pytorch import ResidualVQ
 
 from .transformer import LlamaTransformer
 
@@ -32,6 +31,13 @@ class FlowMatching(nn.Module):
         out_channels: int = 256,
     ):
         super().__init__()
+        try:
+            from vector_quantize_pytorch import ResidualVQ
+        except ImportError as e:
+            raise ImportError(
+                "vector_quantize_pytorch is required for FlowMatching. "
+                "Install it with: pip install vector-quantize-pytorch"
+            ) from e
         self.vq_embed = ResidualVQ(
             dim=dim,
             codebook_size=codebook_size,
