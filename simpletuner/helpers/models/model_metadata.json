@@ -3,6 +3,7 @@
         "class_name": "Flux2",
         "module_path": "simpletuner.helpers.models.flux2.model",
         "name": "Flux.2",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "dev",
             "klein-4b",
@@ -13,6 +14,7 @@
         "class_name": "LTXVideo2",
         "module_path": "simpletuner.helpers.models.ltxvideo2.model",
         "name": "LTXVideo2",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "dev",
             "dev-fp4",
@@ -23,6 +25,7 @@
         "class_name": "Sana",
         "module_path": "simpletuner.helpers.models.sana.model",
         "name": "Sana",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "sana1.5-4.8b-1024",
             "sana1.5-1.6b-1024",
@@ -36,6 +39,7 @@
         "class_name": "Kandinsky5Image",
         "module_path": "simpletuner.helpers.models.kandinsky5_image.model",
         "name": "Kandinsky5-Image",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "t2i-lite-sft",
             "t2i-lite-pretrain",
@@ -47,6 +51,7 @@
         "class_name": "HiDream",
         "module_path": "simpletuner.helpers.models.hidream.model",
         "name": "HiDream",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "dev",
             "full",
@@ -57,6 +62,7 @@
         "class_name": "QwenImage",
         "module_path": "simpletuner.helpers.models.qwen_image.model",
         "name": "Qwen-Image",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "v1.0",
             "v2.0",
@@ -70,6 +76,7 @@
         "class_name": "ZImageOmni",
         "module_path": "simpletuner.helpers.models.z_image_omni.model",
         "name": "Z-Image Omni",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "base",
             "edit"
@@ -79,6 +86,7 @@
         "class_name": "ACEStep",
         "module_path": "simpletuner.helpers.models.ace_step.model",
         "name": "ACE-Step",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "base"
         ]
@@ -87,6 +95,7 @@
         "class_name": "OmniGen",
         "module_path": "simpletuner.helpers.models.omnigen.model",
         "name": "OmniGen",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "v1"
         ]
@@ -95,6 +104,7 @@
         "class_name": "HunyuanVideo",
         "module_path": "simpletuner.helpers.models.hunyuanvideo.model",
         "name": "HunyuanVideo",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "t2v-480p",
             "t2v-720p",
@@ -109,6 +119,7 @@
         "class_name": "StableDiffusion1",
         "module_path": "simpletuner.helpers.models.sd1x.model",
         "name": "Stable Diffusion 1.x",
+        "prediction_type": "epsilon",
         "flavour_choices": [
             "1.5",
             "1.4",
@@ -120,6 +131,7 @@
         "class_name": "Flux",
         "module_path": "simpletuner.helpers.models.flux.model",
         "name": "Flux.1",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "dev",
             "krea",
@@ -133,6 +145,7 @@
         "class_name": "DeepFloydIF",
         "module_path": "simpletuner.helpers.models.deepfloyd.model",
         "name": "DeepFloyd IF",
+        "prediction_type": "epsilon",
         "flavour_choices": [
             "i-medium-400m",
             "i-large-900m",
@@ -145,6 +158,7 @@
         "class_name": "StableCascadeStageC",
         "module_path": "simpletuner.helpers.models.stable_cascade.model",
         "name": "Stable Cascade (Stage C)",
+        "prediction_type": "epsilon",
         "flavour_choices": [
             "stage-c",
             "stage-c-lite"
@@ -154,6 +168,7 @@
         "class_name": "LongCatImage",
         "module_path": "simpletuner.helpers.models.longcat_image.model",
         "name": "LongCat-Image",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "final",
             "dev",
@@ -164,6 +179,7 @@
         "class_name": "LTXVideo",
         "module_path": "simpletuner.helpers.models.ltxvideo.model",
         "name": "LTXVideo",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "0.9.5",
             "0.9.0"
@@ -173,6 +189,7 @@
         "class_name": "LongCatVideo",
         "module_path": "simpletuner.helpers.models.longcat_video.model",
         "name": "LongCat-Video",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "final"
         ]
@@ -181,6 +198,7 @@
         "class_name": "PixartSigma",
         "module_path": "simpletuner.helpers.models.pixart.model",
         "name": "PixArt Sigma",
+        "prediction_type": "epsilon",
         "flavour_choices": [
             "900M-1024-v0.6",
             "900M-1024-v0.7-stage1",
@@ -194,6 +212,7 @@
         "class_name": "ZImage",
         "module_path": "simpletuner.helpers.models.z_image.model",
         "name": "Z-Image",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "turbo",
             "turbo-ostris-v2",
@@ -204,6 +223,7 @@
         "class_name": "SDXL",
         "module_path": "simpletuner.helpers.models.sdxl.model",
         "name": "Stable Diffusion XL",
+        "prediction_type": "epsilon",
         "flavour_choices": [
             "base-1.0",
             "refiner-1.0",
@@ -215,6 +235,7 @@
         "class_name": "Wan",
         "module_path": "simpletuner.helpers.models.wan.model",
         "name": "Wan",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "t2v-480p-1.3b-2.1",
             "t2v-480p-14b-2.1",
@@ -232,6 +253,7 @@
         "class_name": "Lumina2",
         "module_path": "simpletuner.helpers.models.lumina2.model",
         "name": "Lumina-T2I",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "2.0",
             "neta-lumina"
@@ -241,6 +263,7 @@
         "class_name": "Chroma",
         "module_path": "simpletuner.helpers.models.chroma.model",
         "name": "Chroma 1",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "base",
             "hd",
@@ -251,6 +274,7 @@
         "class_name": "WanS2V",
         "module_path": "simpletuner.helpers.models.wan_s2v.model",
         "name": "WanS2V",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "s2v-14b-2.2"
         ]
@@ -259,6 +283,7 @@
         "class_name": "Cosmos2Image",
         "module_path": "simpletuner.helpers.models.cosmos.model",
         "name": "Cosmos (T2I)",
+        "prediction_type": "sample",
         "flavour_choices": [
             "2b",
             "14b"
@@ -268,6 +293,7 @@
         "class_name": "Kolors",
         "module_path": "simpletuner.helpers.models.kolors.model",
         "name": "Kwai Kolors",
+        "prediction_type": "epsilon",
         "flavour_choices": [
             "1.0"
         ]
@@ -276,6 +302,7 @@
         "class_name": "Kandinsky5Video",
         "module_path": "simpletuner.helpers.models.kandinsky5_video.model",
         "name": "Kandinsky5-Video",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "t2v-lite-sft-5s",
             "t2v-lite-pretrain-5s",
@@ -293,6 +320,7 @@
         "class_name": "Auraflow",
         "module_path": "simpletuner.helpers.models.auraflow.model",
         "name": "Auraflow",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "pony",
             "v0.3",
@@ -304,6 +332,7 @@
         "class_name": "SanaVideo",
         "module_path": "simpletuner.helpers.models.sanavideo.model",
         "name": "SanaVideo",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "2b-480p"
         ]
@@ -312,6 +341,7 @@
         "class_name": "SD3",
         "module_path": "simpletuner.helpers.models.sd3.model",
         "name": "Stable Diffusion 3.x",
+        "prediction_type": "flow_matching",
         "flavour_choices": [
             "medium",
             "large"
