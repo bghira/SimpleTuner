@@ -26,6 +26,7 @@ class S3PublishingProvider(PublishingProvider):
         session_kwargs: dict[str, Any] = {
             "aws_access_key_id": config.get("access_key") or config.get("aws_access_key_id"),
             "aws_secret_access_key": config.get("secret_key") or config.get("aws_secret_access_key"),
+            "aws_session_token": config.get("session_token") or config.get("aws_session_token"),
             "region_name": config.get("region") or config.get("region_name"),
         }
         profile = config.get("profile")
