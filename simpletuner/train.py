@@ -6,6 +6,7 @@ from pathlib import Path
 
 # Import WebhookLogger setup FIRST before creating any loggers
 from simpletuner.helpers.logging import get_logger
+from simpletuner.helpers.training.error_reporter import write_error as write_error_file
 
 # Quiet down, you.
 ds_logger1 = logging.getLogger("DeepSpeed")
@@ -235,6 +236,9 @@ if __name__ == "__main__":
             )
     except Exception as e:
         import traceback
+
+        # Write structured error file for parent process to read
+        write_error_file(e, traceback.format_exc())
 
         # If webhook handler isn't configured yet (crash happened early), try to configure it now
         if StateTracker.get_webhook_handler() is None:
