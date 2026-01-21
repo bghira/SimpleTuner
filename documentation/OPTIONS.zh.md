@@ -157,6 +157,20 @@ simpletuner configure config/foo/config.json
 - **内容**：训练 ControlNet 时对其 Linear 层应用 RamTorch 替换。
 - **默认**：`False`
 
+### `--ramtorch_transformer_percent`
+
+- **内容**：使用 RamTorch 卸载的 transformer Linear 层的百分比（0-100）。
+- **默认**：`100`（所有符合条件的层）
+- **原因**：允许部分卸载以平衡显存节省与性能。较低的值保留更多层在 GPU 上以加快训练，同时仍减少内存使用。
+- **说明**：层按模块遍历顺序从头开始选择。可与 `--ramtorch_target_modules` 结合使用。
+
+### `--ramtorch_text_encoder_percent`
+
+- **内容**：使用 RamTorch 卸载的文本编码器 Linear 层的百分比（0-100）。
+- **默认**：`100`（所有符合条件的层）
+- **原因**：当启用 `--ramtorch_text_encoder` 时，允许部分卸载文本编码器。
+- **说明**：仅在启用 `--ramtorch_text_encoder` 时适用。
+
 ### `--pretrained_model_name_or_path`
 
 - **内容**：预训练模型路径或 <https://huggingface.co/models> 上的标识符。

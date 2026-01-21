@@ -157,6 +157,20 @@ simpletuner configure config/foo/config.json
 - **内容**: ControlNet を学習する際、ControlNet の Linear レイヤーに RamTorch 置換を適用。
 - **既定**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **内容**: RamTorch でオフロードする transformer Linear レイヤーの割合（0-100）。
+- **既定**: `100`（対象となるすべてのレイヤー）
+- **理由**: 部分的なオフロードにより、VRAM 節約とパフォーマンスのバランスを取ることができます。低い値はより多くのレイヤーを GPU に保持し、メモリ使用量を削減しながら高速な学習を可能にします。
+- **注記**: レイヤーはモジュール走査順の先頭から選択されます。`--ramtorch_target_modules` と組み合わせ可能。
+
+### `--ramtorch_text_encoder_percent`
+
+- **内容**: RamTorch でオフロードするテキストエンコーダー Linear レイヤーの割合（0-100）。
+- **既定**: `100`（対象となるすべてのレイヤー）
+- **理由**: `--ramtorch_text_encoder` 有効時にテキストエンコーダーの部分的なオフロードを可能にします。
+- **注記**: `--ramtorch_text_encoder` が有効な場合のみ適用。
+
 ### `--pretrained_model_name_or_path`
 
 - **内容**: 事前学習済みモデルのパス、または <https://huggingface.co/models> の識別子。
