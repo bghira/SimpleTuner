@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Optional
 
@@ -45,6 +47,65 @@ class S3PublishingProvider(PublishingProvider):
         if self.endpoint_url:
             return f"{self.endpoint_url.rstrip('/')}/{self.bucket}/{key_prefix.lstrip('/')}"
         return f"s3://{self.bucket}/{key_prefix.lstrip('/')}"
+
+    def resolve_key_prefix(self, remote_path: str) -> str:
+        if not remote_path:
+            raise ValueError("Resume checkpoint path is required.")
+        candidate = remote_path.strip()
+        if candidate.startswith(("s3://", "r2://")):
+            parsed = urlparse(candidate)
+            bucket = parsed.netloc
+            if bucket and bucket != self.bucket:
+                raise ValueError(f"Resume checkpoint bucket '{bucket}' does not match configured bucket '{self.bucket}'.")
+            return parsed.path.lstrip("/").rstrip("/")
+        if candidate.startswith(("http://", "https://")):
+            if self.public_base_url and candidate.startswith(self.public_base_url.rstrip("/")):
+                return candidate[len(self.public_base_url.rstrip("/")) :].lstrip("/").rstrip("/")
+            if self.endpoint_url and candidate.startswith(self.endpoint_url.rstrip("/")):
+                remainder = candidate[len(self.endpoint_url.rstrip("/")) :].lstrip("/")
+                if remainder.startswith(f"{self.bucket}/"):
+                    return remainder[len(f"{self.bucket}/") :].rstrip("/")
+            raise ValueError("Resume checkpoint URL does not match configured S3 endpoints.")
+        if candidate.startswith("/"):
+            return candidate.lstrip("/").rstrip("/")
+        return candidate.rstrip("/")
+
+    def download_checkpoint(
+        self,
+        *,
+        key_prefix: str,
+        local_dir: str | Path,
+        manifest_filename: str,
+    ) -> dict[str, Any]:
+        key_prefix = key_prefix.strip("/").rstrip("/")
+        manifest_key = f"{key_prefix}/{manifest_filename}"
+        local_dir = Path(local_dir)
+        local_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            response = self._client.get_object(Bucket=self.bucket, Key=manifest_key)
+        except self._client.exceptions.NoSuchKey as exc:
+            raise FileNotFoundError("Remote checkpoint manifest not found.") from exc
+
+        manifest_bytes = response["Body"].read()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        if not isinstance(manifest, dict) or "files" not in manifest:
+            raise ValueError("Remote checkpoint manifest is invalid or missing file list.")
+        files = manifest.get("files")
+        if not isinstance(files, list):
+            raise ValueError("Remote checkpoint manifest files must be a list.")
+
+        for entry in files:
+            if not isinstance(entry, str):
+                raise ValueError("Remote checkpoint manifest entries must be strings.")
+            if ".." in entry or entry.startswith(("/", "\\")):
+                raise ValueError("Remote checkpoint manifest includes unsafe paths.")
+            remote_key = f"{key_prefix}/{entry.lstrip('/')}"
+            target_path = local_dir / entry
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            self._client.download_file(self.bucket, remote_key, str(target_path))
+        manifest_path = local_dir / manifest_filename
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+        return manifest
 
     def publish(
         self,
