@@ -346,6 +346,50 @@ def register_training_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="ramtorch_transformer_percent",
+            arg_name="--ramtorch_transformer_percent",
+            ui_label="RamTorch Transformer Percent",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="memory_optimization",
+            default_value=100,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Percent must be >= 0"),
+                ValidationRule(ValidationRuleType.MAX, value=100, message="Percent must be <= 100"),
+            ],
+            help_text="Percentage (0-100) of transformer Linear layers to offload with RamTorch.",
+            tooltip="Offload only a portion of the transformer's Linear layers. 100 = all layers (default), 50 = half the layers.",
+            importance=ImportanceLevel.ADVANCED,
+            order=10,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_transformer_percent",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_text_encoder_percent",
+            arg_name="--ramtorch_text_encoder_percent",
+            ui_label="RamTorch Text Encoder Percent",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="memory_optimization",
+            default_value=100,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Percent must be >= 0"),
+                ValidationRule(ValidationRuleType.MAX, value=100, message="Percent must be <= 100"),
+            ],
+            help_text="Percentage (0-100) of text encoder Linear layers to offload with RamTorch.",
+            tooltip="Offload only a portion of the text encoder's Linear layers. 100 = all layers (default), 50 = half the layers.",
+            importance=ImportanceLevel.ADVANCED,
+            order=11,
+            dependencies=[FieldDependency(field="ramtorch_text_encoder", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_text_encoder_percent",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="group_offload_type",
             arg_name="--group_offload_type",
             ui_label="Group Offload Granularity",

@@ -156,6 +156,20 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Aplica substituicoes RamTorch a camadas Linear do ControlNet ao treinar um ControlNet.
 - **Padrao**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **O que**: Porcentagem (0-100) de camadas Linear do transformer a serem descarregadas com RamTorch.
+- **Padrao**: `100` (todas as camadas elegiveis)
+- **Por que**: Permite descarregamento parcial para equilibrar economia de VRAM com desempenho. Valores mais baixos mantem mais camadas na GPU para treinamento mais rapido, enquanto ainda reduz o uso de memoria.
+- **Notas**: As camadas sao selecionadas desde o inicio da ordem de travessia do modulo. Pode ser combinado com `--ramtorch_target_modules`.
+
+### `--ramtorch_text_encoder_percent`
+
+- **O que**: Porcentagem (0-100) de camadas Linear do codificador de texto a serem descarregadas com RamTorch.
+- **Padrao**: `100` (todas as camadas elegiveis)
+- **Por que**: Permite descarregamento parcial de codificadores de texto quando `--ramtorch_text_encoder` esta habilitado.
+- **Notas**: Aplica-se apenas quando `--ramtorch_text_encoder` esta habilitado.
+
 ### `--pretrained_model_name_or_path`
 
 - **O que**: Caminho para o modelo pre-treinado ou seu identificador em <https://huggingface.co/models>.

@@ -156,6 +156,20 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Applies RamTorch replacements to ControlNet Linear layers when training a ControlNet.
 - **Default**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **What**: Percentage (0-100) of transformer Linear layers to offload with RamTorch.
+- **Default**: `100` (all eligible layers)
+- **Why**: Allows partial offloading to balance VRAM savings against performance. Lower values keep more layers on GPU for faster training while still reducing memory usage.
+- **Notes**: Layers are selected from the beginning of module traversal order. Can be combined with `--ramtorch_target_modules`.
+
+### `--ramtorch_text_encoder_percent`
+
+- **What**: Percentage (0-100) of text encoder Linear layers to offload with RamTorch.
+- **Default**: `100` (all eligible layers)
+- **Why**: Allows partial offloading of text encoders when `--ramtorch_text_encoder` is enabled.
+- **Notes**: Only applies when `--ramtorch_text_encoder` is enabled.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from <https://huggingface.co/models>.

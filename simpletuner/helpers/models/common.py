@@ -2139,7 +2139,12 @@ class ModelFoundation(ABC):
 
                 if self._ramtorch_text_encoders_requested():
                     # Use full ramtorch for text encoders - all layer types stream from CPU
-                    self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}", full_ramtorch=True)
+                    self._apply_ramtorch_layers(
+                        text_encoder,
+                        f"text_encoder_{text_encoder_idx}",
+                        full_ramtorch=True,
+                        percent=self._ramtorch_text_encoder_percent(),
+                    )
 
                 if (
                     move_to_device
@@ -2562,7 +2567,7 @@ class ModelFoundation(ABC):
                     "All model parameters remain on the meta device after reload."
                 )
         if self._ramtorch_enabled() and self.model is not None:
-            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
+            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value, percent=self._ramtorch_transformer_percent())
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
@@ -3006,6 +3011,20 @@ class ModelFoundation(ABC):
             return override
         return self._ramtorch_targets()
 
+    def _ramtorch_transformer_percent(self) -> Optional[float]:
+        """Get the percentage of transformer Linear layers to offload (0-100)."""
+        percent = getattr(self.config, "ramtorch_transformer_percent", None)
+        if percent is None:
+            return None
+        return float(percent) if percent < 100 else None
+
+    def _ramtorch_text_encoder_percent(self) -> Optional[float]:
+        """Get the percentage of text encoder Linear layers to offload (0-100)."""
+        percent = getattr(self.config, "ramtorch_text_encoder_percent", None)
+        if percent is None:
+            return None
+        return float(percent) if percent < 100 else None
+
     def _apply_ramtorch_layers(
         self,
         module,
@@ -3013,6 +3032,7 @@ class ModelFoundation(ABC):
         *,
         target_patterns: Optional[list[str]] = None,
         full_ramtorch: bool = False,
+        percent: Optional[float] = None,
     ) -> int:
         """
         Apply RamTorch to a module's layers.
@@ -3023,6 +3043,7 @@ class ModelFoundation(ABC):
             target_patterns: Optional patterns to filter which Linear layers to convert.
             full_ramtorch: If True, convert all supported layer types (Linear, Embedding,
                           Conv, LayerNorm) to bouncing versions. If False, only Linear.
+            percent: Optional percentage (0-100) of eligible Linear layers to replace.
         """
         if module is None or not self._ramtorch_enabled():
             return 0
@@ -3037,6 +3058,7 @@ class ModelFoundation(ABC):
                     include_embedding=True,
                     include_conv=True,
                     include_layernorm=True,
+                    percent=percent,
                 )
                 total = counts.get("linear", 0) + counts.get("other", 0)
                 if total:
@@ -3064,6 +3086,7 @@ class ModelFoundation(ABC):
                     device=self._ramtorch_device(),
                     target_patterns=self._ramtorch_targets_for_component(target_patterns),
                     name_prefix=component_label,
+                    percent=percent,
                 )
                 if replaced:
                     logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)

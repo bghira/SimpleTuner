@@ -156,6 +156,20 @@ simpletuner configure config/foo/config.json
 - **What**: ControlNet training के दौरान ControlNet Linear layers पर RamTorch replacements लागू करता है।
 - **Default**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **What**: RamTorch के साथ offload करने के लिए transformer Linear layers का प्रतिशत (0-100)।
+- **Default**: `100` (सभी eligible layers)
+- **Why**: VRAM बचत और performance के बीच संतुलन के लिए partial offloading की अनुमति देता है। कम values GPU पर अधिक layers रखती हैं जिससे training तेज होती है जबकि memory usage भी कम होती है।
+- **Notes**: Layers module traversal order की शुरुआत से select की जाती हैं। `--ramtorch_target_modules` के साथ combine किया जा सकता है।
+
+### `--ramtorch_text_encoder_percent`
+
+- **What**: RamTorch के साथ offload करने के लिए text encoder Linear layers का प्रतिशत (0-100)।
+- **Default**: `100` (सभी eligible layers)
+- **Why**: जब `--ramtorch_text_encoder` enabled हो तब text encoders की partial offloading की अनुमति देता है।
+- **Notes**: केवल तब लागू होता है जब `--ramtorch_text_encoder` enabled हो।
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: pretrained model का path या <https://huggingface.co/models> से उसका identifier.

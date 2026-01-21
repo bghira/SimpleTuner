@@ -346,7 +346,7 @@ class ACEStep(AudioModelFoundation):
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
         if self._ramtorch_text_encoders_requested():
-            self._apply_ramtorch_layers(text_encoder, "text_encoder_1")
+            self._apply_ramtorch_layers(text_encoder, "text_encoder_1", percent=self._ramtorch_text_encoder_percent())
 
         self.text_encoders = [text_encoder]
         self.text_encoder_1 = text_encoder

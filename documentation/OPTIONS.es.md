@@ -156,6 +156,20 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Qué**: Aplica reemplazos RamTorch a las capas Linear de ControlNet cuando se entrena un ControlNet.
 - **Predeterminado**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **Qué**: Porcentaje (0-100) de capas Linear del transformer a descargar con RamTorch.
+- **Predeterminado**: `100` (todas las capas elegibles)
+- **Por qué**: Permite una descarga parcial para equilibrar el ahorro de VRAM con el rendimiento. Valores más bajos mantienen más capas en la GPU para un entrenamiento más rápido, mientras se reduce el uso de memoria.
+- **Notas**: Las capas se seleccionan desde el inicio del orden de recorrido del módulo. Se puede combinar con `--ramtorch_target_modules`.
+
+### `--ramtorch_text_encoder_percent`
+
+- **Qué**: Porcentaje (0-100) de capas Linear del codificador de texto a descargar con RamTorch.
+- **Predeterminado**: `100` (todas las capas elegibles)
+- **Por qué**: Permite la descarga parcial de codificadores de texto cuando `--ramtorch_text_encoder` está habilitado.
+- **Notas**: Solo aplica cuando `--ramtorch_text_encoder` está habilitado.
+
 ### `--pretrained_model_name_or_path`
 
 - **Qué**: Ruta al modelo preentrenado o su identificador en <https://huggingface.co/models>.

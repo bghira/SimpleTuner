@@ -414,7 +414,7 @@ class Flux2(ImageModelFoundation):
             )
             self._qwen_model.to(target_device, dtype=dtype)
         if self._ramtorch_text_encoders_requested():
-            self._apply_ramtorch_layers(self._qwen_model, "text_encoder_1")
+            self._apply_ramtorch_layers(self._qwen_model, "text_encoder_1", percent=self._ramtorch_text_encoder_percent())
         self._qwen_model.requires_grad_(False)
         self._qwen_model.eval()
 
@@ -465,7 +465,7 @@ class Flux2(ImageModelFoundation):
             )
             self._mistral_model.to(target_device, dtype=dtype)
         if self._ramtorch_text_encoders_requested():
-            self._apply_ramtorch_layers(self._mistral_model, "text_encoder_1")
+            self._apply_ramtorch_layers(self._mistral_model, "text_encoder_1", percent=self._ramtorch_text_encoder_percent())
         self._mistral_model.requires_grad_(False)
         self._mistral_model.eval()
 
