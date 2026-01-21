@@ -1520,6 +1520,9 @@ class ModelFoundation(ABC):
                 adapter_metadata.update(value)
 
         lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        if lora_format == PEFTLoRAFormat.COMFYUI and getattr(self, "NATIVE_COMFYUI_LORA_SUPPORT", False):
+            logger.info("Skipping ComfyUI LoRA conversion - model has native ComfyUI support")
+            lora_format = PEFTLoRAFormat.DIFFUSERS  # Treat as diffusers format (no-op)
         if lora_format == PEFTLoRAFormat.COMFYUI:
             import safetensors.torch
             from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
