@@ -305,6 +305,32 @@ class QwenImage(ImageModelFoundation):
 
         return self.config, self.noise_schedule
 
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled")
+
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
 
