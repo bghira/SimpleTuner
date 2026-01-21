@@ -1209,6 +1209,47 @@ logger.info("Subprocess exiting")
         }
         self._dispatch_callback_event(status_payload)
 
+    @staticmethod
+    def _collect_child_pids_from_proc(parent_pid: int) -> List[int]:
+        """Collect all descendant PIDs by traversing /proc (Linux fallback when psutil unavailable)."""
+        children: List[int] = []
+        to_visit = [parent_pid]
+        visited = set()
+
+        while to_visit:
+            current = to_visit.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+
+            # Find direct children by scanning /proc/*/stat for PPid
+            try:
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        stat_path = f"/proc/{entry}/stat"
+                        with open(stat_path, "r") as f:
+                            stat_content = f.read()
+                        # Format: pid (comm) state ppid ...
+                        # The comm field may contain spaces/parens, so find the last ')'
+                        last_paren = stat_content.rfind(")")
+                        if last_paren == -1:
+                            continue
+                        fields = stat_content[last_paren + 2 :].split()
+                        if len(fields) >= 2:
+                            ppid = int(fields[1])
+                            child_pid = int(entry)
+                            if ppid == current and child_pid not in visited:
+                                children.append(child_pid)
+                                to_visit.append(child_pid)
+                    except (FileNotFoundError, PermissionError, ValueError, IndexError):
+                        continue
+            except Exception:
+                break
+
+        return children
+
     def _force_kill_process_tree(self, timeout: int) -> None:
         """Terminate the subprocess tree with a short graceful window before force kill."""
 
@@ -1221,25 +1262,34 @@ logger.info("Subprocess exiting")
         grace_timeout = max(0.0, min(timeout, 5))
         remaining_timeout = max(0.0, timeout - grace_timeout)
 
-        def _kill_with_psutil(proc_pid: int) -> None:
-            if not psutil:
-                return
-
+        # Collect all child PIDs BEFORE sending any signals.
+        # This is critical because if the parent process exits first (common with
+        # accelerate launch), we won't be able to find its children later - they
+        # get reparented to init and continue running, holding GPU memory.
+        child_pids: List[int] = []
+        if psutil:
             try:
-                parent = psutil.Process(proc_pid)
-            except Exception:
-                return
+                parent = psutil.Process(pid)
+                for child in parent.children(recursive=True):
+                    try:
+                        child_pids.append(child.pid)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug(f"Failed to collect child PIDs for {self.job_id}: {exc}")
+        elif os.path.isdir("/proc"):
+            # Fallback: use /proc on Linux when psutil is unavailable
+            child_pids = self._collect_child_pids_from_proc(pid)
 
-            for child in parent.children(recursive=True):
+        def _kill_collected_pids(sig: int) -> None:
+            """Kill all collected child PIDs with the given signal."""
+            for child_pid in child_pids:
                 try:
-                    child.kill()
-                except Exception:
-                    pass
-
-            try:
-                parent.kill()
-            except Exception:
-                pass
+                    os.kill(child_pid, sig)
+                except ProcessLookupError:
+                    pass  # Already dead
+                except Exception as exc:
+                    logger.debug(f"Failed to send signal {sig} to {child_pid}: {exc}")
 
         try:
             # First try to terminate so cleanup handlers can run.
@@ -1273,8 +1323,10 @@ logger.info("Subprocess exiting")
                     except Exception as exc:
                         logger.debug(f"kill() failed for {self.job_id}: {exc}")
 
-            # Always attempt to clean up any children that may have survived.
-            _kill_with_psutil(pid)
+            # Kill any children that may have survived using the PIDs we collected earlier.
+            # This handles the case where the parent exits but children (e.g., accelerate
+            # workers) continue running because they created their own process groups.
+            _kill_collected_pids(signal.SIGKILL)
 
             try:
                 self.process.wait(timeout=remaining_timeout or timeout)
