@@ -305,7 +305,6 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         message = payload.get("message", "")
         self.assertIn("SIGKILL", message)
 
-    @unittest.skip("Requires process fixes")
     def test_force_kill_unresponsive_process(self):
         """Test force killing a process that ignores SIGTERM."""
         job_id = "test_force_kill"
@@ -313,13 +312,20 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         config = {}
 
         process = submit_job(job_id, hanging_task, config)
-        time.sleep(0.2)  # Let it start
+        time.sleep(0.3)  # Let it start and install signal handler
 
         success = terminate_process(job_id)
         self.assertTrue(success)
 
-        time.sleep(0.5)
-        status = get_process_status(job_id)
+        # terminate_process sends SIGTERM, waits up to 5s grace, then SIGKILL
+        # The process ignores SIGTERM so it should be killed after grace period
+        deadline = time.time() + 10
+        status = None
+        while time.time() < deadline:
+            status = get_process_status(job_id)
+            if status == "terminated":
+                break
+            time.sleep(0.1)
         self.assertEqual(status, "terminated")
 
     @unittest.skip("Requires subprocess module")
@@ -414,7 +420,6 @@ class TestProcessCommunication(ProcessKeeperTestCase):
 
 class TestProcessStateTracking(ProcessKeeperTestCase):
 
-    @unittest.skip("Requires process fixes")
     def test_process_crash_detection_and_state_update(self):
         """Test that crashed processes are detected and marked."""
         job_id = "test_crash_detection"
@@ -422,9 +427,15 @@ class TestProcessStateTracking(ProcessKeeperTestCase):
         config = {}
 
         process = submit_job(job_id, crashing_task, config)
-        time.sleep(0.3)
+        # Wait for crash to be detected - crashing_task sleeps 0.1s then exits
+        deadline = time.time() + 5
+        status = None
+        while time.time() < deadline:
+            status = get_process_status(job_id)
+            if status not in {"pending", "running"}:
+                break
+            time.sleep(0.1)
 
-        status = get_process_status(job_id)
         self.assertNotEqual(status, "running")
         self.assertFalse(process.is_alive())
 
@@ -539,18 +550,19 @@ class TestProcessCleanup(ProcessKeeperTestCase):
 
 class TestProcessTermination(ProcessKeeperTestCase):
 
-    @unittest.skip("Requires process fixes")
     def test_graceful_termination_with_timeout(self):
         """Test graceful termination respects timeout."""
         job_id = "test_graceful_timeout"
+        self.test_jobs.append(job_id)
         process = submit_job(job_id, slow_shutdown, {})
-        time.sleep(0.2)
+        time.sleep(0.3)  # Let it start and install signal handler
 
         start_time = time.time()
-        success = process.terminate(timeout=1)
+        success = process.terminate(timeout=2)
         duration = time.time() - start_time
 
         self.assertTrue(success)
+        # Should complete within ~2s grace + some overhead, not 10s from slow handler
         self.assertLess(duration, 5)
 
     def test_terminate_already_dead_process(self):
