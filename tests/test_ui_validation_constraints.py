@@ -98,3 +98,34 @@ class ValidationServiceConstraintTests(unittest.TestCase):
             any(msg.field == "deepspeed_config" and msg.severity == ValidationSeverity.ERROR for msg in result.messages),
             [msg.to_dict() for msg in result.messages],
         )
+
+    def test_validation_service_requires_s3_config_for_remote_resume(self) -> None:
+        service = ValidationService()
+        result = service.validate_configuration(
+            {"resume_from_checkpoint": "s3://bucket/jobs/run/checkpoint-100"},
+            validate_paths=True,
+            estimate_vram=False,
+        )
+
+        self.assertFalse(result.is_valid)
+        self.assertTrue(
+            any(
+                msg.field == "resume_from_checkpoint" and msg.severity == ValidationSeverity.ERROR
+                for msg in result.messages
+            ),
+            [msg.to_dict() for msg in result.messages],
+        )
+
+    def test_validation_service_allows_remote_resume_with_s3_config(self) -> None:
+        service = ValidationService()
+        result = service.validate_configuration(
+            {
+                "resume_from_checkpoint": "s3://bucket/jobs/run/checkpoint-100",
+                "publishing_config": [{"provider": "s3", "bucket": "bucket"}],
+                "num_train_epochs": 1,
+            },
+            validate_paths=True,
+            estimate_vram=False,
+        )
+
+        self.assertTrue(result.is_valid)

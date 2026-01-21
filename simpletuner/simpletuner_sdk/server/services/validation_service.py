@@ -6,6 +6,7 @@ validation rules, eliminating the need for hardcoded validation in routes.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -464,6 +465,58 @@ class ValidationService:
         """Return a canonical representation for comparing field identifiers."""
         return field_name.lstrip("-")
 
+    def _parse_publishing_config(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        raw_value = self._get_config_value(config, "publishing_config")
+        if raw_value in (None, "", "None"):
+            return []
+        if isinstance(raw_value, dict):
+            return [raw_value]
+        if isinstance(raw_value, list):
+            return [entry for entry in raw_value if isinstance(entry, dict)]
+        if isinstance(raw_value, str):
+            candidate = raw_value.strip()
+            if candidate.startswith(("{", "[")):
+                try:
+                    parsed = json.loads(candidate)
+                except json.JSONDecodeError:
+                    return []
+                if isinstance(parsed, dict):
+                    return [parsed]
+                if isinstance(parsed, list):
+                    return [entry for entry in parsed if isinstance(entry, dict)]
+                return []
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, "r") as handle:
+                        parsed = json.load(handle)
+                except Exception:
+                    return []
+                if isinstance(parsed, dict):
+                    return [parsed]
+                if isinstance(parsed, list):
+                    return [entry for entry in parsed if isinstance(entry, dict)]
+        return []
+
+    def _publishing_config_has_s3(self, config: Dict[str, Any]) -> bool:
+        configs = self._parse_publishing_config(config)
+        for entry in configs:
+            provider_name = str(entry.get("provider") or entry.get("type") or "").strip().lower()
+            if provider_name in {"s3", "s3-compatible", "backblaze_b2", "b2"}:
+                return True
+        return False
+
+    def _resume_path_is_remote(self, resume_value: Any) -> bool:
+        if not isinstance(resume_value, str):
+            return False
+        candidate = resume_value.strip()
+        if not candidate or candidate == "latest":
+            return False
+        if candidate.startswith(("s3://", "r2://", "http://", "https://")):
+            return True
+        if candidate.startswith("/"):
+            return True
+        return "/" in candidate
+
     def _validate_paths(self, config: Dict[str, Any], result: ValidationResult):
         """Validate file and directory paths in configuration."""
         path_fields = [
@@ -479,6 +532,13 @@ class ValidationService:
                 continue
 
             if isinstance(path_value, str) and path_value.startswith("http"):
+                continue
+            if field_name == "resume_from_checkpoint" and self._resume_path_is_remote(path_value):
+                if not self._publishing_config_has_s3(config):
+                    result.add_error(
+                        "resume_from_checkpoint",
+                        "Remote resume_from_checkpoint requires an S3 publishing_config entry.",
+                    )
                 continue
 
             path = Path(str(path_value))

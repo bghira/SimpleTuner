@@ -140,6 +140,9 @@ class SaveHookManager:
             architecture = f"{architecture}/controlnet" if architecture else "controlnet"
         return architecture
 
+    def get_modelspec_architecture(self) -> str | None:
+        return self._derive_modelspec_architecture()
+
     def _derive_modelspec_title(self, checkpoint_dir: str | None = None) -> str | None:
         title = getattr(self.args, "tracker_run_name", None)
         if isinstance(title, str) and title.strip():

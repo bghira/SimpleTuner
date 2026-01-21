@@ -1,4 +1,7 @@
+import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -81,6 +84,39 @@ class TestS3Provider(unittest.TestCase):
                 result = provider.publish("f.txt")
                 # Should use public_base_url instead of s3:// or endpoint_url
                 self.assertEqual(result.uri, "https://cdn.example.com/f.txt")
+
+    def test_resolve_key_prefix_s3_uri(self):
+        mock_boto3 = MagicMock()
+        with patch.dict(sys.modules, {"boto3": mock_boto3}):
+            provider = S3PublishingProvider(self.config)
+            prefix = provider.resolve_key_prefix("s3://test-bucket/jobs/run/checkpoint-100")
+            self.assertEqual(prefix, "jobs/run/checkpoint-100")
+
+    def test_download_checkpoint_uses_manifest(self):
+        manifest = {"files": ["training_state.json", "model.safetensors"], "metadata": {"model_family": "sdxl"}}
+        mock_boto3 = MagicMock()
+        mock_session = mock_boto3.session.Session.return_value
+        mock_client = mock_session.client.return_value
+        mock_client.get_object.return_value = {"Body": io.BytesIO(json.dumps(manifest).encode("utf-8"))}
+
+        def fake_download_file(_bucket, _key, filename):
+            Path(filename).parent.mkdir(parents=True, exist_ok=True)
+            Path(filename).write_text("data")
+
+        mock_client.download_file.side_effect = fake_download_file
+
+        with patch.dict(sys.modules, {"boto3": mock_boto3}):
+            provider = S3PublishingProvider(self.config)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                result = provider.download_checkpoint(
+                    key_prefix="jobs/run/checkpoint-100",
+                    local_dir=tmpdir,
+                    manifest_filename="checkpoint_manifest.json",
+                )
+                self.assertEqual(result["metadata"]["model_family"], "sdxl")
+                self.assertTrue((Path(tmpdir) / "training_state.json").exists())
+                self.assertTrue((Path(tmpdir) / "model.safetensors").exists())
+                self.assertTrue((Path(tmpdir) / "checkpoint_manifest.json").exists())
 
 
 class TestAzureProvider(unittest.TestCase):

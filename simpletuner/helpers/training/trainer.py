@@ -48,6 +48,7 @@ from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, Distill
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
+from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -78,7 +79,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
-from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.helpers.utils.checkpoint_manager import CHECKPOINT_MANIFEST_FILENAME, CheckpointManager
 from simpletuner.helpers.webhooks.events import (
     attach_timestamp,
     checkpoint_event,
@@ -3911,6 +3912,139 @@ class Trainer:
             )
         )
 
+    def _publishing_config_has_s3(self) -> bool:
+        publishing_config = getattr(self.config, "publishing_config", None)
+        if publishing_config in (None, "", [], {}, "None"):
+            return False
+        if isinstance(publishing_config, dict):
+            configs = [publishing_config]
+        elif isinstance(publishing_config, (list, tuple)):
+            configs = list(publishing_config)
+        else:
+            return False
+        for entry in configs:
+            if not isinstance(entry, dict):
+                continue
+            provider_name = str(entry.get("provider") or entry.get("type") or "").strip().lower()
+            if provider_name in {"s3", "s3-compatible", "backblaze_b2", "b2"}:
+                return True
+        return False
+
+    def _resume_path_is_remote(self, resume_path: str) -> bool:
+        if not resume_path or resume_path in ("", "None", "latest"):
+            return False
+        if not self._publishing_config_has_s3():
+            return False
+        candidate = resume_path.strip()
+        if candidate.startswith(("s3://", "r2://", "http://", "https://")):
+            return True
+        if candidate.startswith("/"):
+            return not os.path.exists(candidate)
+        if "/" in candidate:
+            output_dir = getattr(self.config, "output_dir", None)
+            if output_dir and os.path.exists(os.path.join(output_dir, candidate)):
+                return False
+            return True
+        return False
+
+    def _select_s3_provider_for_resume(self, resume_path: str) -> tuple[S3PublishingProvider, str]:
+        publishing_config = getattr(self.config, "publishing_config", None)
+        if publishing_config in (None, "", [], {}, "None"):
+            raise ValueError("resume_from_checkpoint requires publishing_config for S3 access.")
+
+        manager = self.publishing_manager or PublishingManager(publishing_config)
+        providers = [provider for provider in manager.providers if isinstance(provider, S3PublishingProvider)]
+        if not providers:
+            raise ValueError("resume_from_checkpoint requires an S3 publishing provider.")
+
+        candidate = resume_path.strip()
+        is_relative = not candidate.startswith(("s3://", "r2://", "http://", "https://"))
+        if is_relative and len(providers) > 1:
+            raise ValueError("resume_from_checkpoint is relative but multiple S3 providers exist; use a full URI.")
+
+        for provider in providers:
+            try:
+                key_prefix = provider.resolve_key_prefix(candidate)
+            except ValueError:
+                continue
+            return provider, key_prefix
+
+        raise ValueError("resume_from_checkpoint does not match any configured S3 provider.")
+
+    def _validate_resume_manifest(self, manifest: dict[str, Any] | None) -> None:
+        if not manifest or not isinstance(manifest, dict):
+            return
+        metadata = manifest.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        expected_family = str(getattr(self.config, "model_family", "") or "").strip().lower()
+        expected_type = str(getattr(self.config, "model_type", "") or "").strip().lower()
+        expected_flavour = str(
+            getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", "")) or ""
+        ).strip().lower()
+        expected_arch = None
+        if getattr(self, "model_hooks", None) is not None:
+            expected_arch = self.model_hooks.get_modelspec_architecture()
+
+        manifest_family = str(metadata.get("model_family", "") or "").strip().lower()
+        manifest_type = str(metadata.get("model_type", "") or "").strip().lower()
+        manifest_flavour = str(metadata.get("model_flavour", metadata.get("model_flavor", "")) or "").strip().lower()
+        manifest_arch = str(metadata.get("modelspec_architecture", metadata.get("modelspec.architecture", "")) or "").strip()
+
+        if expected_family and manifest_family and expected_family != manifest_family:
+            raise ValueError(
+                f"Checkpoint model_family mismatch (expected {expected_family}, got {manifest_family})."
+            )
+        if expected_type and manifest_type and expected_type != manifest_type:
+            raise ValueError(f"Checkpoint model_type mismatch (expected {expected_type}, got {manifest_type}).")
+        if expected_flavour and manifest_flavour and expected_flavour != manifest_flavour:
+            raise ValueError(
+                f"Checkpoint model_flavour mismatch (expected {expected_flavour}, got {manifest_flavour})."
+            )
+        if expected_arch and manifest_arch and expected_arch != manifest_arch:
+            raise ValueError(
+                f"Checkpoint architecture mismatch (expected {expected_arch}, got {manifest_arch})."
+            )
+        if expected_arch and not manifest_arch:
+            logger.warning("Checkpoint manifest missing architecture metadata; skipping architecture validation.")
+
+    def _download_remote_checkpoint(self, resume_path: str) -> str:
+        if not getattr(self.config, "output_dir", None):
+            raise ValueError("output_dir is required to download remote checkpoints.")
+
+        provider, key_prefix = self._select_s3_provider_for_resume(resume_path)
+        checkpoint_name = os.path.basename(key_prefix.rstrip("/"))
+        if not checkpoint_name:
+            raise ValueError("resume_from_checkpoint must include a checkpoint directory name.")
+
+        local_dir = os.path.join(self.config.output_dir, checkpoint_name)
+        manifest = None
+        if os.path.exists(os.path.join(local_dir, CHECKPOINT_MANIFEST_FILENAME)) and self.checkpoint_manager:
+            manifest = self.checkpoint_manager.load_manifest(local_dir)
+        if manifest is None:
+            manifest = provider.download_checkpoint(
+                key_prefix=key_prefix,
+                local_dir=local_dir,
+                manifest_filename=CHECKPOINT_MANIFEST_FILENAME,
+            )
+        manager = self.checkpoint_manager or CheckpointManager(self.config.output_dir)
+        is_valid, error_message = manager.validate_checkpoint(checkpoint_name)
+        if not is_valid:
+            raise ValueError(f"Downloaded checkpoint is invalid: {error_message}")
+        self._validate_resume_manifest(manifest)
+        return local_dir
+
+    def _build_checkpoint_manifest_metadata(self) -> dict[str, Any]:
+        metadata = {
+            "model_family": getattr(self.config, "model_family", None),
+            "model_type": getattr(self.config, "model_type", None),
+            "model_flavour": getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", None)),
+        }
+        if getattr(self, "model_hooks", None) is not None:
+            metadata["modelspec_architecture"] = self.model_hooks.get_modelspec_architecture()
+        return {key: value for key, value in metadata.items() if value not in (None, "")}
+
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
@@ -3920,8 +4054,13 @@ class Trainer:
         if not self.config.resume_from_checkpoint:
             logger.info(f"Not resuming from checkpoint.")
             return lr_scheduler
-        if self.config.resume_from_checkpoint != "latest":
-            path = os.path.basename(self.config.resume_from_checkpoint)
+        resume_value = str(self.config.resume_from_checkpoint)
+        checkpoint_dir = None
+        if resume_value != "latest" and self._resume_path_is_remote(resume_value):
+            checkpoint_dir = self._download_remote_checkpoint(resume_value)
+            path = os.path.basename(checkpoint_dir.rstrip("/"))
+        elif resume_value != "latest":
+            path = os.path.basename(resume_value.rstrip("/"))
         else:
             # Get the most recent checkpoint
             path = self.checkpoint_state_latest(self.config.output_dir)
@@ -3941,7 +4080,8 @@ class Trainer:
             self.config.resume_from_checkpoint = None
             return lr_scheduler
 
-        checkpoint_dir = os.path.join(self.config.output_dir, path)
+        if checkpoint_dir is None:
+            checkpoint_dir = os.path.join(self.config.output_dir, path)
         logger.info(f"Resuming from checkpoint {checkpoint_dir}")
         self.accelerator.load_state(checkpoint_dir)
 
@@ -5079,6 +5219,11 @@ class Trainer:
                         self.model_hooks.training_state_path,
                     ),
                 )
+        if self.checkpoint_manager and getattr(self.accelerator, "is_main_process", True):
+            self.checkpoint_manager.write_manifest(
+                save_path_tmp,
+                metadata=self._build_checkpoint_manifest_metadata(),
+            )
         if save_path != save_path_tmp:
             os.rename(save_path_tmp, save_path)
         event = checkpoint_event(

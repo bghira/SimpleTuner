@@ -1187,8 +1187,11 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 ### `--resume_from_checkpoint`
 
-- **What**: training resume करना है या नहीं और कहाँ से।
-- **Why**: saved state से training जारी रखने देता है, चाहे manual रूप से या latest उपलब्ध checkpoint से। एक checkpoint में `unet` और वैकल्पिक रूप से `unet_ema` subfolder होता है। `unet` को किसी भी Diffusers layout SDXL मॉडल में रखा जा सकता है, जिससे इसे सामान्य मॉडल की तरह उपयोग किया जा सकता है।
+- **What**: training resume करना है या नहीं और कहाँ से। `latest`, local checkpoint नाम/पथ, या S3/R2 URI स्वीकार करता है।
+- **Why**: saved state से training जारी रखने देता है, manual रूप से या latest उपलब्ध checkpoint से।
+- **Remote resume**: पूरा URI (`s3://bucket/jobs/.../checkpoint-100`) या bucket-relative key (`jobs/.../checkpoint-100`) दें। `latest` केवल local `output_dir` पर काम करता है。
+- **Requirements**: remote resume के लिए publishing_config में S3 entry (bucket + credentials) चाहिए जो checkpoint read कर सके।
+- **Notes**: remote checkpoints में `checkpoint_manifest.json` होना चाहिए (हाल की SimpleTuner runs से generated)। एक checkpoint में `unet` और वैकल्पिक रूप से `unet_ema` subfolder होता है। `unet` को किसी भी Diffusers layout SDXL मॉडल में रखा जा सकता है, जिससे इसे सामान्य मॉडल की तरह उपयोग किया जा सकता है।
 
 > ℹ️ PixArt, SD3, या Hunyuan जैसे transformer मॉडल `transformer` और `transformer_ema` subfolder नाम उपयोग करते हैं।
 

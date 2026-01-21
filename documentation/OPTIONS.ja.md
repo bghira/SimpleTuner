@@ -1191,8 +1191,11 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 
 ### `--resume_from_checkpoint`
 
-- **内容**: 学習再開の有無と再開元を指定します。
-- **理由**: 手動指定または最新のチェックポイントから再開できます。チェックポイントは `unet` と任意の `unet_ema` サブフォルダで構成されます。`unet` は Diffusers レイアウトの SDXL モデルにそのまま配置でき、通常のモデルとして利用可能です。
+- **内容**: 学習再開の有無と再開元を指定します。`latest`、ローカルのチェックポイント名/パス、または S3/R2 の URI を受け付けます。
+- **理由**: 保存済みの状態から再開できます。手動指定、または最新のチェックポイントを利用します。
+- **リモート再開**: 完全な URI (`s3://bucket/jobs/.../checkpoint-100`) またはバケット相対キー (`jobs/.../checkpoint-100`) を指定します。`latest` はローカルの `output_dir` のみで動作します。
+- **要件**: リモート再開にはチェックポイントを読み取れる S3 の publishing_config（bucket + credentials）が必要です。
+- **注記**: リモートチェックポイントには `checkpoint_manifest.json` が含まれている必要があります（最近の SimpleTuner 実行で生成）。チェックポイントは `unet` と任意の `unet_ema` サブフォルダで構成されます。`unet` は Diffusers レイアウトの SDXL モデルにそのまま配置でき、通常のモデルとして利用可能です。
 
 > ℹ️ PixArt、SD3、Hunyuan などの Transformer モデルは `transformer` と `transformer_ema` のサブフォルダ名を使用します。
 
