@@ -905,10 +905,12 @@ class LTXVideo2(VideoModelFoundation):
             if width > 64:
                 width = width // video_spatial_ratio
         else:
-            # Default to a reasonable resolution for audio-only
-            default_res = getattr(self.config, "resolution", 512) or 512
-            height = default_res // video_spatial_ratio
-            width = default_res // video_spatial_ratio
+            # For audio-only training, use minimal resolution since video latents
+            # are just zeros with masked loss - no need to allocate large tensors
+            # Default to 64x64 (2x2 latent) which is the minimum practical size
+            default_res = 64
+            height = default_res // video_spatial_ratio  # 64 / 32 = 2
+            width = default_res // video_spatial_ratio  # 64 / 32 = 2
 
         batch_size = audio_latents.shape[0]
         shape = (batch_size, self.LATENT_CHANNEL_COUNT, latent_frames, height, width)
@@ -973,6 +975,26 @@ class LTXVideo2(VideoModelFoundation):
             audio_latents = torch.cat([audio_latents, padding], dim=2)
 
         return audio_latents
+
+    def prepare_batch(self, batch: dict, state: dict) -> dict:
+        """
+        Override to handle audio-only mode before base class processing.
+
+        For audio-only training, latent_batch is None because audio latents are in
+        audio_latent_batch. We need to build empty video latents before the base class
+        attempts to process them.
+        """
+        is_audio_only = batch.get("is_audio_only", False)
+        audio_latents = batch.get("audio_latent_batch")
+
+        if is_audio_only and batch.get("latent_batch") is None and audio_latents is not None:
+            # Build empty video latents from audio latent dimensions
+            target_device = self.accelerator.device
+            target_dtype = self.config.weight_dtype
+            video_latents = self._build_empty_video_latents(batch, target_device, target_dtype)
+            batch["latent_batch"] = video_latents
+
+        return super().prepare_batch(batch=batch, state=state)
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch_conditions(batch=batch, state=state)

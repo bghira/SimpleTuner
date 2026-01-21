@@ -42,6 +42,36 @@ def _coerce_to_stream(source: AudioSource) -> Union[str, IO[bytes]]:
     return source
 
 
+def _load_with_ffmpeg(filepath: str) -> Tuple[torch.Tensor, int]:
+    """Load audio from container formats (MPEG, MP4, MKV, etc.) using ffmpeg."""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+        tmp_path = tmp_file.name
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            filepath,
+            "-vn",  # No video
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "2",  # Stereo (LTX-2 audio VAE expects 2 channels)
+            tmp_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {result.stderr}")
+        # Use wave module directly to avoid torchaudio/torchcodec issues
+        waveform, sample_rate = _load_with_wave(tmp_path)
+        return waveform, sample_rate
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 def _load_with_wave(source: AudioSource) -> Tuple[torch.Tensor, int]:
     """Fallback WAV reader used when torchaudio cannot decode a source."""
     if isinstance(source, (bytes, bytearray)):
@@ -96,10 +126,20 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
         _, ext = os.path.splitext(stream)
         if ext:
             format_hint = ext.lstrip(".")
+    # Container formats that may need ffmpeg fallback
+    container_formats = {"mp4", "mpeg", "mpg", "mkv", "webm", "avi", "mov", "m4a", "m4v"}
+
     try:
         waveform, sample_rate = torchaudio.load(stream, format=format_hint)
-    except (RuntimeError, ImportError, OSError):
-        if hasattr(stream, "read"):
+    except (RuntimeError, ImportError, OSError) as torchaudio_error:
+        # For file paths, try ffmpeg for container formats
+        if isinstance(stream, str) and format_hint and format_hint.lower() in container_formats:
+            try:
+                waveform, sample_rate = _load_with_ffmpeg(stream)
+            except Exception as ffmpeg_error:
+                logger.warning(f"ffmpeg fallback failed for {stream}: {ffmpeg_error}")
+                raise torchaudio_error from ffmpeg_error
+        elif hasattr(stream, "read"):
             try:
                 stream.seek(0)
             except (AttributeError, OSError):

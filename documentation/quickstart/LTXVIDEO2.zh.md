@@ -322,9 +322,11 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 LTX-2 支持**纯音频训练**，即仅训练音频生成能力而无需视频文件。当您拥有音频数据集但没有对应视频内容时，此功能非常有用。
 
 在纯音频模式下：
-- 视频 latents 自动置零
+- 视频 latents 自动置零（最小 64x64 分辨率以节省内存）
 - 视频损失被屏蔽（不计算）
-- 仅训练音频生成
+- 仅训练音频生成层
+
+当您的数据集配置仅包含音频数据集（无视频或图像数据集）时，纯音频模式会**自动检测**。您也可以通过 `audio.audio_only: true` 显式启用。
 
 #### 纯音频数据集配置
 
@@ -337,12 +339,10 @@ LTX-2 支持**纯音频训练**，即仅训练音频生成能力而无需视频�
     "instance_data_dir": "datasets/audio",
     "caption_strategy": "textfile",
     "audio": {
-      "audio_only": true,
       "sample_rate": 16000,
-      "channels": 1,
-      "min_duration_seconds": 1,
-      "max_duration_seconds": 30,
-      "duration_interval": 3.0
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
     },
     "repeats": 10
   },
@@ -357,10 +357,14 @@ LTX-2 支持**纯音频训练**，即仅训练音频生成能力而无需视频�
 ]
 ```
 
-关键设置是 `audio.audio_only: true`，它会让 SimpleTuner：
-1. 使用音频 VAE 缓存音频 latents
-2. 生成与音频时长匹配的零视频 latents
-3. 在训练期间屏蔽视频损失
+关键音频设置：
+- `channels`：LTX-2 音频 VAE **必须为 2**（立体声）
+- `duration_interval`：将音频分桶到指定间隔（例如 3.0 秒）。**对内存管理很重要** - 长音频文件会创建许多视频帧，即使它们是零
+- `truncation_mode`：如何处理超过分桶时长的音频（`beginning`、`end` 或 `random`）
+
+#### 支持的音频格式
+
+SimpleTuner 支持常见音频格式（`.wav`、`.flac`、`.mp3`、`.ogg`、`.opus` 等）以及可能包含纯音频内容的容器格式（`.mp4`、`.mpeg`、`.mkv`、`.webm`）。容器格式会使用 ffmpeg 自动提取。
 
 #### 音频训练的 LoRA 目标
 
@@ -374,7 +378,7 @@ LTX-2 支持**纯音频训练**，即仅训练音频生成能力而无需视频�
 
 如果您想手动覆盖 LoRA 目标，请使用 `--peft_lora_target_modules` 并提供模块名称的 JSON 列表。
 
-将音频文件（`.wav`、`.flac`、`.mp3` 等）放入 `instance_data_dir`，并提供相应的 `.txt` 字幕文件。
+将音频文件放入 `instance_data_dir`，并提供相应的 `.txt` 字幕文件。
 
 ### 验证流程（T2V vs I2V）
 

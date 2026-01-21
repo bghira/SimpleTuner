@@ -322,9 +322,11 @@ Configuração testada em campo que prioriza o menor uso de VRAM no LTX Video 2.
 O LTX-2 suporta **treinamento apenas com áudio**, onde você treina somente a capacidade de geração de áudio sem arquivos de vídeo. Isso é útil quando você tem datasets de áudio, mas nenhum conteúdo de vídeo correspondente.
 
 No modo apenas áudio:
-- Os latentes de vídeo são automaticamente zerados
+- Os latentes de vídeo são automaticamente zerados (resolução mínima de 64x64 para economizar memória)
 - A perda de vídeo é mascarada (não computada)
-- Apenas a geração de áudio é treinada
+- Apenas as camadas de geração de áudio são treinadas
+
+O modo apenas áudio é **detectado automaticamente** quando sua configuração de dataset contém apenas datasets de áudio (sem datasets de vídeo ou imagem). Você também pode habilitá-lo explicitamente com `audio.audio_only: true`.
 
 #### Configuração do dataset apenas áudio
 
@@ -337,12 +339,10 @@ No modo apenas áudio:
     "instance_data_dir": "datasets/audio",
     "caption_strategy": "textfile",
     "audio": {
-      "audio_only": true,
       "sample_rate": 16000,
-      "channels": 1,
-      "min_duration_seconds": 1,
-      "max_duration_seconds": 30,
-      "duration_interval": 3.0
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
     },
     "repeats": 10
   },
@@ -357,10 +357,14 @@ No modo apenas áudio:
 ]
 ```
 
-A configuração chave é `audio.audio_only: true`, que instrui o SimpleTuner a:
-1. Usar o Audio VAE para cachear os latentes de áudio
-2. Gerar latentes de vídeo zerados correspondendo à duração do áudio
-3. Mascarar a perda de vídeo durante o treinamento
+Configurações chave de áudio:
+- `channels`: **Deve ser 2** (estéreo) para o Audio VAE do LTX-2
+- `duration_interval`: Agrupa o áudio em intervalos (ex. 3.0 segundos). **Importante para gerenciamento de memória** - arquivos de áudio longos criam muitos frames de vídeo mesmo sendo zeros
+- `truncation_mode`: Como lidar com áudio mais longo que a duração do bucket (`beginning`, `end`, ou `random`)
+
+#### Formatos de áudio suportados
+
+O SimpleTuner suporta formatos de áudio comuns (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, etc.) assim como formatos contêiner que podem conter apenas áudio (`.mp4`, `.mpeg`, `.mkv`, `.webm`). Formatos contêiner são extraídos automaticamente usando ffmpeg.
 
 #### Alvos LoRA para treinamento de áudio
 
@@ -374,7 +378,7 @@ Isso acontece automaticamente tanto para treinamento apenas com áudio quanto pa
 
 Se você quiser substituir os alvos LoRA manualmente, use `--peft_lora_target_modules` com uma lista JSON de nomes de módulos.
 
-Coloque seus arquivos de áudio (`.wav`, `.flac`, `.mp3`, etc.) no `instance_data_dir` com os arquivos `.txt` de legenda correspondentes.
+Coloque seus arquivos de áudio no `instance_data_dir` com os arquivos `.txt` de legenda correspondentes.
 
 ### Fluxos de validação (T2V vs I2V)
 

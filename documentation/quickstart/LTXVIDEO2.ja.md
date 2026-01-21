@@ -323,9 +323,11 @@ LTX Video 2 で VRAM 使用量を最小化するための実測済み設定で�
 LTX-2 は**音声のみのトレーニング**をサポートしており、動画ファイルなしで音声生成機能のみをトレーニングできます。動画コンテンツはないが音声データセットがある場合に便利です。
 
 音声のみモードでは:
-- 動画 latents は自動的にゼロに設定
+- 動画 latents は自動的にゼロに設定（メモリ節約のため最小 64x64 解像度）
 - 動画損失はマスク（計算されない）
-- 音声生成のみがトレーニングされる
+- 音声生成レイヤーのみがトレーニングされる
+
+データセット設定に音声データセットのみが含まれる場合（動画や画像データセットなし）、音声のみモードは**自動的に検出**されます。`audio.audio_only: true` で明示的に有効にすることもできます。
 
 #### 音声のみデータセット設定
 
@@ -338,12 +340,10 @@ LTX-2 は**音声のみのトレーニング**をサポートしており、動�
     "instance_data_dir": "datasets/audio",
     "caption_strategy": "textfile",
     "audio": {
-      "audio_only": true,
       "sample_rate": 16000,
-      "channels": 1,
-      "min_duration_seconds": 1,
-      "max_duration_seconds": 30,
-      "duration_interval": 3.0
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
     },
     "repeats": 10
   },
@@ -358,10 +358,14 @@ LTX-2 は**音声のみのトレーニング**をサポートしており、動�
 ]
 ```
 
-重要な設定は `audio.audio_only: true` で、SimpleTuner に以下を指示します:
-1. Audio VAE を使用して音声 latents をキャッシュ
-2. 音声の長さに合わせたゼロ動画 latents を生成
-3. トレーニング中に動画損失をマスク
+主要な音声設定:
+- `channels`: LTX-2 Audio VAE では**2（ステレオ）が必須**
+- `duration_interval`: 音声を指定間隔（例: 3.0 秒）でバケット化。**メモリ管理に重要** - 長い音声ファイルはゼロであっても多くの動画フレームを作成
+- `truncation_mode`: バケット時間を超える音声の処理方法（`beginning`、`end`、または `random`）
+
+#### サポートされる音声フォーマット
+
+SimpleTuner は一般的な音声フォーマット（`.wav`、`.flac`、`.mp3`、`.ogg`、`.opus` など）と、音声のみのコンテンツを含む可能性のあるコンテナフォーマット（`.mp4`、`.mpeg`、`.mkv`、`.webm`）をサポートします。コンテナフォーマットは ffmpeg を使用して自動的に抽出されます。
 
 #### 音声トレーニング用の LoRA ターゲット
 
@@ -375,7 +379,7 @@ LTX-2 は**音声のみのトレーニング**をサポートしており、動�
 
 LoRA ターゲットを手動で上書きしたい場合は、`--peft_lora_target_modules` でモジュール名の JSON リストを指定してください。
 
-音声ファイル（`.wav`、`.flac`、`.mp3` など）を `instance_data_dir` に配置し、対応する `.txt` キャプションファイルを用意してください。
+音声ファイルを `instance_data_dir` に配置し、対応する `.txt` キャプションファイルを用意してください。
 
 ### 検証ワークフロー (T2V vs I2V)
 

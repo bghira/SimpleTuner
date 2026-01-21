@@ -322,9 +322,11 @@ Field-tested config that prioritizes minimal VRAM usage on LTX Video 2.
 LTX-2 supports **audio-only training** where you train only the audio generation capability without video files. This is useful when you have audio datasets but no corresponding video content.
 
 In audio-only mode:
-- Video latents are automatically zeroed out
+- Video latents are automatically zeroed out (minimal 64x64 resolution to save memory)
 - Video loss is masked (not computed)
-- Only audio generation is trained
+- Only audio generation layers are trained
+
+Audio-only mode is **automatically detected** when your dataset configuration contains only audio datasets (no video or image datasets). You can also explicitly enable it with `audio.audio_only: true`.
 
 #### Audio-only dataset configuration
 
@@ -337,12 +339,10 @@ In audio-only mode:
     "instance_data_dir": "datasets/audio",
     "caption_strategy": "textfile",
     "audio": {
-      "audio_only": true,
       "sample_rate": 16000,
-      "channels": 1,
-      "min_duration_seconds": 1,
-      "max_duration_seconds": 30,
-      "duration_interval": 3.0
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
     },
     "repeats": 10
   },
@@ -357,10 +357,14 @@ In audio-only mode:
 ]
 ```
 
-The key setting is `audio.audio_only: true`, which tells SimpleTuner to:
-1. Use the audio VAE to cache audio latents
-2. Generate zero video latents matching the audio duration
-3. Mask video loss during training
+Key audio settings:
+- `channels`: **Must be 2** (stereo) for the LTX-2 audio VAE
+- `duration_interval`: Bucket audio into intervals (e.g., 3.0 seconds). **Important for memory management** - long audio files create many video frames even though they're zeros
+- `truncation_mode`: How to handle audio longer than the bucket duration (`beginning`, `end`, or `random`)
+
+#### Supported audio formats
+
+SimpleTuner supports common audio formats (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, etc.) as well as container formats that may contain audio-only content (`.mp4`, `.mpeg`, `.mkv`, `.webm`). Container formats are automatically extracted using ffmpeg.
 
 #### LoRA targets for audio training
 
@@ -374,7 +378,7 @@ This happens automatically for both audio-only training and joint audio+video tr
 
 If you want to override the LoRA targets manually, use `--peft_lora_target_modules` with a JSON list of module names.
 
-Place your audio files (`.wav`, `.flac`, `.mp3`, etc.) in the `instance_data_dir` with corresponding `.txt` caption files.
+Place your audio files in the `instance_data_dir` with corresponding `.txt` caption files.
 
 ### Validation workflows (T2V vs I2V)
 
