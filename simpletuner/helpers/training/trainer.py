@@ -6397,6 +6397,18 @@ def run_trainer_job(config):
         if signal_file_path:
             launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
 
+        # Set up error file for structured error reporting from subprocess
+        from simpletuner.helpers.training.error_reporter import ERROR_FILE_ENV_VAR
+
+        error_file_path = None
+        if signal_dir:
+            error_file_path = Path(signal_dir) / "error.json"
+        else:
+            import tempfile
+
+            error_file_path = Path(tempfile.gettempdir()) / f"simpletuner_error_{os.getpid()}.json"
+        launch_env[ERROR_FILE_ENV_VAR] = str(error_file_path)
+
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
@@ -6560,54 +6572,37 @@ def run_trainer_job(config):
         returncode = process.wait()
         _cleanup_signal_relay()
         if returncode != 0:
-            helper = globals().get("_summarize_accelerate_failure")
-            if helper is None:
+            # Try to read structured error file first
+            from simpletuner.helpers.training.error_reporter import cleanup_error_file, read_error
 
-                def helper(exit_code, lines):
-                    import re
+            error_data = read_error(error_file_path) if error_file_path else None
 
-                    cleaned = [_strip_ansi(line.rstrip("\n")) for line in lines]
-                    # Look for actual trainer [ERROR] messages - these are the meaningful ones
-                    error_lines = []
-                    for line in cleaned:
-                        if "[ERROR]" in line:
-                            # Extract the error message after [ERROR]
-                            idx = line.find("[ERROR]")
-                            error_msg = line[idx + 7 :].strip()
-                            if error_msg:
-                                error_lines.append(error_msg)
+            if error_data:
+                # Use structured error data from subprocess
+                summary = f"{error_data.get('exception_type', 'Error')}: {error_data.get('message', 'Unknown error')}"
+                excerpt = error_data.get("traceback")
+                cleanup_error_file(error_file_path)
+            else:
+                # Fallback: extract from stdout (last resort)
+                cleaned = [_strip_ansi(line.rstrip("\n")) for line in recent_lines]
+                excerpt_lines = [line.strip() for line in cleaned[-40:] if line.strip()]
+                excerpt = "\n".join(excerpt_lines) if excerpt_lines else None
+                summary = f"Accelerate launch exited with status {returncode}"
+                if excerpt_lines:
+                    summary = f"{summary}: {excerpt_lines[-1][:200]}"
 
-                    # Also look for Python exceptions (e.g., "FileNotFoundError: ...")
-                    exception_pattern = re.compile(r"^(\w+(?:Error|Exception|Warning)):\s*(.+)$")
-                    exception_line = None
-                    for line in reversed(cleaned):
-                        stripped = line.strip()
-                        match = exception_pattern.match(stripped)
-                        if match:
-                            exception_line = stripped
-                            break
-
-                    excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
-                    excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
-
-                    # Priority: [ERROR] messages first, then Python exceptions
-                    if error_lines:
-                        summary_text = error_lines[0]
-                    elif exception_line:
-                        summary_text = exception_line
-                    else:
-                        summary_text = f"Accelerate launch exited with status {exit_code}"
-                        if excerpt_lines:
-                            summary_text = f"{summary_text}: {excerpt_lines[-1]}"
-                    return summary_text[:512], excerpt_text
-
-            summary, excerpt = helper(returncode, list(recent_lines))
-            launch_error = RuntimeError(summary)
+            launch_error = RuntimeError(summary[:512])
             if excerpt:
                 setattr(launch_error, "_simpletuner_log_excerpt", excerpt)
             if recent_lines:
                 setattr(launch_error, "_simpletuner_recent_log_lines", list(recent_lines))
             raise launch_error
+        # Clean up error file on success
+        if error_file_path and error_file_path.exists():
+            try:
+                error_file_path.unlink()
+            except Exception:
+                pass
         return returncode
 
     try:
