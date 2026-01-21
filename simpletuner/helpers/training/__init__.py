@@ -83,6 +83,12 @@ audio_file_extensions = {
     "aif",
     "aifc",
     "alac",
+    # Container formats that can hold audio-only content
+    "mp4",
+    "mpeg",
+    "mpg",
+    "mkv",
+    "webm",
 }
 # we combine image and video extensions as image extensions because it's a hack that is used to list all files.
 image_file_extensions = image_file_extensions.union(video_file_extensions)

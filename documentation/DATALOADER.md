@@ -150,6 +150,8 @@ This automatically creates a `my-videos_audio` dataset and links it via `s2v_dat
 | `audio.auto_split` | bool | false | Auto-generate audio dataset from video files |
 | `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
 | `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
+| `audio.audio_only` | bool | false | Audio-only training mode (LTX-2): train audio generation without video files |
+| `audio.target_resolution` | int | null | Target video resolution for audio-only mode (used to compute latent dimensions) |
 | `audio.sample_rate` | int | 16000 | Target sample rate for audio extraction |
 | `audio.channels` | int | 1 | Number of audio channels (1=mono, 2=stereo) |
 | `audio.bucket_strategy` | string | "duration" | Bucketing strategy for audio samples |

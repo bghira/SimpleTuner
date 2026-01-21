@@ -594,6 +594,23 @@ def collate_fn(batch):
     data_backend = StateTracker.get_data_backend(batch_backend_id)
     training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
+    # Check for audio-only mode (LTX-2 audio-only training)
+    # Can be explicit (audio.audio_only: true) or implicit (audio dataset + model supports audio-only)
+    backend_config_for_audio_check = data_backend.get("config", {})
+    is_audio_only = False
+    if backend_config_for_audio_check.get("dataset_type") == "audio":
+        audio_config = backend_config_for_audio_check.get("audio", {})
+        explicit_audio_only = audio_config.get("audio_only", False)
+        # Check for implicit audio-only mode: model supports it and this is an audio dataset
+        implicit_audio_only = False
+        model_for_audio_check = StateTracker.get_model()
+        if model_for_audio_check is not None:
+            try:
+                implicit_audio_only = bool(model_for_audio_check.supports_audio_only_training())
+            except (AttributeError, TypeError):
+                implicit_audio_only = False
+        is_audio_only = explicit_audio_only or implicit_audio_only
+
     model = StateTracker.get_model()
     uses_audio_tokens = False
     if model is not None:
@@ -1084,6 +1101,24 @@ def collate_fn(batch):
                     [1 if path is not None else 0 for path in s2v_audio_paths], dtype=torch.float32
                 )
 
+    # Handle audio-only mode: transfer audio latents and set video mask
+    video_latent_mask = None
+    if is_audio_only:
+        # For audio-only datasets, the latent_batch contains audio latents from the audio VAE cache
+        # We need to move them to audio_latent_batch and set video latents to None
+        if audio_latent_batch is None and latent_batch is not None:
+            # The latent_batch contains audio latents - move them
+            if isinstance(latent_batch, list):
+                audio_latent_batch = torch.stack(latent_batch, dim=0) if len(latent_batch) > 0 else None
+            else:
+                audio_latent_batch = latent_batch
+            audio_latent_mask = torch.ones(len(examples), dtype=torch.float32)
+            latent_batch = None  # Signal that video latents need to be built by the model
+
+        # Set video latent mask to zeros (mask out video loss)
+        batch_size = len(examples)
+        video_latent_mask = torch.zeros(batch_size, dtype=torch.float32)
+
     return {
         "latent_batch": latent_batch,
         "latent_metadata": latent_metadata,
@@ -1103,6 +1138,8 @@ def collate_fn(batch):
         "conditioning_type": conditioning_type,
         "audio_latent_batch": audio_latent_batch,
         "audio_latent_mask": audio_latent_mask,
+        "video_latent_mask": video_latent_mask,
+        "is_audio_only": is_audio_only,
         "s2v_audio_paths": s2v_audio_paths if any(s2v_audio_paths) else None,
         "s2v_audio_backend_ids": s2v_audio_backend_ids if any(s2v_audio_backend_ids) else None,
     }

@@ -317,6 +317,69 @@ Field-tested config that prioritizes minimal VRAM usage on LTX Video 2.
 ```
 </details>
 
+### Audio-Only Training
+
+LTX-2 supports **audio-only training** where you train only the audio generation capability without video files. This is useful when you have audio datasets but no corresponding video content.
+
+In audio-only mode:
+- Video latents are automatically zeroed out (minimal 64x64 resolution to save memory)
+- Video loss is masked (not computed)
+- Only audio generation layers are trained
+
+Audio-only mode is **automatically detected** when your dataset configuration contains only audio datasets (no video or image datasets). You can also explicitly enable it with `audio.audio_only: true`.
+
+#### Audio-only dataset configuration
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "sample_rate": 16000,
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+Key audio settings:
+- `channels`: **Must be 2** (stereo) for the LTX-2 audio VAE
+- `duration_interval`: Bucket audio into intervals (e.g., 3.0 seconds). **Important for memory management** - long audio files create many video frames even though they're zeros
+- `truncation_mode`: How to handle audio longer than the bucket duration (`beginning`, `end`, or `random`)
+
+#### Supported audio formats
+
+SimpleTuner supports common audio formats (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, etc.) as well as container formats that may contain audio-only content (`.mp4`, `.mpeg`, `.mkv`, `.webm`). Container formats are automatically extracted using ffmpeg.
+
+#### LoRA targets for audio training
+
+When audio data is detected in your datasets, SimpleTuner automatically adds audio-specific modules to the LoRA targets:
+- `audio_proj_in` - Audio input projection
+- `audio_proj_out` - Audio output projection
+- `audio_caption_projection.linear_1` - Audio caption projection layer 1
+- `audio_caption_projection.linear_2` - Audio caption projection layer 2
+
+This happens automatically for both audio-only training and joint audio+video training.
+
+If you want to override the LoRA targets manually, use `--peft_lora_target_modules` with a JSON list of module names.
+
+Place your audio files in the `instance_data_dir` with corresponding `.txt` caption files.
+
 ### Validation workflows (T2V vs I2V)
 
 - **T2V (text-to-video)**: Leave `validation_using_datasets: false` and use `validation_prompt` or `validation_prompt_library`.

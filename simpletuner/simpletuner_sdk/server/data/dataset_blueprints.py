@@ -550,6 +550,13 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "audio_audio_only",
+                    "label": "audio-only training",
+                    "description": "train only on audio without video (LTX-2 only)",
+                    "type": "toggle",
+                    "defaultValue": False,
+                },
+                {
                     "id": "cache_dir_vae",
                     "label": "vae cache directory",
                     "description": "directory used for cached audio latents",

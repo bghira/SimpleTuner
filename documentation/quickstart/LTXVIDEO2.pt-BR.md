@@ -317,6 +317,69 @@ Configuração testada em campo que prioriza o menor uso de VRAM no LTX Video 2.
 ```
 </details>
 
+### Treinamento apenas com áudio
+
+O LTX-2 suporta **treinamento apenas com áudio**, onde você treina somente a capacidade de geração de áudio sem arquivos de vídeo. Isso é útil quando você tem datasets de áudio, mas nenhum conteúdo de vídeo correspondente.
+
+No modo apenas áudio:
+- Os latentes de vídeo são automaticamente zerados (resolução mínima de 64x64 para economizar memória)
+- A perda de vídeo é mascarada (não computada)
+- Apenas as camadas de geração de áudio são treinadas
+
+O modo apenas áudio é **detectado automaticamente** quando sua configuração de dataset contém apenas datasets de áudio (sem datasets de vídeo ou imagem). Você também pode habilitá-lo explicitamente com `audio.audio_only: true`.
+
+#### Configuração do dataset apenas áudio
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "sample_rate": 16000,
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+Configurações chave de áudio:
+- `channels`: **Deve ser 2** (estéreo) para o Audio VAE do LTX-2
+- `duration_interval`: Agrupa o áudio em intervalos (ex. 3.0 segundos). **Importante para gerenciamento de memória** - arquivos de áudio longos criam muitos frames de vídeo mesmo sendo zeros
+- `truncation_mode`: Como lidar com áudio mais longo que a duração do bucket (`beginning`, `end`, ou `random`)
+
+#### Formatos de áudio suportados
+
+O SimpleTuner suporta formatos de áudio comuns (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, etc.) assim como formatos contêiner que podem conter apenas áudio (`.mp4`, `.mpeg`, `.mkv`, `.webm`). Formatos contêiner são extraídos automaticamente usando ffmpeg.
+
+#### Alvos LoRA para treinamento de áudio
+
+Quando dados de áudio são detectados em seus datasets, o SimpleTuner adiciona automaticamente módulos específicos de áudio aos alvos LoRA:
+- `audio_proj_in` - Projeção de entrada de áudio
+- `audio_proj_out` - Projeção de saída de áudio
+- `audio_caption_projection.linear_1` - Camada de projeção de legenda de áudio 1
+- `audio_caption_projection.linear_2` - Camada de projeção de legenda de áudio 2
+
+Isso acontece automaticamente tanto para treinamento apenas com áudio quanto para treinamento conjunto de áudio+vídeo.
+
+Se você quiser substituir os alvos LoRA manualmente, use `--peft_lora_target_modules` com uma lista JSON de nomes de módulos.
+
+Coloque seus arquivos de áudio no `instance_data_dir` com os arquivos `.txt` de legenda correspondentes.
+
 ### Fluxos de validação (T2V vs I2V)
 
 - **T2V (texto para vídeo)**: Deixe `validation_using_datasets: false` e use `validation_prompt` ou `validation_prompt_library`.

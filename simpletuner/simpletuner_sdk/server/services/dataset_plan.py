@@ -185,6 +185,7 @@ def compute_validations(
     # Check if this is a video-only model
     is_video_model = False
     requires_strict_video_inputs = False
+    supports_audio_only = False
     if model_family:
         try:
             from simpletuner.helpers.models.common import VideoModelFoundation
@@ -192,9 +193,16 @@ def compute_validations(
 
             model_cls = ModelRegistry.get(model_family)
             if model_cls:
-                is_video_model = issubclass(model_cls, VideoModelFoundation)
-                if hasattr(model_cls, "is_strict_i2v_flavour") and callable(model_cls.is_strict_i2v_flavour):
-                    requires_strict_video_inputs = bool(model_cls.is_strict_i2v_flavour(model_flavour))
+                # Resolve lazy model class if needed
+                if hasattr(model_cls, "get_real_class"):
+                    actual_cls = model_cls.get_real_class()
+                else:
+                    actual_cls = model_cls
+                is_video_model = issubclass(actual_cls, VideoModelFoundation)
+                if hasattr(actual_cls, "is_strict_i2v_flavour") and callable(actual_cls.is_strict_i2v_flavour):
+                    requires_strict_video_inputs = bool(actual_cls.is_strict_i2v_flavour(model_flavour))
+                if hasattr(actual_cls, "supports_audio_only_training") and callable(actual_cls.supports_audio_only_training):
+                    supports_audio_only = bool(actual_cls.supports_audio_only_training())
         except Exception:
             pass
 
@@ -203,6 +211,17 @@ def compute_validations(
     image_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE)
     video_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.VIDEO)
     audio_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.AUDIO)
+
+    # Check for audio-only mode:
+    # 1. Explicit: audio datasets with audio.audio_only: true
+    # 2. Implicit: model supports audio-only AND has audio datasets AND no video/image datasets
+    explicit_audio_only_count = sum(
+        1
+        for dataset in datasets
+        if _dataset_type(dataset) is DatasetType.AUDIO and dataset.get("audio", {}).get("audio_only", False)
+    )
+    implicit_audio_only = supports_audio_only and audio_count > 0 and video_count == 0 and image_count == 0
+    has_valid_audio_only = supports_audio_only and (explicit_audio_only_count > 0 or implicit_audio_only)
 
     if str(model_family).lower() == "ace_step":
         if audio_count == 0 and not relax_training_requirement:
@@ -223,7 +242,7 @@ def compute_validations(
                         level="error",
                     )
                 )
-            elif image_count == 0:
+            elif image_count == 0 and not has_valid_audio_only:
                 validations.append(
                     ValidationMessage(
                         field="datasets",
