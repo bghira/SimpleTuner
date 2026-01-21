@@ -1185,8 +1185,11 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 
 ### `--resume_from_checkpoint`
 
-- **O que**: Especifica se e de onde retomar o treinamento.
-- **Por que**: Permite continuar de um estado salvo, manualmente ou do mais recente. Um checkpoint e composto de um subdiretorio `unet` e opcionalmente `unet_ema`. O `unet` pode ser colocado em qualquer layout Diffusers SDXL para usar como modelo normal.
+- **O que**: Especifica se e de onde retomar o treinamento. Aceita `latest`, um nome/caminho local de checkpoint ou um URI S3/R2.
+- **Por que**: Permite continuar de um estado salvo, manualmente ou do mais recente.
+- **Retomada remota**: Forneca um URI completo (`s3://bucket/jobs/.../checkpoint-100`) ou uma chave relativa ao bucket (`jobs/.../checkpoint-100`). `latest` so funciona com `output_dir` local.
+- **Requisitos**: A retomada remota precisa de uma entrada S3 em publishing_config (bucket + credenciais) que consiga ler o checkpoint.
+- **Notas**: Checkpoints remotos devem incluir `checkpoint_manifest.json` (gerado por execucoes recentes do SimpleTuner). Um checkpoint e composto de um subdiretorio `unet` e opcionalmente `unet_ema`. O `unet` pode ser colocado em qualquer layout Diffusers SDXL para usar como modelo normal.
 
 > ℹ️ Modelos transformer como PixArt, SD3 ou Hunyuan usam os subdiretorios `transformer` e `transformer_ema`.
 

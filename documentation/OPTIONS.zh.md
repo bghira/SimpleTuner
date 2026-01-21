@@ -1193,8 +1193,11 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 
 ### `--resume_from_checkpoint`
 
-- **内容**：指定是否以及从何处恢复训练。
-- **原因**：可从手动指定或最新检查点继续。检查点由 `unet` 与可选 `unet_ema` 子目录组成。`unet` 可直接放入 Diffusers 布局的 SDXL 模型中，像普通模型一样使用。
+- **内容**：指定是否以及从何处恢复训练。接受 `latest`、本地检查点名称/路径或 S3/R2 URI。
+- **原因**：允许从已保存的状态继续训练，可手动指定或使用最新可用检查点。
+- **远程恢复**：提供完整 URI (`s3://bucket/jobs/.../checkpoint-100`) 或相对 bucket 的 key (`jobs/.../checkpoint-100`)。`latest` 仅适用于本地 `output_dir`。
+- **要求**：远程恢复需要在 publishing_config 中提供可读取检查点的 S3 配置（bucket + credentials）。
+- **注意**：远程检查点必须包含 `checkpoint_manifest.json`（由较新的 SimpleTuner 运行生成）。检查点由 `unet` 与可选 `unet_ema` 子目录组成。`unet` 可直接放入 Diffusers 布局的 SDXL 模型中，像普通模型一样使用。
 
 > ℹ️ PixArt、SD3、Hunyuan 等 Transformer 模型使用 `transformer` 与 `transformer_ema` 子目录名称。
 
