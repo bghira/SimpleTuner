@@ -13,7 +13,7 @@ Esta guía explica cómo configurar SimpleTuner para ajustar el **prior de Stabl
 
 ## Requisitos previos
 
-1. Python 3.12 (que coincide con el `.venv` del proyecto).
+1. Python 3.13 (que coincide con el `.venv` del proyecto).
 2. CUDA 12.1+ o ROCm 5.7+ para aceleración GPU (o Apple Metal para Macs M‑series, aunque Stage C se prueba principalmente en CUDA).
 3. `torchvision` (requerido para el autoencoder de Stable Cascade) y `accelerate` para lanzar entrenamiento.
 
@@ -26,7 +26,7 @@ python --version
 Instala paquetes faltantes (ejemplo Ubuntu):
 
 ```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv
+sudo apt update && sudo apt install -y python3.13 python3.13-venv
 ```
 
 ## Instalación
@@ -34,10 +34,13 @@ sudo apt update && sudo apt install -y python3.12 python3.12-venv
 Sigue la instalación estándar de SimpleTuner (pip o fuente). Para una workstation CUDA típica:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 Para contribuidores o quienes trabajen directamente en el repo, instala desde fuente y luego ejecuta `pip install -e .[cuda,dev]`.

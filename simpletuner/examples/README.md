@@ -17,6 +17,7 @@ To run `kontext.peft-lora` example:
 **Option 1 (Recommended - pip install):**
 ```bash
 pip install 'simpletuner[cuda]'
+# or for CUDA 13 / Blackwell users: pip install 'simpletuner[cuda13]'
 simpletuner train example=kontext.peft-lora
 ```
 
@@ -24,7 +25,7 @@ simpletuner train example=kontext.peft-lora
 ```bash
 git clone https://github.com/bghira/simpletuner
 cd simpletuner
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 simpletuner train env=examples/kontext.peft-lora
@@ -34,7 +35,7 @@ simpletuner train env=examples/kontext.peft-lora
 ```bash
 git clone https://github.com/bghira/simpletuner
 cd simpletuner
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 ENV=examples/kontext.peft-lora ./train.sh

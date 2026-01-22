@@ -1087,6 +1087,28 @@ class QwenImageTransformer2DModel(
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        # Pre-normalize route indices to handle negative values
+        if use_routing:
+            num_blocks = len(self.transformer_blocks)
+
+            def _to_pos(idx: int) -> int:
+                return idx if idx >= 0 else num_blocks + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
+        # TREAD state tracking
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+
         grad_enabled = torch.is_grad_enabled()
         musubi_manager = self._musubi_block_swap
         musubi_offload_active = False
@@ -1105,26 +1127,21 @@ class QwenImageTransformer2DModel(
 
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
-            # TREAD routing for this layer
-            if use_routing:
-                # Check if this layer should use routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.transformer_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.transformer_blocks) + end_idx
-
-                    if start_idx <= index_block <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.start_route(hidden_states, mask_info)
-                        break
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_in(block, hidden_states.device)
+
+            # TREAD: START a route?
+            if use_routing and route_ptr < len(routes) and index_block == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                routing_now = True
+
             if torch.is_grad_enabled() and self.gradient_checkpointing:
 
                 def create_custom_forward(module, mod_idx):
@@ -1181,24 +1198,16 @@ class QwenImageTransformer2DModel(
 
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
-            # TREAD end routing for this layer
-            if use_routing:
-                # Check if this layer should end routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.transformer_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.transformer_blocks) + end_idx
 
-                    if start_idx <= index_block <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.end_route(hidden_states, mask_info)
-                        break
+            # TREAD: END the current route?
+            if routing_now and index_block == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(
+                    hidden_states,
+                    tread_mask_info,
+                    original_x=saved_tokens,
+                )
+                routing_now = False
+                route_ptr += 1
 
             # controlnet residual
             if controlnet_block_samples is not None:

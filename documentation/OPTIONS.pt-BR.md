@@ -156,6 +156,20 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Aplica substituicoes RamTorch a camadas Linear do ControlNet ao treinar um ControlNet.
 - **Padrao**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **O que**: Porcentagem (0-100) de camadas Linear do transformer a serem descarregadas com RamTorch.
+- **Padrao**: `100` (todas as camadas elegiveis)
+- **Por que**: Permite descarregamento parcial para equilibrar economia de VRAM com desempenho. Valores mais baixos mantem mais camadas na GPU para treinamento mais rapido, enquanto ainda reduz o uso de memoria.
+- **Notas**: As camadas sao selecionadas desde o inicio da ordem de travessia do modulo. Pode ser combinado com `--ramtorch_target_modules`.
+
+### `--ramtorch_text_encoder_percent`
+
+- **O que**: Porcentagem (0-100) de camadas Linear do codificador de texto a serem descarregadas com RamTorch.
+- **Padrao**: `100` (todas as camadas elegiveis)
+- **Por que**: Permite descarregamento parcial de codificadores de texto quando `--ramtorch_text_encoder` esta habilitado.
+- **Notas**: Aplica-se apenas quando `--ramtorch_text_encoder` esta habilitado.
+
 ### `--pretrained_model_name_or_path`
 
 - **O que**: Caminho para o modelo pre-treinado ou seu identificador em <https://huggingface.co/models>.
@@ -1171,10 +1185,37 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 
 ### `--resume_from_checkpoint`
 
-- **O que**: Especifica se e de onde retomar o treinamento.
-- **Por que**: Permite continuar de um estado salvo, manualmente ou do mais recente. Um checkpoint e composto de um subdiretorio `unet` e opcionalmente `unet_ema`. O `unet` pode ser colocado em qualquer layout Diffusers SDXL para usar como modelo normal.
+- **O que**: Especifica se e de onde retomar o treinamento. Aceita `latest`, um nome/caminho local de checkpoint ou um URI S3/R2.
+- **Por que**: Permite continuar de um estado salvo, manualmente ou do mais recente.
+- **Retomada remota**: Forneca um URI completo (`s3://bucket/jobs/.../checkpoint-100`) ou uma chave relativa ao bucket (`jobs/.../checkpoint-100`). `latest` so funciona com `output_dir` local.
+- **Requisitos**: A retomada remota precisa de uma entrada S3 em publishing_config (bucket + credenciais) que consiga ler o checkpoint.
+- **Notas**: Checkpoints remotos devem incluir `checkpoint_manifest.json` (gerado por execucoes recentes do SimpleTuner). Um checkpoint e composto de um subdiretorio `unet` e opcionalmente `unet_ema`. O `unet` pode ser colocado em qualquer layout Diffusers SDXL para usar como modelo normal.
 
 > ℹ️ Modelos transformer como PixArt, SD3 ou Hunyuan usam os subdiretorios `transformer` e `transformer_ema`.
+
+### `--disk_low_threshold`
+
+- **O que**: Espaco minimo livre em disco necessario antes de salvar checkpoints.
+- **Por que**: Previne falhas no treinamento por erros de disco cheio detectando espaco baixo antecipadamente e tomando uma acao configurada.
+- **Formato**: String de tamanho como `100G`, `50M`, `1T`, `500K`, ou bytes simples.
+- **Padrao**: Nenhum (funcionalidade desativada)
+
+### `--disk_low_action`
+
+- **O que**: Acao a tomar quando o espaco em disco esta abaixo do limite.
+- **Opcoes**: `stop`, `wait`, `script`
+- **Padrao**: `stop`
+- **Comportamento**:
+  - `stop`: Encerra o treinamento imediatamente com uma mensagem de erro.
+  - `wait`: Faz loop a cada 30 segundos ate o espaco ficar disponivel. Pode esperar indefinidamente.
+  - `script`: Executa o script especificado por `--disk_low_script` para liberar espaco.
+
+### `--disk_low_script`
+
+- **O que**: Caminho para um script de limpeza a executar quando o espaco em disco esta baixo.
+- **Por que**: Permite limpeza automatizada (ex: remover checkpoints antigos, limpar cache) quando o espaco em disco esta baixo.
+- **Notas**: Usado apenas quando `--disk_low_action=script`. O script deve ser executavel. Se o script falhar ou nao liberar espaco suficiente, o treinamento parara com um erro.
+- **Padrao**: Nenhum
 
 ---
 

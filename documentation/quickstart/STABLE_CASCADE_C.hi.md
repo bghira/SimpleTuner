@@ -13,7 +13,7 @@
 
 ## पूर्वापेक्षाएँ
 
-1. Python 3.12 (प्रोजेक्ट `.venv` से मेल)।
+1. Python 3.13 (प्रोजेक्ट `.venv` से मेल)।
 2. GPU acceleration के लिए CUDA 12.1+ या ROCm 5.7+ (या Apple Metal for M‑series Macs, हालांकि Stage C मुख्यतः CUDA पर टेस्ट हुआ है)।
 3. `torchvision` (Stable Cascade autoencoder के लिए आवश्यक) और training launch के लिए `accelerate`.
 
@@ -26,7 +26,7 @@ python --version
 Missing पैकेज इंस्टॉल करें (Ubuntu उदाहरण):
 
 ```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv
+sudo apt update && sudo apt install -y python3.13 python3.13-venv
 ```
 
 ## इंस्टॉलेशन
@@ -34,10 +34,13 @@ sudo apt update && sudo apt install -y python3.12 python3.12-venv
 मानक SimpleTuner इंस्टॉलेशन (pip या source) का पालन करें। एक सामान्य CUDA वर्कस्टेशन के लिए:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 Contributors या जो भी सीधे repo पर काम कर रहे हैं, source से इंस्टॉल करें और फिर `pip install -e .[cuda,dev]` चलाएँ।

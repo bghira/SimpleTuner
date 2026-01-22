@@ -6,7 +6,7 @@ SimpleTuner における TwinFlow:
 * `diff2flow_enabled` + `twinflow_allow_diff2flow` を明示しない限り、flow-matching 専用です。
 * 既定では EMA 教師。教師/CFG パスの前後で RNG のキャプチャ/復元が **常に有効** で、参照 TwinFlow 実行に合わせます。
 * 負時間の意味を扱う符号埋め込みは Transformer に配線済みですが、`twinflow_enabled` が true のときのみ使用されます。フラグなしの HF 設定は挙動が変わりません。
-* 現在の損失は RCGM + real-velocity のみ（adversarial/fake ブランチは無効）。ガイダンス `0.0` で 1–4 ステップ生成を想定しています。
+* 既定の損失は RCGM + real-velocity。`twinflow_adversarial_enabled: true` で完全な自己敵対訓練（L_adv と L_rectify 損失）を有効化できます。ガイダンス `0.0` で 1–4 ステップ生成を想定しています。
 * W&B ログでは TwinFlow の軌跡散布図（理論は未検証）をデバッグ目的で出力できます。
 
 ---
@@ -51,7 +51,7 @@ SimpleTuner における TwinFlow:
 }
 ```
 
-> TwinFlow は意図的にシンプルです。追加の discriminator や fake ブランチは配線せず、RCGM と real-velocity のみを使用します。
+> 既定では TwinFlow は RCGM + real-velocity 損失を使用します。`twinflow_adversarial_enabled: true` で完全な自己敵対訓練（L_adv と L_rectify 損失）を有効化でき、外部 discriminator は不要です。
 
 ---
 
@@ -78,6 +78,18 @@ arXiv:2512.05150（PDF テキスト）より:
 * `twinflow_allow_diff2flow`: `diff2flow_enabled` と併用時に epsilon/v-prediction をブリッジします。
 * RNG キャプチャ/復元: 参照 TwinFlow 実装に合わせるため常時有効。無効化スイッチはありません。
 * 符号埋め込み: `twinflow_enabled` が true のとき、`timestep_sign` をサポートする Transformer に `twinflow_time_sign` を渡します。false の場合は追加埋め込みを使いません。
+
+### 敵対ブランチ（完全 TwinFlow）
+
+オリジナル論文の自己敵対訓練を有効にして品質を向上させます：
+
+* `twinflow_adversarial_enabled`（既定 false）: L_adv と L_rectify 損失を有効化。負時間を使用して「偽」軌道を訓練し、外部 discriminator なしで分布マッチングを実現します。
+* `twinflow_adversarial_weight`（既定 1.0）: 敵対損失（L_adv）の重み係数。
+* `twinflow_rectify_weight`（既定 1.0）: 修正損失（L_rectify）の重み係数。
+
+有効化すると、訓練は 1 ステップ生成で偽サンプルを生成し、以下の損失を訓練します:
+- **L_adv**: 負時間での偽速度損失 — モデルに偽サンプルからノイズへのマッピングを学習させます。
+- **L_rectify**: 分布マッチング損失 — 真偽の軌道予測を揃えてより直線的なパスを得ます。
 
 ---
 

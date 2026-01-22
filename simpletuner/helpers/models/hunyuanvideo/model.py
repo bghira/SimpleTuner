@@ -264,7 +264,7 @@ class HunyuanVideo(VideoModelFoundation):
         if move_to_device and not self._ramtorch_text_encoders_requested():
             text_encoder = text_encoder.to(device)
         if self._ramtorch_text_encoders_requested():
-            self._apply_ramtorch_layers(text_encoder, "text_encoder_1")
+            self._apply_ramtorch_layers(text_encoder, "text_encoder_1", percent=self._ramtorch_text_encoder_percent())
 
         glyph_repo = getattr(self.config, "glyph_byt5_repo", self.GLYPH_BYT5_REPO)
         fallback_glyph_repo = getattr(self.config, "glyph_byt5_fallback_repo", "google/byt5-small")
@@ -306,7 +306,7 @@ class HunyuanVideo(VideoModelFoundation):
         if move_to_device and not self._ramtorch_text_encoders_requested():
             byt5_model = byt5_model.to(device)
         if self._ramtorch_text_encoders_requested():
-            self._apply_ramtorch_layers(byt5_model, "text_encoder_2")
+            self._apply_ramtorch_layers(byt5_model, "text_encoder_2", percent=self._ramtorch_text_encoder_percent())
 
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer

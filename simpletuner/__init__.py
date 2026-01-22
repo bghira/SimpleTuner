@@ -48,6 +48,16 @@ warnings.filterwarnings(
     message=r"remove second argument of ws_handler",
     category=DeprecationWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"`torch\.jit\.script_method` is deprecated\.",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"TypedStorage is deprecated\.",
+    category=UserWarning,
+)
 
 _original_warn = warnings.warn
 
@@ -93,4 +103,4 @@ def _suppress_swigvarlink(message, *args, **kwargs):
 warnings.warn = _suppress_swigvarlink
 
 
-__version__ = "4.0.1"
+__version__ = "4.0.2"

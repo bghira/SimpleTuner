@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simpletuner"
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Stable Diffusion 2.x and XL tuner."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -39,77 +39,7 @@ keywords = [
 ]
 requires-python = ">=3.12,<3.14"
 
-# Dynamic fields are handled by setup.py above
-
-[project.optional-dependencies]
-# Platform-specific extras (for manual override)
-cuda = [
-    "torch>=2.9.1",
-    "torchvision>=0.24.0",
-    "torchaudio>=2.4.1",
-    "triton>=3.3.0",
-    "bitsandbytes>=0.45.0",
-    "deepspeed>=0.17.2",
-    "torchao>=0.12.0",
-    "nvidia-cudnn-cu12",
-    "nvidia-nccl-cu12",
-    "lm-eval>=0.4.4",
-]
-rocm = [
-    "torch>=2.9.0",
-    "torchvision>=0.24.0",
-    "torchaudio>=2.4.1",
-    "torchao>=0.11.0",
-]
-apple = [
-    "torch>=2.9.1",
-    "torchvision>=0.24.0",
-    "torchaudio>=2.4.1",
-    "torchao>=0.11.0",
-]
-cpu = [
-    "torch>=2.9.1",
-    "torchvision>=0.24.0",
-    "torchaudio>=2.4.1",
-    "torchao>=0.11.0",
-]
-
-# Feature extras
-jxl = [
-    "pillow-jxl-plugin>=1.3.1",
-]
-
-# Development extras
-dev = [
-    "selenium>=4.0.0",
-    "coverage>=7.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
-    "mypy>=1.0.0",
-    "pre-commit>=3.0.0",
-]
-
-# Testing extras
-test = ["selenium>=4.0.0", "coverage>=7.0.0"]
-
-# Documentation extras
-docs = [
-    "mkdocs>=1.6.0",
-    "mkdocs-material>=9.5.0",
-    "mkdocs-static-i18n>=1.2.0",
-    "pymdown-extensions>=10.0",
-]
-
-# All extras combined
-all = [
-    "pillow-jxl-plugin>=1.3.1",
-    "selenium>=4.0.0",
-    "coverage>=7.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
-]
+# Dynamic fields (dependencies, optional-dependencies) are handled by setup.py
 
 [project.scripts]
 simpletuner = "st_cli:main"

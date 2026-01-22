@@ -34,6 +34,7 @@ class ImageBackendConfig(BaseBackendConfig):
     aws_endpoint_url: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     aws_max_pool_connections: Optional[int] = None
 
     dataset_name: Optional[str] = None
@@ -131,6 +132,7 @@ class ImageBackendConfig(BaseBackendConfig):
             config.aws_endpoint_url = backend_dict.get("aws_endpoint_url")
             config.aws_access_key_id = backend_dict.get("aws_access_key_id")
             config.aws_secret_access_key = backend_dict.get("aws_secret_access_key")
+            config.aws_session_token = backend_dict.get("aws_session_token")
             config.aws_max_pool_connections = backend_dict.get(
                 "aws_max_pool_connections", _get_arg("aws_max_pool_connections")
             )
@@ -422,6 +424,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config["aws_endpoint_url"] = self.aws_endpoint_url
             config["aws_access_key_id"] = self.aws_access_key_id
             config["aws_secret_access_key"] = self.aws_secret_access_key
+            if self.aws_session_token is not None:
+                config["aws_session_token"] = self.aws_session_token
             if self.aws_max_pool_connections is not None:
                 config["aws_max_pool_connections"] = self.aws_max_pool_connections
 

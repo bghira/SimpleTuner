@@ -48,6 +48,7 @@ from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, Distill
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
+from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -78,7 +79,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
-from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.helpers.utils.checkpoint_manager import CHECKPOINT_MANIFEST_FILENAME, CheckpointManager
 from simpletuner.helpers.webhooks.events import (
     attach_timestamp,
     checkpoint_event,
@@ -166,6 +167,13 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
             signal_num = int(match.group(2))
             signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
             break
+        # Also match accelerate's format: "Signal 9 (SIGKILL) received by PID 12345"
+        match = re.search(r"Signal\s+(\d+)\s+\(([A-Z_]+)\)\s+received by PID", candidate_raw, re.IGNORECASE)
+        if match:
+            signal_num = int(match.group(1))
+            signal_name = match.group(2)
+            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
+            break
 
     if signal_fallback is None and signal_exit_message is not None:
         signal_fallback = (max(len(cleaned) - 1, 0), signal_exit_message)
@@ -234,6 +242,18 @@ def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple
 
     if best_line is not None and _is_wrapper_line(best_line) and signal_fallback is not None:
         best_index, best_line = signal_fallback
+
+    # If we have signal info (SIGKILL, etc) and the best_line is just a generic RuntimeError,
+    # prefer the signal info as it's more useful for diagnosing OOM/killed processes
+    if signal_fallback is not None and best_line is not None:
+        signal_message = signal_fallback[1].lower()
+        best_lower = best_line.lower()
+        has_useful_signal_info = any(sig in signal_message for sig in ("sigkill", "sigterm", "signal"))
+        is_generic_runtime_error = (
+            best_lower.startswith("runtimeerror:") and "cuda" not in best_lower and "memory" not in best_lower
+        )
+        if has_useful_signal_info and is_generic_runtime_error:
+            best_index, best_line = signal_fallback
 
     if best_line is None:
         for idx in range(len(cleaned) - 1, -1, -1):
@@ -1917,6 +1937,10 @@ class Trainer:
             return
         from simpletuner.helpers.models.common import PredictionTypes
 
+        if not self.model.uses_noise_schedule():
+            self.config.flow_matching = False
+            self.noise_scheduler = None
+            return
         self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
@@ -3888,6 +3912,139 @@ class Trainer:
             )
         )
 
+    def _publishing_config_has_s3(self) -> bool:
+        publishing_config = getattr(self.config, "publishing_config", None)
+        if publishing_config in (None, "", [], {}, "None"):
+            return False
+        if isinstance(publishing_config, dict):
+            configs = [publishing_config]
+        elif isinstance(publishing_config, (list, tuple)):
+            configs = list(publishing_config)
+        else:
+            return False
+        for entry in configs:
+            if not isinstance(entry, dict):
+                continue
+            provider_name = str(entry.get("provider") or entry.get("type") or "").strip().lower()
+            if provider_name in {"s3", "s3-compatible", "backblaze_b2", "b2"}:
+                return True
+        return False
+
+    def _resume_path_is_remote(self, resume_path: str) -> bool:
+        if not resume_path or resume_path in ("", "None", "latest"):
+            return False
+        if not self._publishing_config_has_s3():
+            return False
+        candidate = resume_path.strip()
+        if candidate.startswith(("s3://", "r2://", "http://", "https://")):
+            return True
+        if candidate.startswith("/"):
+            return not os.path.exists(candidate)
+        if "/" in candidate:
+            output_dir = getattr(self.config, "output_dir", None)
+            if output_dir and os.path.exists(os.path.join(output_dir, candidate)):
+                return False
+            return True
+        return False
+
+    def _select_s3_provider_for_resume(self, resume_path: str) -> tuple[S3PublishingProvider, str]:
+        publishing_config = getattr(self.config, "publishing_config", None)
+        if publishing_config in (None, "", [], {}, "None"):
+            raise ValueError("resume_from_checkpoint requires publishing_config for S3 access.")
+
+        manager = self.publishing_manager or PublishingManager(publishing_config)
+        providers = [provider for provider in manager.providers if isinstance(provider, S3PublishingProvider)]
+        if not providers:
+            raise ValueError("resume_from_checkpoint requires an S3 publishing provider.")
+
+        candidate = resume_path.strip()
+        is_relative = not candidate.startswith(("s3://", "r2://", "http://", "https://"))
+        if is_relative and len(providers) > 1:
+            raise ValueError("resume_from_checkpoint is relative but multiple S3 providers exist; use a full URI.")
+
+        for provider in providers:
+            try:
+                key_prefix = provider.resolve_key_prefix(candidate)
+            except ValueError:
+                continue
+            return provider, key_prefix
+
+        raise ValueError("resume_from_checkpoint does not match any configured S3 provider.")
+
+    def _validate_resume_manifest(self, manifest: dict[str, Any] | None) -> None:
+        if not manifest or not isinstance(manifest, dict):
+            return
+        metadata = manifest.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        expected_family = str(getattr(self.config, "model_family", "") or "").strip().lower()
+        expected_type = str(getattr(self.config, "model_type", "") or "").strip().lower()
+        expected_flavour = str(
+            getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", "")) or ""
+        ).strip().lower()
+        expected_arch = None
+        if getattr(self, "model_hooks", None) is not None:
+            expected_arch = self.model_hooks.get_modelspec_architecture()
+
+        manifest_family = str(metadata.get("model_family", "") or "").strip().lower()
+        manifest_type = str(metadata.get("model_type", "") or "").strip().lower()
+        manifest_flavour = str(metadata.get("model_flavour", metadata.get("model_flavor", "")) or "").strip().lower()
+        manifest_arch = str(metadata.get("modelspec_architecture", metadata.get("modelspec.architecture", "")) or "").strip()
+
+        if expected_family and manifest_family and expected_family != manifest_family:
+            raise ValueError(
+                f"Checkpoint model_family mismatch (expected {expected_family}, got {manifest_family})."
+            )
+        if expected_type and manifest_type and expected_type != manifest_type:
+            raise ValueError(f"Checkpoint model_type mismatch (expected {expected_type}, got {manifest_type}).")
+        if expected_flavour and manifest_flavour and expected_flavour != manifest_flavour:
+            raise ValueError(
+                f"Checkpoint model_flavour mismatch (expected {expected_flavour}, got {manifest_flavour})."
+            )
+        if expected_arch and manifest_arch and expected_arch != manifest_arch:
+            raise ValueError(
+                f"Checkpoint architecture mismatch (expected {expected_arch}, got {manifest_arch})."
+            )
+        if expected_arch and not manifest_arch:
+            logger.warning("Checkpoint manifest missing architecture metadata; skipping architecture validation.")
+
+    def _download_remote_checkpoint(self, resume_path: str) -> str:
+        if not getattr(self.config, "output_dir", None):
+            raise ValueError("output_dir is required to download remote checkpoints.")
+
+        provider, key_prefix = self._select_s3_provider_for_resume(resume_path)
+        checkpoint_name = os.path.basename(key_prefix.rstrip("/"))
+        if not checkpoint_name:
+            raise ValueError("resume_from_checkpoint must include a checkpoint directory name.")
+
+        local_dir = os.path.join(self.config.output_dir, checkpoint_name)
+        manifest = None
+        if os.path.exists(os.path.join(local_dir, CHECKPOINT_MANIFEST_FILENAME)) and self.checkpoint_manager:
+            manifest = self.checkpoint_manager.load_manifest(local_dir)
+        if manifest is None:
+            manifest = provider.download_checkpoint(
+                key_prefix=key_prefix,
+                local_dir=local_dir,
+                manifest_filename=CHECKPOINT_MANIFEST_FILENAME,
+            )
+        manager = self.checkpoint_manager or CheckpointManager(self.config.output_dir)
+        is_valid, error_message = manager.validate_checkpoint(checkpoint_name)
+        if not is_valid:
+            raise ValueError(f"Downloaded checkpoint is invalid: {error_message}")
+        self._validate_resume_manifest(manifest)
+        return local_dir
+
+    def _build_checkpoint_manifest_metadata(self) -> dict[str, Any]:
+        metadata = {
+            "model_family": getattr(self.config, "model_family", None),
+            "model_type": getattr(self.config, "model_type", None),
+            "model_flavour": getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", None)),
+        }
+        if getattr(self, "model_hooks", None) is not None:
+            metadata["modelspec_architecture"] = self.model_hooks.get_modelspec_architecture()
+        return {key: value for key, value in metadata.items() if value not in (None, "")}
+
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
@@ -3897,8 +4054,13 @@ class Trainer:
         if not self.config.resume_from_checkpoint:
             logger.info(f"Not resuming from checkpoint.")
             return lr_scheduler
-        if self.config.resume_from_checkpoint != "latest":
-            path = os.path.basename(self.config.resume_from_checkpoint)
+        resume_value = str(self.config.resume_from_checkpoint)
+        checkpoint_dir = None
+        if resume_value != "latest" and self._resume_path_is_remote(resume_value):
+            checkpoint_dir = self._download_remote_checkpoint(resume_value)
+            path = os.path.basename(checkpoint_dir.rstrip("/"))
+        elif resume_value != "latest":
+            path = os.path.basename(resume_value.rstrip("/"))
         else:
             # Get the most recent checkpoint
             path = self.checkpoint_state_latest(self.config.output_dir)
@@ -3918,7 +4080,8 @@ class Trainer:
             self.config.resume_from_checkpoint = None
             return lr_scheduler
 
-        checkpoint_dir = os.path.join(self.config.output_dir, path)
+        if checkpoint_dir is None:
+            checkpoint_dir = os.path.join(self.config.output_dir, path)
         logger.info(f"Resuming from checkpoint {checkpoint_dir}")
         self.accelerator.load_state(checkpoint_dir)
 
@@ -4777,12 +4940,13 @@ class Trainer:
     ):
         if custom_timesteps is not None:
             timesteps = custom_timesteps
-        prepared_batch = apply_scheduled_sampling_rollout(
-            self.model,
-            prepared_batch,
-            self.noise_scheduler,
-            self.config,
-        )
+        if self.model.uses_noise_schedule():
+            prepared_batch = apply_scheduled_sampling_rollout(
+                self.model,
+                prepared_batch,
+                self.noise_scheduler,
+                self.config,
+            )
         if not self.config.disable_accelerator:
             if self.config.controlnet:
                 model_pred = self.model.controlnet_predict(
@@ -4795,11 +4959,14 @@ class Trainer:
 
         else:
             # Dummy model prediction for debugging.
+            if not self.model.uses_noise_schedule():
+                raise ValueError("disable_accelerator debug path is not supported for autoregressive models.")
             model_pred = torch.randn_like(prepared_batch["noisy_latents"])
 
         # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
         if (
-            hasattr(self.noise_scheduler, "config")
+            self.model.uses_noise_schedule()
+            and hasattr(self.noise_scheduler, "config")
             and hasattr(self.noise_scheduler.config, "prediction_type")
             and self.noise_scheduler.config.prediction_type == "sample"
         ):
@@ -4940,7 +5107,37 @@ class Trainer:
             for removing_checkpoint in removing_checkpoints:
                 self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
+    def _check_disk_space_before_checkpoint(self) -> None:
+        """Check disk space before saving a checkpoint."""
+        threshold_str = getattr(self.config, "disk_low_threshold", None)
+        if threshold_str in (None, "", "None"):
+            return
+
+        if not self.accelerator.is_main_process:
+            return
+
+        from simpletuner.helpers.training.disk_space import DiskLowAction, check_disk_space, parse_size_threshold
+
+        threshold_bytes = parse_size_threshold(threshold_str)
+        if threshold_bytes is None:
+            return
+
+        action = getattr(self.config, "disk_low_action", DiskLowAction.STOP)
+        if isinstance(action, str):
+            action = DiskLowAction.from_raw(action)
+
+        script_path = getattr(self.config, "disk_low_script", None)
+        output_dir = self.config.output_dir
+
+        check_disk_space(
+            output_dir=output_dir,
+            threshold_bytes=threshold_bytes,
+            action=action,
+            script_path=script_path,
+        )
+
     def checkpoint_state_save(self, output_dir, suffix=None):
+        self._check_disk_space_before_checkpoint()
         print("\n")
 
         save_path = os.path.join(
@@ -5022,6 +5219,11 @@ class Trainer:
                         self.model_hooks.training_state_path,
                     ),
                 )
+        if self.checkpoint_manager and getattr(self.accelerator, "is_main_process", True):
+            self.checkpoint_manager.write_manifest(
+                save_path_tmp,
+                metadata=self._build_checkpoint_manifest_metadata(),
+            )
         if save_path != save_path_tmp:
             os.rename(save_path_tmp, save_path)
         event = checkpoint_event(
@@ -5183,33 +5385,43 @@ class Trainer:
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
                 with self.accelerator.accumulate(*training_models):
-                    bsz = prepared_batch["latents"].shape[0]
-                    training_logger.debug("Sending latent batch to GPU.")
+                    if self.model.uses_noise_schedule():
+                        batch_label = "latents"
+                        bsz = prepared_batch["latents"].shape[0]
+                        training_logger.debug("Sending latent batch to GPU.")
+                    else:
+                        batch_label = "tokens"
+                        bsz = prepared_batch["tokens"].shape[0]
+                        training_logger.debug("Sending token batch to GPU.")
 
                     if int(bsz) != int(self.config.train_batch_size):
                         logger.error(
-                            f"Received {bsz} latents, but expected {self.config.train_batch_size}. Processing short batch."
+                            f"Received {bsz} {batch_label}, but expected {self.config.train_batch_size}. "
+                            "Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
-                    for timestep in prepared_batch["timesteps"].tolist():
-                        self.timesteps_buffer.append((self.state["global_step"], timestep))
-                    if getattr(self.config, "twinflow_enabled", False):
-                        sigmas = prepared_batch.get("sigmas")
-                        tt = prepared_batch.get("twinflow_tt")
-                        time_sign = prepared_batch.get("twinflow_time_sign")
-                        if sigmas is not None and tt is not None:
-                            try:
-                                sigma_mean = float(sigmas.detach().float().mean().item())
-                                tt_mean = float(tt.detach().float().mean().item())
-                                sign_val = (
-                                    float(time_sign.detach().float().mean().item())
-                                    if time_sign is not None
-                                    else float(torch.sign(sigmas.detach().float()).mean().item())
-                                )
-                                self.twinflow_traj_buffer.append((self.state["global_step"], sigma_mean, tt_mean, sign_val))
-                            except Exception:
-                                training_logger.debug("TwinFlow trajectory logging skipped due to tensor shape issues.")
+                    if self.model.uses_noise_schedule():
+                        for timestep in prepared_batch["timesteps"].tolist():
+                            self.timesteps_buffer.append((self.state["global_step"], timestep))
+                        if getattr(self.config, "twinflow_enabled", False):
+                            sigmas = prepared_batch.get("sigmas")
+                            tt = prepared_batch.get("twinflow_tt")
+                            time_sign = prepared_batch.get("twinflow_time_sign")
+                            if sigmas is not None and tt is not None:
+                                try:
+                                    sigma_mean = float(sigmas.detach().float().mean().item())
+                                    tt_mean = float(tt.detach().float().mean().item())
+                                    sign_val = (
+                                        float(time_sign.detach().float().mean().item())
+                                        if time_sign is not None
+                                        else float(torch.sign(sigmas.detach().float()).mean().item())
+                                    )
+                                    self.twinflow_traj_buffer.append(
+                                        (self.state["global_step"], sigma_mean, tt_mean, sign_val)
+                                    )
+                                except Exception:
+                                    training_logger.debug("TwinFlow trajectory logging skipped due to tensor shape issues.")
 
                     if "encoder_hidden_states" in prepared_batch:
                         encoder_hidden_states = prepared_batch["encoder_hidden_states"]
@@ -5223,7 +5435,7 @@ class Trainer:
 
                     # Predict the noise residual and compute loss
                     is_regularisation_data = prepared_batch.get("is_regularisation_data", False)
-                    if is_regularisation_data and self.config.model_type == "lora":
+                    if is_regularisation_data and self.config.model_type == "lora" and self.model.uses_noise_schedule():
                         training_logger.debug("Predicting parent model residual.")
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
@@ -6330,6 +6542,18 @@ def run_trainer_job(config):
         if signal_file_path:
             launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
 
+        # Set up error file for structured error reporting from subprocess
+        from simpletuner.helpers.training.error_reporter import ERROR_FILE_ENV_VAR
+
+        error_file_path = None
+        if signal_dir:
+            error_file_path = Path(signal_dir) / "error.json"
+        else:
+            import tempfile
+
+            error_file_path = Path(tempfile.gettempdir()) / f"simpletuner_error_{os.getpid()}.json"
+        launch_env[ERROR_FILE_ENV_VAR] = str(error_file_path)
+
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
@@ -6493,25 +6717,37 @@ def run_trainer_job(config):
         returncode = process.wait()
         _cleanup_signal_relay()
         if returncode != 0:
-            helper = globals().get("_summarize_accelerate_failure")
-            if helper is None:
+            # Try to read structured error file first
+            from simpletuner.helpers.training.error_reporter import cleanup_error_file, read_error
 
-                def helper(exit_code, lines):
-                    cleaned = [line.rstrip("\n") for line in lines]
-                    excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
-                    excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
-                    summary_text = f"Accelerate launch exited with status {exit_code}"
-                    if excerpt_lines:
-                        summary_text = f"{summary_text}: {excerpt_lines[-1]}"
-                    return summary_text[:512], excerpt_text
+            error_data = read_error(error_file_path) if error_file_path else None
 
-            summary, excerpt = helper(returncode, list(recent_lines))
-            launch_error = RuntimeError(summary)
+            if error_data:
+                # Use structured error data from subprocess
+                summary = f"{error_data.get('exception_type', 'Error')}: {error_data.get('message', 'Unknown error')}"
+                excerpt = error_data.get("traceback")
+                cleanup_error_file(error_file_path)
+            else:
+                # Fallback: extract from stdout (last resort)
+                cleaned = [_strip_ansi(line.rstrip("\n")) for line in recent_lines]
+                excerpt_lines = [line.strip() for line in cleaned[-40:] if line.strip()]
+                excerpt = "\n".join(excerpt_lines) if excerpt_lines else None
+                summary = f"Accelerate launch exited with status {returncode}"
+                if excerpt_lines:
+                    summary = f"{summary}: {excerpt_lines[-1][:200]}"
+
+            launch_error = RuntimeError(summary[:512])
             if excerpt:
                 setattr(launch_error, "_simpletuner_log_excerpt", excerpt)
             if recent_lines:
                 setattr(launch_error, "_simpletuner_recent_log_lines", list(recent_lines))
             raise launch_error
+        # Clean up error file on success
+        if error_file_path and error_file_path.exists():
+            try:
+                error_file_path.unlink()
+            except Exception:
+                pass
         return returncode
 
     try:

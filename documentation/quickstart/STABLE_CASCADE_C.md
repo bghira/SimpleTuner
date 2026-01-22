@@ -13,7 +13,7 @@ This guide walks through configuring SimpleTuner to fine-tune the **Stable Casca
 
 ## Prerequisites
 
-1. Python 3.12 (matching the project `.venv`).
+1. Python 3.13 (matching the project `.venv`).
 2. CUDA 12.1+ or ROCm 5.7+ for GPU acceleration (or Apple Metal for M-series Macs, though Stage C is mostly tested on CUDA).
 3. `torchvision` (required for the Stable Cascade autoencoder) and `accelerate` for launching training.
 
@@ -26,7 +26,7 @@ python --version
 Install missing packages (Ubuntu example):
 
 ```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv
+sudo apt update && sudo apt install -y python3.13 python3.13-venv
 ```
 
 ## Installation
@@ -34,10 +34,13 @@ sudo apt update && sudo apt install -y python3.12 python3.12-venv
 Follow the standard SimpleTuner installation (pip or source). For a typical CUDA workstation:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 For contributors or anyone hacking on the repo directly, install from source and then run `pip install -e .[cuda,dev]`.

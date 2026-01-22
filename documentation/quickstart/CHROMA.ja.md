@@ -35,6 +35,9 @@ SimpleTunerをインストール（CUDAの例）:
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 バックエンド固有のセットアップの詳細（CUDA、ROCm、Apple）については、[インストールガイド](../INSTALL.md)を参照してください。

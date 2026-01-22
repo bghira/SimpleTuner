@@ -156,6 +156,20 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Qué**: Aplica reemplazos RamTorch a las capas Linear de ControlNet cuando se entrena un ControlNet.
 - **Predeterminado**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **Qué**: Porcentaje (0-100) de capas Linear del transformer a descargar con RamTorch.
+- **Predeterminado**: `100` (todas las capas elegibles)
+- **Por qué**: Permite una descarga parcial para equilibrar el ahorro de VRAM con el rendimiento. Valores más bajos mantienen más capas en la GPU para un entrenamiento más rápido, mientras se reduce el uso de memoria.
+- **Notas**: Las capas se seleccionan desde el inicio del orden de recorrido del módulo. Se puede combinar con `--ramtorch_target_modules`.
+
+### `--ramtorch_text_encoder_percent`
+
+- **Qué**: Porcentaje (0-100) de capas Linear del codificador de texto a descargar con RamTorch.
+- **Predeterminado**: `100` (todas las capas elegibles)
+- **Por qué**: Permite la descarga parcial de codificadores de texto cuando `--ramtorch_text_encoder` está habilitado.
+- **Notas**: Solo aplica cuando `--ramtorch_text_encoder` está habilitado.
+
 ### `--pretrained_model_name_or_path`
 
 - **Qué**: Ruta al modelo preentrenado o su identificador en <https://huggingface.co/models>.
@@ -1175,10 +1189,37 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 
 ### `--resume_from_checkpoint`
 
-- **Qué**: Especifica si y desde dónde reanudar el entrenamiento.
-- **Por qué**: Permite continuar entrenando desde un estado guardado, ya sea especificado manualmente o el más reciente disponible. Un checkpoint se compone de un subdirectorio `unet` y opcionalmente `unet_ema`. El `unet` puede colocarse en cualquier layout de Diffusers para SDXL, permitiendo usarlo como lo harías con un modelo normal.
+- **Qué**: Especifica si y desde dónde reanudar el entrenamiento. Acepta `latest`, un nombre/ruta local de checkpoint o un URI S3/R2.
+- **Por qué**: Permite continuar entrenando desde un estado guardado, ya sea especificado manualmente o el más reciente disponible.
+- **Reanudación remota**: Proporciona un URI completo (`s3://bucket/jobs/.../checkpoint-100`) o una clave relativa al bucket (`jobs/.../checkpoint-100`). `latest` solo funciona con `output_dir` local.
+- **Requisitos**: La reanudación remota necesita una entrada S3 en publishing_config (bucket + credenciales) que pueda leer el checkpoint.
+- **Notas**: Los checkpoints remotos deben incluir `checkpoint_manifest.json` (generado por ejecuciones recientes de SimpleTuner). Un checkpoint se compone de un subdirectorio `unet` y opcionalmente `unet_ema`. El `unet` puede colocarse en cualquier layout de Diffusers para SDXL, permitiendo usarlo como lo harías con un modelo normal.
 
 > ℹ️ Los modelos transformer como PixArt, SD3 o Hunyuan usan los nombres de subcarpeta `transformer` y `transformer_ema`.
+
+### `--disk_low_threshold`
+
+- **Qué**: Espacio mínimo libre en disco requerido antes de guardar checkpoints.
+- **Por qué**: Previene que el entrenamiento falle por errores de disco lleno al detectar espacio bajo tempranamente y tomar una acción configurada.
+- **Formato**: Cadena de tamaño como `100G`, `50M`, `1T`, `500K`, o bytes simples.
+- **Por defecto**: Ninguno (función desactivada)
+
+### `--disk_low_action`
+
+- **Qué**: Acción a tomar cuando el espacio en disco está por debajo del umbral.
+- **Opciones**: `stop`, `wait`, `script`
+- **Por defecto**: `stop`
+- **Comportamiento**:
+  - `stop`: Termina el entrenamiento inmediatamente con un mensaje de error.
+  - `wait`: Hace bucle cada 30 segundos hasta que el espacio esté disponible. Puede esperar indefinidamente.
+  - `script`: Ejecuta el script especificado por `--disk_low_script` para liberar espacio.
+
+### `--disk_low_script`
+
+- **Qué**: Ruta a un script de limpieza para ejecutar cuando el espacio en disco es bajo.
+- **Por qué**: Permite limpieza automatizada (ej: eliminar checkpoints antiguos, limpiar caché) cuando el espacio en disco es bajo.
+- **Notas**: Solo se usa cuando `--disk_low_action=script`. El script debe ser ejecutable. Si el script falla o no libera suficiente espacio, el entrenamiento se detendrá con un error.
+- **Por defecto**: Ninguno
 
 ---
 

@@ -9,7 +9,6 @@ from typing import Optional
 import numpy
 from tqdm import tqdm
 
-from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -642,6 +641,8 @@ class ParquetMetadataBackend(MetadataBackend):
                     statistics.setdefault("skipped", {}).setdefault("not_found", 0)
                     statistics["skipped"]["not_found"] += 1
                     return aspect_ratio_bucket_indices
+                from simpletuner.helpers.audio import load_audio
+
                 buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
                 buffer.seek(0)
                 waveform, inferred_sample_rate = load_audio(buffer)
@@ -668,6 +669,12 @@ class ParquetMetadataBackend(MetadataBackend):
                 lyrics_value = self._extract_audio_value(database_row, lyrics_column)
                 if lyrics_value:
                     overrides["lyrics"] = lyrics_value
+            for token_field in ("audio_tokens", "audio_tokens_path"):
+                token_value = self._extract_audio_value(database_row, token_field)
+                if token_value is not None:
+                    if hasattr(token_value, "tolist") and not isinstance(token_value, (str, bytes)):
+                        token_value = token_value.tolist()
+                    overrides[token_field] = token_value
 
             audio_metadata = self._build_audio_metadata_entry(
                 sample_path=image_path_str,

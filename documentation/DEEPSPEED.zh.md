@@ -24,7 +24,7 @@ SimpleTuner v0.7 为使用 DeepSpeed ZeRO 1–3 阶段训练 SDXL 提供了初�
 |  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
 |        ID   ID                                                   Usage      |
 |=============================================================================|
-|    0   N/A  N/A     11500      C   ...uner/.venv/bin/python3.12     9232MiB |
+|    0   N/A  N/A     11500      C   ...uner/.venv/bin/python3.13     9232MiB |
 +-----------------------------------------------------------------------------+
 ```
 

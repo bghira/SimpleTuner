@@ -93,6 +93,32 @@ class AttentionPhase(Enum):
     EVAL = "eval"
 
 
+def is_sageattention_available() -> bool:
+    """Check if sageattention package is importable."""
+    try:
+        import sageattention  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def xformers_compute_capability_error() -> Optional[str]:
+    """Return an error message if xformers is unsupported on the current GPU, else None.
+
+    xformers does not support compute capability 9.0+ (Hopper architecture).
+    """
+    if not torch.cuda.is_available():
+        return None
+    major, _ = torch.cuda.get_device_capability()
+    if major >= 9:
+        return (
+            f"xformers is not supported on GPUs with compute capability 9.0+ "
+            f"(detected {major}.x). Use a different attention mechanism such as 'diffusers'."
+        )
+    return None
+
+
 SLAKey = Tuple[int, str, Optional[int], torch.dtype]
 
 

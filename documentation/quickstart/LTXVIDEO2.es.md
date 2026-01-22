@@ -62,6 +62,9 @@ python --version
 
 ```bash
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 Consulta [INSTALL.md](../INSTALL.md) para opciones de instalación avanzadas.
@@ -313,6 +316,69 @@ Configuración probada en campo que prioriza el uso mínimo de VRAM en LTX Video
 }
 ```
 </details>
+
+### Entrenamiento solo con audio
+
+LTX-2 soporta **entrenamiento solo con audio**, donde entrenas únicamente la capacidad de generación de audio sin archivos de video. Esto es útil cuando tienes datasets de audio pero ningún contenido de video correspondiente.
+
+En modo solo audio:
+- Los latentes de video se ponen a cero automáticamente (resolución mínima de 64x64 para ahorrar memoria)
+- La pérdida de video se enmascara (no se calcula)
+- Solo se entrenan las capas de generación de audio
+
+El modo solo audio se **detecta automáticamente** cuando tu configuración de dataset contiene únicamente datasets de audio (sin datasets de video o imagen). También puedes habilitarlo explícitamente con `audio.audio_only: true`.
+
+#### Configuración del dataset solo audio
+
+```json
+[
+  {
+    "id": "my-audio-dataset",
+    "type": "local",
+    "dataset_type": "audio",
+    "instance_data_dir": "datasets/audio",
+    "caption_strategy": "textfile",
+    "audio": {
+      "sample_rate": 16000,
+      "channels": 2,
+      "duration_interval": 3.0,
+      "truncation_mode": "beginning"
+    },
+    "repeats": 10
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo2",
+    "disabled": false
+  }
+]
+```
+
+Configuraciones clave de audio:
+- `channels`: **Debe ser 2** (estéreo) para el Audio VAE de LTX-2
+- `duration_interval`: Agrupa el audio en intervalos (ej. 3.0 segundos). **Importante para la gestión de memoria** - archivos de audio largos crean muchos frames de video aunque sean ceros
+- `truncation_mode`: Cómo manejar audio más largo que la duración del bucket (`beginning`, `end`, o `random`)
+
+#### Formatos de audio soportados
+
+SimpleTuner soporta formatos de audio comunes (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, etc.) así como formatos contenedor que pueden contener solo audio (`.mp4`, `.mpeg`, `.mkv`, `.webm`). Los formatos contenedor se extraen automáticamente usando ffmpeg.
+
+#### Objetivos LoRA para entrenamiento de audio
+
+Cuando se detectan datos de audio en tus datasets, SimpleTuner añade automáticamente módulos específicos de audio a los objetivos LoRA:
+- `audio_proj_in` - Proyección de entrada de audio
+- `audio_proj_out` - Proyección de salida de audio
+- `audio_caption_projection.linear_1` - Capa de proyección de subtítulos de audio 1
+- `audio_caption_projection.linear_2` - Capa de proyección de subtítulos de audio 2
+
+Esto sucede automáticamente tanto para el entrenamiento solo con audio como para el entrenamiento conjunto de audio+video.
+
+Si deseas sobrescribir los objetivos LoRA manualmente, usa `--peft_lora_target_modules` con una lista JSON de nombres de módulos.
+
+Coloca tus archivos de audio en `instance_data_dir` con los archivos `.txt` de subtítulos correspondientes.
 
 ### Flujos de validación (T2V vs I2V)
 

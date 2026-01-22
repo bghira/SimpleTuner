@@ -12,6 +12,16 @@ class LazyModelClass:
     def NAME(self):
         return self._metadata.get("name", "Unknown Model")
 
+    @property
+    def PREDICTION_TYPE(self):
+        """Return prediction type from metadata without importing the module."""
+        prediction_type = self._metadata.get("prediction_type")
+        if prediction_type is None:
+            return None
+        # Return a simple object with a .value attribute to match the enum pattern
+        # used in loss.py: getattr(getattr(cls, "PREDICTION_TYPE"), "value", ...)
+        return type("PredictionType", (), {"value": prediction_type})()
+
     def get_flavour_choices(self):
         return self._metadata.get("flavour_choices", [])
 

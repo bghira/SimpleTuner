@@ -121,6 +121,8 @@
 - **`duration_interval`** – 以秒为单位的分桶舍入（未设置时默认 **3**）。例如设为 `15` 时，77 秒的片段会归入 75 秒桶。这样可防止单个超长片段占用过多桶，并强制截断到统一间隔。
 - **`max_duration_seconds`** – 超过此时长的片段在元数据发现时会被完全跳过，避免异常长的音轨占用桶。
 - **`truncation_mode`** – 规定对齐到桶间隔时保留片段的哪一部分。可选：`beginning`、`end`、`random`（默认：`beginning`）。
+- **`audio_only`** – 纯音频训练模式（LTX-2）：不使用视频文件仅训练音频生成。视频 latents 会自动置零并屏蔽视频损失。
+- **`target_resolution`** – 纯音频模式下的目标视频分辨率（用于计算 latent 维度）。
 - 标准音频设置（声道数、缓存目录）会直接映射到 `simpletuner.helpers.data_backend.factory` 创建的运行时音频后端。刻意避免 padding——片段被截断而不是延长，以保持与 ACE-Step 等扩散训练器的行为一致。
 
 ### 音频字幕（Hugging Face）

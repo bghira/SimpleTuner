@@ -1,0 +1,18 @@
+[
+  {
+    "id": "heartmula-demo-data",
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "Yi3852/ACEStep-Songs",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "cache_dir_vae": "cache/vae/{model_family}/heartmula-demo-data"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]

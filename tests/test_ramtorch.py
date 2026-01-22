@@ -71,6 +71,109 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIsInstance(model.linear1, nn.Linear)
         self.assertIsInstance(model.block[0], nn.Linear)
 
+    def test_replace_linear_with_percent_50(self):
+        """Test that percent=50 replaces only half (rounded up) of eligible layers."""
+
+        class _LargerModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear1 = nn.Linear(2, 2)
+                self.linear2 = nn.Linear(2, 2)
+                self.linear3 = nn.Linear(2, 2)
+                self.linear4 = nn.Linear(2, 2)
+
+        model = _LargerModel()
+        replace_all_calls = {"count": 0}
+
+        def fake_replace_all(mod, device=None):
+            replace_all_calls["count"] += 1
+
+        stub_imports = self._build_stub_imports(fake_replace_all)
+        with patch.object(ramtorch_utils, "ensure_available", return_value=stub_imports):
+            # percent=50 should replace 2 of 4 layers (ceil(4 * 0.5) = 2)
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cuda", percent=50)
+
+        self.assertEqual(replaced, 2)
+        self.assertEqual(replace_all_calls["count"], 0)  # Should not use replace_all
+        # First 2 layers should be replaced
+        self.assertIsInstance(model.linear1, _StubLinear)
+        self.assertIsInstance(model.linear2, _StubLinear)
+        # Last 2 layers should remain as nn.Linear
+        self.assertIsInstance(model.linear3, nn.Linear)
+        self.assertIsInstance(model.linear4, nn.Linear)
+
+    def test_replace_linear_with_percent_100(self):
+        """Test that percent=100 (or None) replaces all layers."""
+        model = _SimpleModel()
+        replace_all_calls = {"count": 0}
+
+        def fake_replace_all(mod, device=None):
+            replace_all_calls["count"] += 1
+
+        stub_imports = self._build_stub_imports(fake_replace_all)
+        with patch.object(ramtorch_utils, "ensure_available", return_value=stub_imports):
+            # percent=100 should behave the same as percent=None (all layers)
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cuda", percent=100)
+
+        self.assertEqual(replaced, 2)
+        self.assertEqual(replace_all_calls["count"], 1)  # Should use replace_all for efficiency
+
+    def test_replace_linear_with_percent_0(self):
+        """Test that percent=0 replaces no layers."""
+
+        class _LargerModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear1 = nn.Linear(2, 2)
+                self.linear2 = nn.Linear(2, 2)
+
+        model = _LargerModel()
+        replace_all_calls = {"count": 0}
+
+        def fake_replace_all(mod, device=None):
+            replace_all_calls["count"] += 1
+
+        stub_imports = self._build_stub_imports(fake_replace_all)
+        with patch.object(ramtorch_utils, "ensure_available", return_value=stub_imports):
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cuda", percent=0)
+
+        self.assertEqual(replaced, 0)
+        self.assertEqual(replace_all_calls["count"], 0)
+        self.assertIsInstance(model.linear1, nn.Linear)
+        self.assertIsInstance(model.linear2, nn.Linear)
+
+    def test_replace_linear_with_percent_and_patterns(self):
+        """Test that percent works together with target_patterns."""
+
+        class _NestedModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.block_a = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
+                self.block_b = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
+
+        model = _NestedModel()
+        replace_all_calls = {"count": 0}
+
+        def fake_replace_all(mod, device=None):
+            replace_all_calls["count"] += 1
+
+        stub_imports = self._build_stub_imports(fake_replace_all)
+        with patch.object(ramtorch_utils, "ensure_available", return_value=stub_imports):
+            # Only target block_a layers (2 layers), replace 50% = 1 layer
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(
+                model, device="cuda", target_patterns=["block_a.*"], percent=50
+            )
+
+        self.assertEqual(replaced, 1)
+        self.assertEqual(replace_all_calls["count"], 0)
+        # First layer in block_a should be replaced
+        self.assertIsInstance(model.block_a[0], _StubLinear)
+        # Second layer in block_a should remain as nn.Linear
+        self.assertIsInstance(model.block_a[1], nn.Linear)
+        # block_b layers should all remain as nn.Linear (not in target patterns)
+        self.assertIsInstance(model.block_b[0], nn.Linear)
+        self.assertIsInstance(model.block_b[1], nn.Linear)
+
     def test_mark_ddp_ignore_params_marks_ramtorch_names(self):
         class _IgnoreModel(nn.Module):
             def __init__(self):

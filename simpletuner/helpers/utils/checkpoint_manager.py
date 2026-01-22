@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+CHECKPOINT_MANIFEST_FILENAME = "checkpoint_manifest.json"
+
 
 class CheckpointManager:
     """Manages checkpoint operations including listing, validation, and cleanup."""
@@ -124,6 +126,39 @@ class CheckpointManager:
             return False, f"Failed to read training state: {str(e)}"
 
         return True, None
+
+    def write_manifest(self, checkpoint_path: str, metadata: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+        """Write a manifest file listing checkpoint contents for remote resume."""
+        root = Path(checkpoint_path)
+        if not root.exists():
+            raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
+        files = [
+            str(path.relative_to(root).as_posix())
+            for path in root.rglob("*")
+            if path.is_file() and path.name != CHECKPOINT_MANIFEST_FILENAME
+        ]
+        files.sort()
+        manifest: Dict[str, object] = {
+            "version": 1,
+            "checkpoint": root.name,
+            "files": files,
+            "metadata": metadata or {},
+        }
+        manifest_path = root / CHECKPOINT_MANIFEST_FILENAME
+        with manifest_path.open("w") as handle:
+            json.dump(manifest, handle, indent=2)
+        return manifest
+
+    def load_manifest(self, checkpoint_path: str) -> Optional[Dict[str, object]]:
+        """Load a checkpoint manifest if present."""
+        manifest_path = Path(checkpoint_path) / CHECKPOINT_MANIFEST_FILENAME
+        if not manifest_path.exists():
+            return None
+        with manifest_path.open("r") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            return None
+        return data
 
     def cleanup_checkpoints(self, limit: int, suffix: Optional[str] = None):
         """Clean up old checkpoints, keeping only the most recent ones.

@@ -93,12 +93,41 @@ def _matches_pattern(name: str, module: nn.Module, patterns: Iterable[str]) -> b
     return False
 
 
+def _count_eligible_linear_layers(
+    module: nn.Module,
+    patterns: Optional[list[str]],
+    name_prefix: str = "",
+) -> list[tuple[nn.Module, str, nn.Linear, str]]:
+    """
+    Count and collect all Linear layers eligible for replacement.
+
+    Returns:
+        List of tuples: (parent_module, child_name, linear_layer, qualified_name)
+    """
+    eligible = []
+
+    def _recurse(current: nn.Module, prefix: str = ""):
+        for child_name, child in current.named_children():
+            qualified_name = f"{prefix}.{child_name}" if prefix else child_name
+
+            if isinstance(child, nn.Linear):
+                if patterns is None or _matches_pattern(qualified_name, child, patterns):
+                    eligible.append((current, child_name, child, qualified_name))
+                continue
+
+            _recurse(child, qualified_name)
+
+    _recurse(module, name_prefix)
+    return eligible
+
+
 def replace_linear_layers_with_ramtorch(
     module: nn.Module,
     *,
     device: object,
     target_patterns: Optional[Sequence[str]] = None,
     name_prefix: str = "",
+    percent: Optional[float] = None,
 ) -> int:
     """
     Replace Linear layers within a module with RamTorch equivalents.
@@ -108,10 +137,13 @@ def replace_linear_layers_with_ramtorch(
         device: Target CUDA/ROCm device identifier (torch.device or string).
         target_patterns: Optional list of glob patterns to filter which modules are replaced.
         name_prefix: Optional prefix applied to the qualified module names used for matching.
+        percent: Optional percentage (0-100) of eligible Linear layers to replace.
+                 If None or 100, all eligible layers are replaced.
 
     Returns:
         Number of Linear modules replaced.
     """
+    import math
 
     imports = ensure_available()
     ramtorch_linear = imports["Linear"]
@@ -119,7 +151,10 @@ def replace_linear_layers_with_ramtorch(
     patterns = normalize_patterns(target_patterns)
     resolved_device = _normalize_device(device)
 
-    if patterns is None:
+    # Handle percentage: if not specified or 100, replace all
+    use_percent = percent is not None and percent < 100
+
+    if patterns is None and not use_percent:
         # Replace every Linear using RamTorch's helper.
         num_linear = sum(1 for _, child in module.named_modules() if isinstance(child, nn.Linear))
         replace_all(module, device=resolved_device)
@@ -129,46 +164,56 @@ def replace_linear_layers_with_ramtorch(
                     setattr(param, "is_ramtorch", True)
         return num_linear
 
+    # Collect all eligible layers first (needed for percentage calculation)
+    eligible = _count_eligible_linear_layers(module, patterns, name_prefix)
+
+    if not eligible:
+        return 0
+
+    # Calculate how many to replace based on percentage
+    if use_percent:
+        total_eligible = len(eligible)
+        num_to_replace = math.ceil(total_eligible * percent / 100)
+        if num_to_replace == 0 and percent > 0:
+            num_to_replace = 1  # At least one if percent > 0
+        eligible = eligible[:num_to_replace]
+        logger.info(
+            "RamTorch percentage mode: replacing %d of %d eligible Linear layers (%.1f%%).",
+            num_to_replace,
+            total_eligible,
+            percent,
+        )
+
     replaced = 0
+    for parent, child_name, child, qualified_name in eligible:
+        if isinstance(child, ramtorch_linear):
+            continue
 
-    def _recurse(current: nn.Module, prefix: str = ""):
-        nonlocal replaced
-        for child_name, child in current.named_children():
-            qualified_name = f"{prefix}.{child_name}" if prefix else child_name
+        new_layer = ramtorch_linear(
+            child.in_features,
+            child.out_features,
+            bias=child.bias is not None,
+            device=resolved_device,
+            dtype=child.weight.dtype,
+            skip_init=True,
+        )
+        new_layer.train(child.training)
 
-            if isinstance(child, ramtorch_linear):
-                continue
+        with torch.no_grad():
+            new_layer.weight.copy_(child.weight.detach().to("cpu"))
+            if child.bias is not None and new_layer.bias is not None:
+                new_layer.bias.copy_(child.bias.detach().to("cpu"))
 
-            if isinstance(child, nn.Linear) and _matches_pattern(qualified_name, child, patterns):
-                new_layer = ramtorch_linear(
-                    child.in_features,
-                    child.out_features,
-                    bias=child.bias is not None,
-                    device=resolved_device,
-                    dtype=child.weight.dtype,
-                    skip_init=True,
-                )
-                new_layer.train(child.training)
+        new_layer.weight.requires_grad = child.weight.requires_grad
+        if new_layer.bias is not None and child.bias is not None:
+            new_layer.bias.requires_grad = child.bias.requires_grad
+        setattr(new_layer.weight, "is_ramtorch", True)
+        if new_layer.bias is not None:
+            setattr(new_layer.bias, "is_ramtorch", True)
 
-                with torch.no_grad():
-                    new_layer.weight.copy_(child.weight.detach().to("cpu"))
-                    if child.bias is not None and new_layer.bias is not None:
-                        new_layer.bias.copy_(child.bias.detach().to("cpu"))
+        setattr(parent, child_name, new_layer)
+        replaced += 1
 
-                new_layer.weight.requires_grad = child.weight.requires_grad
-                if new_layer.bias is not None and child.bias is not None:
-                    new_layer.bias.requires_grad = child.bias.requires_grad
-                setattr(new_layer.weight, "is_ramtorch", True)
-                if new_layer.bias is not None:
-                    setattr(new_layer.bias, "is_ramtorch", True)
-
-                setattr(current, child_name, new_layer)
-                replaced += 1
-                continue
-
-            _recurse(child, qualified_name)
-
-    _recurse(module, name_prefix)
     return replaced
 
 
@@ -183,6 +228,7 @@ def replace_all_layers_with_ramtorch(
     include_rmsnorm: bool = True,
     target_patterns: Optional[Sequence[str]] = None,
     name_prefix: str = "",
+    percent: Optional[float] = None,
 ) -> dict:
     """
     Replace all supported layer types with CPU-bouncing RamTorch versions.
@@ -200,6 +246,7 @@ def replace_all_layers_with_ramtorch(
         include_rmsnorm: Replace RMSNorm-like layers.
         target_patterns: Optional glob patterns to filter which modules are replaced.
         name_prefix: Optional prefix for module names.
+        percent: Optional percentage (0-100) of eligible Linear layers to replace.
 
     Returns:
         Dict with counts of each layer type replaced.
@@ -216,6 +263,7 @@ def replace_all_layers_with_ramtorch(
             device=resolved_device,
             target_patterns=target_patterns,
             name_prefix=name_prefix,
+            percent=percent,
         )
 
     # Replace other layers using our extensions

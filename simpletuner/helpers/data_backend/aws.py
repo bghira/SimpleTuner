@@ -13,7 +13,6 @@ from botocore.config import Config
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from torch import Tensor
 
-from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
@@ -64,6 +63,7 @@ class S3DataBackend(BaseDataBackend):
         endpoint_url: str = None,
         aws_access_key_id: str = None,
         aws_secret_access_key: str = None,
+        aws_session_token: str = None,
         read_retry_limit: int = 5,
         write_retry_limit: int = 5,
         read_retry_interval: int = 5,
@@ -80,6 +80,7 @@ class S3DataBackend(BaseDataBackend):
         self.write_retry_interval = write_retry_interval
         self.compress_cache = compress_cache
         self.max_pool_connections = max_pool_connections
+        self.aws_session_token = aws_session_token
         self.type = "aws"
 
         extra_args = {"region_name": region_name}
@@ -92,6 +93,7 @@ class S3DataBackend(BaseDataBackend):
             "s3",
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
             config=s3_config,
             **extra_args,
         )
@@ -293,6 +295,8 @@ class S3DataBackend(BaseDataBackend):
         # Check extension
         ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
         if ext in audio_file_extensions:
+            from simpletuner.helpers.audio import load_audio
+
             return load_audio(buffer)
         if ext in video_file_extensions:
             return load_video(buffer)
@@ -317,6 +321,8 @@ class S3DataBackend(BaseDataBackend):
                 ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
                 buffer = BytesIO(data)
                 if ext in audio_file_extensions:
+                    from simpletuner.helpers.audio import load_audio
+
                     image_data = load_audio(buffer)
                 elif ext in video_file_extensions:
                     image_data = load_video(buffer)
@@ -351,6 +357,7 @@ def test_s3_connection(
     endpoint_url: Optional[str] = None,
     aws_access_key_id: Optional[str] = None,
     aws_secret_access_key: Optional[str] = None,
+    aws_session_token: Optional[str] = None,
     max_keys: int = 5,
 ) -> Dict[str, Any]:
     """Run a minimal connectivity check against an S3 bucket."""
@@ -369,6 +376,7 @@ def test_s3_connection(
             "s3",
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
             config=s3_config,
             **extra_args,
         )

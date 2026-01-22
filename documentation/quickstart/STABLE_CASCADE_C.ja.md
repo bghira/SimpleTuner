@@ -13,7 +13,7 @@
 
 ## 前提条件
 
-1. Python 3.12（プロジェクトの `.venv` と一致）。
+1. Python 3.13（プロジェクトの `.venv` と一致）。
 2. GPU アクセラレーション用に CUDA 12.1+ または ROCm 5.7+（Apple M シリーズは Metal でも動作しますが Stage C は主に CUDA で検証）。
 3. `torchvision`（Stable Cascade オートエンコーダに必須）と `accelerate`（トレーニング起動用）。
 
@@ -26,7 +26,7 @@ python --version
 不足パッケージのインストール（Ubuntu 例）:
 
 ```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv
+sudo apt update && sudo apt install -y python3.13 python3.13-venv
 ```
 
 ## インストール
@@ -34,10 +34,13 @@ sudo apt update && sudo apt install -y python3.12 python3.12-venv
 標準の SimpleTuner インストール（pip もしくはソース）に従ってください。一般的な CUDA ワークステーションの例:
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 ```
 
 コントリビューターやリポジトリ直編集の場合は、ソースからインストールし `pip install -e .[cuda,dev]` を実行します。

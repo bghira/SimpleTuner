@@ -32,7 +32,12 @@ except ImportError:
 
 from simpletuner.diff2flow import DiffusionToFlowBridge
 from simpletuner.helpers.assistant_lora import build_adapter_stack, set_adapter_stack
-from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.models.foundation_mixins import (
+    AudioTransformMixin,
+    PipelineSupportMixin,
+    VaeLatentScalingMixin,
+    VideoTransformMixin,
+)
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
@@ -307,6 +312,7 @@ class PredictionTypes(Enum):
     SAMPLE = "sample"
     V_PREDICTION = "v_prediction"
     FLOW_MATCHING = "flow_matching"
+    AUTOREGRESSIVE_NEXT_TOKEN = "autoregressive_next_token"
 
     @staticmethod
     def from_str(label):
@@ -318,6 +324,8 @@ class PredictionTypes(Enum):
             return PredictionTypes.SAMPLE
         elif label in ("flow", "flow_matching", "flow-matching"):
             return PredictionTypes.FLOW_MATCHING
+        elif label in ("ar", "autoregressive", "autoregressive_next_token"):
+            return PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
         else:
             raise NotImplementedError
 
@@ -771,6 +779,54 @@ class ModelFoundation(ABC):
         return False
 
     # -------------------------------------------------------------------------
+    # Data signal infrastructure
+    # -------------------------------------------------------------------------
+    # These flags are set by the factory after data backend configuration to
+    # inform the model about what data types are present. Models can use these
+    # signals to adjust behavior (e.g., LoRA target modules).
+
+    _data_has_images: bool = False
+    _data_has_video: bool = False
+    _data_has_audio: bool = False
+
+    def configure_data_signals(
+        self,
+        has_images: bool = False,
+        has_video: bool = False,
+        has_audio: bool = False,
+    ) -> None:
+        """
+        Configure data type signals from the dataloader.
+
+        Called by the factory after data backend configuration to inform the
+        model about what data types are present in the training data. Models
+        can override this to take action based on data types, or use the stored
+        flags in other methods like get_lora_target_layers().
+
+        Args:
+            has_images: Whether image data is present
+            has_video: Whether video data is present
+            has_audio: Whether audio data is present
+        """
+        self._data_has_images = has_images
+        self._data_has_video = has_video
+        self._data_has_audio = has_audio
+
+    def _get_additional_lora_targets(self) -> list[str]:
+        """
+        Return additional LoRA target modules based on data signals.
+
+        Models can override this to add extra targets when certain data types
+        are present. For example, a model with audio support might add audio
+        projection layers when audio data is detected.
+
+        Returns:
+            List of additional module name patterns to include in LoRA targets.
+            Empty list by default.
+        """
+        return []
+
+    # -------------------------------------------------------------------------
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
@@ -807,19 +863,32 @@ class ModelFoundation(ABC):
             return manual_targets
 
         lora_type = getattr(self.config, "lora_type", "standard")
+        base_targets = None
         if lora_type.lower() == "standard":
             if getattr(self.config, "slider_lora_target", False):
                 slider_target = getattr(self, "SLIDER_LORA_TARGET", None) or getattr(
                     self, "DEFAULT_SLIDER_LORA_TARGET", None
                 )
                 if slider_target:
-                    return slider_target
-            if getattr(self.config, "controlnet", False):
-                return self.DEFAULT_CONTROLNET_LORA_TARGET
-            return self.DEFAULT_LORA_TARGET
-        if lora_type.lower() == "lycoris":
-            return self.DEFAULT_LYCORIS_TARGET
-        raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+                    base_targets = slider_target
+            if base_targets is None and getattr(self.config, "controlnet", False):
+                base_targets = self.DEFAULT_CONTROLNET_LORA_TARGET
+            if base_targets is None:
+                base_targets = self.DEFAULT_LORA_TARGET
+        elif lora_type.lower() == "lycoris":
+            base_targets = self.DEFAULT_LYCORIS_TARGET
+        else:
+            raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+
+        additional_targets = self._get_additional_lora_targets()
+        if not additional_targets:
+            return base_targets
+
+        combined = list(base_targets) if base_targets else []
+        for target in additional_targets:
+            if target not in combined:
+                combined.append(target)
+        return combined
 
     def add_lora_adapter(self):
         from peft import LoraConfig
@@ -1087,6 +1156,25 @@ class ModelFoundation(ABC):
     def uses_audio_latents(self) -> bool:
         return False
 
+    def uses_audio_tokens(self) -> bool:
+        """
+        Override to True for autoregressive audio models that consume discrete token sequences
+        instead of VAE latents.
+        """
+        return False
+
+    def uses_text_embeddings_cache(self) -> bool:
+        """
+        Override to False for models that do not use text encoder embeddings.
+        """
+        return bool(getattr(self, "TEXT_ENCODER_CONFIGURATION", None))
+
+    def uses_noise_schedule(self) -> bool:
+        """
+        Override to False for autoregressive models that do not use diffusion timesteps/sigmas.
+        """
+        return self.PREDICTION_TYPE is not PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
+
     def get_vae_for_dataset_type(self, dataset_type: str):
         return self.get_vae()
 
@@ -1194,6 +1282,17 @@ class ModelFoundation(ABC):
         Returns a dictionary. If the dictionary is empty, it is ignored and usual collate occurs.
         """
         return {}
+
+    def collate_audio_tokens(self, examples: list[dict]) -> dict:
+        """
+        Optional hook for autoregressive audio models to build token batches.
+
+        Must return a dict containing at least:
+        - tokens: LongTensor [batch, seq_len, num_codebooks + 1]
+        - tokens_mask: BoolTensor [batch, seq_len, num_codebooks + 1]
+        - audio_frame_mask: BoolTensor [batch, seq_len] where True marks audio frames
+        """
+        raise NotImplementedError("collate_audio_tokens must be implemented by the child class.")
 
     @classmethod
     def get_flavour_choices(cls):
@@ -1421,6 +1520,9 @@ class ModelFoundation(ABC):
                 adapter_metadata.update(value)
 
         lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        if lora_format == PEFTLoRAFormat.COMFYUI and getattr(self, "NATIVE_COMFYUI_LORA_SUPPORT", False):
+            logger.info("Skipping ComfyUI LoRA conversion - model has native ComfyUI support")
+            lora_format = PEFTLoRAFormat.DIFFUSERS  # Treat as diffusers format (no-op)
         if lora_format == PEFTLoRAFormat.COMFYUI:
             import safetensors.torch
             from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
@@ -2040,7 +2142,12 @@ class ModelFoundation(ABC):
 
                 if self._ramtorch_text_encoders_requested():
                     # Use full ramtorch for text encoders - all layer types stream from CPU
-                    self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}", full_ramtorch=True)
+                    self._apply_ramtorch_layers(
+                        text_encoder,
+                        f"text_encoder_{text_encoder_idx}",
+                        full_ramtorch=True,
+                        percent=self._ramtorch_text_encoder_percent(),
+                    )
 
                 if (
                     move_to_device
@@ -2463,7 +2570,7 @@ class ModelFoundation(ABC):
                     "All model parameters remain on the meta device after reload."
                 )
         if self._ramtorch_enabled() and self.model is not None:
-            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
+            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value, percent=self._ramtorch_transformer_percent())
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
@@ -2907,6 +3014,20 @@ class ModelFoundation(ABC):
             return override
         return self._ramtorch_targets()
 
+    def _ramtorch_transformer_percent(self) -> Optional[float]:
+        """Get the percentage of transformer Linear layers to offload (0-100)."""
+        percent = getattr(self.config, "ramtorch_transformer_percent", None)
+        if percent is None:
+            return None
+        return float(percent) if percent < 100 else None
+
+    def _ramtorch_text_encoder_percent(self) -> Optional[float]:
+        """Get the percentage of text encoder Linear layers to offload (0-100)."""
+        percent = getattr(self.config, "ramtorch_text_encoder_percent", None)
+        if percent is None:
+            return None
+        return float(percent) if percent < 100 else None
+
     def _apply_ramtorch_layers(
         self,
         module,
@@ -2914,6 +3035,7 @@ class ModelFoundation(ABC):
         *,
         target_patterns: Optional[list[str]] = None,
         full_ramtorch: bool = False,
+        percent: Optional[float] = None,
     ) -> int:
         """
         Apply RamTorch to a module's layers.
@@ -2924,6 +3046,7 @@ class ModelFoundation(ABC):
             target_patterns: Optional patterns to filter which Linear layers to convert.
             full_ramtorch: If True, convert all supported layer types (Linear, Embedding,
                           Conv, LayerNorm) to bouncing versions. If False, only Linear.
+            percent: Optional percentage (0-100) of eligible Linear layers to replace.
         """
         if module is None or not self._ramtorch_enabled():
             return 0
@@ -2938,6 +3061,7 @@ class ModelFoundation(ABC):
                     include_embedding=True,
                     include_conv=True,
                     include_layernorm=True,
+                    percent=percent,
                 )
                 total = counts.get("linear", 0) + counts.get("other", 0)
                 if total:
@@ -2965,6 +3089,7 @@ class ModelFoundation(ABC):
                     device=self._ramtorch_device(),
                     target_patterns=self._ramtorch_targets_for_component(target_patterns),
                     name_prefix=component_label,
+                    percent=percent,
                 )
                 if replaced:
                     logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
@@ -3196,6 +3321,9 @@ class ModelFoundation(ABC):
 
         It's important to note, this is the *training* schedule, not inference.
         """
+        if not self.uses_noise_schedule():
+            self.noise_schedule = None
+            return self.config, None
         flow_matching = False
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             from diffusers import FlowMatchEulerDiscreteScheduler
@@ -3555,6 +3683,10 @@ class ModelFoundation(ABC):
             "clamp_target": float(getattr(self.config, "twinflow_target_clamp", 1.0) or 1.0),
             "require_ema": bool(getattr(self.config, "twinflow_require_ema", True)),
             "use_rng_state": True,
+            # Adversarial branch settings (L_adv + L_rectify)
+            "adversarial_enabled": bool(getattr(self.config, "twinflow_adversarial_enabled", False)),
+            "adversarial_weight": float(getattr(self.config, "twinflow_adversarial_weight", 1.0) or 1.0),
+            "rectify_weight": float(getattr(self.config, "twinflow_rectify_weight", 1.0) or 1.0),
         }
 
     @staticmethod
@@ -3588,6 +3720,114 @@ class ModelFoundation(ABC):
         tt = torch.maximum(tt, torch.zeros_like(tt))
         tt = torch.minimum(tt, sigmas - eps)
         return tt
+
+    def _twinflow_generate_fake_samples(
+        self,
+        prepared_batch: dict,
+        settings: dict,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Generate fake samples via one-step generation (t=1, tt=0).
+
+        Following the TwinFlow reference implementation, we run the model with
+        t=1 (pure noise) and tt=0 (predict to clean) to generate fake samples.
+
+        Returns:
+            (x_fake, z): The generated fake sample and the noise used.
+        """
+        latents = prepared_batch["latents"]
+        z = torch.randn_like(latents)
+
+        ones = torch.ones(z.shape[0], device=z.device, dtype=z.dtype)
+        zeros = torch.zeros_like(ones)
+
+        with torch.no_grad():
+            F_fake = self._twinflow_forward(
+                prepared_batch=prepared_batch,
+                noisy_latents=z,
+                sigmas=ones,
+                tt=zeros,
+                use_grad=False,
+            )
+
+        # Integrate one step: x_fake = z - F_fake (from t=1 to t=0)
+        x_fake = z - F_fake
+        return x_fake.detach(), z
+
+    def _twinflow_compute_adversarial_loss(
+        self,
+        prepared_batch: dict,
+        x_fake: torch.Tensor,
+        z: torch.Tensor,
+        settings: dict,
+    ) -> torch.Tensor:
+        """
+        Compute L_adv: train fake trajectory with negative time.
+
+        From the TwinFlow paper:
+            x_t_fake = t*z + (1-t)*x_fake
+            target_fake = z - x_fake (velocity from fake clean to noise)
+            Forward with -t (negative time signals fake trajectory)
+            L_adv = MSE(F_pred, target_fake)
+        """
+        bsz = x_fake.shape[0]
+        # Sample time for fake trajectory
+        t = torch.rand(bsz, device=x_fake.device, dtype=x_fake.dtype).clamp(min=0.01, max=0.99)
+        t_b = self._twinflow_match_time_shape(t, x_fake)
+
+        # Construct fake trajectory interpolation
+        x_t_fake = t_b * z + (1 - t_b) * x_fake
+
+        # Target velocity for fake trajectory
+        target_fake = z - x_fake
+
+        # Forward with NEGATIVE time (sign embedding handles distinction)
+        neg_t = -t
+        F_pred = self._twinflow_forward(
+            prepared_batch=prepared_batch,
+            noisy_latents=x_t_fake,
+            sigmas=neg_t,
+            tt=None,
+            use_grad=True,
+        )
+
+        return F.mse_loss(F_pred.float(), target_fake.float(), reduction="mean")
+
+    def _twinflow_compute_rectify_loss(
+        self,
+        prepared_batch: dict,
+        base_pred: torch.Tensor,
+        noisy_latents: torch.Tensor,
+        sigmas: torch.Tensor,
+        settings: dict,
+    ) -> torch.Tensor:
+        """
+        Compute L_rectify: align real/fake trajectory predictions.
+
+        From the TwinFlow paper:
+            F_grad = F(x_t, -t) - F(x_t, t)
+            L_rectify = MSE(F(x_t, t), sg(F(x_t, t) - F_grad))
+
+        This aligns the real trajectory predictions with corrections from the
+        fake trajectory, enabling distribution matching without a discriminator.
+        """
+        # Get prediction at negative time (same x_t, opposite trajectory)
+        with torch.no_grad():
+            F_neg = self._twinflow_forward(
+                prepared_batch=prepared_batch,
+                noisy_latents=noisy_latents,
+                sigmas=-sigmas,
+                tt=None,
+                use_grad=False,
+            )
+
+        # F_grad = F(x_t, -t) - F(x_t, t)
+        F_grad = F_neg - base_pred.detach()
+
+        # Target with stop gradient: sg(F(x_t, t) - F_grad)
+        rectify_target = (base_pred.detach() - F_grad).detach()
+
+        return F.mse_loss(base_pred.float(), rectify_target.float(), reduction="mean")
 
     def _prepare_twinflow_metadata(self, batch: dict) -> None:
         """
@@ -4532,24 +4772,47 @@ class ModelFoundation(ABC):
         twin_losses.append(loss_real)
         log_payload["twinflow_realvel"] = loss_real.detach().float().mean().item()
 
-        # NOTE: Self-adversarial branch (L_adv, L_rectify, L_consistency) is disabled.
-        #
-        # The original TwinFlow paper uses an auxiliary time embedding (aux_time_embed) to
-        # distinguish the "fake" trajectory (t ∈ [-1, 0]) from the "real" trajectory (t ∈ [0, 1]).
-        # The model receives |σ| for the main time embedding and the sign via a separate embedding.
-        #
-        # Without modifying transformer architectures to add this dual embedding, the adversarial
-        # losses won't work correctly - the model has no way to distinguish fake from real.
-        #
-        # The RCGM-based consistency training (L_base + L_realvel) still provides significant
-        # few-step generation capability. Full TwinFlow would require architecture changes to
-        # add target_timestep/aux_time_embed support to Flux, SD3, Sana, etc.
+        # 3. Adversarial Loss (L_adv) + Rectification Loss (L_rectify)
+        # These use negative time to train a "fake" trajectory, enabling distribution
+        # matching without an external discriminator. The sign embedding infrastructure
+        # in the transformers distinguishes fake (negative time) from real (positive time).
+        if settings.get("adversarial_enabled", False):
+            # Generate fake samples via one-step generation
+            x_fake, z_fake = self._twinflow_generate_fake_samples(
+                prepared_batch=prepared_batch,
+                settings=settings,
+            )
+
+            # L_adv: fake velocity loss with negative time
+            loss_adv = self._twinflow_compute_adversarial_loss(
+                prepared_batch=prepared_batch,
+                x_fake=x_fake,
+                z=z_fake,
+                settings=settings,
+            )
+            adv_weight = settings.get("adversarial_weight", 1.0)
+            twin_losses.append(adv_weight * loss_adv)
+            log_payload["twinflow_adv"] = loss_adv.detach().float().mean().item()
+
+            # L_rectify: distribution matching via velocity alignment
+            # Use the flat sigmas (not broadcasted) for the rectify loss
+            sigmas_flat = sigmas.view(sigmas.shape[0], -1)[:, 0]
+            loss_rectify = self._twinflow_compute_rectify_loss(
+                prepared_batch=prepared_batch,
+                base_pred=base_pred,
+                noisy_latents=noisy_latents,
+                sigmas=sigmas_flat,
+                settings=settings,
+            )
+            rectify_weight = settings.get("rectify_weight", 1.0)
+            twin_losses.append(rectify_weight * loss_rectify)
+            log_payload["twinflow_rectify"] = loss_rectify.detach().float().mean().item()
 
         total_twin_loss = torch.stack(twin_losses).sum()
         return total_twin_loss, log_payload
 
 
-class ImageModelFoundation(ModelFoundation):
+class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFoundation):
     """
     Implements logic common to image-based diffusion models.
     Handles typical VAE, text encoder loading and a UNet forward pass.
@@ -4598,68 +4861,6 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
-    def scale_vae_latents_for_cache(self, latents, vae):
-        if vae is None or not hasattr(vae, "config") or latents is None:
-            return latents
-        shift_factor = getattr(vae.config, "shift_factor", None)
-        scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae.config, "scaling_factor", 1.0))
-        if shift_factor is not None:
-            return (latents - shift_factor) * scaling_factor
-        if isinstance(latents, torch.Tensor) and hasattr(vae.config, "scaling_factor"):
-            scaled = latents * scaling_factor
-            logger.debug("Latents shape after scaling: %s", scaled.shape)
-            return scaled
-        return latents
-
-    @classmethod
-    def _iter_pipeline_classes(cls):
-        pipelines = getattr(cls, "PIPELINE_CLASSES", {})
-        if not isinstance(pipelines, dict):
-            return []
-        pipeline_classes = []
-        for pipeline_cls in pipelines.values():
-            if inspect.isclass(pipeline_cls):
-                pipeline_classes.append(pipeline_cls)
-        return pipeline_classes
-
-    @staticmethod
-    def _pipeline_has_lora_loader(pipeline_cls) -> bool:
-        if not inspect.isclass(pipeline_cls):
-            return False
-        for base in inspect.getmro(pipeline_cls):
-            if base.__name__.endswith("LoraLoaderMixin"):
-                return True
-        return False
-
-    @classmethod
-    def supports_lora(cls) -> bool:
-        if cls.SUPPORTS_LORA is not None:
-            return bool(cls.SUPPORTS_LORA)
-
-        for pipeline_cls in cls._iter_pipeline_classes():
-            if cls._pipeline_has_lora_loader(pipeline_cls):
-                return True
-        return False
-
-    @classmethod
-    def supports_controlnet(cls) -> bool:
-        if cls.SUPPORTS_CONTROLNET is not None:
-            return bool(cls.SUPPORTS_CONTROLNET)
-
-        pipelines = getattr(cls, "PIPELINE_CLASSES", {})
-        if not isinstance(pipelines, dict):
-            return False
-
-        for pipeline_type, pipeline_cls in pipelines.items():
-            if pipeline_cls is None:
-                continue
-            if isinstance(pipeline_type, PipelineTypes):
-                if pipeline_type in (PipelineTypes.CONTROLNET, PipelineTypes.CONTROL):
-                    return True
-            elif isinstance(pipeline_type, str) and pipeline_type.lower() in {"controlnet", "control"}:
-                return True
-        return False
-
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
         self.has_vae = True
@@ -4692,37 +4893,7 @@ class ImageModelFoundation(ModelFoundation):
         return None
 
 
-class VideoToTensor:
-    def __call__(self, video):
-        """
-        Converts a video (numpy array of shape (num_frames, height, width, channels))
-        to a tensor of shape (num_frames, channels, height, width) by applying the
-        standard ToTensor conversion to each frame.
-        """
-        if isinstance(video, np.ndarray):
-            frames = []
-            for frame in video:
-                # Convert frame to PIL Image if not already.
-                if not isinstance(frame, Image.Image):
-                    frame = Image.fromarray(frame)
-                frame_tensor = transforms.functional.to_tensor(frame)
-                frames.append(frame_tensor)
-            return torch.stack(frames)
-        elif isinstance(video, list):
-            frames = []
-            for frame in video:
-                if not isinstance(frame, Image.Image):
-                    frame = Image.fromarray(frame)
-                frames.append(transforms.functional.to_tensor(frame))
-            return torch.stack(frames)
-        else:
-            raise TypeError("Input video must be a numpy array or a list of frames.")
-
-    def __repr__(self):
-        return self.__class__.__name__ + "()"
-
-
-class VideoModelFoundation(ImageModelFoundation):
+class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
     """
     Base class for video models. Provides default 5D handling and optional
     text encoder instantiation. The actual text encoder classes and their
@@ -4738,65 +4909,12 @@ class VideoModelFoundation(ImageModelFoundation):
         self.config = config
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
-    @classmethod
-    def adjust_video_frames(cls, num_frames: int) -> int:
-        """
-        Calculate nearest valid frame count at or below the given count.
-        Default implementation returns the input unchanged.
-        Subclasses override to enforce model-specific constraints.
-
-        Args:
-            num_frames: The desired number of frames
-
-        Returns:
-            Adjusted frame count (always >= 1)
-        """
-        return num_frames
-
-    def get_transforms(self, dataset_type: str = "image"):
-        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
-            if self.uses_audio_latents():
-
-                def _audio_transform(sample):
-                    waveform = sample
-                    if isinstance(sample, dict):
-                        waveform = sample.get("waveform")
-                    if waveform is None:
-                        raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
-                    if isinstance(waveform, np.ndarray):
-                        waveform = torch.from_numpy(waveform)
-                    if not torch.is_tensor(waveform):
-                        raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
-                    waveform = waveform.detach().clone()
-                    if waveform.ndim == 1:
-                        waveform = waveform.unsqueeze(0)
-                    return waveform
-
-                return _audio_transform
-        return transforms.Compose(
-            [
-                VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
-            ]
-        )
-
     def expand_sigmas(self, batch):
         if len(batch["latents"].shape) == 5:
             logger.debug(
                 f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
             )
             batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
-
-    def apply_i2v_augmentation(self, batch):
-        pass
-
-    def prepare_5d_inputs(self, tensor):
-        """
-        Example method to handle default 5D shape. The typical shape might be:
-        (batch_size, frames, channels, height, width).
-
-        You can reshape or permute as needed for the underlying model.
-        """
-        return tensor
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
@@ -4898,7 +5016,7 @@ class VideoModelFoundation(ImageModelFoundation):
         return loss, aux_logs
 
 
-class AudioModelFoundation(ModelFoundation):
+class AudioModelFoundation(AudioTransformMixin, ModelFoundation):
     """
     Base class for audio-first models. Provides minimal audio transform helpers
     and ensures autoencoders that return auxiliary metadata (e.g. sample lengths)
@@ -4907,61 +5025,8 @@ class AudioModelFoundation(ModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
-
-    def supports_audio_inputs(self) -> bool:
-        return True
-
-    def uses_audio_latents(self) -> bool:
-        return True
-
-    def get_transforms(self, dataset_type: str = "image"):
-        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
-
-            def _audio_transform(sample):
-                waveform = sample
-                if isinstance(sample, dict):
-                    waveform = sample.get("waveform")
-                if waveform is None:
-                    raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
-                if isinstance(waveform, np.ndarray):
-                    waveform = torch.from_numpy(waveform)
-                if not torch.is_tensor(waveform):
-                    raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
-                waveform = waveform.detach().clone()
-                if waveform.ndim == 1:
-                    waveform = waveform.unsqueeze(0)
-                return waveform
-
-            return _audio_transform
-        return super().get_transforms(dataset_type=dataset_type)
-
-    @torch.no_grad()
-    def encode_with_vae(self, vae, samples):
-        """
-        Music-focused autoencoders often return both latents and accompanying
-        sequence lengths. Wrap both into a dict so downstream caches retain the metadata.
-        """
-        if samples is None:
-            raise ValueError("Audio VAE received no samples to encode.")
-        audio = samples
-        if not torch.is_tensor(audio):
-            raise ValueError(f"Audio encoder expected a Tensor input, received {type(audio)}.")
-        if audio.ndim == 2:
-            audio = audio.unsqueeze(0)
-        audio = audio.to(device=self.accelerator.device, dtype=torch.float32)
-        result = vae.encode(audio)
-        latent_lengths = None
-        latents = result
-        if isinstance(result, tuple):
-            latents, *extras = result
-            latent_lengths = extras[0] if extras else None
-        elif isinstance(result, dict):
-            latents = result.get("latents")
-            latent_lengths = result.get("latent_lengths")
-        payload = {"latents": latents}
-        if latent_lengths is not None:
-            payload["latent_lengths"] = latent_lengths
-        return payload
+        self.text_encoders = None
+        self.tokenizers = None
 
     def expand_sigmas(self, batch: dict) -> dict:
         """

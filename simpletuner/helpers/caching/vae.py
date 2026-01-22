@@ -279,6 +279,13 @@ class VAECache(WebhookMixin):
                             video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
                             waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
                         sample = {"waveform": waveform, "sample_rate": sample_rate}
+                    elif self.image_data_backend.type == "local":
+                        # For local audio files, use load_audio which has ffmpeg fallback
+                        # for container formats (MPEG, MP4, etc.)
+                        from simpletuner.helpers.audio import load_audio
+
+                        waveform, sample_rate = load_audio(filename)
+                        sample = {"waveform": waveform, "sample_rate": sample_rate}
                     else:
                         sample = self.image_data_backend.read(filename, as_byteIO=False)
                 else:

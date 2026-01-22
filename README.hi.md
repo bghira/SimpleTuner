@@ -87,6 +87,7 @@ SimpleTuner एक पूर्ण मल्टी‑यूज़र प्र�
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
+| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | कोई नहीं |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
 | **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
 | **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
@@ -139,6 +140,7 @@ SimpleTuner एक पूर्ण मल्टी‑यूज़र प्र�
 - **[Flux.2 Guide](/documentation/quickstart/FLUX2.md)** - **NEW!** Mistral‑3 टेक्स्ट encoder के साथ नवीनतम विशाल Flux मॉडल
 - **[Z-Image Guide](/documentation/quickstart/ZIMAGE.md)** - Base/Turbo LoRA with assistant adapter + TREAD acceleration
 - **[ACE-Step Guide](/documentation/quickstart/ACE_STEP.md)** - **NEW!** ऑडियो जनरेशन मॉडल प्रशिक्षण (text‑to‑music)
+- **[HeartMuLa Guide](/documentation/quickstart/HEARTMULA.md)** - **NEW!** ऑटोरिग्रेसिव ऑडियो जनरेशन मॉडल प्रशिक्षण (text‑to‑audio)
 - **[Chroma Guide](/documentation/quickstart/CHROMA.md)** - Lodestone का flow‑matching transformer, Chroma‑specific schedules के साथ
 - **[Stable Diffusion 3 Guide](/documentation/quickstart/SD3.md)** - ControlNet के साथ full और LoRA प्रशिक्षण
 - **[Stable Diffusion XL Guide](/documentation/quickstart/SDXL.md)** - पूर्ण SDXL प्रशिक्षण पाइपलाइन
@@ -190,6 +192,9 @@ pip install simpletuner
 
 # CUDA users (NVIDIA GPUs)
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 
 # ROCm users (AMD GPUs)
 pip install 'simpletuner[rocm]'

@@ -71,7 +71,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from simpletuner.helpers.audio import load_audio
+# Note: load_audio is imported lazily where needed to avoid requiring torchaudio at import time
 from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -333,6 +333,16 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             )
             truncation_mode = "beginning"
         audio_block["truncation_mode"] = truncation_mode
+
+        # Audio-only mode: standalone audio training without video (e.g., LTX-2 audio-only)
+        audio_only_raw = audio_block.get("audio_only") or source.get("audio_only")
+        if audio_only_raw is not None:
+            audio_block["audio_only"] = bool(audio_only_raw)
+
+        # Target resolution for audio-only mode (used to compute video latent dimensions)
+        target_resolution = audio_block.get("target_resolution") or source.get("target_resolution")
+        if target_resolution is not None:
+            audio_block["target_resolution"] = int(target_resolution)
 
         return {key: value for key, value in audio_block.items() if value is not None}
 
@@ -1291,6 +1301,8 @@ class FactoryRegistry:
         audio_settings["cache_dir"] = audio_cache_dir
         init_backend.setdefault("config", {}).setdefault("audio", audio_settings)
 
+        from simpletuner.helpers.audio import load_audio
+
         init_backend["audio_data_backend"] = {
             "reader": load_audio,
             "max_duration_seconds": audio_settings.get("max_duration_seconds"),
@@ -1331,6 +1343,67 @@ class FactoryRegistry:
         except AttributeError:
             return False
         return result if isinstance(result, bool) else False
+
+    def _supports_audio_only_training(self) -> bool:
+        """Return whether the active model supports audio-only training without video."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.supports_audio_only_training()
+        except AttributeError:
+            return False
+        return result if isinstance(result, bool) else False
+
+    def _compute_implicit_audio_only_mode(self, data_backend_config: List[Dict[str, Any]]) -> bool:
+        """
+        Pre-scan config to determine if we're in implicit audio-only mode.
+
+        Implicit audio-only mode is when:
+        - Model supports audio-only training
+        - There are audio datasets
+        - There are NO video or image datasets
+        """
+        if not self._supports_audio_only_training():
+            return False
+
+        has_audio = False
+        has_video_or_image = False
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            dataset_type = _backend_dataset_type(backend)
+            if dataset_type is DatasetType.AUDIO:
+                has_audio = True
+            elif dataset_type in (DatasetType.VIDEO, DatasetType.IMAGE):
+                has_video_or_image = True
+
+        return has_audio and not has_video_or_image
+
+    def _is_audio_only_mode(self, backend: Dict[str, Any]) -> bool:
+        """
+        Check if a backend is in audio-only mode.
+
+        Audio-only mode can be:
+        1. Explicit: audio.audio_only: true in the backend config
+        2. Implicit: precomputed at start of configure_data_backends
+        """
+        # Check explicit audio_only flag
+        if backend.get("audio", {}).get("audio_only", False):
+            return True
+
+        # Check implicit audio-only mode (precomputed)
+        return getattr(self, "_implicit_audio_only_mode", False)
+
+    def _uses_text_embeddings_cache(self) -> bool:
+        """Return whether the active model uses text embedding caches."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.uses_text_embeddings_cache()
+        except AttributeError:
+            return bool(getattr(self.model, "TEXT_ENCODER_CONFIGURATION", None))
+        return result if isinstance(result, bool) else bool(result)
 
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
@@ -1375,6 +1448,38 @@ class FactoryRegistry:
                     f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose'. "
                     f"Using 'controlnet' or other values will cause dimension mismatches during training. "
                     f"Please update your dataset configuration."
+                )
+
+    def _validate_audio_only_datasets(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Validate audio-only datasets are only used with models that support them.
+        Audio-only mode allows training on audio without video (e.g., LTX-2 audio-only training).
+        """
+        supports_audio_only = self._supports_audio_only_training()
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+
+            dataset_type = backend.get("dataset_type", "image")
+            if dataset_type != "audio":
+                continue
+
+            audio_config = backend.get("audio", {})
+            is_audio_only = audio_config.get("audio_only", False)
+
+            if is_audio_only:
+                backend_id = backend.get("id", "unknown")
+                if not supports_audio_only:
+                    raise ValueError(
+                        f"Audio-only dataset '{backend_id}' is configured with audio.audio_only=true, "
+                        f"but the current model does not support audio-only training. "
+                        f"Audio-only mode is currently only supported by LTX-2. "
+                        f"Either use a compatible model or remove the audio_only setting."
+                    )
+                info_log(
+                    f"(id={backend_id}) Audio-only mode enabled. Video latents will be zeroed and video loss masked. "
+                    f"Only audio generation will be trained."
                 )
 
     def _is_multi_process(self) -> bool:
@@ -1976,6 +2081,24 @@ class FactoryRegistry:
     def configure_text_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure text embedding backends."""
         self._log_performance_metrics("text_embed_config_start")
+        if not self._uses_text_embeddings_cache():
+            enabled_text_backends = [
+                backend
+                for backend in data_backend_config
+                if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
+                and not backend.get("disabled", False)
+                and not backend.get("disable", False)
+            ]
+            if enabled_text_backends:
+                ids = ", ".join(sorted({backend.get("id", "unknown") for backend in enabled_text_backends}))
+                warning_log(f"Model does not use text embeddings; skipping text embed backends: {ids or 'unknown'}.")
+            self.metrics["backend_counts"]["text_embeds"] = 0
+            self._log_performance_metrics(
+                "text_embed_config_complete",
+                {"text_embed_backends_created": 0, "default_backend_id": None, "skipped": True},
+            )
+            return
+
         text_embed_cache_dir_paths = []
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         text_embed_count = 0
@@ -2142,6 +2265,8 @@ class FactoryRegistry:
 
     def _validate_text_embed_backends(self) -> None:
         """Validate text embed backend configuration."""
+        if not self._uses_text_embeddings_cache():
+            return
         if not self.text_embed_backends:
             raise ValueError(
                 "Your dataloader config must contain at least one image dataset AND at least one text_embed dataset."
@@ -2361,7 +2486,11 @@ class FactoryRegistry:
         """
         self._log_performance_metrics("data_backend_config_start")
         self._prevalidate_backend_ids(data_backend_config)
-        if not self.text_embed_backends:
+
+        # Precompute implicit audio-only mode before processing backends
+        self._implicit_audio_only_mode = self._compute_implicit_audio_only_mode(data_backend_config)
+
+        if not self.text_embed_backends and self._uses_text_embeddings_cache():
             self.configure_text_embed_backends(data_backend_config)
         vae_cache_dir_paths = []
         text_embed_cache_dir_paths = [
@@ -2441,12 +2570,46 @@ class FactoryRegistry:
                 f"or use audio.auto_split: true to auto-extract audio from videos.{doc_hint}"
             )
 
+        # Validate audio-only datasets
+        self._validate_audio_only_datasets(data_backend_config)
+
         # Validate conditioning_type for edit models
         self._validate_edit_model_conditioning_type(data_backend_config)
 
         # Process deferred text embeddings for models requiring image context
         # (must happen after conditioning datasets are connected)
         self._process_deferred_text_embeddings()
+
+    def _configure_model_data_signals(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Detect data types present in backends and signal the model.
+
+        This allows models to adjust behavior based on what data types are
+        available (e.g., adding audio LoRA targets when audio data is present).
+        """
+        if self.model is None:
+            return
+
+        has_images = False
+        has_video = False
+        has_audio = False
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            dataset_type = _backend_dataset_type(backend)
+            if dataset_type is DatasetType.IMAGE:
+                has_images = True
+            elif dataset_type is DatasetType.VIDEO:
+                has_video = True
+            elif dataset_type is DatasetType.AUDIO:
+                has_audio = True
+
+        self.model.configure_data_signals(
+            has_images=has_images,
+            has_video=has_video,
+            has_audio=has_audio,
+        )
 
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
@@ -2517,6 +2680,8 @@ class FactoryRegistry:
 
     def _assign_text_embed_cache(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Assign a TextEmbeddingCache to this dataset."""
+        if not self._uses_text_embeddings_cache():
+            return
         text_embed_id = backend.get(
             "text_embeds",
             backend.get("text_embed_cache", self.default_text_embed_backend_id),
@@ -2640,9 +2805,17 @@ class FactoryRegistry:
                 metadata_backend.configure_mock(id=init_backend["id"])
 
     def _handle_bucket_operations(
-        self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
+        self,
+        backend: Dict[str, Any],
+        init_backend: Dict[str, Any],
+        conditioning_type: Optional[str],
+        skip_bucket_split: bool = False,
     ) -> None:
-        """Handle bucket refreshing and validation."""
+        """Handle bucket refreshing and validation.
+
+        Args:
+            skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
+        """
         if (
             not backend.get("auto_generated", False)  # auto-generated datasets have duplicate metadata.
             and "aspect" not in self.args.skip_file_discovery
@@ -2757,7 +2930,9 @@ class FactoryRegistry:
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
-            if not getattr(init_backend["metadata_backend"], "read_only", False):
+            if skip_bucket_split:
+                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
+            elif not getattr(init_backend["metadata_backend"], "read_only", False):
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
                     apply_padding=apply_padding,
@@ -2767,7 +2942,8 @@ class FactoryRegistry:
 
             # Check if this is a conditioning backend and if it has no images after splitting
             if (
-                init_backend.get("dataset_type") == "conditioning"
+                not skip_bucket_split
+                and init_backend.get("dataset_type") == "conditioning"
                 and sum(len(bucket) for bucket in init_backend["metadata_backend"].aspect_ratio_bucket_indices.values()) == 0
             ):
                 if self.accelerator.is_main_process:
@@ -2777,7 +2953,9 @@ class FactoryRegistry:
                         f"Consider using a larger dataset or fewer GPUs."
                     )
         else:
-            if self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
+            if skip_bucket_split:
+                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
+            elif self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
                     apply_padding=apply_padding,
@@ -3029,6 +3207,8 @@ class FactoryRegistry:
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
         """Process text embeddings for captions."""
+        if not self._uses_text_embeddings_cache():
+            return
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
         # caption_strategy is stored in init_backend["config"], not directly in backend
         caption_strategy = init_backend["config"].get("caption_strategy")
@@ -3128,6 +3308,8 @@ class FactoryRegistry:
         Process text embeddings for backends that were deferred because they require
         image context and needed conditioning datasets to be connected first.
         """
+        if not self._uses_text_embeddings_cache():
+            return
         if not self._deferred_text_embed_backends:
             return
 
@@ -3869,7 +4051,10 @@ class FactoryRegistry:
             self.data_backends[init_backend["id"]] = init_backend
             return
 
-        self._handle_bucket_operations(backend, init_backend, conditioning_type)
+        # For audio-only datasets, we need to discover files but skip bucket splitting
+        # Audio-only can be explicit (audio.audio_only: true) or implicit (only audio datasets, no video/image)
+        is_audio_only_dataset = dataset_type_enum is DatasetType.AUDIO and self._is_audio_only_mode(backend)
+        self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
@@ -3976,6 +4161,8 @@ class FactoryRegistry:
         self.configure_conditioning_image_embed_backends(data_backend_config)
         self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
+
+        self._configure_model_data_signals(data_backend_config)
 
         result = {
             "data_backends": StateTracker.get_data_backends(),

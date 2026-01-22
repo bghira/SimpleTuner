@@ -259,7 +259,7 @@ async def cancel_job(
 
     job_type_label = "Local" if job.is_local else "Cloud"
 
-    store.log_audit_event(
+    await store.log_audit_event(
         action="job.cancelled",
         job_id=job_id,
         provider=job.provider,
@@ -375,7 +375,7 @@ async def delete_job(
 
     # With unified JobRepository, no separate queue store to sync
 
-    store.log_audit_event(
+    await store.log_audit_event(
         action="job.deleted",
         job_id=job_id,
         provider=job_provider,

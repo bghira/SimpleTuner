@@ -454,8 +454,30 @@ class MetadataBackend:
 
         # Audio datasets use duration-based bucketing, not spatial aspect ratios.
         if self.dataset_type is DatasetType.AUDIO:
-            logger.info("Audio dataset detected; rebuilding duration buckets.")
+            logger.info("Audio dataset detected; processing audio files for duration buckets.")
             self.load_image_metadata()
+
+            # Process new audio files to generate metadata
+            if new_files:
+                logger.info(f"Processing {len(new_files)} new audio files...")
+                metadata_updates = {}
+                aspect_ratio_bucket_indices_local = {}
+                statistics = {"total_processed": 0, "skipped": {}}
+                for audio_file in new_files:
+                    self._process_for_bucket(
+                        image_path_str=audio_file,
+                        aspect_ratio_bucket_indices=aspect_ratio_bucket_indices_local,
+                        metadata_updates=metadata_updates,
+                        statistics=statistics,
+                    )
+                    statistics["total_processed"] += 1
+                # Update metadata with processed audio files
+                for filepath, meta in metadata_updates.items():
+                    self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
+                logger.info(f"Processed {statistics['total_processed']} audio files. Statistics: {statistics}")
+                self.save_image_metadata()
+
+            # Rebuild buckets from all metadata (existing + new)
             self.aspect_ratio_bucket_indices = {}
             for sample_path, meta in self.image_metadata.items():
                 duration_seconds = None
@@ -470,9 +492,10 @@ class MetadataBackend:
                 if truncated is not None and isinstance(meta, dict):
                     meta["bucket_duration_seconds"] = truncated
                     meta["duration_seconds"] = truncated
+            self.save_cache(enforce_constraints=False)
             if self.bucket_report:
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
-            logger.info("Audio bucket rebuild complete.")
+            logger.info(f"Audio bucket rebuild complete. {len(self.aspect_ratio_bucket_indices)} buckets created.")
             return
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())

@@ -9,7 +9,7 @@
 对于 Ubuntu 系统，首先安装所需的软件包：
 
 ```bash
-apt -y install python3.12-venv python3.12-dev
+apt -y install python3.13-venv python3.13-dev
 apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # 如果您使用 DeepSpeed
 apt -y install ffmpeg # 如果训练视频模型
 ```
@@ -38,7 +38,7 @@ cd $SIMPLETUNER_WORKSPACE
 创建虚拟环境以安装依赖：
 
 ```bash
-python3.12 -m venv .venv
+python3.13 -m venv .venv
 . .venv/bin/activate
 ```
 
@@ -48,6 +48,8 @@ NVIDIA 用户需要使用 CUDA extras 来获取所有正确的依赖：
 
 ```bash
 pip install -e 'simpletuner[cuda]'
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
+# pip install -e 'simpletuner[cuda13]'
 # 或者，如果您通过 git 克隆：
 # pip install -e '.[cuda]'
 ```

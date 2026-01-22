@@ -87,6 +87,7 @@ For deployment details, see the [Enterprise Guide](/documentation/experimental/s
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
+| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | None |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
 | **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
 | **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
@@ -139,6 +140,7 @@ Detailed quickstart guides are available for all supported models:
 - **[Flux.2 Guide](/documentation/quickstart/FLUX2.md)** - **NEW!** Latest enormous Flux model with Mistral-3 text encoder
 - **[Z-Image Guide](/documentation/quickstart/ZIMAGE.md)** - Base/Turbo LoRA with assistant adapter + TREAD acceleration
 - **[ACE-Step Guide](/documentation/quickstart/ACE_STEP.md)** - **NEW!** Audio generation model training (text-to-music)
+- **[HeartMuLa Guide](/documentation/quickstart/HEARTMULA.md)** - **NEW!** Autoregressive audio generation model training (text-to-audio)
 - **[Chroma Guide](/documentation/quickstart/CHROMA.md)** - Lodestone's flow-matching transformer with Chroma-specific schedules
 - **[Stable Diffusion 3 Guide](/documentation/quickstart/SD3.md)** - Full and LoRA training with ControlNet
 - **[Stable Diffusion XL Guide](/documentation/quickstart/SDXL.md)** - Complete SDXL training pipeline
@@ -190,6 +192,9 @@ pip install simpletuner
 
 # CUDA users (NVIDIA GPUs)
 pip install 'simpletuner[cuda]'
+
+# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]'
 
 # ROCm users (AMD GPUs)
 pip install 'simpletuner[rocm]'

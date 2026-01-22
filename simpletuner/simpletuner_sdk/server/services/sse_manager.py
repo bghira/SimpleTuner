@@ -198,7 +198,10 @@ class SSEManager:
         Returns:
             True if the broadcast was scheduled successfully, False otherwise.
         """
-        if not self._main_loop:
+        if not self._main_loop or self._main_loop.is_closed():
+            if self._main_loop and self._main_loop.is_closed():
+                self._main_loop = None
+                self._main_thread_id = None
             logger.warning("SSE manager not started - cannot broadcast")
             return False
 
@@ -212,14 +215,16 @@ class SSEManager:
             except RuntimeError:
                 pass
 
+        coro = self.broadcast(data, event_type, filter_func)
         try:
-            future = asyncio.run_coroutine_threadsafe(
-                self.broadcast(data, event_type, filter_func),
-                self._main_loop,
-            )
+            future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
             future.result(timeout=5.0)
             return True
         except Exception as exc:
+            try:
+                coro.close()
+            except Exception:
+                pass
             logger.debug("Thread-safe broadcast failed: %s", exc)
             return False
 

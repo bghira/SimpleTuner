@@ -12,8 +12,9 @@ import requests
 import torch
 from diffusers import AutoencoderTiny
 
+from .taef2 import TAEF2
 from .taehv import TAEHV
-from .types import ImageTAESpec, VideoTAESpec
+from .types import Flux2TAESpec, ImageTAESpec, VideoTAESpec
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,24 @@ class ImageTAEDecoder(_BaseTAEDecoder):
         return decoded
 
 
+class Flux2TAEDecoder(_BaseTAEDecoder):
+    """TAE decoder for FLUX.2 (32-channel latent space)."""
+
+    is_video = False
+
+    def __init__(self, model: TAEF2, device: torch.device, dtype: torch.dtype):
+        super().__init__()
+        self.model = model.eval()
+        self.device = device
+        self.dtype = dtype
+
+    def decode(self, latents: torch.Tensor) -> torch.Tensor:
+        latents = latents.to(device=self.device, dtype=self.dtype)
+        with torch.no_grad():
+            decoded = self.model.decode(latents)
+        return decoded
+
+
 class VideoTAEDecoder(_BaseTAEDecoder):
     is_video = True
 
@@ -143,6 +162,13 @@ def _instantiate_image_decoder(spec: ImageTAESpec, device: torch.device, dtype: 
     return ImageTAEDecoder(model, device=device, dtype=dtype)
 
 
+def _instantiate_flux2_decoder(spec: Flux2TAESpec, device: torch.device, dtype: torch.dtype) -> Flux2TAEDecoder:
+    checkpoint_path = _download_checkpoint(spec.download_url, spec.filename, spec.sha256)
+    tae = TAEF2(decoder_path=str(checkpoint_path))
+    tae.to(device=device, dtype=dtype)
+    return Flux2TAEDecoder(tae, device=device, dtype=dtype)
+
+
 def _instantiate_video_decoder(spec: VideoTAESpec, device: torch.device, dtype: torch.dtype) -> VideoTAEDecoder:
     checkpoint_path = _download_checkpoint(spec.download_url, spec.filename, spec.sha256)
     decoder_kwargs = {
@@ -158,7 +184,7 @@ def _instantiate_video_decoder(spec: VideoTAESpec, device: torch.device, dtype: 
 
 
 def load_tae_decoder(
-    spec: Union[ImageTAESpec, VideoTAESpec],
+    spec: Union[ImageTAESpec, Flux2TAESpec, VideoTAESpec],
     *,
     device: Union[torch.device, str, None] = None,
     dtype: Union[torch.dtype, str, None] = None,
@@ -171,6 +197,8 @@ def load_tae_decoder(
     dtype = _resolve_dtype(dtype)
     if isinstance(spec, ImageTAESpec):
         decoder = _instantiate_image_decoder(spec, device, dtype)
+    elif isinstance(spec, Flux2TAESpec):
+        decoder = _instantiate_flux2_decoder(spec, device, dtype)
     elif isinstance(spec, VideoTAESpec):
         decoder = _instantiate_video_decoder(spec, device, dtype)
     else:  # pragma: no cover - defensive

@@ -542,8 +542,16 @@ except Exception as e:
     traceback_str = traceback.format_exc() if log_level == logging.ERROR else ""
     if log_level == logging.ERROR:
         logger.error(traceback_str)
-    send_event("error", {{"message": error_message, "traceback": traceback_str}})
-    send_event("state", {{"status": "failed", "message": error_message}})
+    # Extract log excerpt if available (attached by _summarize_accelerate_failure)
+    log_excerpt = getattr(e, "_simpletuner_log_excerpt", None)
+    recent_lines = getattr(e, "_simpletuner_recent_log_lines", None)
+    error_payload = {{"message": error_message, "traceback": traceback_str}}
+    if log_excerpt:
+        error_payload["log_excerpt"] = log_excerpt
+    if recent_lines:
+        error_payload["recent_lines"] = recent_lines
+    send_event("error", error_payload)
+    send_event("state", {{"status": "failed", "message": error_message, "log_excerpt": log_excerpt}})
     time.sleep(0.2)
 
 logger.info("Subprocess exiting")
@@ -734,6 +742,14 @@ logger.info("Subprocess exiting")
                 if match:
                     signal_name = match.group(1)
                     signal_num = int(match.group(2))
+                    preferred_message = self._format_signal_message(signal_num, signal_name)
+                    break
+            # Also match accelerate's format: "Signal 9 (SIGKILL) received by PID 12345"
+            if "signal" in lowered and "received by pid" in lowered:
+                match = re.search(r"Signal\s+(\d+)\s+\(([A-Z_]+)\)\s+received by PID", line, re.IGNORECASE)
+                if match:
+                    signal_num = int(match.group(1))
+                    signal_name = match.group(2)
                     preferred_message = self._format_signal_message(signal_num, signal_name)
                     break
             if "nccl" in lowered and "warning" in lowered:
@@ -986,6 +1002,41 @@ logger.info("Subprocess exiting")
         if first_failure:
             self._relayed_failure = True
 
+        # If the message looks generic (like "Accelerate launch exited with status 1"),
+        # try to extract more useful info from logs
+        generic_patterns = [
+            "accelerate launch exited with status",
+            "training failed due to a fatal error",
+            "exited with status",
+            "exit code",
+        ]
+        message_lower = message.lower()
+        is_generic = any(p in message_lower for p in generic_patterns)
+        has_log_excerpt = bool(payload_data.get("log_excerpt"))
+
+        if first_failure and is_generic and not has_log_excerpt:
+            exit_code = payload_data.get("exit_code")
+            if exit_code is None:
+                # Try to extract exit code from message
+                match = re.search(r"status\s+(-?\d+)", message)
+                if match:
+                    try:
+                        exit_code = int(match.group(1))
+                    except ValueError:
+                        pass
+            supplemental = self._extract_error_from_logs(exit_code)
+            if supplemental:
+                # Merge supplemental info into payload
+                if supplemental.get("message") and supplemental["message"] != message:
+                    # Use the more specific message from logs
+                    better_message = supplemental["message"]
+                    if len(better_message) > len(message) or "signal" in better_message.lower():
+                        message = better_message
+                if supplemental.get("log_excerpt"):
+                    payload_data["log_excerpt"] = supplemental["log_excerpt"]
+                if supplemental.get("traceback"):
+                    payload_data.setdefault("traceback", supplemental["traceback"])
+
         payload_data.setdefault("status", "failed")
         normalized_status = str(payload_data.get("status") or "failed").strip().lower() or "failed"
         if not first_failure:
@@ -1158,6 +1209,47 @@ logger.info("Subprocess exiting")
         }
         self._dispatch_callback_event(status_payload)
 
+    @staticmethod
+    def _collect_child_pids_from_proc(parent_pid: int) -> List[int]:
+        """Collect all descendant PIDs by traversing /proc (Linux fallback when psutil unavailable)."""
+        children: List[int] = []
+        to_visit = [parent_pid]
+        visited = set()
+
+        while to_visit:
+            current = to_visit.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+
+            # Find direct children by scanning /proc/*/stat for PPid
+            try:
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        stat_path = f"/proc/{entry}/stat"
+                        with open(stat_path, "r") as f:
+                            stat_content = f.read()
+                        # Format: pid (comm) state ppid ...
+                        # The comm field may contain spaces/parens, so find the last ')'
+                        last_paren = stat_content.rfind(")")
+                        if last_paren == -1:
+                            continue
+                        fields = stat_content[last_paren + 2 :].split()
+                        if len(fields) >= 2:
+                            ppid = int(fields[1])
+                            child_pid = int(entry)
+                            if ppid == current and child_pid not in visited:
+                                children.append(child_pid)
+                                to_visit.append(child_pid)
+                    except (FileNotFoundError, PermissionError, ValueError, IndexError):
+                        continue
+            except Exception:
+                break
+
+        return children
+
     def _force_kill_process_tree(self, timeout: int) -> None:
         """Terminate the subprocess tree with a short graceful window before force kill."""
 
@@ -1170,25 +1262,34 @@ logger.info("Subprocess exiting")
         grace_timeout = max(0.0, min(timeout, 5))
         remaining_timeout = max(0.0, timeout - grace_timeout)
 
-        def _kill_with_psutil(proc_pid: int) -> None:
-            if not psutil:
-                return
-
+        # Collect all child PIDs BEFORE sending any signals.
+        # This is critical because if the parent process exits first (common with
+        # accelerate launch), we won't be able to find its children later - they
+        # get reparented to init and continue running, holding GPU memory.
+        child_pids: List[int] = []
+        if psutil:
             try:
-                parent = psutil.Process(proc_pid)
-            except Exception:
-                return
+                parent = psutil.Process(pid)
+                for child in parent.children(recursive=True):
+                    try:
+                        child_pids.append(child.pid)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug(f"Failed to collect child PIDs for {self.job_id}: {exc}")
+        elif os.path.isdir("/proc"):
+            # Fallback: use /proc on Linux when psutil is unavailable
+            child_pids = self._collect_child_pids_from_proc(pid)
 
-            for child in parent.children(recursive=True):
+        def _kill_collected_pids(sig: int) -> None:
+            """Kill all collected child PIDs with the given signal."""
+            for child_pid in child_pids:
                 try:
-                    child.kill()
-                except Exception:
-                    pass
-
-            try:
-                parent.kill()
-            except Exception:
-                pass
+                    os.kill(child_pid, sig)
+                except ProcessLookupError:
+                    pass  # Already dead
+                except Exception as exc:
+                    logger.debug(f"Failed to send signal {sig} to {child_pid}: {exc}")
 
         try:
             # First try to terminate so cleanup handlers can run.
@@ -1222,8 +1323,10 @@ logger.info("Subprocess exiting")
                     except Exception as exc:
                         logger.debug(f"kill() failed for {self.job_id}: {exc}")
 
-            # Always attempt to clean up any children that may have survived.
-            _kill_with_psutil(pid)
+            # Kill any children that may have survived using the PIDs we collected earlier.
+            # This handles the case where the parent exits but children (e.g., accelerate
+            # workers) continue running because they created their own process groups.
+            _kill_collected_pids(signal.SIGKILL)
 
             try:
                 self.process.wait(timeout=remaining_timeout or timeout)

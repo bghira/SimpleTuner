@@ -121,6 +121,8 @@ Los backends de audio admiten un bloque `audio` dedicado para que los metadatos 
 - **`duration_interval`** – redondeo del bucket en segundos (por defecto **3** si no se configura). Con `15`, un clip de 77 s queda en el bucket de 75 s. Esto evita que un clip largo deje a otras ranks sin muestras y fuerza el truncado al mismo intervalo.
 - **`max_duration_seconds`** – los clips más largos que esto se omiten por completo durante el descubrimiento de metadatos, así que pistas excepcionalmente largas no consumen buckets inesperadamente.
 - **`truncation_mode`** – determina qué parte del clip se conserva cuando ajustamos al intervalo del bucket. Opciones: `beginning`, `end` o `random` (default: `beginning`).
+- **`audio_only`** – modo de entrenamiento solo audio (LTX-2): entrena solo la generación de audio sin archivos de video. Los latentes de video se ponen a cero automáticamente y la pérdida de video se enmascara.
+- **`target_resolution`** – resolución de video objetivo para el modo solo audio (usada para calcular dimensiones de latentes).
 - La configuración estándar de audio (número de canales, directorio de caché) se mapea directamente al backend de audio en tiempo de ejecución creado por `simpletuner.helpers.data_backend.factory`. Se evita el padding intencionalmente: los clips se truncan en lugar de extenderse para mantener el comportamiento consistente con entrenadores de difusión como ACE-Step.
 
 ### Captions de audio (Hugging Face)

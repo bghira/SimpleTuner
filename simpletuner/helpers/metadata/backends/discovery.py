@@ -6,7 +6,6 @@ import traceback
 from io import BytesIO
 from typing import Optional
 
-from simpletuner.helpers.audio import generate_zero_audio, load_audio, load_audio_from_video
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
@@ -542,21 +541,30 @@ class DiscoveryMetadataBackend(MetadataBackend):
         if statistics is None:
             statistics = {}
         try:
-            audio_payload = self.data_backend.read(image_path_str)
-            if audio_payload is None:
-                logger.debug(f"Audio sample {image_path_str} was not found on the backend. Skipping.")
-                statistics.setdefault("skipped", {}).setdefault("not_found", 0)
-                statistics["skipped"]["not_found"] += 1
-                return aspect_ratio_bucket_indices
-
             # Check if audio is sourced from video files
             source_from_video = self.audio_config.get("source_from_video", False)
-            allow_zero_audio = self.audio_config.get("allow_zero_audio", False)
+            is_local_backend = getattr(self.data_backend, "type", None) == "local"
+
+            # For local backends with non-video audio files, we can skip reading the payload
+            # and pass the path directly to load_audio (enables ffmpeg fallback)
             file_ext = os.path.splitext(image_path_str)[1].lower().lstrip(".")
             is_video_file = file_ext in video_file_extensions
 
+            # Only read payload if needed (non-local backend or source_from_video)
+            audio_payload = None
+            if not is_local_backend or (source_from_video and is_video_file):
+                audio_payload = self.data_backend.read(image_path_str)
+                if audio_payload is None:
+                    logger.debug(f"Audio sample {image_path_str} was not found on the backend. Skipping.")
+                    statistics.setdefault("skipped", {}).setdefault("not_found", 0)
+                    statistics["skipped"]["not_found"] += 1
+                    return aspect_ratio_bucket_indices
+            allow_zero_audio = self.audio_config.get("allow_zero_audio", False)
+
             if source_from_video and is_video_file:
                 # Extract audio from video file
+                from simpletuner.helpers.audio import generate_zero_audio, load_audio_from_video
+
                 target_sr = self.audio_config.get("sample_rate", 16000)
                 target_channels = self.audio_config.get("channels", 1)
                 try:
@@ -579,9 +587,16 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         statistics["skipped"]["no_audio"] += 1
                         return aspect_ratio_bucket_indices
             else:
-                buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
-                buffer.seek(0)
-                waveform, sample_rate = load_audio(buffer)
+                from simpletuner.helpers.audio import load_audio
+
+                # For local backends, pass the file path directly to enable ffmpeg fallback
+                # for container formats (MPEG, MP4, etc.)
+                if is_local_backend:
+                    waveform, sample_rate = load_audio(image_path_str)
+                else:
+                    buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
+                    buffer.seek(0)
+                    waveform, sample_rate = load_audio(buffer)
             if waveform is None or waveform.numel() == 0:
                 logger.debug(f"Audio sample {image_path_str} is empty. Skipping.")
                 statistics.setdefault("skipped", {}).setdefault("other", 0)
@@ -605,6 +620,11 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 num_samples=num_samples,
                 duration_seconds=duration_seconds,
             )
+            existing_metadata = self.image_metadata.get(image_path_str)
+            if isinstance(existing_metadata, dict) and existing_metadata:
+                for key, value in existing_metadata.items():
+                    if key not in audio_metadata or audio_metadata.get(key) in (None, "", [], {}):
+                        audio_metadata[key] = value
 
             max_duration = self.audio_max_duration_seconds
             if max_duration is not None and duration_seconds and duration_seconds > max_duration:

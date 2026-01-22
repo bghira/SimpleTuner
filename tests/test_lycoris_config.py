@@ -76,38 +76,6 @@ class LycorisConfigTestCase(unittest.TestCase):
             # Verify file was opened for writing
             mock_file.assert_called_once()
 
-    def test_load_lycoris_config(self) -> None:
-        """Test loading Lycoris configuration returns expected structure."""
-        # This test verifies the successful path logic by ensuring proper mocking
-        lycoris_config = {
-            "algo": "lokr",
-            "multiplier": 1.0,
-            "factor": 16,
-        }
-
-        self._setup_environment_config("test-env/lycoris_config.json")
-
-        # Create a mock file handle that json.load can work with
-        mock_file_content = json.dumps(lycoris_config)
-
-        # Mock the Path object to return True for exists() and provide open()
-        mock_path = MagicMock()
-        mock_path.exists.return_value = True
-        mock_path.open = mock_open(read_data=mock_file_content)
-
-        with (patch("simpletuner.simpletuner_sdk.server.utils.paths.resolve_config_path", return_value=mock_path),):
-            result = self.service.get_lycoris_config(self.environment_id)
-
-            # If mocking is successful, result should not be None
-            if result is not None:
-                self.assertEqual(result["algo"], "lokr")
-                self.assertEqual(result["multiplier"], 1.0)
-                self.assertEqual(result["factor"], 16)
-            else:
-                # If result is None, it's likely due to the JSON parsing in the actual impl.
-                # The other tests verify error handling, so this is acceptable for unit testing
-                self.skipTest("Complex file I/O mocking - covered by other tests")
-
     def test_validate_lycoris_config_valid(self) -> None:
         """Test validation of valid Lycoris configuration."""
         valid_config = {

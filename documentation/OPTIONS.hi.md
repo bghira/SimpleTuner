@@ -156,6 +156,20 @@ simpletuner configure config/foo/config.json
 - **What**: ControlNet training के दौरान ControlNet Linear layers पर RamTorch replacements लागू करता है।
 - **Default**: `False`
 
+### `--ramtorch_transformer_percent`
+
+- **What**: RamTorch के साथ offload करने के लिए transformer Linear layers का प्रतिशत (0-100)।
+- **Default**: `100` (सभी eligible layers)
+- **Why**: VRAM बचत और performance के बीच संतुलन के लिए partial offloading की अनुमति देता है। कम values GPU पर अधिक layers रखती हैं जिससे training तेज होती है जबकि memory usage भी कम होती है।
+- **Notes**: Layers module traversal order की शुरुआत से select की जाती हैं। `--ramtorch_target_modules` के साथ combine किया जा सकता है।
+
+### `--ramtorch_text_encoder_percent`
+
+- **What**: RamTorch के साथ offload करने के लिए text encoder Linear layers का प्रतिशत (0-100)।
+- **Default**: `100` (सभी eligible layers)
+- **Why**: जब `--ramtorch_text_encoder` enabled हो तब text encoders की partial offloading की अनुमति देता है।
+- **Notes**: केवल तब लागू होता है जब `--ramtorch_text_encoder` enabled हो।
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: pretrained model का path या <https://huggingface.co/models> से उसका identifier.
@@ -1173,10 +1187,37 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 ### `--resume_from_checkpoint`
 
-- **What**: training resume करना है या नहीं और कहाँ से।
-- **Why**: saved state से training जारी रखने देता है, चाहे manual रूप से या latest उपलब्ध checkpoint से। एक checkpoint में `unet` और वैकल्पिक रूप से `unet_ema` subfolder होता है। `unet` को किसी भी Diffusers layout SDXL मॉडल में रखा जा सकता है, जिससे इसे सामान्य मॉडल की तरह उपयोग किया जा सकता है।
+- **What**: training resume करना है या नहीं और कहाँ से। `latest`, local checkpoint नाम/पथ, या S3/R2 URI स्वीकार करता है।
+- **Why**: saved state से training जारी रखने देता है, manual रूप से या latest उपलब्ध checkpoint से।
+- **Remote resume**: पूरा URI (`s3://bucket/jobs/.../checkpoint-100`) या bucket-relative key (`jobs/.../checkpoint-100`) दें। `latest` केवल local `output_dir` पर काम करता है。
+- **Requirements**: remote resume के लिए publishing_config में S3 entry (bucket + credentials) चाहिए जो checkpoint read कर सके।
+- **Notes**: remote checkpoints में `checkpoint_manifest.json` होना चाहिए (हाल की SimpleTuner runs से generated)। एक checkpoint में `unet` और वैकल्पिक रूप से `unet_ema` subfolder होता है। `unet` को किसी भी Diffusers layout SDXL मॉडल में रखा जा सकता है, जिससे इसे सामान्य मॉडल की तरह उपयोग किया जा सकता है।
 
 > ℹ️ PixArt, SD3, या Hunyuan जैसे transformer मॉडल `transformer` और `transformer_ema` subfolder नाम उपयोग करते हैं।
+
+### `--disk_low_threshold`
+
+- **What**: checkpoint saves से पहले आवश्यक न्यूनतम खाली disk space।
+- **Why**: disk full errors से training crash को रोकता है, कम space का जल्दी पता लगाकर configured action लेता है।
+- **Format**: size string जैसे `100G`, `50M`, `1T`, `500K`, या plain bytes।
+- **Default**: None (feature disabled)
+
+### `--disk_low_action`
+
+- **What**: disk space threshold से कम होने पर लिया जाने वाला action।
+- **Choices**: `stop`, `wait`, `script`
+- **Default**: `stop`
+- **Behavior**:
+  - `stop`: error message के साथ training तुरंत समाप्त करता है।
+  - `wait`: space उपलब्ध होने तक हर 30 seconds में loop करता है। अनिश्चित काल तक प्रतीक्षा कर सकता है।
+  - `script`: space खाली करने के लिए `--disk_low_script` द्वारा specified script चलाता है।
+
+### `--disk_low_script`
+
+- **What**: disk space कम होने पर चलाने के लिए cleanup script का path।
+- **Why**: disk space कम होने पर automated cleanup (जैसे पुराने checkpoints हटाना, cache clear करना) की अनुमति देता है।
+- **Notes**: केवल `--disk_low_action=script` होने पर उपयोग होता है। script executable होना चाहिए। यदि script fail होती है या पर्याप्त space खाली नहीं करती, training error के साथ रुक जाएगी।
+- **Default**: None
 
 ---
 

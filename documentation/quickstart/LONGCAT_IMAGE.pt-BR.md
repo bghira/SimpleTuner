@@ -14,7 +14,7 @@ LongCat-Image é um modelo bilíngue (zh/en) de texto-para-imagem com 6B que usa
 
 ## 2) Pré-requisitos (passo a passo)
 
-1. Python 3.10–3.12 verificado:
+1. Python 3.10–3.13 verificado:
    ```bash
    python --version
    ```
@@ -26,6 +26,7 @@ LongCat-Image é um modelo bilíngue (zh/en) de texto-para-imagem com 6B que usa
 3. Instale o SimpleTuner com os extras corretos para seu backend:
    ```bash
    pip install "simpletuner[cuda]"   # CUDA
+   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

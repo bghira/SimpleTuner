@@ -283,7 +283,28 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         message = payload.get("message", "")
         self.assertTrue("SIGKILL" in message or "signal 9" in message)
 
-    @unittest.skip("Requires process fixes")
+    def test_log_extraction_parses_signal_received_by_pid_format(self):
+        """Log extraction should parse accelerate's 'Signal N (SIGNAME) received by PID' format."""
+        job_id = "test_log_signal_pid_format"
+        process = TrainerProcess(job_id)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "stdout.log")
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...\n")
+                handle.write("traceback : Signal 9 (SIGKILL) received by PID 2963915\n")
+                handle.write("RuntimeError: Some wrapper error\n")
+
+            process.log_file = log_path
+            # Exit code is 1 (not -9) because accelerate wraps the signal
+            payload = process._extract_error_from_logs(exit_code=1)
+
+        self.assertIsNotNone(payload)
+        if payload is None:  # Pragmatic guard for static checkers
+            self.fail("Expected payload from log extraction")
+        message = payload.get("message", "")
+        self.assertIn("SIGKILL", message)
+
     def test_force_kill_unresponsive_process(self):
         """Test force killing a process that ignores SIGTERM."""
         job_id = "test_force_kill"
@@ -291,13 +312,20 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         config = {}
 
         process = submit_job(job_id, hanging_task, config)
-        time.sleep(0.2)  # Let it start
+        time.sleep(0.3)  # Let it start and install signal handler
 
         success = terminate_process(job_id)
         self.assertTrue(success)
 
-        time.sleep(0.5)
-        status = get_process_status(job_id)
+        # terminate_process sends SIGTERM, waits up to 5s grace, then SIGKILL
+        # The process ignores SIGTERM so it should be killed after grace period
+        deadline = time.time() + 10
+        status = None
+        while time.time() < deadline:
+            status = get_process_status(job_id)
+            if status == "terminated":
+                break
+            time.sleep(0.1)
         self.assertEqual(status, "terminated")
 
     @unittest.skip("Requires subprocess module")
@@ -392,7 +420,6 @@ class TestProcessCommunication(ProcessKeeperTestCase):
 
 class TestProcessStateTracking(ProcessKeeperTestCase):
 
-    @unittest.skip("Requires process fixes")
     def test_process_crash_detection_and_state_update(self):
         """Test that crashed processes are detected and marked."""
         job_id = "test_crash_detection"
@@ -400,9 +427,15 @@ class TestProcessStateTracking(ProcessKeeperTestCase):
         config = {}
 
         process = submit_job(job_id, crashing_task, config)
-        time.sleep(0.3)
+        # Wait for crash to be detected - crashing_task sleeps 0.1s then exits
+        deadline = time.time() + 5
+        status = None
+        while time.time() < deadline:
+            status = get_process_status(job_id)
+            if status not in {"pending", "running"}:
+                break
+            time.sleep(0.1)
 
-        status = get_process_status(job_id)
         self.assertNotEqual(status, "running")
         self.assertFalse(process.is_alive())
 
@@ -517,18 +550,19 @@ class TestProcessCleanup(ProcessKeeperTestCase):
 
 class TestProcessTermination(ProcessKeeperTestCase):
 
-    @unittest.skip("Requires process fixes")
     def test_graceful_termination_with_timeout(self):
         """Test graceful termination respects timeout."""
         job_id = "test_graceful_timeout"
+        self.test_jobs.append(job_id)
         process = submit_job(job_id, slow_shutdown, {})
-        time.sleep(0.2)
+        time.sleep(0.3)  # Let it start and install signal handler
 
         start_time = time.time()
-        success = process.terminate(timeout=1)
+        success = process.terminate(timeout=2)
         duration = time.time() - start_time
 
         self.assertTrue(success)
+        # Should complete within ~2s grace + some overhead, not 10s from slow handler
         self.assertLess(duration, 5)
 
     def test_terminate_already_dead_process(self):

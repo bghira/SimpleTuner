@@ -157,6 +157,20 @@ simpletuner configure config/foo/config.json
 - **内容**：训练 ControlNet 时对其 Linear 层应用 RamTorch 替换。
 - **默认**：`False`
 
+### `--ramtorch_transformer_percent`
+
+- **内容**：使用 RamTorch 卸载的 transformer Linear 层的百分比（0-100）。
+- **默认**：`100`（所有符合条件的层）
+- **原因**：允许部分卸载以平衡显存节省与性能。较低的值保留更多层在 GPU 上以加快训练，同时仍减少内存使用。
+- **说明**：层按模块遍历顺序从头开始选择。可与 `--ramtorch_target_modules` 结合使用。
+
+### `--ramtorch_text_encoder_percent`
+
+- **内容**：使用 RamTorch 卸载的文本编码器 Linear 层的百分比（0-100）。
+- **默认**：`100`（所有符合条件的层）
+- **原因**：当启用 `--ramtorch_text_encoder` 时，允许部分卸载文本编码器。
+- **说明**：仅在启用 `--ramtorch_text_encoder` 时适用。
+
 ### `--pretrained_model_name_or_path`
 
 - **内容**：预训练模型路径或 <https://huggingface.co/models> 上的标识符。
@@ -1179,10 +1193,37 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 
 ### `--resume_from_checkpoint`
 
-- **内容**：指定是否以及从何处恢复训练。
-- **原因**：可从手动指定或最新检查点继续。检查点由 `unet` 与可选 `unet_ema` 子目录组成。`unet` 可直接放入 Diffusers 布局的 SDXL 模型中，像普通模型一样使用。
+- **内容**：指定是否以及从何处恢复训练。接受 `latest`、本地检查点名称/路径或 S3/R2 URI。
+- **原因**：允许从已保存的状态继续训练，可手动指定或使用最新可用检查点。
+- **远程恢复**：提供完整 URI (`s3://bucket/jobs/.../checkpoint-100`) 或相对 bucket 的 key (`jobs/.../checkpoint-100`)。`latest` 仅适用于本地 `output_dir`。
+- **要求**：远程恢复需要在 publishing_config 中提供可读取检查点的 S3 配置（bucket + credentials）。
+- **注意**：远程检查点必须包含 `checkpoint_manifest.json`（由较新的 SimpleTuner 运行生成）。检查点由 `unet` 与可选 `unet_ema` 子目录组成。`unet` 可直接放入 Diffusers 布局的 SDXL 模型中，像普通模型一样使用。
 
 > ℹ️ PixArt、SD3、Hunyuan 等 Transformer 模型使用 `transformer` 与 `transformer_ema` 子目录名称。
+
+### `--disk_low_threshold`
+
+- **内容**：检查点保存前所需的最小可用磁盘空间。
+- **原因**：通过提前检测磁盘空间不足并采取配置的操作，防止训练因磁盘已满错误而崩溃。
+- **格式**：大小字符串，如 `100G`、`50M`、`1T`、`500K`，或纯字节数。
+- **默认**：无（功能禁用）
+
+### `--disk_low_action`
+
+- **内容**：磁盘空间低于阈值时采取的操作。
+- **选项**：`stop`、`wait`、`script`
+- **默认**：`stop`
+- **行为**：
+  - `stop`：立即停止训练并显示错误消息。
+  - `wait`：每 30 秒循环检查直到空间可用。可能无限等待。
+  - `script`：运行 `--disk_low_script` 指定的脚本以释放空间。
+
+### `--disk_low_script`
+
+- **内容**：磁盘空间不足时运行的清理脚本路径。
+- **原因**：允许在磁盘空间不足时自动清理（如删除旧检查点、清除缓存）。
+- **注意**：仅在 `--disk_low_action=script` 时使用。脚本必须可执行。如果脚本失败或未能释放足够空间，训练将停止并报错。
+- **默认**：无
 
 ---
 

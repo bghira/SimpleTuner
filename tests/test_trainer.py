@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import torch
 
+from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 _OPTIONAL_MODULES = {
@@ -881,6 +882,22 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue("SIGKILL" in summary or "signal 9" in summary)
         self.assertIsNotNone(excerpt)
 
+    def test_accelerate_failure_summary_highlights_signal_received_by_pid(self):
+        """Test parsing of accelerate's 'Signal N (SIGNAME) received by PID' format."""
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        lines = [
+            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
+            "traceback : Signal 9 (SIGKILL) received by PID 2963915",
+            "RuntimeError: Some wrapper error",
+        ]
+
+        summary, excerpt = trainer_module._summarize_accelerate_failure(1, lines)
+
+        # Should extract the SIGKILL message even though exit code is 1
+        self.assertIn("SIGKILL", summary)
+        self.assertIsNotNone(excerpt)
+
     def test_launch_with_accelerate_fallback_imports(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
@@ -1508,6 +1525,73 @@ class TestTrainer(unittest.TestCase):
                 trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
                 mock_logger.info.assert_called()
                 trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-200")
+
+    @patch("simpletuner.helpers.training.trainer.PublishingManager")
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_downloads_remote(self, mock_attention_backend, mock_manager):
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.config = Mock(
+            output_dir="/path/to/output",
+            resume_from_checkpoint="s3://test-bucket/jobs/run/checkpoint-100",
+            total_steps_remaining_at_start=100,
+            global_resume_step=1,
+            num_train_epochs=0,
+            max_train_steps=100,
+            musubi_blocks_to_swap=0,
+            model_family="sdxl",
+            model_type="lora",
+            model_flavour=None,
+            publishing_config=[{"provider": "s3", "bucket": "test-bucket"}],
+            lr_scheduler="constant",
+            learning_rate=0.001,
+            is_schedulefree=False,
+            optimizer="adamw",
+        )
+        trainer.accelerator = Mock(num_processes=1)
+        trainer.accelerator.load_state = Mock()
+        trainer.accelerator.wait_for_everyone = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+        trainer.optimizer = Mock(param_groups=[{"lr": 0.1}])
+        trainer.distiller = None
+        trainer.model_hooks = Mock()
+        trainer.model_hooks.get_modelspec_architecture.return_value = "sdxl/lora"
+        trainer.job_id = "job-123"
+        trainer.webhook_handler = None
+        trainer.publishing_manager = None
+        trainer.checkpoint_manager = Mock()
+        trainer.checkpoint_manager.validate_checkpoint.return_value = (True, None)
+
+        provider = Mock(spec=S3PublishingProvider)
+        provider.resolve_key_prefix.return_value = "jobs/run/checkpoint-100"
+        provider.download_checkpoint.return_value = {
+            "metadata": {
+                "model_family": "sdxl",
+                "model_type": "lora",
+                "modelspec_architecture": "sdxl/lora",
+            }
+        }
+        mock_manager.return_value.providers = [provider]
+
+        lr_scheduler = Mock()
+        lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+        with patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            return_value={},
+        ):
+            with patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker.get_global_step",
+                return_value=100,
+            ):
+                trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+        provider.download_checkpoint.assert_called_with(
+            key_prefix="jobs/run/checkpoint-100",
+            local_dir="/path/to/output/checkpoint-100",
+            manifest_filename="checkpoint_manifest.json",
+        )
+        trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-100")
 
     @patch("simpletuner.helpers.training.trainer.logger")
     def test_init_resume_checkpoint_prodigy_without_split_groups(self, mock_logger):

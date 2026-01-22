@@ -2044,6 +2044,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
                 FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
             ],
             importance=ImportanceLevel.EXPERIMENTAL,
+            allow_empty=True,
             order=51,
         )
     )
@@ -2553,5 +2554,91 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="How timesteps are spaced during validation/inference. Should match training for consistency.",
             importance=ImportanceLevel.ADVANCED,
             order=21,
+        )
+    )
+
+    # Disk Low Space Detection
+    registry._add_field(
+        ConfigField(
+            name="disk_low_threshold",
+            arg_name="--disk_low_threshold",
+            ui_label="Disk Space Threshold",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="checkpointing",
+            subsection="disk_space",
+            default_value=None,
+            help_text="Minimum free disk space required before checkpoint saves (e.g., '100G', '50M'). Leave empty to disable.",
+            tooltip="Training will pause or stop if available space drops below this threshold.",
+            importance=ImportanceLevel.ADVANCED,
+            group="disk_low_space",
+            order=100,
+            documentation="OPTIONS.md#--disk_low_threshold",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="disk_low_action",
+            arg_name="--disk_low_action",
+            ui_label="Low Disk Space Action",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="checkpointing",
+            subsection="disk_space",
+            default_value="stop",
+            choices=[
+                {"value": "stop", "label": "Stop Training"},
+                {"value": "wait", "label": "Wait for Space"},
+                {"value": "script", "label": "Run Cleanup Script"},
+            ],
+            help_text="Action to take when disk space is below threshold.",
+            tooltip="'stop' ends training with an error. 'wait' loops until space returns. 'script' runs a custom cleanup script.",
+            importance=ImportanceLevel.ADVANCED,
+            group="disk_low_space",
+            order=101,
+            dependencies=[
+                FieldDependency(
+                    field="disk_low_threshold",
+                    operator="not_equals",
+                    value=None,
+                    action="show",
+                )
+            ],
+            documentation="OPTIONS.md#--disk_low_action",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="disk_low_script",
+            arg_name="--disk_low_script",
+            ui_label="Disk Cleanup Script Path",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="checkpointing",
+            subsection="disk_space",
+            default_value=None,
+            help_text="Path to script to run when disk space is low (only used when action is 'script').",
+            tooltip="Script will be executed when disk space drops below threshold. Must be executable.",
+            importance=ImportanceLevel.ADVANCED,
+            group="disk_low_space",
+            order=102,
+            validation_rules=[
+                ValidationRule(
+                    ValidationRuleType.PATH_EXISTS,
+                    message="Cleanup script path does not exist",
+                    condition={"disk_low_action": "script"},
+                )
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="disk_low_action",
+                    operator="equals",
+                    value="script",
+                    action="show",
+                )
+            ],
+            documentation="OPTIONS.md#--disk_low_script",
         )
     )

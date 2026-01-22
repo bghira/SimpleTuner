@@ -6,6 +6,7 @@ from pathlib import Path
 
 # Import WebhookLogger setup FIRST before creating any loggers
 from simpletuner.helpers.logging import get_logger
+from simpletuner.helpers.training.error_reporter import write_error as write_error_file
 
 # Quiet down, you.
 ds_logger1 = logging.getLogger("DeepSpeed")
@@ -94,6 +95,67 @@ def _build_signal_consumer(signal_path_text: str | None, key: str):
     return _consume
 
 
+def _configure_last_ditch_webhook():
+    """
+    Attempt to configure a webhook handler when no Trainer instance is available.
+    This is a last-ditch effort to send error notifications when training fails
+    before the normal webhook configuration happens.
+    """
+    import json
+    import sys
+
+    # Try to extract webhook_config from CLI args
+    webhook_config = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--webhook_config" and i + 1 < len(sys.argv):
+            webhook_config = sys.argv[i + 1]
+            break
+        if arg.startswith("--webhook_config="):
+            webhook_config = arg.split("=", 1)[1]
+            break
+
+    if not webhook_config:
+        return
+
+    # Parse the webhook config
+    if webhook_config.startswith("{") or webhook_config.startswith("["):
+        try:
+            parsed_config = json.loads(webhook_config)
+            if isinstance(parsed_config, dict):
+                webhook_config = [parsed_config]
+            elif isinstance(parsed_config, list):
+                webhook_config = parsed_config
+            else:
+                return
+        except json.JSONDecodeError:
+            return
+    elif Path(webhook_config).is_file():
+        try:
+            with open(webhook_config, "r") as f:
+                parsed_config = json.load(f)
+                if isinstance(parsed_config, dict):
+                    webhook_config = [parsed_config]
+                elif isinstance(parsed_config, list):
+                    webhook_config = parsed_config
+                else:
+                    return
+        except Exception:
+            return
+    else:
+        return
+
+    # Create a minimal webhook handler without accelerator
+    from simpletuner.helpers.webhooks.handler import WebhookHandler
+
+    handler = WebhookHandler(
+        accelerator=None,
+        project_name="SimpleTuner (emergency)",
+        webhook_config=webhook_config,
+    )
+    StateTracker.set_webhook_handler(handler)
+    logger.info("Configured last-ditch webhook handler for error reporting")
+
+
 if __name__ == "__main__":
     trainer = None
 
@@ -174,6 +236,16 @@ if __name__ == "__main__":
             )
     except Exception as e:
         import traceback
+
+        # Write structured error file for parent process to read
+        write_error_file(e, traceback.format_exc())
+
+        # If webhook handler isn't configured yet (crash happened early), try to configure it now
+        if StateTracker.get_webhook_handler() is None:
+            try:
+                _configure_last_ditch_webhook()
+            except Exception as webhook_err:
+                logger.warning(f"Failed to configure last-ditch webhook: {webhook_err}")
 
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(

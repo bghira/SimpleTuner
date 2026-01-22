@@ -14,7 +14,7 @@ LongCat‑Image एक 6B द्विभाषी (zh/en) टेक्स्ट
 
 ## 2) पूर्वापेक्षाएँ (चरण‑दर‑चरण)
 
-1. Python 3.10–3.12 सत्यापित करें:
+1. Python 3.10–3.13 सत्यापित करें:
    ```bash
    python --version
    ```
@@ -26,6 +26,7 @@ LongCat‑Image एक 6B द्विभाषी (zh/en) टेक्स्ट
 3. अपने बैकएंड के अनुसार SimpleTuner इंस्टॉल करें:
    ```bash
    pip install "simpletuner[cuda]"   # CUDA
+   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

@@ -13,6 +13,8 @@ Puedes instalar SimpleTuner con pip, recomendado para la mayoría de usuarios:
 ```bash
 # para CUDA
 pip install 'simpletuner[cuda]'
+# para CUDA 13 / Blackwell (GPUs NVIDIA serie B)
+pip install 'simpletuner[cuda13]'
 # para ROCm
 pip install 'simpletuner[rocm]'
 # para Apple Silicon
@@ -35,8 +37,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
-# si python --version muestra 3.11 tendrás que actualizar a 3.12.
-python3.12 -m venv .venv
+# si python --version muestra 3.11 o 3.12, puedes actualizar a 3.13.
+python3.13 -m venv .venv
 
 source .venv/bin/activate
 ```

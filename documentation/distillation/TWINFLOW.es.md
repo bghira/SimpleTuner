@@ -6,7 +6,7 @@ TwinFlow en SimpleTuner:
 * Solo flow-matching a menos que enlaces explícitamente modelos de difusión con `diff2flow_enabled` + `twinflow_allow_diff2flow`.
 * Teacher EMA por defecto; captura/restauración de RNG **siempre activada** alrededor de pases teacher/CFG para reflejar la ejecución TwinFlow de referencia.
 * Embeddings de signo opcionales para semántica de tiempo negativo están cableados en transformers pero solo se usan cuando `twinflow_enabled` es true; las configs HF sin flag evitan cambios de comportamiento.
-* Las pérdidas actuales usan solo RCGM + real-velocity (rama adversarial/fake deshabilitada); espera generación de 1–4 pasos con guidance `0.0`.
+* Las pérdidas por defecto usan RCGM + real-velocity; opcionalmente habilita entrenamiento auto-adversarial completo con `twinflow_adversarial_enabled: true` para las pérdidas L_adv y L_rectify. Espera generación de 1–4 pasos con guidance `0.0`.
 * El logging en W&B puede emitir un scatter experimental de trayectoria TwinFlow (teoría no verificada) para depuración.
 
 ---
@@ -51,7 +51,7 @@ Para modelos de difusión (epsilon/v prediction) activa explícitamente:
 }
 ```
 
-> TwinFlow es intencionalmente simple: no se conecta ningún discriminador extra ni rama fake; solo se usan los términos RCGM y real-velocity.
+> Por defecto, TwinFlow usa las pérdidas RCGM + real-velocity. Habilita `twinflow_adversarial_enabled: true` para entrenamiento auto-adversarial completo con pérdidas L_adv y L_rectify (sin necesidad de discriminador externo).
 
 ---
 
@@ -78,6 +78,18 @@ Trata esto como expectativas orientativas, no garantías. Para hardware/runtime 
 * `twinflow_allow_diff2flow`: Habilita el puente para modelos epsilon/v-prediction cuando `diff2flow_enabled` también es true.
 * Captura/restauración de RNG: Siempre habilitado para reflejar la implementación TwinFlow de referencia en pases teacher/CFG consistentes. No hay opción para desactivarlo.
 * Embeddings de signo: Cuando `twinflow_enabled` es true, los modelos pasan `twinflow_time_sign` a transformers que soportan `timestep_sign`; de lo contrario no se usa embedding extra.
+
+### Rama adversarial (TwinFlow completo)
+
+Habilita el entrenamiento auto-adversarial del paper original para mejor calidad:
+
+* `twinflow_adversarial_enabled` (por defecto false): Habilita las pérdidas L_adv y L_rectify. Usan tiempo negativo para entrenar una trayectoria "fake", permitiendo coincidencia de distribuciones sin discriminadores externos.
+* `twinflow_adversarial_weight` (por defecto 1.0): Multiplicador de peso para la pérdida adversarial (L_adv).
+* `twinflow_rectify_weight` (por defecto 1.0): Multiplicador de peso para la pérdida de rectificación (L_rectify).
+
+Cuando se habilita, el entrenamiento genera muestras fake mediante generación de un paso, luego entrena ambas:
+- **L_adv**: Pérdida de velocidad fake con tiempo negativo—enseña al modelo a mapear muestras fake de vuelta a ruido.
+- **L_rectify**: Pérdida de coincidencia de distribución—alinea predicciones de trayectorias real y fake para caminos más rectos.
 
 ---
 

@@ -8,7 +8,6 @@ import torch
 from atomicwrites import atomic_write
 from PIL import Image
 
-from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
@@ -214,6 +213,8 @@ class LocalDataBackend(BaseDataBackend):
         file_extension = os.path.splitext(filepath)[1].lower().strip(".")
         if file_extension in audio_file_extensions:
             try:
+                from simpletuner.helpers.audio import load_audio
+
                 return load_audio(filepath)
             except Exception as exc:
                 logger.error(f"Encountered error opening audio sample {filepath}: {exc}", exc_info=True)
