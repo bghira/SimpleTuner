@@ -698,15 +698,31 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
-        if model_family == "ltxvideo2":
-            for frame_value, frame_label in ((min_frames, "min_frames"), (num_frames, "num_frames")):
-                if frame_value % 8 != 1:
-                    raise ValueError(
-                        f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
-                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}. "
-                        f"Note: Individual videos are automatically trimmed to satisfy this constraint. "
-                        f"Videos shorter than min_frames after trimming will be skipped."
+
+        # Auto-adjust frame counts using model-specific constraints via adjust_video_frames()
+        from simpletuner.helpers.models import ModelRegistry
+
+        if model_family and model_family in ModelRegistry.model_families():
+            model_class = ModelRegistry.model_families()[model_family]
+            if hasattr(model_class, "adjust_video_frames"):
+                adjusted_min_frames = model_class.adjust_video_frames(min_frames)
+                adjusted_num_frames = model_class.adjust_video_frames(num_frames)
+
+                if adjusted_min_frames != min_frames:
+                    warning_log(
+                        f"(id={backend['id']}) Adjusted video->min_frames from {min_frames} to {adjusted_min_frames} "
+                        f"to satisfy {model_class.NAME} model constraints."
                     )
+                    output["config"]["video"]["min_frames"] = adjusted_min_frames
+                    min_frames = adjusted_min_frames
+
+                if adjusted_num_frames != num_frames:
+                    warning_log(
+                        f"(id={backend['id']}) Adjusted video->num_frames from {num_frames} to {adjusted_num_frames} "
+                        f"to satisfy {model_class.NAME} model constraints."
+                    )
+                    output["config"]["video"]["num_frames"] = adjusted_num_frames
+                    num_frames = adjusted_num_frames
 
         # Warn about resolution_frames bucket strategy with fixed num_frames
         bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
