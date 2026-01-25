@@ -3834,7 +3834,11 @@ window.environmentsTabComponent = function environmentsTabComponent() {
     background: #1c1f2e;
     border-radius: 0.75rem;
     width: 100%;
-    max-width: 520px;
+    max-width: 32.5rem;
+    max-height: calc(100vh - 3rem);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.08);
     pointer-events: auto;
@@ -3846,6 +3850,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0;
 }
 
 .environment-modal-backdrop .modal-title {
@@ -3856,8 +3861,27 @@ window.environmentsTabComponent = function environmentsTabComponent() {
     align-items: center;
 }
 
+.environment-modal-backdrop .modal-dialog > div:not(.modal-header):not(.modal-footer) {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.environment-modal-backdrop .modal-dialog form {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
 .environment-modal-backdrop .modal-body {
     padding: 1.25rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .environment-modal-backdrop .modal-footer {
@@ -3866,6 +3890,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
     display: flex;
     justify-content: flex-end;
     gap: 0.75rem;
+    flex-shrink: 0;
 }
 
 .environment-modal-backdrop .btn-close {
