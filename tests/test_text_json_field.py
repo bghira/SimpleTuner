@@ -103,8 +103,8 @@ class TestTextJsonConversion(unittest.TestCase):
         self.assertEqual(result, ["line1", "{env:MY_VAR}", "line3"])
 
 
-class TestModelspecCommentFieldRegistration(unittest.TestCase):
-    """Test that modelspec_comment field is registered with TEXT_JSON type."""
+class TestTextJsonFieldRegistration(unittest.TestCase):
+    """Test that TEXT_JSON fields are registered correctly."""
 
     def test_modelspec_comment_is_text_json(self):
         """modelspec_comment should be registered as TEXT_JSON field type."""
@@ -114,6 +114,14 @@ class TestModelspecCommentFieldRegistration(unittest.TestCase):
         self.assertEqual(field.field_type, FieldType.TEXT_JSON)
         self.assertEqual(field.arg_name, "--modelspec_comment")
         self.assertTrue(field.allow_empty)
+
+    def test_tread_config_is_text_json(self):
+        """tread_config should be registered as TEXT_JSON field type."""
+        registry = FieldRegistry()
+        field = registry.get_field("tread_config")
+        self.assertIsNotNone(field, "tread_config field should be registered")
+        self.assertEqual(field.field_type, FieldType.TEXT_JSON)
+        self.assertEqual(field.arg_name, "--tread_config")
 
 
 class TestTextJsonRoundTrip(unittest.TestCase):
