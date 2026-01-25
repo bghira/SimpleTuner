@@ -905,6 +905,22 @@
                   hx-on::after-request="window.handleFieldValidation(event, this)"
                   data-feedback-id="field-feedback-{{ field_id }}">{{ field_value }}</textarea>
 
+    {% elif field_type == 'text_json' %}
+        <textarea class="form-control font-monospace"
+                  id="{{ field_id }}"
+                  name="{{ field_name }}"
+                  rows="{{ field.rows|default(4) }}"
+                  {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}
+                  {% if field.disabled %}disabled{% endif %}
+                  data-field-type="text_json"
+                  data-debounce="500"
+                  hx-post="/api/validate/{{ field_id }}"
+                  hx-trigger="change"
+                  hx-target="#field-feedback-{{ field_id }}"
+                  hx-swap="innerHTML"
+                  hx-on::after-request="window.handleFieldValidation(event, this)"
+                  data-feedback-id="field-feedback-{{ field_id }}">{{ field_value | tojson(indent=2) if field_value is not none else '' }}</textarea>
+
     {% elif field_type == 'number' %}
         <input type="number"
                class="form-control"
