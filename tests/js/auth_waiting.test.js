@@ -200,6 +200,27 @@ describe('Auth Waiting Behavior', () => {
             global.Alpine._components = {};
             // Reset waitForAuthReady mock
             window.waitForAuthReady = jest.fn();
+            // Mock HintMixin (required by datasetWizardComponent)
+            window.HintMixin = {
+                createMultiHint: jest.fn(({ hintKeys }) => {
+                    const hints = {};
+                    hintKeys.forEach((key) => {
+                        hints[key] = true;
+                    });
+                    return {
+                        hints,
+                        hintsLoading: false,
+                        loadHints: jest.fn(),
+                        dismissHint: jest.fn(),
+                        showHint: jest.fn(),
+                        restoreAllHints: jest.fn(),
+                        anyHintsDismissed: function () {
+                            return hintKeys.some((k) => !this.hints[k]);
+                        },
+                        _saveHintsToStorage: jest.fn(),
+                    };
+                }),
+            };
         });
 
         test('skips API calls when auth not ready', async () => {
@@ -259,6 +280,28 @@ describe('Auth Waiting Behavior', () => {
                         ok: true,
                         json: () => Promise.resolve({ datasets: [], blueprints: [] }),
                     });
+                }),
+            };
+
+            // Re-mock HintMixin after resetModules
+            window.HintMixin = {
+                createMultiHint: jest.fn(({ hintKeys }) => {
+                    const hints = {};
+                    hintKeys.forEach((key) => {
+                        hints[key] = true;
+                    });
+                    return {
+                        hints,
+                        hintsLoading: false,
+                        loadHints: jest.fn(),
+                        dismissHint: jest.fn(),
+                        showHint: jest.fn(),
+                        restoreAllHints: jest.fn(),
+                        anyHintsDismissed: function () {
+                            return hintKeys.some((k) => !this.hints[k]);
+                        },
+                        _saveHintsToStorage: jest.fn(),
+                    };
                 }),
             };
 
