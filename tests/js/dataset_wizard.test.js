@@ -43,6 +43,33 @@ global.Alpine = {
 // Mock $nextTick
 const mockNextTick = jest.fn((cb) => setTimeout(cb, 0));
 
+// Mock HintMixin (used by datasetWizardComponent for hero CTA)
+global.window = global.window || {};
+window.HintMixin = {
+    createMultiHint: jest.fn(({ hintKeys }) => {
+        const hints = {};
+        hintKeys.forEach((key) => {
+            hints[key] = true;
+        });
+        return {
+            hints,
+            hintsLoading: false,
+            loadHints: jest.fn(),
+            dismissHint: jest.fn((key) => {
+                hints[key] = false;
+            }),
+            showHint: jest.fn((key) => {
+                hints[key] = true;
+            }),
+            restoreAllHints: jest.fn(),
+            anyHintsDismissed: function () {
+                return hintKeys.some((key) => !this.hints[key]);
+            },
+            _saveHintsToStorage: jest.fn(),
+        };
+    }),
+};
+
 // Load the dataset wizard module
 require('../../simpletuner/static/js/dataset-wizard.js');
 
@@ -283,5 +310,194 @@ describe('Dataset Wizard Modal State Transitions', () => {
         component.openUploadModal();
         expect(component.showNewFolderInput).toBe(false);
         expect(component.uploadModalOpen).toBe(true);
+    });
+});
+
+describe('Getter Reactivity (canProceed, stepDefinitions)', () => {
+    let component;
+
+    beforeEach(() => {
+        const factory = window.datasetWizardComponent;
+        component = factory();
+        component.$nextTick = jest.fn((cb) => cb());
+        component.$refs = {};
+    });
+
+    describe('canProceed getter', () => {
+        test('canProceed is a reactive getter, not a static value', () => {
+            // Verify canProceed is defined via getter (not static false)
+            const descriptor = Object.getOwnPropertyDescriptor(component, 'canProceed');
+            expect(descriptor).toBeDefined();
+            expect(typeof descriptor.get).toBe('function');
+        });
+
+        test('canProceed returns falsy when dataset ID is empty on name step', () => {
+            component.wizardStep = 1;
+            component.currentDataset.id = '';
+
+            // Returns '' (falsy) due to short-circuit evaluation, which works for :disabled="!canProceed"
+            expect(component.canProceed).toBeFalsy();
+        });
+
+        test('canProceed returns false when dataset ID is only whitespace on name step', () => {
+            component.wizardStep = 1;
+            component.currentDataset.id = '   ';
+
+            expect(component.canProceed).toBe(false);
+        });
+
+        test('canProceed returns true when dataset ID is provided on name step', () => {
+            component.wizardStep = 1;
+            component.currentDataset.id = 'my-dataset';
+
+            expect(component.canProceed).toBe(true);
+        });
+
+        test('canProceed reacts to dataset ID changes', () => {
+            component.wizardStep = 1;
+
+            // Initially empty
+            component.currentDataset.id = '';
+            expect(component.canProceed).toBeFalsy();
+
+            // User types dataset ID
+            component.currentDataset.id = 'test-dataset';
+            expect(component.canProceed).toBe(true);
+
+            // User clears the field
+            component.currentDataset.id = '';
+            expect(component.canProceed).toBeFalsy();
+        });
+
+        test('canProceed checks selectedBackend on type step', () => {
+            component.wizardStep = 2;
+
+            // No backend selected
+            component.selectedBackend = null;
+            expect(component.canProceed).toBe(false);
+
+            // Backend selected
+            component.selectedBackend = 'local';
+            expect(component.canProceed).toBe(true);
+        });
+    });
+
+    describe('stepDefinitions getter', () => {
+        test('stepDefinitions is a reactive getter', () => {
+            const descriptor = Object.getOwnPropertyDescriptor(component, 'stepDefinitions');
+            expect(descriptor).toBeDefined();
+            expect(typeof descriptor.get).toBe('function');
+        });
+
+        test('stepDefinitions returns base steps', () => {
+            const steps = component.stepDefinitions;
+
+            expect(Array.isArray(steps)).toBe(true);
+            expect(steps.length).toBeGreaterThanOrEqual(7);
+
+            // Check required steps exist
+            const stepIds = steps.map((s) => s.id);
+            expect(stepIds).toContain('name');
+            expect(stepIds).toContain('type');
+            expect(stepIds).toContain('config');
+            expect(stepIds).toContain('resolution');
+            expect(stepIds).toContain('cropping');
+            expect(stepIds).toContain('captions');
+            expect(stepIds).toContain('review');
+        });
+
+        test('stepDefinitions includes text-embeds step when enabled', () => {
+            component.separateTextEmbeds = false;
+            let stepIds = component.stepDefinitions.map((s) => s.id);
+            expect(stepIds).not.toContain('text-embeds');
+
+            component.separateTextEmbeds = true;
+            stepIds = component.stepDefinitions.map((s) => s.id);
+            expect(stepIds).toContain('text-embeds');
+        });
+
+        test('stepDefinitions includes vae-cache step when enabled', () => {
+            component.separateVaeCache = false;
+            let stepIds = component.stepDefinitions.map((s) => s.id);
+            expect(stepIds).not.toContain('vae-cache');
+
+            component.separateVaeCache = true;
+            stepIds = component.stepDefinitions.map((s) => s.id);
+            expect(stepIds).toContain('vae-cache');
+        });
+    });
+
+    describe('currentStepDef getter', () => {
+        test('currentStepDef is a reactive getter', () => {
+            const descriptor = Object.getOwnPropertyDescriptor(component, 'currentStepDef');
+            expect(descriptor).toBeDefined();
+            expect(typeof descriptor.get).toBe('function');
+        });
+
+        test('currentStepDef returns correct step for wizardStep', () => {
+            component.wizardStep = 1;
+            expect(component.currentStepDef.id).toBe('name');
+
+            component.wizardStep = 2;
+            expect(component.currentStepDef.id).toBe('type');
+
+            component.wizardStep = 3;
+            expect(component.currentStepDef.id).toBe('config');
+        });
+    });
+
+    describe('totalSteps getter', () => {
+        test('totalSteps is a reactive getter', () => {
+            const descriptor = Object.getOwnPropertyDescriptor(component, 'totalSteps');
+            expect(descriptor).toBeDefined();
+            expect(typeof descriptor.get).toBe('function');
+        });
+
+        test('totalSteps matches stepDefinitions length', () => {
+            expect(component.totalSteps).toBe(component.stepDefinitions.length);
+        });
+
+        test('totalSteps changes when optional steps are enabled', () => {
+            const baseSteps = component.totalSteps;
+
+            component.separateTextEmbeds = true;
+            expect(component.totalSteps).toBe(baseSteps + 1);
+
+            component.separateVaeCache = true;
+            expect(component.totalSteps).toBe(baseSteps + 2);
+        });
+    });
+});
+
+describe('HintMixin Integration', () => {
+    let component;
+
+    beforeEach(() => {
+        const factory = window.datasetWizardComponent;
+        component = factory();
+        component.$nextTick = jest.fn((cb) => cb());
+    });
+
+    test('component includes HintMixin properties', () => {
+        expect(component.hints).toBeDefined();
+        expect(component.hints.hero).toBe(true);
+        expect(typeof component.loadHints).toBe('function');
+        expect(typeof component.dismissHint).toBe('function');
+        expect(typeof component.showHint).toBe('function');
+    });
+
+    test('component includes hero CTA helper methods', () => {
+        expect(typeof component.showHeroCTA).toBe('function');
+        expect(typeof component.dismissHeroCTA).toBe('function');
+        expect(typeof component.restoreHeroCTA).toBe('function');
+        expect(typeof component.launchWizardFromHero).toBe('function');
+    });
+
+    test('showHeroCTA returns hints.hero value', () => {
+        component.hints.hero = true;
+        expect(component.showHeroCTA()).toBe(true);
+
+        component.hints.hero = false;
+        expect(component.showHeroCTA()).toBe(false);
     });
 });
