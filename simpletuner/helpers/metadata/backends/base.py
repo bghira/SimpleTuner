@@ -960,9 +960,15 @@ class MetadataBackend:
         if StateTracker.get_args().disable_bucket_pruning:
             logger.warning("Not pruning small buckets, as --disable_bucket_pruning is provided.")
             return
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type) if dataset_type is not None else DatasetType.IMAGE
+        except Exception:
+            dataset_type_enum = DatasetType.IMAGE
+        effective_batch_size = 1 if dataset_type_enum is DatasetType.EVAL else self.batch_size
         if (
             bucket in self.aspect_ratio_bucket_indices
-            and (len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)) < self.batch_size
+            and (len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)) < effective_batch_size
         ):
             bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
             if self.bucket_report:
@@ -970,12 +976,12 @@ class MetadataBackend:
                     bucket=bucket,
                     reason="insufficient_for_batch",
                     removed=bucket_sample_count,
-                    batch_size=self.batch_size,
+                    batch_size=effective_batch_size,
                     repeats=int(self.repeats),
                 )
             del self.aspect_ratio_bucket_indices[bucket]
             logger.warning(
-                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={bucket_sample_count})."
+                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={effective_batch_size} > sample_count={bucket_sample_count})."
             )
 
     def _iterate_buckets_with_progress(self, desc: str):
