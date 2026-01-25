@@ -551,6 +551,24 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - Oversubscription के बिना: Error आएगा
 - `--allow_dataset_oversubscription` के साथ: repeats स्वतः 1 पर सेट होंगे (25 × 2 = 50 samples)
 
+### `max_num_samples`
+
+- **विवरण:** Dataset को अधिकतम samples की संख्या तक सीमित करता है। सेट करने पर, पूर्ण dataset से निर्दिष्ट आकार का एक deterministic random subset चुना जाता है।
+- **उपयोग का मामला:** बड़े regularization datasets के लिए उपयोगी जहाँ आप छोटे training sets को overwhelm न करने के लिए डेटा का केवल एक हिस्सा उपयोग करना चाहते हैं।
+- **Deterministic selection:** Random selection dataset `id` को seed के रूप में उपयोग करता है, जिससे reproducibility के लिए training sessions में समान subset चुना जाना सुनिश्चित होता है।
+- **डिफ़ॉल्ट:** `null` (कोई सीमा नहीं, सभी samples उपयोग होते हैं)
+
+#### उदाहरण
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+यह dataset से 1000 samples को deterministically select करेगा, जिसमें हर बार training चलाने पर समान selection उपयोग होगी।
+
 ### `start_epoch` / `start_step`
 
 - यह schedule करता है कि dataset sampling कब शुरू होगी।

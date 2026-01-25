@@ -2,6 +2,8 @@
 
 For various large-scale datasets on Hugging Face Hub, configuration details are provided here to give a head start on making things work.
 
+> **Tip:** For large regularization datasets, you can use `max_num_samples` to limit the dataset to a deterministic random subset. See [DATALOADER.md](../DATALOADER.md#max_num_samples) for details.
+
 To add a new preset, use [this template](../data_presets/preset.md) to submit a new pull-request.
 
 - [DALLE-3 1M](../data_presets/preset_dalle3.md)

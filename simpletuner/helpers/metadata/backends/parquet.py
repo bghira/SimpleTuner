@@ -68,6 +68,7 @@ class ParquetMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        max_num_samples: int = None,
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
@@ -98,6 +99,7 @@ class ParquetMetadataBackend(MetadataBackend):
             num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
+            max_num_samples=max_num_samples,
         )
         self.load_parquet_database()
         self.caption_cache = self._extract_captions_to_fast_list()
@@ -244,8 +246,10 @@ class ParquetMetadataBackend(MetadataBackend):
 
         if ignore_existing_cache:
             self.aspect_ratio_bucket_indices = {}
-            return list(all_image_files)
+            return self._apply_max_num_samples_limit(list(all_image_files))
 
+        # Apply max_num_samples limit deterministically before filtering
+        all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
