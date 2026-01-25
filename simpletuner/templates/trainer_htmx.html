@@ -4828,8 +4828,20 @@ function trainerComponent() {
                     return null;
                 }
 
-                const metadata = metadataMap?.get?.(name);
-                const fieldType = metadata?.field_type || metadata?.fieldType;
+                // Try both prefixed and bare names for metadata lookup
+                const bareName = name.startsWith('--') ? name.slice(2) : name;
+                const metadata = metadataMap?.get?.(name) || metadataMap?.get?.(bareName);
+                const fieldType = (metadata?.field_type || metadata?.fieldType || '').toLowerCase();
+
+                // TEXT_JSON fields serialize the entire value as JSON string
+                if (fieldType === 'text_json') {
+                    try {
+                        return { kind: 'single', value: JSON.stringify(value, null, 2) };
+                    } catch (error) {
+                        console.warn('[TRAINER] Failed to serialize TEXT_JSON value for', name, error);
+                        return null;
+                    }
+                }
 
                 if (Array.isArray(value)) {
                     const primitives = value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item));
@@ -4918,8 +4930,20 @@ function trainerComponent() {
                     return { kind: 'single', value: '' };
                 }
 
-                const metadata = metadataMap?.get?.(name);
-                const fieldType = metadata?.field_type || metadata?.fieldType;
+                // Try both prefixed and bare names for metadata lookup
+                const bareName = name.startsWith('--') ? name.slice(2) : name;
+                const metadata = metadataMap?.get?.(name) || metadataMap?.get?.(bareName);
+                const fieldType = (metadata?.field_type || metadata?.fieldType || '').toLowerCase();
+
+                // TEXT_JSON fields serialize the entire value as JSON string
+                if (fieldType === 'text_json') {
+                    try {
+                        return { kind: 'single', value: JSON.stringify(value, null, 2) };
+                    } catch (error) {
+                        console.warn('[TRAINER] Failed to serialize TEXT_JSON value for seed store', name, error);
+                        return { kind: 'single', value: '' };
+                    }
+                }
 
                 if (Array.isArray(value)) {
                     const primitives = value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item));
