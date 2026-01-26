@@ -1011,6 +1011,19 @@ class LTXVideo2(VideoModelFoundation):
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch_conditions(batch=batch, state=state)
 
+        conditioning_latents = batch.get("conditioning_latents")
+        conditioning_type = batch.get("conditioning_type")
+        if isinstance(conditioning_latents, list):
+            raise ValueError(
+                "LTX-2 IC-LoRA requires a single conditioning latent tensor. "
+                "Use reference_strict conditioning so reference videos align to one shape."
+            )
+        if conditioning_latents is not None and conditioning_type not in (None, "reference_strict", "reference_loose"):
+            raise ValueError(
+                f"Unsupported conditioning_type '{conditioning_type}' for LTX-2 IC-LoRA. "
+                "Use reference_strict or reference_loose."
+            )
+
         audio_latents = batch.get("audio_latent_batch")
         audio_mask = batch.get("audio_latent_mask")
         video_mask = batch.get("video_latent_mask")
@@ -1130,21 +1143,6 @@ class LTXVideo2(VideoModelFoundation):
             )
 
         return mask.to(device=latents.device, dtype=torch.bool)
-
-    def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
-        conditioning_latents = batch.get("conditioning_latents")
-        conditioning_type = batch.get("conditioning_type")
-        if isinstance(conditioning_latents, list):
-            raise ValueError(
-                "LTX-2 IC-LoRA requires a single conditioning latent tensor. "
-                "Use reference_strict conditioning so reference videos align to one shape."
-            )
-        if conditioning_latents is not None and conditioning_type not in (None, "reference_strict", "reference_loose"):
-            raise ValueError(
-                f"Unsupported conditioning_type '{conditioning_type}' for LTX-2 IC-LoRA. "
-                "Use reference_strict or reference_loose."
-            )
-        return super().prepare_batch_conditions(batch=batch, state=state)
 
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"]
