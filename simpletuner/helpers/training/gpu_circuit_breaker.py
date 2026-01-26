@@ -83,11 +83,15 @@ THROTTLE_REASONS = {
     0x0000000000000100: "display_clocks_setting",
 }
 
-# Reasons that indicate potential hardware issues
+# Reasons that indicate potential hardware issues (fatal - opens circuit)
 CRITICAL_THROTTLE_REASONS = {
     "hw_slowdown",
-    "hw_thermal_slowdown",
     "hw_power_brake_slowdown",
+}
+
+# Reasons that indicate thermal throttling (warning only - does not open circuit)
+WARNING_THROTTLE_REASONS = {
+    "hw_thermal_slowdown",
 }
 
 
@@ -136,6 +140,10 @@ class GPUCircuitBreaker:
         self._baseline_ecc_errors: Dict[int, int] = {}
 
         # Track cumulative ECC errors per GPU (baseline established at start)
+        # Track thermal warnings per GPU (non-fatal, for WebUI display)
+        self._thermal_warnings: Dict[int, GPUHealthMetrics] = {}
+        self._thermal_warning_lock = threading.Lock()
+
         self._initialize_nvml()
 
     def _initialize_nvml(self) -> bool:
@@ -321,7 +329,19 @@ class GPUCircuitBreaker:
 
             for gpu_index in range(self._gpu_count):
                 metrics = self._get_gpu_metrics(gpu_index)
-                if metrics and not metrics.is_healthy:
+                if metrics is None:
+                    continue
+
+                # Check for thermal throttling (non-fatal warning)
+                thermal_throttles = set(metrics.throttle_reasons) & WARNING_THROTTLE_REASONS
+                if thermal_throttles:
+                    self._handle_thermal_warning(gpu_index, metrics, thermal_throttles)
+                else:
+                    # Clear thermal warning if no longer throttling
+                    self._clear_thermal_warning(gpu_index)
+
+                # Check for critical issues (fatal - opens circuit)
+                if not metrics.is_healthy:
                     logger.warning(f"GPU {gpu_index} ({metrics.name}) unhealthy: {metrics.fault_reason}")
                     self._open_circuit(
                         fault_type="health_warning",
@@ -426,6 +446,94 @@ class GPUCircuitBreaker:
             logger.info("GPU fault webhook sent successfully")
         except Exception as e:
             logger.error(f"Failed to send GPU fault webhook: {e}")
+
+    def _handle_thermal_warning(
+        self,
+        gpu_index: int,
+        metrics: GPUHealthMetrics,
+        thermal_throttles: set,
+    ) -> None:
+        """Handle thermal throttling warning (non-fatal)."""
+        with self._thermal_warning_lock:
+            was_warning = gpu_index in self._thermal_warnings
+            self._thermal_warnings[gpu_index] = metrics
+
+        # Log warning (only on first detection or if new)
+        if not was_warning:
+            logger.warning(
+                f"GPU {gpu_index} ({metrics.name}) thermal throttling: "
+                f"{', '.join(thermal_throttles)} at {metrics.temperature_celsius}C"
+            )
+            # Emit webhook event (non-fatal, just for monitoring)
+            self._emit_thermal_warning_webhook(gpu_index, metrics, thermal_throttles)
+
+    def _clear_thermal_warning(self, gpu_index: int) -> None:
+        """Clear thermal warning when GPU is no longer throttling."""
+        with self._thermal_warning_lock:
+            if gpu_index in self._thermal_warnings:
+                del self._thermal_warnings[gpu_index]
+                logger.info(f"GPU {gpu_index} thermal throttling resolved")
+
+    def _emit_thermal_warning_webhook(
+        self,
+        gpu_index: int,
+        metrics: GPUHealthMetrics,
+        thermal_throttles: set,
+    ) -> None:
+        """Emit a thermal warning webhook (non-fatal, informational)."""
+        if self.webhook_handler is None:
+            logger.debug("No webhook handler configured, skipping thermal warning webhook")
+            return
+
+        try:
+            from simpletuner.helpers.webhooks.events import attach_timestamp, gpu_fault_event
+
+            event = gpu_fault_event(
+                fault_type="thermal",
+                message=f"GPU thermal throttling: {', '.join(thermal_throttles)} at {metrics.temperature_celsius}C",
+                gpu_index=gpu_index,
+                gpu_name=metrics.name,
+                job_id=self.job_id,
+                severity="warning",  # Not critical - just a warning
+                temperature_celsius=metrics.temperature_celsius,
+                throttle_reasons=list(thermal_throttles),
+                memory_used_percent=metrics.memory_used_percent,
+                action_taken=None,  # No action taken - training continues
+            )
+            event = attach_timestamp(event)
+
+            self.webhook_handler.send(event)
+            logger.info("GPU thermal warning webhook sent")
+        except Exception as e:
+            logger.error(f"Failed to send GPU thermal warning webhook: {e}")
+
+    def get_gpu_thermal_status(self) -> List[Dict[str, Any]]:
+        """Get thermal status for all GPUs (for WebUI display).
+
+        Returns:
+            List of GPU status dicts with thermal warning info
+        """
+        gpu_statuses = []
+        with self._thermal_warning_lock:
+            thermal_warnings = dict(self._thermal_warnings)
+
+        for gpu_index in range(self._gpu_count):
+            metrics = self._get_gpu_metrics(gpu_index)
+            if metrics is None:
+                continue
+
+            status = {
+                "index": gpu_index,
+                "name": metrics.name,
+                "temperature_celsius": metrics.temperature_celsius,
+                "temperature_threshold_slowdown": metrics.temperature_threshold_slowdown,
+                "temperature_threshold_shutdown": metrics.temperature_threshold_shutdown,
+                "is_thermal_throttling": gpu_index in thermal_warnings,
+                "throttle_reasons": metrics.throttle_reasons,
+            }
+            gpu_statuses.append(status)
+
+        return gpu_statuses
 
     @property
     def is_open(self) -> bool:

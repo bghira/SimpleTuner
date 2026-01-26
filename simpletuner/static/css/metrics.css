@@ -444,3 +444,50 @@
         max-height: 250px;
     }
 }
+
+/* GPU Health Styles */
+.gpu-health-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.gpu-health-item {
+    transition: background 0.2s ease;
+}
+
+.gpu-health-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.gpu-id-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.gpu-id-badge.thermal-throttling {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    animation: thermal-pulse 2s ease-in-out infinite;
+}
+
+.gpu-id-badge .fire-emoji {
+    font-size: 0.85rem;
+}
+
+@keyframes thermal-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.3);
+    }
+}

@@ -140,6 +140,69 @@
                     </div>
                 </div>
 
+                <!-- GPU Health Status -->
+                <div class="metrics-card mb-3">
+                    <div class="metrics-card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-microchip me-2"></i>GPU Health</h5>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    @click="loadGpuHealth()"
+                                    :disabled="gpuHealthLoading"
+                                    title="Refresh">
+                                <i class="fas" :class="gpuHealthLoading ? 'fa-spinner fa-spin' : 'fa-sync'"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="metrics-card-body">
+                        <!-- Empty state -->
+                        <template x-if="!gpuHealthLoading && gpuHealth.length === 0">
+                            <div class="text-center text-muted small py-2">
+                                <i class="fas fa-desktop me-1"></i>
+                                No GPU information available
+                            </div>
+                        </template>
+
+                        <!-- GPU health list -->
+                        <template x-if="gpuHealth.length > 0">
+                            <div class="gpu-health-list">
+                                <template x-for="gpu in gpuHealth" :key="gpu.index">
+                                    <div class="gpu-health-item d-flex align-items-center justify-content-between py-2 border-bottom border-secondary"
+                                         :title="getGpuHealthTooltip(gpu)">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="gpu-id-badge"
+                                                  :class="{ 'thermal-throttling': gpu.is_thermal_throttling }">
+                                                <template x-if="gpu.is_thermal_throttling">
+                                                    <span class="fire-emoji">🔥</span>
+                                                </template>
+                                                <span x-text="'GPU ' + gpu.index"></span>
+                                            </span>
+                                            <span class="small text-muted" x-text="gpu.name"></span>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="small"
+                                                  :class="{
+                                                      'text-danger': gpu.is_thermal_throttling,
+                                                      'text-warning': !gpu.is_thermal_throttling && gpu.temperature_celsius >= (gpu.temperature_threshold_slowdown - 10),
+                                                      'text-success': !gpu.is_thermal_throttling && gpu.temperature_celsius < (gpu.temperature_threshold_slowdown - 10)
+                                                  }">
+                                                <i class="fas fa-thermometer-half me-1"></i>
+                                                <span x-text="gpu.temperature_celsius + '°C'"></span>
+                                            </span>
+                                            <span class="badge"
+                                                  :class="{
+                                                      'bg-danger': gpu.is_thermal_throttling,
+                                                      'bg-success': !gpu.is_thermal_throttling
+                                                  }"
+                                                  x-text="gpu.is_thermal_throttling ? 'Throttling' : 'OK'">
+                                            </span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
                 <!-- Prometheus Configuration (collapsible) -->
                 <div class="metrics-card">
                     <div class="metrics-card-header collapsed"

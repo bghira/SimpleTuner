@@ -30,6 +30,10 @@ function metricsComponent(initialSettings = {}) {
         circuitBreakers: [],
         circuitBreakersLoading: false,
 
+        // GPU health state
+        gpuHealth: [],
+        gpuHealthLoading: false,
+
         // Initialization
         async init() {
             // Wait for auth before making any API calls
@@ -41,10 +45,11 @@ function metricsComponent(initialSettings = {}) {
             // Check if hero should be shown
             this.heroDismissed = this.dismissedHints.includes('hero');
 
-            // Load categories, templates, and circuit breaker status
+            // Load categories, templates, circuit breaker status, and GPU health
             await Promise.all([
                 this.loadCategoriesAndTemplates(),
                 this.loadCircuitBreakers(),
+                this.loadGpuHealth(),
             ]);
 
             // Load initial preview if enabled
@@ -84,6 +89,28 @@ function metricsComponent(initialSettings = {}) {
                 case 'open': return 'Open';
                 default: return 'Unknown';
             }
+        },
+
+        async loadGpuHealth() {
+            this.gpuHealthLoading = true;
+            try {
+                const response = await fetch('/api/metrics/gpu-health');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.gpuHealth = data.gpus || [];
+                }
+            } catch (error) {
+                console.error('Failed to load GPU health:', error);
+            } finally {
+                this.gpuHealthLoading = false;
+            }
+        },
+
+        getGpuHealthTooltip(gpu) {
+            if (gpu.is_thermal_throttling) {
+                return `Your GPU is thermal throttling: ${gpu.temperature_celsius}°C`;
+            }
+            return `${gpu.name}: ${gpu.temperature_celsius}°C`;
         },
 
         async loadCategoriesAndTemplates() {
