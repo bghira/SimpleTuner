@@ -2018,6 +2018,11 @@ class FactoryRegistry:
                             virtual_backend["id"] = virtual_id
                             virtual_backend["dataset_type"] = "conditioning"
                             virtual_backend.pop("conditioning", None)
+                            # Conditioning datasets don't use audio - remove audio settings
+                            # (e.g., IC-LoRA reference videos are visual-only conditioning)
+                            virtual_backend.pop("audio", None)
+                            virtual_backend.pop("s2v_datasets", None)
+                            virtual_backend.pop("_s2v_audio_autoinjected", None)
                             virtual_backend["conditioning_data"] = []
                             virtual_backend["conditioning_type"] = "reference_strict"
                             virtual_backend["source_dataset_id"] = backend["id"]
