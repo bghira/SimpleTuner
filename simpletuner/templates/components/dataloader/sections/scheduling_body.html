@@ -1,16 +1,17 @@
 <!-- Scheduling Settings Body -->
 <div class="modal-section-body">
     <!-- Dataset Activation Scheduling -->
-    <div class="section-group" x-show="matchesParamFilter('schedule', 'start', 'epoch', 'step', 'delay', 'activation')">
+    <div class="section-group" x-show="matchesParamFilter('schedule', 'start', 'end', 'epoch', 'step', 'delay', 'activation', 'curriculum')">
         <h6 class="modal-section-title">Dataset Activation</h6>
         <div class="form-text small text-muted mb-3">
-            Control when this dataset becomes active during training. By default, datasets are active from the start.
+            Control when this dataset becomes active during training. Optionally set an end point for curriculum learning workflows.
         </div>
 
+        <!-- Start Scheduling -->
         <div class="row g-2">
             <!-- Schedule Mode Selector -->
             <div class="col-md-4">
-                <label class="form-label small">Delay Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#scheduling') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Start Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#scheduling') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
                         x-model="editingDataset._scheduleMode"
                         @change="
@@ -59,16 +60,87 @@
             </div>
         </div>
 
-        <!-- Status indicator - no row wrapper, flows naturally -->
+        <!-- End Scheduling -->
+        <div class="row g-2 mt-2">
+            <!-- End Mode Selector -->
+            <div class="col-md-4">
+                <label class="form-label small">End Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#end_epoch--end_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset._endScheduleMode"
+                        @change="
+                            if (editingDataset._endScheduleMode === 'none') {
+                                editingDataset.end_epoch = undefined;
+                                editingDataset.end_step = undefined;
+                            } else if (editingDataset._endScheduleMode === 'epoch') {
+                                editingDataset.end_step = undefined;
+                                if (!editingDataset.end_epoch || editingDataset.end_epoch < 1) editingDataset.end_epoch = (editingDataset.start_epoch || 1) + 1;
+                            } else if (editingDataset._endScheduleMode === 'step') {
+                                editingDataset.end_epoch = undefined;
+                                if (!editingDataset.end_step || editingDataset.end_step < 1) editingDataset.end_step = (editingDataset.start_step || 0) + 100;
+                            }
+                            markAsUnsaved()
+                        ">
+                    <option value="none">Never (runs indefinitely)</option>
+                    <option value="epoch">By Epoch</option>
+                    <option value="step">By Step</option>
+                </select>
+            </div>
+
+            <!-- End Epoch -->
+            <div class="col-md-4" x-show="editingDataset._endScheduleMode === 'epoch'" x-cloak>
+                <label class="form-label small">End Epoch <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#end_epoch--end_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.end_epoch"
+                       @input="markAsUnsaved()"
+                       placeholder="5">
+                <div class="form-text small">Stops after this epoch</div>
+            </div>
+
+            <!-- End Step -->
+            <div class="col-md-4" x-show="editingDataset._endScheduleMode === 'step'" x-cloak>
+                <label class="form-label small">End Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#end_epoch--end_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.end_step"
+                       @input="markAsUnsaved()"
+                       placeholder="300">
+                <div class="form-text small">Stops after this step</div>
+            </div>
+        </div>
+
+        <!-- Status indicator -->
         <div class="alert alert-info small py-2 px-3 mb-0 mt-2">
-            <span x-show="editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode">
-                <i class="fas fa-check-circle me-1"></i> This dataset is available from the start of training
+            <span x-show="(editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode) && (editingDataset._endScheduleMode === 'none' || !editingDataset._endScheduleMode)">
+                <i class="fas fa-check-circle me-1"></i> This dataset is available throughout training
             </span>
-            <span x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
-                <i class="fas fa-clock me-1"></i> This dataset will be skipped until epoch <strong x-text="editingDataset.start_epoch || 2"></strong>
+            <span x-show="editingDataset._scheduleMode === 'epoch' && (editingDataset._endScheduleMode === 'none' || !editingDataset._endScheduleMode)" x-cloak>
+                <i class="fas fa-clock me-1"></i> Skipped until epoch <strong x-text="editingDataset.start_epoch || 2"></strong>, then active indefinitely
             </span>
-            <span x-show="editingDataset._scheduleMode === 'step'" x-cloak>
-                <i class="fas fa-clock me-1"></i> This dataset will be skipped until step <strong x-text="editingDataset.start_step || 1"></strong>
+            <span x-show="editingDataset._scheduleMode === 'step' && (editingDataset._endScheduleMode === 'none' || !editingDataset._endScheduleMode)" x-cloak>
+                <i class="fas fa-clock me-1"></i> Skipped until step <strong x-text="editingDataset.start_step || 1"></strong>, then active indefinitely
+            </span>
+            <span x-show="(editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode) && editingDataset._endScheduleMode === 'epoch'" x-cloak>
+                <i class="fas fa-hourglass-end me-1"></i> Active from start, stops after epoch <strong x-text="editingDataset.end_epoch || 1"></strong>
+            </span>
+            <span x-show="(editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode) && editingDataset._endScheduleMode === 'step'" x-cloak>
+                <i class="fas fa-hourglass-end me-1"></i> Active from start, stops after step <strong x-text="editingDataset.end_step || 1"></strong>
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'epoch' && editingDataset._endScheduleMode === 'epoch'" x-cloak>
+                <i class="fas fa-arrows-alt-h me-1"></i> Active from epoch <strong x-text="editingDataset.start_epoch || 2"></strong> to <strong x-text="editingDataset.end_epoch || 1"></strong>
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'step' && editingDataset._endScheduleMode === 'step'" x-cloak>
+                <i class="fas fa-arrows-alt-h me-1"></i> Active from step <strong x-text="editingDataset.start_step || 1"></strong> to <strong x-text="editingDataset.end_step || 1"></strong>
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'epoch' && editingDataset._endScheduleMode === 'step'" x-cloak>
+                <i class="fas fa-arrows-alt-h me-1"></i> Starts at epoch <strong x-text="editingDataset.start_epoch || 2"></strong>, stops at step <strong x-text="editingDataset.end_step || 1"></strong>
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'step' && editingDataset._endScheduleMode === 'epoch'" x-cloak>
+                <i class="fas fa-arrows-alt-h me-1"></i> Starts at step <strong x-text="editingDataset.start_step || 1"></strong>, stops at epoch <strong x-text="editingDataset.end_epoch || 1"></strong>
             </span>
         </div>
     </div>

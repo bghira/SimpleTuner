@@ -339,6 +339,176 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
         self.assertEqual(len(scheduling_errors), 0)
 
 
+class EndSchedulingValidationTest(unittest.TestCase):
+    """Tests for end_epoch and end_step validation in compute_validations."""
+
+    @classmethod
+    def setUpClass(cls):
+        if IMPORT_ERROR is not None:  # pragma: no cover - dependency guard
+            raise unittest.SkipTest(f"compute_validations import failed: {IMPORT_ERROR}")
+        import simpletuner.helpers.models.all  # noqa: F401
+
+    def _base_datasets(self):
+        return [
+            {"id": "text-embeds", "dataset_type": "text_embeds", "type": "local", "default": True},
+        ]
+
+    def _collect_errors(self, validations):
+        return [message.message for message in validations if message.level == "error"]
+
+    def _collect_by_field_pattern(self, validations, pattern):
+        return [message for message in validations if pattern in message.field]
+
+    def test_valid_end_epoch_passes(self):
+        """Dataset with end_epoch > start_epoch should pass."""
+        datasets = self._base_datasets()
+        datasets.append(
+            {
+                "id": "bounded",
+                "dataset_type": "image",
+                "type": "local",
+                "start_epoch": 1,
+                "end_epoch": 5,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        scheduling_errors = self._collect_by_field_pattern(validations, "scheduling")
+        self.assertEqual(len(scheduling_errors), 0)
+
+    def test_end_epoch_less_than_start_epoch_fails(self):
+        """Dataset with end_epoch < start_epoch should fail validation."""
+        datasets = self._base_datasets()
+        datasets.append(
+            {
+                "id": "invalid",
+                "dataset_type": "image",
+                "type": "local",
+                "start_epoch": 5,
+                "end_epoch": 3,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        errors = self._collect_errors(validations)
+        self.assertTrue(any("end_epoch" in msg and "start_epoch" in msg for msg in errors))
+
+    def test_valid_end_step_passes(self):
+        """Dataset with end_step > start_step should pass."""
+        datasets = self._base_datasets()
+        # Add an immediate dataset so the "at least one immediate" check passes
+        datasets.append(
+            {
+                "id": "immediate",
+                "dataset_type": "image",
+                "type": "local",
+            }
+        )
+        datasets.append(
+            {
+                "id": "bounded",
+                "dataset_type": "image",
+                "type": "local",
+                "start_step": 100,
+                "end_step": 300,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        scheduling_errors = self._collect_by_field_pattern(validations, "scheduling")
+        self.assertEqual(len(scheduling_errors), 0)
+
+    def test_end_step_less_than_start_step_fails(self):
+        """Dataset with end_step < start_step should fail validation."""
+        datasets = self._base_datasets()
+        datasets.append(
+            {
+                "id": "invalid",
+                "dataset_type": "image",
+                "type": "local",
+                "start_step": 300,
+                "end_step": 100,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        errors = self._collect_errors(validations)
+        self.assertTrue(any("end_step" in msg and "start_step" in msg for msg in errors))
+
+    def test_end_epoch_only_passes(self):
+        """Dataset with only end_epoch (no start_epoch) should pass."""
+        datasets = self._base_datasets()
+        datasets.append(
+            {
+                "id": "bounded",
+                "dataset_type": "image",
+                "type": "local",
+                "end_epoch": 3,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        scheduling_errors = self._collect_by_field_pattern(validations, "scheduling")
+        self.assertEqual(len(scheduling_errors), 0)
+
+    def test_end_step_only_passes(self):
+        """Dataset with only end_step (no start_step) should pass."""
+        datasets = self._base_datasets()
+        datasets.append(
+            {
+                "id": "bounded",
+                "dataset_type": "image",
+                "type": "local",
+                "end_step": 300,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        scheduling_errors = self._collect_by_field_pattern(validations, "scheduling")
+        self.assertEqual(len(scheduling_errors), 0)
+
+    def test_mixed_start_epoch_end_step_passes(self):
+        """Dataset with start_epoch and end_step should pass (independent parameters)."""
+        datasets = self._base_datasets()
+        # Add an immediate dataset so the "at least one immediate" check passes
+        datasets.append(
+            {
+                "id": "immediate",
+                "dataset_type": "image",
+                "type": "local",
+            }
+        )
+        datasets.append(
+            {
+                "id": "mixed",
+                "dataset_type": "image",
+                "type": "local",
+                "start_epoch": 2,
+                "end_step": 500,
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        scheduling_errors = self._collect_by_field_pattern(validations, "scheduling")
+        self.assertEqual(len(scheduling_errors), 0)
+
+    def test_curriculum_learning_multiple_datasets(self):
+        """Multiple datasets with complementary scheduling should pass."""
+        datasets = self._base_datasets()
+        datasets.append(
+            {
+                "id": "lowres-512",
+                "dataset_type": "image",
+                "type": "local",
+                "end_step": 300,  # Active from start, ends at step 300
+            }
+        )
+        datasets.append(
+            {
+                "id": "highres-1024",
+                "dataset_type": "image",
+                "type": "local",
+                "start_step": 300,  # Starts at step 300
+            }
+        )
+        validations = compute_validations(datasets, blueprints=[])
+        scheduling_errors = self._collect_by_field_pattern(validations, "scheduling")
+        self.assertEqual(len(scheduling_errors), 0)
+
+
 class AudioOnlyDatasetValidationTest(unittest.TestCase):
     """Tests for audio-only dataset validation in compute_validations."""
 

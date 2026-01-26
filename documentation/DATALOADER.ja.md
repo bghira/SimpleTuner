@@ -578,6 +578,38 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - 開始条件を満たさないデータセット（例: `start_epoch` が `--num_train_epochs` を超える）はスキップされ、モデルカードに記載されます。
 - 進行中にスケジュールされたデータセットが有効になるとエポック長が増えるため、進捗バーのステップ見積もりは概算になります。
 
+### `end_epoch` / `end_step`
+
+- データセットのサンプリング**終了**タイミングをスケジュールします（`start_epoch`/`start_step` を補完）。
+- `end_epoch`（既定: `null` = 制限なし）はこのエポック後にサンプリングを停止；`end_step`（既定: `null` = 制限なし）はこの最適化ステップ後にサンプリングを停止。
+- どちらかの条件が終了するとデータセットは停止します。両者は独立して動作します。
+- **カリキュラム学習**ワークフローに有用です：
+  - 早期に低解像度データで訓練し、その後高解像度データに切り替える。
+  - ある時点以降、正則化データを段階的に廃止する。
+  - 単一の設定ファイル内で多段階訓練を作成する。
+
+**例：カリキュラム学習**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+この例では、512px データセットはステップ 1-300 で使用され、その後ステップ 300 から 1024px データセットに引き継がれます。
+
 ### `is_regularisation_data`
 
 - `is_regularization_data` と綴ることもできます。

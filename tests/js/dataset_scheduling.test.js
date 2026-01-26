@@ -1,7 +1,8 @@
 /**
  * Tests for dataset scheduling functionality.
  *
- * Covers _scheduleMode initialization based on start_epoch and start_step values.
+ * Covers _scheduleMode and _endScheduleMode initialization based on
+ * start_epoch, start_step, end_epoch, and end_step values.
  */
 
 // Helper to create a minimal dataset runtime state initializer
@@ -16,6 +17,28 @@ const initializeScheduleMode = (dataset) => {
             dataset._scheduleMode = 'none';
         }
     }
+    return dataset;
+};
+
+// Helper to initialize end schedule mode
+// This mirrors the logic in dataloader-section-component.js
+const initializeEndScheduleMode = (dataset) => {
+    if (dataset._endScheduleMode === undefined) {
+        if (dataset.end_step !== undefined && dataset.end_step !== null && dataset.end_step > 0) {
+            dataset._endScheduleMode = 'step';
+        } else if (dataset.end_epoch !== undefined && dataset.end_epoch !== null && dataset.end_epoch > 0) {
+            dataset._endScheduleMode = 'epoch';
+        } else {
+            dataset._endScheduleMode = 'none';
+        }
+    }
+    return dataset;
+};
+
+// Combined initializer for both start and end modes
+const initializeAllScheduleModes = (dataset) => {
+    initializeScheduleMode(dataset);
+    initializeEndScheduleMode(dataset);
     return dataset;
 };
 
@@ -158,6 +181,218 @@ describe('Dataset Scheduling Mode Initialization', () => {
             expect(datasets[0]._scheduleMode).toBe('none');
             expect(datasets[1]._scheduleMode).toBe('epoch');
             expect(datasets[2]._scheduleMode).toBe('step');
+        });
+    });
+});
+
+describe('Dataset End Scheduling Mode Initialization', () => {
+    describe('_endScheduleMode detection', () => {
+        test('defaults to none when no end values set', () => {
+            const dataset = { id: 'test', dataset_type: 'image' };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('defaults to none when end_epoch is null', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: null };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('defaults to none when end_step is null', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_step: null };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('defaults to none when end_epoch is 0', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: 0 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('defaults to none when end_step is 0', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_step: 0 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('sets epoch mode when end_epoch > 0', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: 5 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('epoch');
+        });
+
+        test('sets step mode when end_step > 0', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_step: 300 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+
+        test('step mode takes precedence when both are set', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: 5, end_step: 300 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+
+        test('does not override existing _endScheduleMode', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: 5, _endScheduleMode: 'none' };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('handles negative end_epoch as none mode', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: -1 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('handles negative end_step as none mode', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_step: -10 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+    });
+
+    describe('edge cases', () => {
+        test('handles end_epoch of 1 as epoch mode', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: 1 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('epoch');
+        });
+
+        test('handles end_step of 1 as step mode', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_step: 1 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+
+        test('handles float values for end_epoch', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_epoch: 3.5 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('epoch');
+        });
+
+        test('handles float values for end_step', () => {
+            const dataset = { id: 'test', dataset_type: 'image', end_step: 200.5 };
+            initializeEndScheduleMode(dataset);
+
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+    });
+});
+
+describe('Combined Start and End Scheduling', () => {
+    describe('curriculum learning scenarios', () => {
+        test('low-res dataset: immediate start, ends at epoch 3', () => {
+            const dataset = { id: 'lowres-512', dataset_type: 'image', end_epoch: 3 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('none');
+            expect(dataset._endScheduleMode).toBe('epoch');
+        });
+
+        test('high-res dataset: starts at epoch 3, runs indefinitely', () => {
+            const dataset = { id: 'highres-1024', dataset_type: 'image', start_epoch: 3 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('epoch');
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('step-based curriculum: low-res ends at step 300', () => {
+            const dataset = { id: 'lowres-512', dataset_type: 'image', end_step: 300 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('none');
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+
+        test('step-based curriculum: high-res starts at step 300', () => {
+            const dataset = { id: 'highres-1024', dataset_type: 'image', start_step: 300 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('step');
+            expect(dataset._endScheduleMode).toBe('none');
+        });
+
+        test('mixed mode: start by epoch, end by step', () => {
+            const dataset = { id: 'mixed', dataset_type: 'image', start_epoch: 2, end_step: 500 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('epoch');
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+
+        test('mixed mode: start by step, end by epoch', () => {
+            const dataset = { id: 'mixed', dataset_type: 'image', start_step: 100, end_epoch: 5 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('step');
+            expect(dataset._endScheduleMode).toBe('epoch');
+        });
+
+        test('full range: starts at epoch 2, ends at epoch 5', () => {
+            const dataset = { id: 'bounded', dataset_type: 'image', start_epoch: 2, end_epoch: 5 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('epoch');
+            expect(dataset._endScheduleMode).toBe('epoch');
+        });
+
+        test('full range: starts at step 100, ends at step 300', () => {
+            const dataset = { id: 'bounded', dataset_type: 'image', start_step: 100, end_step: 300 };
+            initializeAllScheduleModes(dataset);
+
+            expect(dataset._scheduleMode).toBe('step');
+            expect(dataset._endScheduleMode).toBe('step');
+        });
+    });
+
+    describe('multiple datasets for curriculum learning', () => {
+        test('complete curriculum setup with handoff', () => {
+            const datasets = [
+                { id: 'lowres-512', dataset_type: 'image', end_step: 300 },
+                { id: 'highres-1024', dataset_type: 'image', start_step: 300 },
+            ];
+
+            datasets.forEach(initializeAllScheduleModes);
+
+            expect(datasets[0]._scheduleMode).toBe('none');
+            expect(datasets[0]._endScheduleMode).toBe('step');
+            expect(datasets[1]._scheduleMode).toBe('step');
+            expect(datasets[1]._endScheduleMode).toBe('none');
+        });
+
+        test('epoch-based curriculum with three stages', () => {
+            const datasets = [
+                { id: 'stage1', dataset_type: 'image', end_epoch: 3 },
+                { id: 'stage2', dataset_type: 'image', start_epoch: 3, end_epoch: 6 },
+                { id: 'stage3', dataset_type: 'image', start_epoch: 6 },
+            ];
+
+            datasets.forEach(initializeAllScheduleModes);
+
+            expect(datasets[0]._scheduleMode).toBe('none');
+            expect(datasets[0]._endScheduleMode).toBe('epoch');
+            expect(datasets[1]._scheduleMode).toBe('epoch');
+            expect(datasets[1]._endScheduleMode).toBe('epoch');
+            expect(datasets[2]._scheduleMode).toBe('epoch');
+            expect(datasets[2]._endScheduleMode).toBe('none');
         });
     });
 });

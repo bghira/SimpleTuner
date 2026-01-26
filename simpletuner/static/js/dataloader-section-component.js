@@ -469,6 +469,16 @@ function dataloaderSectionComponent() {
                 dataset._scheduleMode = 'none';
             }
         }
+        // Initialize end schedule mode based on end_epoch and end_step values
+        if (dataset._endScheduleMode === undefined) {
+            if (dataset.end_step !== undefined && dataset.end_step !== null && dataset.end_step > 0) {
+                dataset._endScheduleMode = 'step';
+            } else if (dataset.end_epoch !== undefined && dataset.end_epoch !== null && dataset.end_epoch > 0) {
+                dataset._endScheduleMode = 'epoch';
+            } else {
+                dataset._endScheduleMode = 'none';
+            }
+        }
         if (this._collapseStateLoaded) {
             this.applyCollapsedStateToDataset(dataset);
         }
