@@ -151,10 +151,17 @@ class VAECache(WebhookMixin):
         self.vae_batch_size = vae_batch_size
         self.instance_data_dir = instance_data_dir
         self.model = model
-        self.transform_sample = model.get_transforms(dataset_type=self.dataset_type)
+        # Conditioning datasets with video content (e.g., IC-LoRA reference videos)
+        # need video transforms and num_video_frames even though dataset_type is "conditioning"
         self.num_video_frames = None
-        if self.dataset_type == "video":
+        is_video_like = self.dataset_type == "video" or (
+            self.dataset_type == "conditioning" and num_video_frames is not None
+        )
+        if is_video_like:
             self.num_video_frames = num_video_frames
+        # Use video transforms for video-like datasets (including video conditioning)
+        transform_type = "video" if is_video_like else self.dataset_type
+        self.transform_sample = model.get_transforms(dataset_type=transform_type)
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
         if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:

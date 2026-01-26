@@ -3673,12 +3673,15 @@ class FactoryRegistry:
         write_batch_size = backend.get("write_batch_size")
         vae_batch_size = backend.get("vae_batch_size")
 
-        if dataset_type_enum is DatasetType.VIDEO:
+        # Video conditioning datasets (e.g., IC-LoRA reference videos) also need video-like batch sizes
+        is_video_conditioning = dataset_type_enum is DatasetType.CONDITIONING and video_config.get("num_frames") is not None
+        if dataset_type_enum is DatasetType.VIDEO or is_video_conditioning:
+            dataset_label = "video conditioning" if is_video_conditioning else "video"
             if process_queue_size is None:
                 process_queue_size = self.args.image_processing_batch_size
                 if process_queue_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set image_processing_batch_size to override."
                     )
                 process_queue_size = 1
@@ -3687,7 +3690,7 @@ class FactoryRegistry:
                 read_batch_size = self.args.read_batch_size
                 if read_batch_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set read_batch_size to override."
                     )
                 read_batch_size = 1
@@ -3696,7 +3699,7 @@ class FactoryRegistry:
                 write_batch_size = self.args.write_batch_size
                 if write_batch_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set write_batch_size to override."
                     )
                 write_batch_size = 1
@@ -3705,7 +3708,7 @@ class FactoryRegistry:
                 vae_batch_size = self.args.vae_batch_size
                 if vae_batch_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set vae_batch_size to override."
                     )
                 vae_batch_size = 1
