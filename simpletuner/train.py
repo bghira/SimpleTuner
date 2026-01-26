@@ -26,6 +26,7 @@ environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from simpletuner.helpers import log_format
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
+from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.trainer import Trainer
@@ -236,6 +237,19 @@ if __name__ == "__main__":
             )
     except Exception as e:
         import traceback
+
+        # Check if this is a CUDA/GPU error and trigger circuit breaker
+        if is_cuda_error(e):
+            try:
+                circuit_breaker = get_gpu_circuit_breaker(
+                    webhook_handler=StateTracker.get_webhook_handler(),
+                    job_id=StateTracker.get_job_id(),
+                )
+                gpu_idx = get_current_gpu_index()
+                circuit_breaker.record_cuda_error(e, gpu_idx)
+                logger.error(f"GPU circuit breaker triggered by CUDA error on GPU {gpu_idx}: {e}")
+            except Exception as cb_err:
+                logger.warning(f"Failed to trigger GPU circuit breaker: {cb_err}")
 
         # Write structured error file for parent process to read
         write_error_file(e, traceback.format_exc())

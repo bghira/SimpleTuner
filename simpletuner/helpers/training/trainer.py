@@ -58,6 +58,8 @@ from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER 
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
 from simpletuner.helpers.training.evaluation import ModelEvaluator
+from simpletuner.helpers.training.exceptions import GPUHealthError
+from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
@@ -84,6 +86,7 @@ from simpletuner.helpers.webhooks.events import (
     attach_timestamp,
     checkpoint_event,
     error_event,
+    gpu_fault_event,
     lifecycle_stage_event,
     notification_event,
     training_status_event,
@@ -2037,6 +2040,11 @@ class Trainer:
             webhook_config=webhook_config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
+        # Initialize GPU circuit breaker for hardware fault detection
+        self.gpu_circuit_breaker = get_gpu_circuit_breaker(
+            webhook_handler=self.webhook_handler,
+            job_id=self.job_id,
+        )
         if send_startup_message:
             self._send_webhook_msg(
                 message="SimpleTuner has launched. Hold onto your butts!",
@@ -3980,9 +3988,9 @@ class Trainer:
 
         expected_family = str(getattr(self.config, "model_family", "") or "").strip().lower()
         expected_type = str(getattr(self.config, "model_type", "") or "").strip().lower()
-        expected_flavour = str(
-            getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", "")) or ""
-        ).strip().lower()
+        expected_flavour = (
+            str(getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", "")) or "").strip().lower()
+        )
         expected_arch = None
         if getattr(self, "model_hooks", None) is not None:
             expected_arch = self.model_hooks.get_modelspec_architecture()
@@ -3993,19 +4001,13 @@ class Trainer:
         manifest_arch = str(metadata.get("modelspec_architecture", metadata.get("modelspec.architecture", "")) or "").strip()
 
         if expected_family and manifest_family and expected_family != manifest_family:
-            raise ValueError(
-                f"Checkpoint model_family mismatch (expected {expected_family}, got {manifest_family})."
-            )
+            raise ValueError(f"Checkpoint model_family mismatch (expected {expected_family}, got {manifest_family}).")
         if expected_type and manifest_type and expected_type != manifest_type:
             raise ValueError(f"Checkpoint model_type mismatch (expected {expected_type}, got {manifest_type}).")
         if expected_flavour and manifest_flavour and expected_flavour != manifest_flavour:
-            raise ValueError(
-                f"Checkpoint model_flavour mismatch (expected {expected_flavour}, got {manifest_flavour})."
-            )
+            raise ValueError(f"Checkpoint model_flavour mismatch (expected {expected_flavour}, got {manifest_flavour}).")
         if expected_arch and manifest_arch and expected_arch != manifest_arch:
-            raise ValueError(
-                f"Checkpoint architecture mismatch (expected {expected_arch}, got {manifest_arch})."
-            )
+            raise ValueError(f"Checkpoint architecture mismatch (expected {expected_arch}, got {manifest_arch}).")
         if expected_arch and not manifest_arch:
             logger.warning("Checkpoint manifest missing architecture metadata; skipping architecture validation.")
 
@@ -4917,6 +4919,12 @@ class Trainer:
         self._cleanup_invoked = True
 
         try:
+            if getattr(self, "gpu_circuit_breaker", None) is not None:
+                self.gpu_circuit_breaker.stop_monitoring()
+        except Exception as exc:
+            logger.debug("Failed to stop GPU health monitor during cleanup: %s", exc, exc_info=True)
+
+        try:
             if getattr(self, "bf", None) is not None:
                 self.bf.stop_fetching()
         except Exception as exc:
@@ -5250,6 +5258,9 @@ class Trainer:
         self.init_trackers()
         self._train_initial_msg()
         self.mark_optimizer_train()
+        # Start GPU health monitoring
+        if hasattr(self, "gpu_circuit_breaker") and self.gpu_circuit_breaker is not None:
+            self.gpu_circuit_breaker.start_monitoring()
 
         # Only show the progress bar once on each machine.
         show_progress_bar = True
@@ -5384,6 +5395,14 @@ class Trainer:
 
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
+                # Check GPU circuit breaker before training step
+                if hasattr(self, "gpu_circuit_breaker") and self.gpu_circuit_breaker is not None:
+                    if self.gpu_circuit_breaker.is_open:
+                        raise GPUHealthError(
+                            message="GPU circuit breaker is open due to hardware fault",
+                            fault_type="circuit_open",
+                            gpu_index=self.gpu_circuit_breaker._state.last_failure_gpu_index,
+                        )
                 with self.accelerator.accumulate(*training_models):
                     if self.model.uses_noise_schedule():
                         batch_label = "latents"

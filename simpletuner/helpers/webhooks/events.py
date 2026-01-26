@@ -196,6 +196,84 @@ def checkpoint_event(
     return payload
 
 
+def gpu_fault_event(
+    fault_type: str,
+    *,
+    message: str,
+    gpu_index: int | None = None,
+    gpu_name: str | None = None,
+    job_id: str | None = None,
+    severity: str = "critical",
+    temperature_celsius: float | None = None,
+    ecc_errors_single: int | None = None,
+    ecc_errors_double: int | None = None,
+    throttle_reasons: list[str] | None = None,
+    memory_used_percent: float | None = None,
+    action_taken: str | None = None,
+    exception_type: str | None = None,
+    timestamp: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a GPU fault event for webhook emission.
+
+    Args:
+        fault_type: Type of fault (e.g., "cuda_error", "ecc_error", "thermal",
+                    "throttling", "circuit_open", "health_warning")
+        message: Human-readable description of the fault
+        gpu_index: GPU device index (0-based)
+        gpu_name: GPU device name (e.g., "NVIDIA RTX 5090")
+        job_id: Training job identifier
+        severity: Event severity ("warning", "error", "critical")
+        temperature_celsius: GPU temperature at time of fault
+        ecc_errors_single: Count of correctable single-bit ECC errors
+        ecc_errors_double: Count of uncorrectable double-bit ECC errors
+        throttle_reasons: List of active throttle reasons
+        memory_used_percent: GPU memory utilization percentage
+        action_taken: Action taken in response (e.g., "circuit_opened", "training_terminated")
+        exception_type: Python exception class name if triggered by exception
+        timestamp: Event timestamp (defaults to now)
+
+    Returns:
+        Structured event dict for webhook emission
+    """
+    gpu_info: dict[str, Any] = {}
+    if gpu_index is not None:
+        gpu_info["index"] = gpu_index
+    if gpu_name:
+        gpu_info["name"] = gpu_name
+    if temperature_celsius is not None:
+        gpu_info["temperature_celsius"] = temperature_celsius
+    if ecc_errors_single is not None:
+        gpu_info["ecc_errors_single"] = ecc_errors_single
+    if ecc_errors_double is not None:
+        gpu_info["ecc_errors_double"] = ecc_errors_double
+    if throttle_reasons:
+        gpu_info["throttle_reasons"] = list(throttle_reasons)
+    if memory_used_percent is not None:
+        gpu_info["memory_used_percent"] = round(memory_used_percent, 1)
+
+    event: dict[str, Any] = {
+        "type": "gpu.fault",
+        "severity": severity,
+        "job_id": job_id,
+        "title": f"GPU Fault: {fault_type}",
+        "message": message,
+        "fault": {
+            "type": fault_type,
+        },
+    }
+
+    if gpu_info:
+        event["fault"]["gpu"] = gpu_info
+    if action_taken:
+        event["fault"]["action_taken"] = action_taken
+    if exception_type:
+        event["fault"]["exception_type"] = exception_type
+    if timestamp:
+        event["timestamp"] = timestamp.isoformat()
+
+    return event
+
+
 def attach_timestamp(event: dict[str, Any]) -> dict[str, Any]:
     """Ensure *event* has an ISO timestamp."""
     if "timestamp" not in event:
@@ -218,5 +296,6 @@ __all__ = [
     "notification_event",
     "error_event",
     "checkpoint_event",
+    "gpu_fault_event",
     "attach_timestamp",
 ]

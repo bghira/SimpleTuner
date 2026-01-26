@@ -304,6 +304,55 @@ dynamo_config:
 - torch compile को max‑autotune के साथ सक्षम करें
 - **Speed**: 2 iterations per second
 
+## GPU Health Monitoring
+
+SimpleTuner में automatic GPU health monitoring शामिल है जो hardware failures को जल्दी detect करता है, जो distributed training में विशेष रूप से महत्वपूर्ण है जहाँ एक GPU की failure पूरे cluster में compute समय और पैसा बर्बाद कर सकती है।
+
+### GPU Circuit Breaker
+
+**GPU circuit breaker** हमेशा enabled रहता है और निम्न को monitor करता है:
+
+- **ECC errors** - Uncorrectable memory errors detect करता है (A100/H100 GPUs के लिए महत्वपूर्ण)
+- **Temperature** - Thermal shutdown threshold के पास पहुँचने पर alert
+- **Throttling** - Thermal या power issues से hardware slowdown detect करता है
+- **CUDA errors** - Training के दौरान runtime errors capture करता है
+
+जब GPU fault detect होता है:
+
+1. एक `gpu.fault` webhook emit होता है (यदि webhooks configured हैं)
+2. Circuit open होता है ताकि faulty hardware पर आगे training रुके
+3. Training cleanly exit होती है ताकि orchestrators instance terminate कर सकें
+
+### Webhook configuration
+
+GPU fault alerts प्राप्त करने के लिए अपने `config.json` में webhooks configure करें:
+
+```json
+{
+  "--webhook_config": "config/webhooks.json"
+}
+```
+
+Discord alerts के लिए उदाहरण `webhooks.json`:
+
+```json
+{
+  "webhook_url": "https://discord.com/api/webhooks/...",
+  "webhook_type": "discord"
+}
+```
+
+### Multi-node considerations
+
+Multi-node training में:
+
+- हर node अपना GPU health monitor चलाता है
+- किसी भी node पर GPU fault उस node से webhook trigger करता है
+- Distributed communication failure के कारण training job सभी nodes पर fail होगा
+- Orchestrators को cluster में किसी भी node से failures monitor करने चाहिए
+
+विस्तृत webhook payload format और programmatic access के लिए [Resilience Infrastructure](experimental/cloud/RESILIENCE.md#gpu-circuit-breaker) देखें।
+
 ## Distributed training caveats
 
 - हर node पर समान संख्या में accelerators उपलब्ध होना चाहिए
