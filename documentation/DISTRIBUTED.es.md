@@ -304,6 +304,55 @@ Batch sizes más bajos, menor resolución, y habilitar torch compile pueden llev
 - Habilitar torch compile con max-autotune
 - **Velocidad**: 2 iteraciones por segundo
 
+## Monitoreo de salud de GPU
+
+SimpleTuner incluye monitoreo automático de salud de GPU para detectar fallos de hardware tempranamente, lo cual es especialmente importante en entrenamiento distribuido donde un fallo de una sola GPU puede desperdiciar tiempo de cómputo y dinero en todo el clúster.
+
+### Circuit Breaker de GPU
+
+El **circuit breaker de GPU** está siempre habilitado y monitorea:
+
+- **Errores ECC** - Detecta errores de memoria incorregibles (importante para GPUs A100/H100)
+- **Temperatura** - Alerta al acercarse al umbral de apagado térmico
+- **Throttling** - Detecta ralentización de hardware por problemas térmicos o de potencia
+- **Errores CUDA** - Captura errores de runtime durante el entrenamiento
+
+Cuando se detecta un fallo de GPU:
+
+1. Se emite un webhook `gpu.fault` (si los webhooks están configurados)
+2. El circuito se abre para prevenir más entrenamiento en hardware defectuoso
+3. El entrenamiento termina limpiamente para que los orquestadores puedan terminar la instancia
+
+### Configuración de webhooks
+
+Configura webhooks en tu `config.json` para recibir alertas de fallos de GPU:
+
+```json
+{
+  "--webhook_config": "config/webhooks.json"
+}
+```
+
+Ejemplo de `webhooks.json` para alertas de Discord:
+
+```json
+{
+  "webhook_url": "https://discord.com/api/webhooks/...",
+  "webhook_type": "discord"
+}
+```
+
+### Consideraciones multi-nodo
+
+En entrenamiento multi-nodo:
+
+- Cada nodo ejecuta su propio monitor de salud de GPU
+- Un fallo de GPU en cualquier nodo disparará un webhook desde ese nodo
+- El trabajo de entrenamiento fallará en todos los nodos debido al fallo de comunicación distribuida
+- Los orquestadores deben monitorear fallos desde cualquier nodo en el clúster
+
+Ver [Infraestructura de resiliencia](experimental/cloud/RESILIENCE.md#circuit-breaker-de-gpu) para formato detallado del payload del webhook y acceso programático.
+
 ## Advertencias del entrenamiento distribuido
 
 - Cada nodo debe tener el mismo número de aceleradores disponibles

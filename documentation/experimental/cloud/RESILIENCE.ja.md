@@ -362,8 +362,76 @@ reset_all_circuit_breakers()
 - 例外型が `retryable_exceptions` に含まれるか確認
 - HTTP ステータスが `retryable_status_codes` に含まれるか確認
 
+## GPU サーキットブレーカ
+
+外部サービス用サーキットブレーカに加え、SimpleTuner には **GPU サーキットブレーカ** が含まれており、GPU ハードウェアの健全性を監視し、トレーニング中の CUDA 障害を検出します。これはクラウドトレーニングで特に重要で、GPU ハードウェア障害を早期に検出しないと費用が無駄になります。
+
+### 動作原理
+
+GPU サーキットブレーカは NVIDIA GPU でのトレーニング時に **常に有効**（設定不要）です：
+
+1. **バックグラウンドヘルスモニタリング** - PyNVML 経由で 5 秒ごとに GPU メトリクスをポーリング
+2. **CUDA エラー検出** - トレーニング中の CUDA ランタイムエラーをキャッチ
+3. **Webhook 送信** - オーケストレータに通知する `gpu.fault` イベントを送信
+
+### 監視メトリクス
+
+| メトリクス | 検出 | 重大度 |
+|------------|------|--------|
+| **ECC エラー** | 閾値を超えた訂正不可（ダブルビット）エラー | 重大 |
+| **温度** | シャットダウン閾値まで 5°C 以内 | 重大 |
+| **スロットリング** | ハードウェアスローダウン、サーマルスロットリング、パワーブレーキ | 重大 |
+| **CUDA エラー** | トレーニング中の CUDA ランタイムエラー | 重大 |
+
+### Webhook ペイロード
+
+サーキットが開くと `gpu.fault` webhook が送信されます：
+
+```json
+{
+  "type": "gpu.fault",
+  "severity": "critical",
+  "job_id": "training-job-123",
+  "title": "GPU Fault: cuda_error",
+  "message": "CUDA driver error: unknown error",
+  "fault": {
+    "type": "cuda_error",
+    "gpu": {
+      "index": 0,
+      "name": "NVIDIA RTX 5090",
+      "temperature_celsius": 75.5,
+      "ecc_errors_double": 2,
+      "throttle_reasons": ["hw_thermal_slowdown"],
+      "memory_used_percent": 85.5
+    },
+    "action_taken": "circuit_opened",
+    "exception_type": "RuntimeError"
+  },
+  "timestamp": "2025-01-25T12:34:56.789Z"
+}
+```
+
+### 障害タイプ
+
+| タイプ | トリガー |
+|--------|----------|
+| `cuda_error` | トレーニングステップ中の CUDA ランタイムエラー |
+| `ecc_error` | 閾値を超えた訂正不可 ECC エラー |
+| `health_warning` | 温度またはスロットリング問題を検出 |
+| `circuit_open` | 以前の障害でサーキットが既に開いている |
+
+### オーケストレータ統合
+
+クラウドオーケストレータ（RunPod、Lambda Labs など）は `gpu.fault` webhook を使用して：
+
+- 課金を避けるためコンテナを自動終了
+- オペレータにハードウェア問題を通知
+- 正常なインスタンスへのフェイルオーバーをトリガー
+- フリートヘルストラッキング用に GPU 障害をログ
+
 ## 参照
 
 - [Operations Guide](OPERATIONS_TUTORIAL.md) - 本番デプロイと監視
 - [Cloud Training Tutorial](TUTORIAL.md) - 入門ガイド
 - [Replicate Integration](REPLICATE.md) - プロバイダ別設定
+- [分散トレーニング](../../DISTRIBUTED.md) - マルチ GPU およびマルチノード設定

@@ -302,6 +302,55 @@ dynamo_config:
 - 启用 torch compile 的 max-autotune
 - **速度**：每秒 2 次迭代
 
+## GPU 健康监控
+
+SimpleTuner 包含自动 GPU 健康监控功能，用于尽早检测硬件故障。这在分布式训练中尤为重要，因为单个 GPU 故障可能会浪费整个集群的计算时间和成本。
+
+### GPU 断路器
+
+**GPU 断路器** 始终启用并监控：
+
+- **ECC 错误** - 检测不可纠正的内存错误（对 A100/H100 GPU 很重要）
+- **温度** - 接近热关机阈值时发出警报
+- **降频** - 检测因热或功率问题导致的硬件降速
+- **CUDA 错误** - 捕获训练期间的运行时错误
+
+当检测到 GPU 故障时：
+
+1. 发送 `gpu.fault` webhook（如果已配置）
+2. 断路器打开以防止在故障硬件上继续训练
+3. 训练干净退出，以便编排器可以终止实例
+
+### Webhook 配置
+
+在 `config.json` 中配置 webhook 以接收 GPU 故障警报：
+
+```json
+{
+  "--webhook_config": "config/webhooks.json"
+}
+```
+
+Discord 警报的 `webhooks.json` 示例：
+
+```json
+{
+  "webhook_url": "https://discord.com/api/webhooks/...",
+  "webhook_type": "discord"
+}
+```
+
+### 多节点注意事项
+
+在多节点训练中：
+
+- 每个节点运行自己的 GPU 健康监控
+- 任何节点上的 GPU 故障都会从该节点触发 webhook
+- 由于分布式通信失败，所有节点上的训练作业都会失败
+- 编排器应监控集群中任何节点的故障
+
+详细的 webhook 负载格式和编程访问，请参阅 [弹性基础设施](experimental/cloud/RESILIENCE.md#gpu-断路器)。
+
 ## 分布式训练注意事项
 
 - 每个节点必须拥有相同数量的加速器

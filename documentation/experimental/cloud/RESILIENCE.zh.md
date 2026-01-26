@@ -362,8 +362,76 @@ reset_all_circuit_breakers()
 - 检查异常类型是否在 `retryable_exceptions`
 - 检查 HTTP 状态码是否在 `retryable_status_codes`
 
+## GPU 断路器
+
+除了外部服务断路器外，SimpleTuner 还包含 **GPU 断路器**，用于监控 GPU 硬件健康状态并在训练期间检测 CUDA 故障。这对于云训练尤为重要，因为 GPU 硬件故障如果不及时检测会浪费金钱。
+
+### 工作原理
+
+当在 NVIDIA GPU 上训练时，GPU 断路器 **始终启用**（零配置）。它会：
+
+1. **后台健康监控** - 每 5 秒通过 PyNVML 轮询 GPU 指标
+2. **CUDA 错误检测** - 捕获训练期间的 CUDA 运行时错误
+3. **Webhook 发送** - 发送 `gpu.fault` 事件通知编排器
+
+### 监控指标
+
+| 指标 | 检测 | 严重性 |
+|------|------|--------|
+| **ECC 错误** | 超过阈值的不可纠正（双位）错误 | 严重 |
+| **温度** | 距关机阈值 5°C 以内 | 严重 |
+| **降频** | 硬件降速、热降频、功率制动 | 严重 |
+| **CUDA 错误** | 训练期间的任何 CUDA 运行时错误 | 严重 |
+
+### Webhook 负载
+
+当断路器打开时，会发送 `gpu.fault` webhook：
+
+```json
+{
+  "type": "gpu.fault",
+  "severity": "critical",
+  "job_id": "training-job-123",
+  "title": "GPU Fault: cuda_error",
+  "message": "CUDA driver error: unknown error",
+  "fault": {
+    "type": "cuda_error",
+    "gpu": {
+      "index": 0,
+      "name": "NVIDIA RTX 5090",
+      "temperature_celsius": 75.5,
+      "ecc_errors_double": 2,
+      "throttle_reasons": ["hw_thermal_slowdown"],
+      "memory_used_percent": 85.5
+    },
+    "action_taken": "circuit_opened",
+    "exception_type": "RuntimeError"
+  },
+  "timestamp": "2025-01-25T12:34:56.789Z"
+}
+```
+
+### 故障类型
+
+| 类型 | 触发条件 |
+|------|----------|
+| `cuda_error` | 训练步骤中的 CUDA 运行时错误 |
+| `ecc_error` | 超过阈值的不可纠正 ECC 错误 |
+| `health_warning` | 检测到温度或降频问题 |
+| `circuit_open` | 因之前的故障断路器已打开 |
+
+### 编排器集成
+
+云编排器（RunPod、Lambda Labs 等）可以使用 `gpu.fault` webhook 来：
+
+- 自动终止容器以避免计费
+- 向运维人员发出硬件问题警报
+- 触发故障转移到健康实例
+- 记录 GPU 故障用于集群健康跟踪
+
 ## 参见
 
 - [Operations Guide](OPERATIONS_TUTORIAL.md) - 生产部署与监控
 - [Cloud Training Tutorial](TUTORIAL.md) - 入门指南
 - [Replicate Integration](REPLICATE.md) - 提供商配置
+- [分布式训练](../../DISTRIBUTED.md) - 多 GPU 和多节点设置

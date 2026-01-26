@@ -304,6 +304,55 @@ Batch sizes menores, resolucao menor e habilitar torch compile podem elevar a ve
 - Habilite torch compile com max-autotune
 - **Velocidade**: 2 iteracoes por segundo
 
+## Monitoramento de saude da GPU
+
+SimpleTuner inclui monitoramento automatico de saude da GPU para detectar falhas de hardware precocemente, o que e especialmente importante em treinamento distribuido onde uma unica falha de GPU pode desperdicar tempo de computacao e dinheiro em todo o cluster.
+
+### Circuit Breaker de GPU
+
+O **circuit breaker de GPU** esta sempre habilitado e monitora:
+
+- **Erros ECC** - Detecta erros de memoria incorrigiveis (importante para GPUs A100/H100)
+- **Temperatura** - Alerta ao se aproximar do limite de desligamento termico
+- **Throttling** - Detecta slowdown de hardware por problemas termicos ou de energia
+- **Erros CUDA** - Captura erros de runtime durante o treinamento
+
+Quando uma falha de GPU e detectada:
+
+1. Um webhook `gpu.fault` e emitido (se webhooks estiverem configurados)
+2. O circuito abre para evitar mais treinamento em hardware com falha
+3. O treinamento termina de forma limpa para que orquestradores possam encerrar a instancia
+
+### Configuracao de webhooks
+
+Configure webhooks no seu `config.json` para receber alertas de falha de GPU:
+
+```json
+{
+  "--webhook_config": "config/webhooks.json"
+}
+```
+
+Exemplo de `webhooks.json` para alertas do Discord:
+
+```json
+{
+  "webhook_url": "https://discord.com/api/webhooks/...",
+  "webhook_type": "discord"
+}
+```
+
+### Consideracoes multi-node
+
+Em treinamento multi-node:
+
+- Cada node executa seu proprio monitor de saude de GPU
+- Uma falha de GPU em qualquer node disparara um webhook daquele node
+- O job de treinamento falhara em todos os nodes devido a falha de comunicacao distribuida
+- Orquestradores devem monitorar falhas de qualquer node no cluster
+
+Veja [Infraestrutura de Resiliencia](experimental/cloud/RESILIENCE.md#circuit-breaker-de-gpu) para formato detalhado do payload do webhook e acesso programatico.
+
 ## Observacoes do treinamento distribuido
 
 - Cada node deve ter o mesmo numero de aceleradores disponiveis
