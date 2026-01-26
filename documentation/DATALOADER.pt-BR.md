@@ -577,6 +577,38 @@ Isso selecionará deterministicamente 1000 amostras do dataset, com a mesma sele
 - Datasets que nunca atendem sua condição de início (por exemplo, `start_epoch` além de `--num_train_epochs`) serão ignorados e anotados no model card.
 - Estimativas de steps na barra de progresso são aproximadas quando datasets programados ativam no meio da execução, porque o tamanho da época pode aumentar quando novos dados entram.
 
+### `end_epoch` / `end_step`
+
+- Agenda quando um dataset **para** de amostrar (complementando `start_epoch`/`start_step`).
+- `end_epoch` (padrão: `null` = sem limite) para de amostrar após esta época; `end_step` (padrão: `null` = sem limite) para de amostrar após este step do otimizador.
+- Qualquer uma das condições que terminar irá parar o dataset; funcionam independentemente.
+- Útil para workflows de **aprendizado curricular** onde você deseja:
+  - Treinar com dados de baixa resolução primeiro, depois mudar para dados de maior resolução.
+  - Eliminar gradualmente dados de regularização após certo ponto.
+  - Criar treinamento multi-estágio em um único arquivo de configuração.
+
+**Exemplo: Aprendizado Curricular**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+Neste exemplo, o dataset de 512px é usado para steps 1-300, então o dataset de 1024px assume a partir do step 300 em diante.
+
 ### `is_regularisation_data`
 
 - Também pode ser escrito como `is_regularization_data`

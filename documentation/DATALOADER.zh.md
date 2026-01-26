@@ -578,6 +578,38 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - 永远达不到开始条件的数据集（例如 `start_epoch` 超过 `--num_train_epochs`）会被跳过，并在模型卡中注明。
 - 当计划的数据集在训练中途激活时，epoch 长度可能增加，因此进度条步数估计为近似值。
 
+### `end_epoch` / `end_step`
+
+- 规划数据集**停止**采样的时间点（与 `start_epoch`/`start_step` 相辅相成）。
+- `end_epoch`（默认：`null` = 无限制）在此 epoch 后停止采样；`end_step`（默认：`null` = 无限制）在此优化器步数后停止采样。
+- 任一条件达成即停止数据集，两者独立工作。
+- 适用于**课程学习**工作流，例如：
+  - 早期使用低分辨率数据训练，然后切换到高分辨率数据。
+  - 在某个时间点后逐步淘汰正则化数据。
+  - 在单个配置文件中创建多阶段训练。
+
+**示例：课程学习**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+在此示例中，512px 数据集用于步骤 1-300，然后 1024px 数据集从步骤 300 开始接管。
+
 ### `is_regularisation_data`
 
 - 也可写作 `is_regularization_data`

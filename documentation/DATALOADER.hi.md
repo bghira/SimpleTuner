@@ -577,6 +577,38 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - जिन datasets की start condition कभी पूरी नहीं होती (उदा., `start_epoch` `--num_train_epochs` से आगे), उन्हें skip किया जाएगा और model card में नोट किया जाएगा।
 - जब scheduled datasets mid‑run में active होते हैं, तो progress‑bar step estimates approximate हो जाते हैं क्योंकि epoch length बढ़ सकती है।
 
+### `end_epoch` / `end_step`
+
+- यह schedule करता है कि dataset sampling कब **बंद** होगी (`start_epoch`/`start_step` का पूरक)।
+- `end_epoch` (डिफ़ॉल्ट: `null` = कोई सीमा नहीं) इस epoch के बाद sampling बंद कर देता है; `end_step` (डिफ़ॉल्ट: `null` = कोई सीमा नहीं) इस optimizer step के बाद sampling बंद कर देता है।
+- कोई भी condition समाप्त होने पर dataset बंद हो जाएगा; वे स्वतंत्र रूप से काम करते हैं।
+- **Curriculum learning** workflows के लिए उपयोगी जहाँ आप चाहते हैं:
+  - पहले low-resolution data पर train करें, फिर high-resolution data पर switch करें।
+  - एक निश्चित बिंदु के बाद regularisation data को धीरे-धीरे हटाएं।
+  - एक single config file में multi-stage training बनाएं।
+
+**उदाहरण: Curriculum Learning**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+इस उदाहरण में, 512px dataset steps 1-300 के लिए उपयोग होता है, फिर 1024px dataset step 300 से आगे संभाल लेता है।
+
 ### `is_regularisation_data`
 
 - इसे `is_regularization_data` भी लिखा जा सकता है

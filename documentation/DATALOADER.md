@@ -611,6 +611,38 @@ This will deterministically select 1000 samples from the dataset, with the same 
 - Datasets that never meet their start condition (for example, `start_epoch` beyond `--num_train_epochs`) will be skipped and noted in the model card.
 - Progress-bar step estimates are approximate when scheduled datasets activate mid-run because epoch length can increase once new data comes online.
 
+### `end_epoch` / `end_step`
+
+- Schedule when a dataset **stops** sampling (complementing `start_epoch`/`start_step`).
+- `end_epoch` (default: `null` = no limit) stops sampling after this epoch; `end_step` (default: `null` = no limit) stops sampling after this optimizer step.
+- Either condition ending will stop the dataset; they work independently.
+- Useful for **curriculum learning** workflows where you want to:
+  - Train on lower-resolution data early, then switch to higher-resolution data.
+  - Phase out regularisation data after a certain point.
+  - Create multi-stage training within a single config file.
+
+**Example: Curriculum Learning**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+In this example, the 512px dataset is used for steps 1-300, then the 1024px dataset takes over from step 300 onward.
+
 ### `is_regularisation_data`
 
 - Also may be spelt `is_regularization_data`

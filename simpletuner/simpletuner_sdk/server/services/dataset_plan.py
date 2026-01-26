@@ -382,6 +382,46 @@ def compute_validations(
                 )
             )
 
+        # Validate end_epoch/end_step scheduling
+        for dataset in training_datasets:
+            dataset_id = dataset.get("id", "unknown")
+            start_epoch = dataset.get("start_epoch")
+            start_step = dataset.get("start_step")
+            end_epoch = dataset.get("end_epoch")
+            end_step = dataset.get("end_step")
+
+            # Validate end_epoch >= start_epoch when both are set
+            if end_epoch is not None and start_epoch is not None:
+                try:
+                    end_e = int(end_epoch)
+                    start_e = int(start_epoch) if start_epoch else 1
+                    if end_e > 0 and end_e < start_e:
+                        validations.append(
+                            ValidationMessage(
+                                field=f"{_normalise_identifier(dataset)}.scheduling",
+                                message=f"end_epoch ({end_e}) must be >= start_epoch ({start_e})",
+                                level="error",
+                            )
+                        )
+                except (TypeError, ValueError):
+                    pass
+
+            # Validate end_step >= start_step when both are set
+            if end_step is not None and start_step is not None:
+                try:
+                    end_s = int(end_step)
+                    start_s = int(start_step) if start_step else 0
+                    if end_s > 0 and end_s < start_s:
+                        validations.append(
+                            ValidationMessage(
+                                field=f"{_normalise_identifier(dataset)}.scheduling",
+                                message=f"end_step ({end_s}) must be >= start_step ({start_s})",
+                                level="error",
+                            )
+                        )
+                except (TypeError, ValueError):
+                    pass
+
     if blueprints is None:
         blueprints = get_dataset_blueprints()
 

@@ -85,7 +85,13 @@ from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
-from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active, normalize_start_epoch, normalize_start_step
+from simpletuner.helpers.data_backend.runtime.schedule import (
+    dataset_is_active,
+    normalize_end_epoch,
+    normalize_end_step,
+    normalize_start_epoch,
+    normalize_start_step,
+)
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
@@ -267,8 +273,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
     start_step = normalize_start_step(backend.get("start_step", 0))
+    end_epoch = normalize_end_epoch(backend.get("end_epoch"))
+    end_step = normalize_end_step(backend.get("end_step"))
     output["config"]["start_epoch"] = start_epoch
     output["config"]["start_step"] = start_step
+    output["config"]["end_epoch"] = end_epoch
+    output["config"]["end_step"] = end_step
 
     def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize audio configuration settings from backend definitions."""
@@ -1601,11 +1611,19 @@ class FactoryRegistry:
             training_seen = True
             start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
             start_step = normalize_start_step(backend.get("start_step", 0))
+            end_epoch = normalize_end_epoch(backend.get("end_epoch"))
+            end_step = normalize_end_step(backend.get("end_step"))
             backend_id = backend.get("id", "unknown")
             if start_epoch <= 1 and start_step <= 1:
                 active_at_start.append(backend_id)
             else:
                 scheduled_later.append((backend_id, start_epoch, start_step))
+
+            # Validate end conditions
+            if end_epoch is not None and end_epoch < start_epoch:
+                raise ValueError(f"(id={backend_id}) end_epoch ({end_epoch}) must be >= start_epoch ({start_epoch}).")
+            if end_step is not None and start_step > 0 and end_step < start_step:
+                raise ValueError(f"(id={backend_id}) end_step ({end_step}) must be >= start_step ({start_step}).")
 
         if not training_seen:
             return
@@ -4025,6 +4043,8 @@ class FactoryRegistry:
             data_backend_id=init_backend["id"],
             start_epoch=init_backend["config"].get("start_epoch"),
             start_step=init_backend["config"].get("start_step"),
+            end_epoch=init_backend["config"].get("end_epoch"),
+            end_step=init_backend["config"].get("end_step"),
         )
 
         preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
