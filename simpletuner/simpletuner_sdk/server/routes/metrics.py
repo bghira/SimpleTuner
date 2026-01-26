@@ -451,3 +451,26 @@ async def get_circuit_breaker_status(
     except Exception as exc:
         logger.warning("Failed to get circuit breaker status: %s", exc)
         return {"circuit_breakers": [], "total": 0, "error": str(exc)}
+
+
+@router.get("/gpu-health")
+async def get_gpu_health_status(
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Get GPU health status including thermal throttling warnings.
+
+    Returns per-GPU status with temperature and throttling info,
+    useful for displaying thermal warnings in the WebUI.
+    """
+    from simpletuner.helpers.training.gpu_circuit_breaker import get_gpu_circuit_breaker
+
+    try:
+        breaker = get_gpu_circuit_breaker()
+        gpu_statuses = breaker.get_gpu_thermal_status()
+        return {
+            "gpus": gpu_statuses,
+            "total": len(gpu_statuses),
+        }
+    except Exception as exc:
+        logger.warning("Failed to get GPU health status: %s", exc)
+        return {"gpus": [], "total": 0, "error": str(exc)}
