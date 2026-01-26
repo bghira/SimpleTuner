@@ -302,6 +302,63 @@ class DatasetDetectTestCase(APITestCase, unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertIn("does not exist", response.json()["detail"])
 
+    def test_detect_returns_filtering_statistics(self) -> None:
+        """Test that detect endpoint returns filtering_statistics when present (issue #2474)."""
+        dataset_dir = self.datasets_dir / "dataset-with-stats"
+        dataset_dir.mkdir()
+
+        # Create aspect bucket metadata with filtering_statistics
+        bucket_file = dataset_dir / "aspect_ratio_bucket_indices_stats-test.json"
+        bucket_data = {
+            "config": {"resolution": 1024},
+            "aspect_ratio_bucket_indices": {
+                "1.0": ["img1.jpg", "img2.jpg"],
+            },
+            "filtering_statistics": {
+                "total_processed": 10,
+                "skipped": {
+                    "already_exists": 0,
+                    "metadata_missing": 0,
+                    "not_found": 0,
+                    "too_small": 4,
+                    "too_long": 0,
+                    "other": 0,
+                },
+            },
+        }
+        bucket_file.write_text(json.dumps(bucket_data))
+
+        response = self.client.get(f"/api/datasets/detect?path={str(dataset_dir)}")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["hasDataset"])
+        self.assertIn("filteringStatistics", data)
+        self.assertEqual(data["filteringStatistics"]["total_processed"], 10)
+        self.assertEqual(data["filteringStatistics"]["skipped"]["too_small"], 4)
+
+    def test_detect_no_filtering_statistics_when_absent(self) -> None:
+        """Test that detect endpoint omits filteringStatistics when not in cache."""
+        dataset_dir = self.datasets_dir / "dataset-no-stats"
+        dataset_dir.mkdir()
+
+        # Create aspect bucket metadata without filtering_statistics
+        bucket_file = dataset_dir / "aspect_ratio_bucket_indices_no-stats.json"
+        bucket_data = {
+            "config": {"resolution": 512},
+            "aspect_ratio_bucket_indices": {
+                "1.0": ["img1.jpg"],
+            },
+        }
+        bucket_file.write_text(json.dumps(bucket_data))
+
+        response = self.client.get(f"/api/datasets/detect?path={str(dataset_dir)}")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["hasDataset"])
+        self.assertNotIn("filteringStatistics", data)
+
 
 if __name__ == "__main__":
     unittest.main()

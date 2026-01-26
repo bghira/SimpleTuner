@@ -54,3 +54,19 @@ Para la matriz de funciones completa y más precisa, consulta el [README princip
 
 - **Diff2Flow**: Permite entrenar modelos estándar epsilon/v-prediction (SD1.5, SDXL, DeepFloyd, etc.) usando un objetivo de pérdida de Flow Matching. Esto reduce la brecha entre arquitecturas antiguas y el entrenamiento moderno basado en flujo.
 - **Scheduled Sampling**: Reduce el sesgo de exposición permitiendo que el modelo genere sus propios latentes ruidosos intermedios durante el entrenamiento ("rollout"). Esto ayuda a que el modelo aprenda a recuperarse de sus propios errores de generación.
+
+## Problemas Comunes
+
+### El dataset tiene menos muestras de lo esperado
+
+Si tu dataset termina con menos muestras utilizables de lo esperado, los archivos pueden haber sido filtrados durante el procesamiento. Razones comunes incluyen:
+
+- **Archivos demasiado pequeños**: Las imágenes por debajo de `minimum_image_size` son filtradas
+- **Relación de aspecto fuera de rango**: Las imágenes fuera de los límites de `minimum_aspect_ratio`/`maximum_aspect_ratio` son excluidas
+- **Límites de duración**: Los archivos de audio/video que exceden los límites de duración son omitidos
+
+**Ver estadísticas de filtrado:**
+- En la WebUI, navega al directorio de tu dataset y selecciónalo para ver estadísticas de filtrado
+- Revisa los logs durante el procesamiento del dataset para estadísticas como: `Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, ...}}`
+
+Para solución de problemas detallada, consulta [Solución de problemas de datasets filtrados](DATALOADER.es.md#solución-de-problemas-de-datasets-filtrados) en la documentación del dataloader.

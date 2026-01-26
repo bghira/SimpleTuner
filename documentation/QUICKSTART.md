@@ -56,3 +56,19 @@ For the complete and most accurate feature matrix, refer to the [main README](ht
 
 - **Diff2Flow**: Allows training standard epsilon/v-prediction models (SD1.5, SDXL, DeepFloyd, etc.) using a Flow Matching loss objective. This bridges the gap between older architectures and modern flow-based training.
 - **Scheduled Sampling**: Reduces exposure bias by letting the model generate its own intermediate noisy latents during training ("rollout"). This helps the model learn to recover from its own generation errors.
+
+## Common Issues
+
+### Dataset has fewer samples than expected
+
+If your dataset ends up with fewer usable samples than you expected, files may have been filtered during processing. Common reasons include:
+
+- **Files too small**: Images below `minimum_image_size` are filtered out
+- **Aspect ratio out of range**: Images outside `minimum_aspect_ratio`/`maximum_aspect_ratio` bounds are excluded
+- **Duration limits**: Audio/video files exceeding duration limits are skipped
+
+**Viewing filtering statistics:**
+- In the WebUI, browse to your dataset directory and select it to see filtering statistics
+- Check the logs during dataset processing for statistics like: `Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, ...}}`
+
+For detailed troubleshooting, see [Troubleshooting filtered datasets](DATALOADER.md#troubleshooting-filtered-datasets) in the dataloader documentation.

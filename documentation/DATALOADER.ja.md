@@ -598,6 +598,32 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **警告:** 破壊的で元に戻せません。注意して使用してください。
 - **既定値:** トレーナーの `--delete_problematic_images` 引数（既定: `false`）にフォールバックします。
 
+### フィルタリング統計の確認
+
+SimpleTuner がデータセットを処理する際、フィルタで除外されたファイルの数と理由を追跡します。これらの統計はデータセットのキャッシュファイル（`aspect_ratio_bucket_indices_*.json`）に保存され、WebUI で確認できます。
+
+**追跡される統計:**
+- **total_processed**: 処理されたファイル数
+- **too_small**: `minimum_image_size` 未満でフィルタされたファイル
+- **too_long**: 時間制限を超えたファイル（オーディオ/ビデオ）
+- **metadata_missing**: メタデータ不足でスキップされたファイル
+- **not_found**: 見つからなかったファイル
+- **already_exists**: キャッシュに既存のファイル（再処理なし）
+- **other**: その他の理由でフィルタされたファイル
+
+**WebUI での確認:**
+
+WebUI のファイルブラウザでデータセットを閲覧する際、既存のデータセットがあるディレクトリを選択すると、フィルタリング統計が表示されます（利用可能な場合）。これは、データセットの使用可能なサンプル数が予想より少ない理由を診断するのに役立ちます。
+
+**フィルタされたファイルのトラブルシューティング:**
+
+多くのファイルが `too_small` としてフィルタされている場合:
+1. `minimum_image_size` の設定を確認 — `resolution` と `resolution_type` に合わせる必要があります
+2. `resolution_type=pixel` の場合、`minimum_image_size` は最小短辺の長さです
+3. `resolution_type=area` または `pixel_area` の場合、`minimum_image_size` は最小総面積です
+
+詳細は下記の[トラブルシューティング](#フィルタされたデータセットのトラブルシューティング)セクションを参照してください。
+
 ### `slider_strength`
 
 - **値:** 任意の浮動小数値（正、負、または 0）

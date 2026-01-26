@@ -515,7 +515,10 @@ async def detect_dataset(path: str, _user: User = Depends(get_current_user)) -> 
         aspect_buckets = bucket_data.get("aspect_ratio_bucket_indices", {})
         total_files = sum(len(files) for files in aspect_buckets.values())
 
-        return {
+        # Get filtering statistics if available
+        filtering_statistics = bucket_data.get("filtering_statistics")
+
+        result = {
             "hasDataset": True,
             "datasetId": dataset_id,
             "path": str(path_obj),
@@ -523,6 +526,9 @@ async def detect_dataset(path: str, _user: User = Depends(get_current_user)) -> 
             "totalFiles": total_files,
             "aspectRatios": list(aspect_buckets.keys()),
         }
+        if filtering_statistics:
+            result["filteringStatistics"] = filtering_statistics
+        return result
 
     except HTTPException:
         raise

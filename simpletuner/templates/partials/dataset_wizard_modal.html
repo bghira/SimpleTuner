@@ -1325,7 +1325,36 @@
                         <p class="mb-2"><strong>Dataset ID:</strong> <span x-text="selectedDirInfo.datasetId"></span></p>
                         <p class="mb-2"><strong>Type:</strong> <span x-text="selectedDirInfo.config?.dataset_type || 'image'"></span></p>
                         <p class="mb-2"><strong>Resolution:</strong> <span x-text="selectedDirInfo.config?.resolution || 'N/A'"></span></p>
-                        <p class="mb-0"><strong>Files:</strong> <span x-text="selectedDirInfo.totalFiles || 'N/A'"></span></p>
+                        <p class="mb-2"><strong>Files in buckets:</strong> <span x-text="selectedDirInfo.totalFiles || 'N/A'"></span></p>
+                        <template x-if="selectedDirInfo.filteringStatistics && selectedDirInfo.filteringStatistics.skipped">
+                            <div class="mt-2 p-2 bg-secondary bg-opacity-25 rounded">
+                                <p class="mb-1 text-muted small"><strong>Processing Statistics:</strong></p>
+                                <p class="mb-1 small" x-show="selectedDirInfo.filteringStatistics.total_processed">
+                                    <span class="text-muted">Processed:</span>
+                                    <span x-text="selectedDirInfo.filteringStatistics.total_processed"></span>
+                                </p>
+                                <p class="mb-1 small" x-show="selectedDirInfo.filteringStatistics.skipped.too_small > 0">
+                                    <span class="text-warning">Filtered (too small):</span>
+                                    <span x-text="selectedDirInfo.filteringStatistics.skipped.too_small"></span>
+                                </p>
+                                <p class="mb-1 small" x-show="selectedDirInfo.filteringStatistics.skipped.too_long > 0">
+                                    <span class="text-warning">Filtered (too long):</span>
+                                    <span x-text="selectedDirInfo.filteringStatistics.skipped.too_long"></span>
+                                </p>
+                                <p class="mb-1 small" x-show="selectedDirInfo.filteringStatistics.skipped.metadata_missing > 0">
+                                    <span class="text-warning">Filtered (metadata missing):</span>
+                                    <span x-text="selectedDirInfo.filteringStatistics.skipped.metadata_missing"></span>
+                                </p>
+                                <p class="mb-1 small" x-show="selectedDirInfo.filteringStatistics.skipped.not_found > 0">
+                                    <span class="text-danger">Not found:</span>
+                                    <span x-text="selectedDirInfo.filteringStatistics.skipped.not_found"></span>
+                                </p>
+                                <p class="mb-0 small" x-show="selectedDirInfo.filteringStatistics.skipped.other > 0">
+                                    <span class="text-warning">Other:</span>
+                                    <span x-text="selectedDirInfo.filteringStatistics.skipped.other"></span>
+                                </p>
+                            </div>
+                        </template>
                         <button type="button"
                                 class="btn btn-sm btn-success mt-2"
                                 @click="importDatasetConfig()"

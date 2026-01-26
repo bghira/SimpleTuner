@@ -177,6 +177,8 @@ class MetadataBackend:
         self.read_only = False
         self.bucket_report = None
         self.max_num_samples = int(max_num_samples) if max_num_samples else None
+        # Filtering statistics from dataset processing (too_small, too_long, etc.)
+        self.filtering_statistics = None
 
     def _apply_max_num_samples_limit(self, file_list: list) -> list:
         """
@@ -502,6 +504,7 @@ class MetadataBackend:
                 for filepath, meta in metadata_updates.items():
                     self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
                 logger.info(f"Processed {statistics['total_processed']} audio files. Statistics: {statistics}")
+                self.filtering_statistics = statistics
                 self.save_image_metadata()
 
             # Rebuild buckets from all metadata (existing + new)
@@ -555,6 +558,7 @@ class MetadataBackend:
         if not new_files:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
+            self.filtering_statistics = aggregated_statistics
             if self.bucket_report:
                 self.bucket_report.update_statistics(aggregated_statistics)
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
@@ -650,6 +654,7 @@ class MetadataBackend:
         for worker in workers:
             worker.join()
         logger.info(f"Sample processing statistics: {aggregated_statistics}")
+        self.filtering_statistics = aggregated_statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")

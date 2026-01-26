@@ -54,3 +54,19 @@
 
 - **Diff2Flow**：允许使用 Flow Matching 损失目标训练标准的 epsilon/v-prediction 模型（SD1.5、SDXL、DeepFloyd 等）。这弥合了旧架构和现代基于流的训练之间的差距。
 - **Scheduled Sampling**：通过让模型在训练期间生成自己的中间噪声潜变量（"rollout"）来减少曝光偏差。这有助于模型学习从自身的生成错误中恢复。
+
+## 常见问题
+
+### 数据集样本少于预期
+
+如果数据集的可用样本少于预期，文件可能在处理过程中被过滤掉了。常见原因包括：
+
+- **文件太小**：低于 `minimum_image_size` 的图像会被过滤
+- **纵横比超出范围**：超出 `minimum_aspect_ratio`/`maximum_aspect_ratio` 边界的图像会被排除
+- **时长限制**：超出时长限制的音频/视频文件会被跳过
+
+**查看过滤统计：**
+- 在 WebUI 中，浏览到您的数据集目录并选择它以查看过滤统计
+- 在数据集处理期间检查日志中的统计信息，如：`Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, ...}}`
+
+详细故障排除请参阅数据加载器文档中的[故障排除-过滤后的数据集](DATALOADER.zh.md#故障排除-过滤后的数据集)。

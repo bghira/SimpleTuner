@@ -597,6 +597,32 @@ Isso selecionará deterministicamente 1000 amostras do dataset, com a mesma sele
 - **Aviso:** Isso é destrutivo e não pode ser desfeito. Use com cuidado.
 - **Padrão:** Usa o argumento do trainer `--delete_problematic_images` (padrão: `false`).
 
+### Visualizando Estatísticas de Filtragem
+
+Quando o SimpleTuner processa seu dataset, ele rastreia quantos arquivos foram filtrados e por quê. Essas estatísticas são armazenadas no arquivo de cache do dataset (`aspect_ratio_bucket_indices_*.json`) e podem ser visualizadas na WebUI.
+
+**Estatísticas rastreadas:**
+- **total_processed**: Número de arquivos processados
+- **too_small**: Arquivos filtrados por estarem abaixo de `minimum_image_size`
+- **too_long**: Arquivos filtrados por excederem limites de duração (áudio/vídeo)
+- **metadata_missing**: Arquivos ignorados por falta de metadados
+- **not_found**: Arquivos que não puderam ser localizados
+- **already_exists**: Arquivos já no cache (não reprocessados)
+- **other**: Arquivos filtrados por outros motivos
+
+**Visualizando na WebUI:**
+
+Ao navegar pelos datasets no navegador de arquivos da WebUI, selecionar um diretório com um dataset existente exibirá estatísticas de filtragem, se disponíveis. Isso ajuda a diagnosticar por que seu dataset pode ter menos amostras utilizáveis do que o esperado.
+
+**Solucionando problemas de arquivos filtrados:**
+
+Se muitos arquivos estão sendo filtrados como `too_small`:
+1. Verifique sua configuração de `minimum_image_size` — deve corresponder a `resolution` e `resolution_type`
+2. Para `resolution_type=pixel`, `minimum_image_size` é o comprimento mínimo da borda mais curta
+3. Para `resolution_type=area` ou `pixel_area`, `minimum_image_size` é a área total mínima
+
+Veja a seção [Solução de Problemas](#solucionando-problemas-de-datasets-filtrados) abaixo para mais detalhes.
+
 ### `slider_strength`
 
 - **Valores:** Qualquer valor float (positivo, negativo ou zero)
