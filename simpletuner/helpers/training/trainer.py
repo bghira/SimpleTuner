@@ -3149,14 +3149,49 @@ class Trainer:
 
         self.config.total_num_batches = total_num_batches
         self.config.initial_num_batches = initial_num_batches
+
+        # Build epoch schedule map: epoch -> cumulative batches added at that epoch
+        # This allows dynamic calculation of steps per epoch based on current epoch
+        epoch_batches_map: dict[int, int] = {}
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+            if backend_type is DatasetType.EVAL or backend_type not in training_dataset_types:
+                continue
+            backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
+            probability = backend_config.get("probability", 1.0)
+            if probability is None:
+                probability_value = 1.0
+            else:
+                try:
+                    probability_value = float(probability)
+                except (TypeError, ValueError):
+                    probability_value = 0.0
+            if probability_value <= 0:
+                continue
+            try:
+                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
+            except Exception:
+                dataset_batches = 0
+            schedule = StateTracker.get_dataset_schedule(backend_id) or {}
+            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend_config.get("start_epoch", 1)))
+            # Accumulate batches by start_epoch
+            epoch_batches_map[start_epoch] = epoch_batches_map.get(start_epoch, 0) + dataset_batches
+
+        # Store the schedule for dynamic steps_per_epoch calculation
+        self.config.epoch_batches_schedule = epoch_batches_map
+
         if initial_num_batches < total_num_batches:
             logger.info(
                 f"Dataset scheduling detected: {initial_num_batches} batches available at start, "
                 f"{total_num_batches} once all schedules begin. Progress estimates may shift after activation."
             )
-        self.config.num_update_steps_per_epoch = math.ceil(
-            self.config.total_num_batches / max(self.config.gradient_accumulation_steps or 1, 1)
-        )
+
+        # Calculate initial steps per epoch (used during first epoch(s) before scheduled datasets activate)
+        grad_accum = max(self.config.gradient_accumulation_steps or 1, 1)
+        self.config.initial_num_update_steps_per_epoch = math.ceil(initial_num_batches / grad_accum)
+
+        # Full steps per epoch (used after all datasets are active)
+        self.config.num_update_steps_per_epoch = math.ceil(total_num_batches / grad_accum)
         steps_per_epoch = max(self.config.num_update_steps_per_epoch, 1)
         target_epochs = float(self.config.num_train_epochs or 0)
         if getattr(self.config, "overrode_max_train_steps", False):
@@ -3211,6 +3246,38 @@ class Trainer:
         self.config.total_batch_size = (
             self.config.train_batch_size * self.accelerator.num_processes * self.config.gradient_accumulation_steps
         )
+
+    def get_steps_per_epoch_for_epoch(self, epoch: int) -> int:
+        """
+        Calculate the number of steps per epoch for a specific epoch.
+
+        When datasets have different start_epoch values, the number of steps
+        per epoch varies. This method computes the correct value for a given epoch.
+
+        Args:
+            epoch: The epoch number (1-indexed) to calculate steps for.
+
+        Returns:
+            The number of update steps for that epoch.
+        """
+        epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
+        if epoch_batches_schedule is None:
+            # No schedule, use the cached value
+            return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
+
+        # Calculate total batches for this epoch by summing all datasets
+        # that have start_epoch <= epoch
+        active_batches = 0
+        for start_epoch, batches in epoch_batches_schedule.items():
+            if start_epoch <= epoch:
+                active_batches += batches
+
+        if active_batches <= 0:
+            # Fallback to cached value if no batches (shouldn't happen)
+            return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
+
+        grad_accum = max(self.config.gradient_accumulation_steps or 1, 1)
+        return max(math.ceil(active_batches / grad_accum), 1)
 
     def _setup_ramtorch_zero_state(self):
         if not self._ramtorch_distributed():
@@ -4830,6 +4897,17 @@ class Trainer:
         # This ensures checkpoints always save the correct epoch value.
         self.state["current_epoch"] = epoch
         StateTracker.set_epoch(epoch)
+
+        # Update steps per epoch for the current epoch based on active datasets.
+        # This handles dynamic dataset scheduling where datasets have different start_epoch values.
+        new_steps_per_epoch = self.get_steps_per_epoch_for_epoch(epoch)
+        old_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", new_steps_per_epoch)
+        if new_steps_per_epoch != old_steps_per_epoch:
+            logger.info(
+                f"Steps per epoch changed from {old_steps_per_epoch} to {new_steps_per_epoch} "
+                f"due to dataset scheduling (epoch {epoch})."
+            )
+        self.config.num_update_steps_per_epoch = new_steps_per_epoch
 
         if self.state["first_epoch"] == epoch:
             return

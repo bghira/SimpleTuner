@@ -1396,6 +1396,8 @@ class TestTrainer(unittest.TestCase):
             num_train_epochs=5,
             aspect_bucket_disable_rebuild=False,
             lr_scheduler="cosine_with_restarts",
+            epoch_batches_schedule=None,
+            num_update_steps_per_epoch=100,
         )
         trainer.extra_lr_scheduler_kwargs = {}
         with patch(
@@ -1422,6 +1424,10 @@ class TestTrainer(unittest.TestCase):
         )
         trainer.model = Mock()
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
+        trainer.config = Mock(
+            epoch_batches_schedule=None,
+            num_update_steps_per_epoch=100,
+        )
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
 
