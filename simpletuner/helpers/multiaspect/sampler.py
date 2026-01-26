@@ -824,7 +824,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         outputs = []
         for sample in samples:
-            video_path = sample.get("image_path") if isinstance(sample, dict) else getattr(sample, "image_path", None)
+            video_path = sample.get("image_path") if isinstance(sample, dict) else sample.image_path()
             if video_path is None:
                 outputs.append(sample)
                 continue
