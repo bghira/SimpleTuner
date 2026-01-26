@@ -552,6 +552,24 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - 不启用超订：报错
 - 启用 `--allow_dataset_oversubscription`：自动将 repeats 设为 1（25 × 2 = 50 样本）
 
+### `max_num_samples`
+
+- **描述：** 限制数据集的最大样本数。设置后，会从完整数据集中确定性地随机选择指定数量的子集。
+- **使用场景：** 适用于大型正则化数据集，当你只想使用部分数据以避免压倒较小的训练集时。
+- **确定性选择：** 随机选择使用数据集 `id` 作为种子，确保在训练会话之间选择相同的子集以保证可重现性。
+- **默认值：** `null`（无限制，使用所有样本）
+
+#### 示例
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+这将从数据集中确定性地选择 1000 个样本，每次运行训练时使用相同的选择。
+
 ### `start_epoch` / `start_step`
 
 - 规划数据集开始采样的时间点。

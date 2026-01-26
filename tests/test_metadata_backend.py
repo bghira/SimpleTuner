@@ -158,6 +158,89 @@ class TestMetadataBackend(unittest.TestCase):
         )
 
 
+class TestMaxNumSamplesLimit(unittest.TestCase):
+    """Test the max_num_samples limit feature for deterministic dataset limiting (issue #2469)."""
+
+    def test_max_num_samples_limit_applied(self):
+        """max_num_samples should limit the file list to the specified count."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_limit"
+        mock_backend.max_num_samples = 3
+
+        file_list = ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg", "img5.jpg"]
+        result = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(len(result), 3)
+        # All results should be from the original list
+        for item in result:
+            self.assertIn(item, file_list)
+
+    def test_max_num_samples_no_limit(self):
+        """When max_num_samples is None, the full list should be returned."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_no_limit"
+        mock_backend.max_num_samples = None
+
+        file_list = ["img1.jpg", "img2.jpg", "img3.jpg"]
+        result = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(result, file_list)
+
+    def test_max_num_samples_larger_than_list(self):
+        """When max_num_samples > len(file_list), return all files."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_larger_limit"
+        mock_backend.max_num_samples = 10
+
+        file_list = ["img1.jpg", "img2.jpg", "img3.jpg"]
+        result = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(result, file_list)
+
+    def test_max_num_samples_deterministic(self):
+        """Same dataset ID should produce same selection across multiple calls."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "deterministic_test"
+        mock_backend.max_num_samples = 3
+
+        file_list = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg", "g.jpg"]
+
+        # Call multiple times, should get same result
+        result1 = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+        result2 = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+        result3 = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(result1, result2)
+        self.assertEqual(result2, result3)
+
+    def test_max_num_samples_different_ids_different_selection(self):
+        """Different dataset IDs should produce different selections."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        file_list = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg", "g.jpg"]
+
+        mock_backend1 = MagicMock(spec=MetadataBackend)
+        mock_backend1.id = "dataset_alpha"
+        mock_backend1.max_num_samples = 3
+
+        mock_backend2 = MagicMock(spec=MetadataBackend)
+        mock_backend2.id = "dataset_beta"
+        mock_backend2.max_num_samples = 3
+
+        result1 = MetadataBackend._apply_max_num_samples_limit(mock_backend1, file_list)
+        result2 = MetadataBackend._apply_max_num_samples_limit(mock_backend2, file_list)
+
+        # With different seeds, selections should differ (statistically almost certain)
+        # Use sets to compare regardless of order
+        self.assertNotEqual(set(result1), set(result2))
 class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
     """Test that eval datasets use batch_size=1 for bucket pruning (issue #2475)."""
 

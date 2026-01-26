@@ -71,6 +71,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         composite_image_column: str = "image",
         quality_filter: Optional[Dict[str, Any]] = None,
         dataset_type: str = "image",
+        max_num_samples: int = None,
     ):
         self.hf_config = hf_config
         self.dataset_type = dataset_type
@@ -136,6 +137,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
+            max_num_samples=max_num_samples,
         )
 
         if not hasattr(data_backend, "dataset"):
@@ -371,6 +373,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         for idx in range(total_items):
             virtual_path = f"{idx}.{self.file_extension}"
             all_files.append(virtual_path)
+
+        # Apply max_num_samples limit deterministically before filtering
+        all_files = self._apply_max_num_samples_limit(all_files)
 
         if ignore_existing_cache:
             logger.debug("Ignoring existing cache, returning all files")

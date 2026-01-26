@@ -585,6 +585,24 @@ This is particularly useful when:
 - Without oversubscription: Error raised
 - With `--allow_dataset_oversubscription`: Repeats automatically set to 1 (25 × 2 = 50 samples)
 
+### `max_num_samples`
+
+- **Description:** Limits the dataset to a maximum number of samples. When set, a deterministic random subset of the specified size is selected from the full dataset.
+- **Use case:** Useful for large regularization datasets where you want to use only a portion of the data to avoid overpowering smaller training sets.
+- **Deterministic selection:** The random selection uses the dataset `id` as a seed, ensuring the same subset is selected across training sessions for reproducibility.
+- **Default:** `null` (no limit, all samples are used)
+
+#### Example
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+This will deterministically select 1000 samples from the dataset, with the same selection used every time training is run.
+
 ### `start_epoch` / `start_step`
 
 - Schedule when a dataset begins sampling.

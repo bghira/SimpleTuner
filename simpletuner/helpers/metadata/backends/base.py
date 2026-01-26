@@ -1,6 +1,7 @@
 import logging
 import numbers
 import os
+import random
 import threading
 import time
 from math import ceil, floor
@@ -121,6 +122,7 @@ class MetadataBackend:
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        max_num_samples: int = None,
     ):
         self.id = id
         if self.id != data_backend.id:
@@ -174,6 +176,31 @@ class MetadataBackend:
         # When a multi-gpu system splits the buckets, we no longer update.
         self.read_only = False
         self.bucket_report = None
+        self.max_num_samples = int(max_num_samples) if max_num_samples else None
+
+    def _apply_max_num_samples_limit(self, file_list: list) -> list:
+        """
+        Apply a deterministic limit to the file list if max_num_samples is set.
+
+        Uses a seeded random generator based on the dataset ID for reproducibility,
+        ensuring the same subset is selected across training sessions.
+
+        Args:
+            file_list: List of file paths to potentially limit
+
+        Returns:
+            list: Limited list of file paths (or original if no limit set)
+        """
+        if self.max_num_samples is None or len(file_list) <= self.max_num_samples:
+            return file_list
+
+        # Use dataset ID as seed for deterministic selection
+        rng = random.Random(self.id)
+        shuffled = list(file_list)
+        rng.shuffle(shuffled)
+        limited = shuffled[: self.max_num_samples]
+        logger.info(f"({self.id}) Applied max_num_samples limit: selected {len(limited)} of {len(file_list)} samples")
+        return limited
 
     def load_metadata(self):
         raise NotImplementedError

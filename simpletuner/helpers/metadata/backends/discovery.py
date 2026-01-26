@@ -69,6 +69,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        max_num_samples: int = None,
     ):
         super().__init__(
             id=id,
@@ -91,6 +92,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
             num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
+            max_num_samples=max_num_samples,
         )
 
     def _should_use_metadata_only_for_video(self) -> bool:
@@ -237,7 +239,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
             # Return all files and remove the existing buckets.
             logger.debug("Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache.")
             self.aspect_ratio_bucket_indices = {}
-            return list(all_image_files.keys())
+            return self._apply_max_num_samples_limit(list(all_image_files.keys()))
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             if self.dataset_type is DatasetType.AUDIO:
@@ -262,6 +264,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
         # logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
 
+        # Apply max_num_samples limit deterministically before filtering
+        all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
