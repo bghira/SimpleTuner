@@ -742,6 +742,17 @@ class Flux2(ImageModelFoundation):
             # Random mode should have selected just one conditioning set
             cond = cond[0]
 
+        # Flatten nested lists that may result from check_latent_shapes returning
+        # per-sample lists when conditioning images have different aspect ratios
+        if isinstance(cond, list):
+            flat_cond = []
+            for item in cond:
+                if isinstance(item, list):
+                    flat_cond.extend(item)
+                else:
+                    flat_cond.append(item)
+            cond = flat_cond if flat_cond else cond
+
         if isinstance(cond, list):
             logger.debug(f"FLUX.2 conditioning inputs shapes: {[d.shape for d in cond]} {cond[0].dtype}")
         else:

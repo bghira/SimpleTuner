@@ -131,7 +131,7 @@ class CollateFunctionTests(unittest.TestCase):
             patch("simpletuner.helpers.training.collate.compute_latents", return_value=[torch.zeros(1, 4, 4, 4)]),
             patch(
                 "simpletuner.helpers.training.collate.check_latent_shapes",
-                side_effect=lambda latents, *_: latents,
+                side_effect=lambda latents, *_, **__: latents,
             ),
             patch(
                 "simpletuner.helpers.training.collate.compute_prompt_embeddings",

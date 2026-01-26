@@ -865,6 +865,7 @@ def collate_fn(batch):
                         _filepaths,
                         backend_id,
                         _examples,
+                        is_conditioning=(conditioning_type == "reference_loose"),
                     )
                     conditioning_latents.append(_latents)
             else:
