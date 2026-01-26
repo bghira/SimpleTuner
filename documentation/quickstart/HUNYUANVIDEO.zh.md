@@ -246,9 +246,24 @@ simpletuner train
 
 ### 图生视频（I2V）
 
-- 使用 `model_flavour="i2v-480p"`。
-- SimpleTuner 会自动将视频样本的首帧作为条件图像。
-- 确保验证设置包含条件输入，或依赖自动提取的首帧。
+- 使用 `model_flavour="i2v-480p"` 或 `i2v-720p`。
+- SimpleTuner 在训练期间会自动将视频样本的首帧作为条件图像。
+
+#### I2V 验证选项
+
+对于 i2v 模型的验证，有两种选择：
+
+1. **自动提取首帧**：默认情况下，验证使用数据集中视频样本的首帧。
+
+2. **单独的图像数据集**（更简单的设置）：使用 `--validation_using_datasets=true` 并将 `--eval_dataset_id` 指向图像数据集。这允许您使用任何图像数据集作为验证视频的首帧条件输入，无需设置训练时使用的复杂条件数据集配对。
+
+选项 2 的示例配置：
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
 
 ### 文本编码器
 

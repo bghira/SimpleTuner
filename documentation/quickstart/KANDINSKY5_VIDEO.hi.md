@@ -236,4 +236,20 @@ ratio पर निर्भर करते हुए यह प्रशिक
 यदि `i2v` flavours उपयोग कर रहे हैं:
 - SimpleTuner training videos के पहले फ्रेम को conditioning image के रूप में स्वतः निकालता है।
 - पाइपलाइन training के दौरान पहले फ्रेम को अपने‑आप mask करती है।
-- Validation के लिए एक input image देना होगा, या SimpleTuner validation video generation के पहले फ्रेम को conditioner के रूप में उपयोग करेगा।
+
+#### I2V Validation Options
+
+i2v models के साथ validation के लिए, आपके पास दो विकल्प हैं:
+
+1. **Auto-extracted first frame**: Default रूप से, validation video samples के पहले frame का उपयोग करता है।
+
+2. **अलग image dataset** (सरल setup): `--validation_using_datasets=true` का उपयोग करें `--eval_dataset_id` को image dataset की ओर point करते हुए:
+
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
+
+यह आपको training में उपयोग होने वाली complex conditioning dataset pairing setup के बिना, किसी भी image dataset को validation videos के लिए first-frame conditioning input के रूप में उपयोग करने देता है।

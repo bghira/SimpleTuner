@@ -661,13 +661,15 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 ### `--validation_using_datasets`
 
 - **What**: pure text-to-image generation के बजाय training datasets से images validation के लिए use करें।
-- **Why**: image-to-image (img2img) validation mode enable करता है जहाँ model pure noise से generate करने के बजाय training images को partially denoise करता है। उपयोगी है:
+- **Why**: image-to-image (img2img) या image-to-video (i2v) validation mode enable करता है जहाँ model training images को conditioning inputs के रूप में use करता है। उपयोगी है:
   - Edit/inpainting models test करने के लिए जिन्हें input images चाहिए
   - Model image structure को कितना preserve करता है evaluate करने के लिए
   - Dual text-to-image AND image-to-image workflows support करने वाले models के लिए (जैसे, Flux2, LTXVideo2)
+  - **I2V video models** (HunyuanVideo, WAN, Kandinsky5Video): image dataset से images को video generation validation के लिए first-frame conditioning input के रूप में use करें
 - **Notes**:
-  - Model में `IMG2IMG` pipeline registered होना चाहिए
+  - Model में `IMG2IMG` या `IMG2VIDEO` pipeline registered होना चाहिए
   - `--eval_dataset_id` के साथ combine कर सकते हैं specific dataset से images लेने के लिए
+  - i2v models के लिए, यह training में use होने वाली complex conditioning dataset pairing setup के बिना simple image dataset validation के लिए use करने देता है
   - Denoising strength normal validation timestep settings से control होती है
 
 ### `--eval_dataset_id`
@@ -703,21 +705,29 @@ SimpleTuner conditioning inputs (reference images, control signals, आदि) u
 - **Flux2**: Optional reference images के साथ dual T2I/I2I training support करता है
 - **LTXVideo2**: Optional first-frame conditioning के साथ T2V और I2V (image-to-video) दोनों support करता है
 - **LongCat-Video**: Optional frame conditioning support करता है
+- **HunyuanVideo i2v**: First-frame conditioning के साथ I2V support करता है (flavours: `i2v-480p`, `i2v-720p`, आदि)
+- **WAN i2v**: First-frame conditioning के साथ I2V support करता है
+- **Kandinsky5Video i2v**: First-frame conditioning के साथ I2V support करता है
 
 इन models के लिए, आप conditioning datasets ADD कर सकते हैं पर जरूरी नहीं। WebUI conditioning options को optional दिखाएगी।
+
+**I2V Validation Shortcut**: i2v video models के लिए, आप `--validation_using_datasets` को image dataset (via `--eval_dataset_id` specified) के साथ use कर सकते हैं validation conditioning images directly प्राप्त करने के लिए, training में use होने वाली full conditioning dataset pairing setup की जरूरत के बिना।
 
 ### 3. Validation Modes
 
 | Mode | Flag | Behavior |
 |------|------|----------|
-| **Text-to-Image** | (default) | केवल text prompts से generate |
-| **Dataset-based** | `--validation_using_datasets` | Datasets से images partially denoise (img2img) |
+| **Text-to-Image/Video** | (default) | केवल text prompts से generate |
+| **Dataset-based (img2img)** | `--validation_using_datasets` | Datasets से images partially denoise |
+| **Dataset-based (i2v)** | `--validation_using_datasets` | i2v video models के लिए, images को first-frame conditioning के रूप में use |
 | **Conditioning-based** | (auto जब conditioning configured हो) | Validation के दौरान conditioning inputs use |
 
 **Modes combine करना**: जब model conditioning support करता है AND `--validation_using_datasets` enabled है:
 - Validation system datasets से images लेता है
 - यदि उन datasets में conditioning data है, तो automatically use होता है
 - `--eval_dataset_id` use करें control करने के लिए कौन सा dataset inputs provide करे
+
+**I2V models के साथ `--validation_using_datasets`**: i2v video models (HunyuanVideo, WAN, Kandinsky5Video) के लिए, यह flag enable करने पर validation के लिए simple image dataset use कर सकते हैं। Images validation videos generate करने के लिए first-frame conditioning inputs के रूप में use होती हैं, complex conditioning dataset pairing setup की जरूरत के बिना।
 
 ### Conditioning Data Types
 

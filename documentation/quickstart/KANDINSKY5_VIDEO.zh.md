@@ -237,4 +237,20 @@ TREAD 也适用于视频，强烈推荐以节省算力。
 使用 `i2v` 版本时：
 - SimpleTuner 会自动提取训练视频的首帧作为条件图像。
 - 训练时会自动遮罩首帧。
-- 验证需要提供输入图像；否则 SimpleTuner 会使用验证生成视频的首帧作为条件图像。
+
+#### I2V 验证选项
+
+i2v 模型验证有两个选项：
+
+1. **自动提取首帧**：默认情况下，验证使用视频样本的首帧。
+
+2. **单独的图像数据集**（更简单的设置）：使用 `--validation_using_datasets=true` 并将 `--eval_dataset_id` 指向图像数据集：
+
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
+
+这允许使用任何图像数据集作为验证视频的首帧条件输入，无需训练时使用的复杂条件数据集配对设置。

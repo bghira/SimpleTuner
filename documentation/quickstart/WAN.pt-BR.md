@@ -52,6 +52,19 @@ flag `wan_force_2_1_time_embedding`. Isso força o transformer a usar time embed
 - Ative `wan_validation_load_other_stage=true` para carregar o stage oposto junto do que você treina para renderizações de validação.
 - Deixe o flavour sem definir (ou use `t2v-480p-1.3b-2.1`) para o run padrão de texto-para-vídeo do Wan 2.1.
 
+#### Validação I2V com Datasets de Imagens
+
+Para validação i2v, você pode usar um dataset de imagens simples sem precisar do pareamento completo de datasets de condicionamento:
+
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
+
+Isso usa imagens do dataset especificado como entradas de condicionamento do primeiro frame para geração de vídeos de validação, sem precisar da configuração complexa de condicionamento usada durante o treinamento.
+
 Sistemas Apple Silicon não funcionam muito bem com o Wan 2.1 até agora; espere algo como 10 minutos por step de treino.
 
 ### Pré-requisitos
