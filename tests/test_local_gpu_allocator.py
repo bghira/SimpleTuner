@@ -16,6 +16,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -102,6 +103,33 @@ class MockWebUIDefaults:
         self.local_job_max_concurrent = local_job_max_concurrent
 
 
+class _StubJob:
+    def __init__(self, job_id: str, *, started_at: str, metadata: Optional[Dict[str, Any]] = None):
+        self.job_id = job_id
+        self.started_at = started_at
+        self.created_at = started_at
+        self.metadata = metadata or {}
+
+
+class _StubJobRepo:
+    def __init__(self, jobs: List[_StubJob]):
+        self._jobs = jobs
+        self.failed: List[tuple[str, str]] = []
+        self.released: List[str] = []
+
+    async def get_running_local_jobs(self) -> List[_StubJob]:
+        return self._jobs
+
+    async def mark_failed(self, job_id: str, error: str) -> bool:
+        self.failed.append((job_id, error))
+        return True
+
+    async def update_allocated_gpus(self, job_id: str, gpus: Optional[List[int]]) -> bool:
+        if gpus is None:
+            self.released.append(job_id)
+        return True
+
+
 class TestLocalGPUAllocatorBasic(unittest.TestCase):
     """Basic tests for LocalGPUAllocator."""
 
@@ -154,6 +182,30 @@ class TestLocalGPUAllocatorBasic(unittest.TestCase):
 
         result = asyncio.run(self.allocator.get_allocated_gpus())
         self.assertEqual(result, {0, 1, 2, 3})
+
+
+class TestLocalGPUAllocatorReconcile(unittest.TestCase):
+    def test_reconcile_marks_preboot_job_failed(self):
+        allocator = LocalGPUAllocator()
+        job = _StubJob(
+            "job-preboot",
+            started_at="2025-01-01T00:00:00+00:00",
+            metadata={"pid": 1234},
+        )
+        repo = _StubJobRepo([job])
+        allocator._job_repo = repo
+
+        boot_time = datetime(2026, 1, 26, tzinfo=timezone.utc)
+        with (
+            patch.object(allocator, "_get_boot_time_utc", return_value=boot_time),
+            patch.object(allocator, "_is_process_alive", return_value=True),
+        ):
+            stats = asyncio.run(allocator.reconcile_on_startup())
+
+        self.assertEqual(stats["orphaned"], 1)
+        self.assertEqual(stats["adopted"], 0)
+        self.assertEqual(repo.failed, [("job-preboot", "Process ended after system reboot")])
+        self.assertEqual(repo.released, ["job-preboot"])
 
 
 class TestLocalGPUAllocatorAvailability(unittest.TestCase):
