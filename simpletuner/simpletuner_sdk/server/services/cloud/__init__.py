@@ -86,6 +86,7 @@ from .protocols import (
     UserStoreProtocol,
 )
 from .replicate_client import ReplicateCogClient
+from .simpletuner_io_client import SimpleTunerIOClient
 from .secrets import (
     AWSSecretsManagerProvider,
     EnvironmentSecretProvider,
@@ -108,6 +109,7 @@ __all__ = [
     "JobType",
     "MetricsService",
     "ReplicateCogClient",
+    "SimpleTunerIOClient",
     "ReplicateUploadBackend",
     "UnifiedJob",
     # Job services

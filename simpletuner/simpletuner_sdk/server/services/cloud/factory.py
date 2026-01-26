@@ -6,6 +6,7 @@ from typing import Dict, Type
 
 from .base import CloudTrainerService
 from .replicate_client import ReplicateCogClient
+from .simpletuner_io_client import SimpleTunerIOClient
 
 
 class ProviderFactory:
@@ -34,3 +35,4 @@ class ProviderFactory:
 
 # Register default providers
 ProviderFactory.register("replicate", ReplicateCogClient)
+ProviderFactory.register("simpletuner_io", SimpleTunerIOClient)
