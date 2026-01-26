@@ -162,41 +162,144 @@
                             </div>
                         </template>
 
-                        <!-- GPU health list -->
+                        <!-- GPU health dashboard -->
                         <template x-if="gpuHealth.length > 0">
-                            <div class="gpu-health-list">
+                            <div class="gpu-dashboard">
+                                <div class="gpu-tabs">
+                                    <template x-for="gpu in gpuHealth" :key="gpu.index">
+                                        <button type="button"
+                                                class="gpu-tab"
+                                                :class="{
+                                                    'active': activeGpuIndex === gpu.index,
+                                                    'thermal-throttling': gpu.is_thermal_throttling
+                                                }"
+                                                @click="setActiveGpu(gpu.index)">
+                                            <template x-if="gpu.is_thermal_throttling">
+                                                <span class="fire-emoji">🔥</span>
+                                            </template>
+                                            <span x-text="'GPU ' + gpu.index"></span>
+                                            <span class="tab-temp" x-text="formatTemperature(gpu.temperature_celsius)"></span>
+                                        </button>
+                                    </template>
+                                </div>
+
                                 <template x-for="gpu in gpuHealth" :key="gpu.index">
-                                    <div class="gpu-health-item d-flex align-items-center justify-content-between py-2 border-bottom border-secondary"
-                                         :title="getGpuHealthTooltip(gpu)">
-                                        <div class="d-flex align-items-center gap-2">
-                                            <span class="gpu-id-badge"
-                                                  :class="{ 'thermal-throttling': gpu.is_thermal_throttling }">
-                                                <template x-if="gpu.is_thermal_throttling">
-                                                    <span class="fire-emoji">🔥</span>
-                                                </template>
-                                                <span x-text="'GPU ' + gpu.index"></span>
-                                            </span>
-                                            <span class="small text-muted" x-text="gpu.name"></span>
+                                    <template x-if="activeGpuIndex === gpu.index">
+                                        <div class="gpu-card"
+                                             :class="{ 'thermal-alert': gpu.is_thermal_throttling }"
+                                             x-init="ensureGpuHistoryState(gpu.index)">
+                                            <div class="gpu-card-header">
+                                                <div class="gpu-id-section">
+                                                    <span class="gpu-id-badge"
+                                                          :class="{ 'thermal-throttling': gpu.is_thermal_throttling }">
+                                                        <template x-if="gpu.is_thermal_throttling">
+                                                            <span class="fire-emoji">🔥</span>
+                                                        </template>
+                                                        <span x-text="'GPU ' + gpu.index"></span>
+                                                    </span>
+                                                    <span class="gpu-name" x-text="gpu.name"></span>
+                                                </div>
+                                                <span class="badge"
+                                                      :class="gpu.is_thermal_throttling ? 'bg-danger' : 'bg-success'"
+                                                      x-text="gpu.is_thermal_throttling ? 'Throttling' : 'OK'">
+                                                </span>
+                                            </div>
+
+                                            <div class="gpu-stats-grid">
+                                                <div class="gpu-stat-item vram-chart-container">
+                                                    <span class="stat-label">VRAM</span>
+                                                    <div class="d-flex align-items-center gap-3">
+                                                        <div class="vram-pie-wrapper">
+                                                            <canvas x-ref="vramCanvas" width="80" height="80"></canvas>
+                                                            <div class="vram-center-text">
+                                                                <div class="vram-percent" x-text="formatPercent(getVramPercent(gpu))"></div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="vram-details" x-text="getVramDetails(gpu)"></div>
+                                                    </div>
+                                                </div>
+
+                                                <div class="gpu-stat-item">
+                                                    <span class="stat-label">Utilization</span>
+                                                    <div class="utilization-bar-container">
+                                                        <div class="utilization-bar"
+                                                             :class="getUtilizationClass(gpu.gpu_utilization_percent)"
+                                                             :style="'width: ' + getUtilizationWidth(gpu.gpu_utilization_percent)">
+                                                        </div>
+                                                    </div>
+                                                    <div class="stat-value" x-text="formatPercent(gpu.gpu_utilization_percent)"></div>
+                                                </div>
+
+                                                <div class="gpu-stat-item">
+                                                    <span class="stat-label">Fan</span>
+                                                    <div class="gpu-fan-container">
+                                                        <i class="fas fa-fan gpu-fan-icon"
+                                                           :style="getFanAnimationStyle(gpu.fan_speed_percent)"></i>
+                                                        <div class="fan-speed-label" x-text="formatPercent(gpu.fan_speed_percent)"></div>
+                                                    </div>
+                                                </div>
+
+                                                <div class="gpu-stat-item">
+                                                    <span class="stat-label">Temperature</span>
+                                                    <div class="temp-display" :class="getTempClass(gpu)">
+                                                        <i class="fas fa-thermometer-half"></i>
+                                                        <span x-text="formatTemperature(gpu.temperature_celsius)"></span>
+                                                    </div>
+                                                    <div class="temp-threshold" x-text="getTempThresholdLabel(gpu)"></div>
+                                                </div>
+                                            </div>
+
+                                            <div class="gpu-history-section">
+                                                <div class="history-header">
+                                                    <div class="history-title">History</div>
+                                                    <div class="history-toggles">
+                                                        <label class="toggle-label">
+                                                            <input type="checkbox"
+                                                                   x-model="gpuHistorySettings[gpu.index].showTemp"
+                                                                   @change="clearHistoryHover(); renderHistoryChart(gpu.index)"
+                                                                   data-testid="gpu-history-temp-toggle">
+                                                            <span class="toggle-color temp-color"></span>
+                                                            Temp
+                                                        </label>
+                                                        <label class="toggle-label">
+                                                            <input type="checkbox"
+                                                                   x-model="gpuHistorySettings[gpu.index].showFan"
+                                                                   @change="clearHistoryHover(); renderHistoryChart(gpu.index)"
+                                                                   data-testid="gpu-history-fan-toggle">
+                                                            <span class="toggle-color fan-color"></span>
+                                                            Fan
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div class="history-chart-container"
+                                                     :data-history-series="getHistorySeriesLabel(gpu.index)">
+                                                    <canvas x-ref="historyCanvas"
+                                                            @mousemove="handleHistoryMouseMove($event, gpu.index)"
+                                                            @mouseleave="clearHistoryHover()"></canvas>
+                                                    <div class="history-tooltip history-tooltip-latest"
+                                                         x-show="historyLatestLabel.visible && historyLatestLabel.gpuIndex === gpu.index"
+                                                         :style="`left: ${historyLatestLabel.left}; top: ${historyLatestLabel.top};`">
+                                                        <template x-for="(line, idx) in historyLatestLabel.lines" :key="idx">
+                                                            <div class="history-tooltip-row">
+                                                                <span class="history-tooltip-dot" :style="`background: ${line.color};`"></span>
+                                                                <span x-text="line.text"></span>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                    <div class="history-tooltip"
+                                                         x-show="historyHover.visible && historyHover.gpuIndex === gpu.index"
+                                                         :style="`left: ${historyHover.left}; top: ${historyHover.top};`">
+                                                        <template x-for="(line, idx) in historyHover.lines" :key="idx">
+                                                            <div class="history-tooltip-row">
+                                                                <span class="history-tooltip-dot" :style="`background: ${line.color};`"></span>
+                                                                <span x-text="line.text"></span>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <span class="small"
-                                                  :class="{
-                                                      'text-danger': gpu.is_thermal_throttling,
-                                                      'text-warning': !gpu.is_thermal_throttling && gpu.temperature_celsius >= (gpu.temperature_threshold_slowdown - 10),
-                                                      'text-success': !gpu.is_thermal_throttling && gpu.temperature_celsius < (gpu.temperature_threshold_slowdown - 10)
-                                                  }">
-                                                <i class="fas fa-thermometer-half me-1"></i>
-                                                <span x-text="gpu.temperature_celsius + '°C'"></span>
-                                            </span>
-                                            <span class="badge"
-                                                  :class="{
-                                                      'bg-danger': gpu.is_thermal_throttling,
-                                                      'bg-success': !gpu.is_thermal_throttling
-                                                  }"
-                                                  x-text="gpu.is_thermal_throttling ? 'Throttling' : 'OK'">
-                                            </span>
-                                        </div>
-                                    </div>
+                                    </template>
                                 </template>
                             </div>
                         </template>

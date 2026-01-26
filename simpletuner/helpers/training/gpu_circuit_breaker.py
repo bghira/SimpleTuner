@@ -54,6 +54,15 @@ class GPUHealthMetrics:
     ecc_errors_double: int = 0
     throttle_reasons: List[str] = field(default_factory=list)
     memory_used_percent: Optional[float] = None
+    memory_used_bytes: Optional[int] = None
+    memory_total_bytes: Optional[int] = None
+    gpu_utilization_percent: Optional[float] = None
+    memory_utilization_percent: Optional[float] = None
+    fan_speed_percent: Optional[float] = None
+    power_usage_watts: Optional[float] = None
+    power_limit_watts: Optional[float] = None
+    clock_graphics_mhz: Optional[int] = None
+    clock_memory_mhz: Optional[int] = None
     is_healthy: bool = True
     fault_reason: Optional[str] = None
 
@@ -284,11 +293,50 @@ class GPUCircuitBreaker:
         except Exception:
             pass
 
-        # Get memory utilization
+        # Get memory info
         try:
             mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            metrics.memory_used_bytes = mem_info.used
+            metrics.memory_total_bytes = mem_info.total
             if mem_info.total > 0:
                 metrics.memory_used_percent = (mem_info.used / mem_info.total) * 100
+        except Exception:
+            pass
+
+        # Get GPU utilization
+        try:
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            metrics.gpu_utilization_percent = util.gpu
+            metrics.memory_utilization_percent = util.memory
+        except Exception:
+            pass
+
+        # Get fan speed
+        try:
+            metrics.fan_speed_percent = pynvml.nvmlDeviceGetFanSpeed(handle)
+        except Exception:
+            pass
+
+        # Get power usage
+        try:
+            # Power is returned in milliwatts
+            metrics.power_usage_watts = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
+        except Exception:
+            pass
+
+        try:
+            metrics.power_limit_watts = pynvml.nvmlDeviceGetPowerManagementLimit(handle) / 1000.0
+        except Exception:
+            pass
+
+        # Get clock speeds
+        try:
+            metrics.clock_graphics_mhz = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)
+        except Exception:
+            pass
+
+        try:
+            metrics.clock_memory_mhz = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_MEM)
         except Exception:
             pass
 
@@ -508,10 +556,10 @@ class GPUCircuitBreaker:
             logger.error(f"Failed to send GPU thermal warning webhook: {e}")
 
     def get_gpu_thermal_status(self) -> List[Dict[str, Any]]:
-        """Get thermal status for all GPUs (for WebUI display).
+        """Get full status for all GPUs (for WebUI display).
 
         Returns:
-            List of GPU status dicts with thermal warning info
+            List of GPU status dicts with all metrics for dashboard display
         """
         gpu_statuses = []
         with self._thermal_warning_lock:
@@ -525,11 +573,27 @@ class GPUCircuitBreaker:
             status = {
                 "index": gpu_index,
                 "name": metrics.name,
+                # Temperature
                 "temperature_celsius": metrics.temperature_celsius,
                 "temperature_threshold_slowdown": metrics.temperature_threshold_slowdown,
                 "temperature_threshold_shutdown": metrics.temperature_threshold_shutdown,
                 "is_thermal_throttling": gpu_index in thermal_warnings,
                 "throttle_reasons": metrics.throttle_reasons,
+                # VRAM
+                "memory_used_bytes": metrics.memory_used_bytes,
+                "memory_total_bytes": metrics.memory_total_bytes,
+                "memory_used_percent": metrics.memory_used_percent,
+                # Utilization
+                "gpu_utilization_percent": metrics.gpu_utilization_percent,
+                "memory_utilization_percent": metrics.memory_utilization_percent,
+                # Fan
+                "fan_speed_percent": metrics.fan_speed_percent,
+                # Power
+                "power_usage_watts": metrics.power_usage_watts,
+                "power_limit_watts": metrics.power_limit_watts,
+                # Clocks
+                "clock_graphics_mhz": metrics.clock_graphics_mhz,
+                "clock_memory_mhz": metrics.clock_memory_mhz,
             }
             gpu_statuses.append(status)
 

@@ -26,6 +26,7 @@ class TrainerPage(BasePage):
         "datasets": "#tab-content #datasets-tab-content",
         "environments": "#tab-content #environments-tab-content",
         "ui_settings": "#tab-content #ui-settings-tab-content",
+        "metrics": "#tab-content #metrics-tab-content",
     }
 
     # Locators
@@ -40,6 +41,7 @@ class TrainerPage(BasePage):
     ADVANCED_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='advanced']")
     DATASETS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='datasets']")
     ENVIRONMENTS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='environments']")
+    METRICS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='metrics']")
 
     CONFIG_JSON_BUTTON = (By.CSS_SELECTOR, "button[title='View and edit the composed training JSON']")
     CONFIG_JSON_MODAL = (By.CSS_SELECTOR, ".config-json-modal")
@@ -174,6 +176,28 @@ class TrainerPage(BasePage):
                           }
                         }));
                       }
+                    }
+
+                    if (normalisedPath.startsWith('/metrics/gpu-health')) {
+                      return Promise.resolve(jsonResponse({
+                        gpus: [
+                          {
+                            index: 0,
+                            name: 'Test GPU',
+                            temperature_celsius: 72,
+                            temperature_threshold_slowdown: 95,
+                            temperature_threshold_shutdown: 105,
+                            is_thermal_throttling: false,
+                            throttle_reasons: [],
+                            memory_used_bytes: 8589934592,
+                            memory_total_bytes: 17179869184,
+                            memory_used_percent: 50,
+                            gpu_utilization_percent: 62,
+                            fan_speed_percent: 45
+                          }
+                        ],
+                        total: 1
+                      }));
                     }
 
                     if (normalisedPath.startsWith('/events')) {
@@ -1014,6 +1038,11 @@ class TrainerPage(BasePage):
         """Switch to Environments tab."""
         self.click_element(*self.ENVIRONMENTS_TAB)
         self.wait_for_tab("environments")
+
+    def switch_to_metrics_tab(self):
+        """Switch to Metrics tab."""
+        self.click_element(*self.METRICS_TAB)
+        self.wait_for_tab("metrics")
 
 
 class BasicConfigTab(BasePage):

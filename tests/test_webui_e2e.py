@@ -293,6 +293,52 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_config_json_modal_reflects_blank_fields", scenario)
 
 
+class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test GPU health dashboard toggles."""
+
+    MAX_BROWSERS = 1
+
+    def test_gpu_history_toggle_series(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_metrics_tab()
+            trainer_page.wait_for_tab("metrics")
+
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#metrics-tab-content .gpu-dashboard"))
+            )
+
+            temp_toggle = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "#metrics-tab-content input[data-testid='gpu-history-temp-toggle']")
+                )
+            )
+            fan_toggle = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "#metrics-tab-content input[data-testid='gpu-history-fan-toggle']")
+                )
+            )
+            history_container = driver.find_element(By.CSS_SELECTOR, "#metrics-tab-content .history-chart-container")
+
+            self.assertEqual(history_container.get_attribute("data-history-series"), "Temp+Fan")
+
+            temp_toggle.click()
+            WebDriverWait(driver, 5).until(lambda d: history_container.get_attribute("data-history-series") == "Fan")
+
+            fan_toggle.click()
+            WebDriverWait(driver, 5).until(lambda d: history_container.get_attribute("data-history-series") == "None")
+
+            temp_toggle.click()
+            WebDriverWait(driver, 5).until(lambda d: history_container.get_attribute("data-history-series") == "Temp")
+
+        self.for_each_browser("test_gpu_history_toggle_series", scenario)
+
+
 class EventDockUptimeTestCase(_TrainerPageMixin, WebUITestCase):
     """Test connection uptime tooltip updates."""
 
