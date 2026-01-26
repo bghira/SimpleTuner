@@ -13,7 +13,7 @@ SimpleTuner ドキュメントの翻訳にご協力いただきありがとう�
 
 ## 翻訳の仕組み
 
-SimpleTuner は [mkdocs-static-i18n](https://github.com/ultrabug/mkdocs-static-i18n) を使った**接尾辞ベースの i18n**を採用しています。翻訳は元ファイルと同じ場所に、言語サフィックス付きで保存します。
+SimpleTuner は Zensical を使った**接尾辞ベースの i18n**を採用しています。翻訳は元ファイルと同じ場所に、言語サフィックス付きで保存します。
 
 ```
 documentation/
@@ -98,10 +98,10 @@ cp documentation/INSTALL.md documentation/INSTALL.zh.md
 
 ```bash
 # Install dependencies
-pip install mkdocs mkdocs-material mkdocs-static-i18n pymdown-extensions
+pip install zensical
 
 # Serve with hot reload
-mkdocs serve
+zensical serve
 
 # Open http://localhost:8000 and switch languages
 ```

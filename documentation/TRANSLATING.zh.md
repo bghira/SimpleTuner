@@ -13,7 +13,7 @@
 
 ## 翻译机制
 
-SimpleTuner 使用 [mkdocs-static-i18n](https://github.com/ultrabug/mkdocs-static-i18n) 的**后缀式 i18n**。翻译与原文件并排存放，通过语言后缀区分：
+SimpleTuner 使用 Zensical 的**后缀式 i18n**。翻译与原文件并排存放，通过语言后缀区分：
 
 ```
 documentation/
@@ -98,10 +98,10 @@ cp documentation/INSTALL.md documentation/INSTALL.zh.md
 
 ```bash
 # Install dependencies
-pip install mkdocs mkdocs-material mkdocs-static-i18n pymdown-extensions
+pip install zensical
 
 # Serve with hot reload
-mkdocs serve
+zensical serve
 
 # Open http://localhost:8000 and switch languages
 ```

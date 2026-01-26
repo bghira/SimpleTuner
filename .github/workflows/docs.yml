@@ -38,10 +38,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install mkdocs mkdocs-material pymdown-extensions mkdocs-static-i18n
+          pip install zensical
 
       - name: Build documentation
-        run: mkdocs build --strict
+        run: zensical build
 
       - name: Upload artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -598,10 +598,7 @@ extras_require = {
     ],
     "test": ["selenium>=4.0.0", "coverage>=7.0.0"],
     "docs": [
-        "mkdocs>=1.6.0",
-        "mkdocs-material>=9.5.0",
-        "mkdocs-static-i18n>=1.2.0",
-        "pymdown-extensions>=10.0",
+        "zensical>=0.0.19",
     ],
     # Platform-specific extras - user must choose one
     "cuda": list(PLATFORM_DEPENDENCIES["cuda"]),
