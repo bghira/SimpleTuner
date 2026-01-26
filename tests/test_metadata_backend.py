@@ -8,6 +8,8 @@ except ModuleNotFoundError:
     from helpers.data import MockDataBackend
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -239,6 +241,85 @@ class TestMaxNumSamplesLimit(unittest.TestCase):
         # With different seeds, selections should differ (statistically almost certain)
         # Use sets to compare regardless of order
         self.assertNotEqual(set(result1), set(result2))
+class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
+    """Test that eval datasets use batch_size=1 for bucket pruning (issue #2475)."""
+
+    def test_eval_dataset_single_image_not_pruned(self):
+        """Eval dataset with 1 image and batch_size=4 should NOT be pruned."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+        self.assertEqual(mock_backend.aspect_ratio_bucket_indices["1.0"], ["eval_img1.jpg"])
+
+    def test_training_dataset_single_image_pruned(self):
+        """Training dataset with 1 image and batch_size=4 should be pruned."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_training"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.IMAGE
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["train_img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+    def test_eval_dataset_no_dataset_type_attribute(self):
+        """Backend without dataset_type attr defaults to IMAGE behavior."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_no_type"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        del mock_backend.dataset_type
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+    def test_eval_dataset_with_repeats(self):
+        """Eval dataset respects repeats but still uses batch_size=1."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_repeats"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 2
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
 
 
 if __name__ == "__main__":
