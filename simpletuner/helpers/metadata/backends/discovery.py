@@ -307,6 +307,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         config=self.config,
                     )
             logger.debug(f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets")
+            # Load filtering statistics if present
+            self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.warning("No cache file found, creating new one.")
 
@@ -331,6 +333,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
+        # Include filtering statistics if available
+        if self.filtering_statistics is not None:
+            cache_data["filtering_statistics"] = self.filtering_statistics
         logger.debug(f"save_cache has config to write: {cache_data['config']}")
         cache_data_str = json.dumps(cache_data)
         # Use our DataBackend to write the cache file.

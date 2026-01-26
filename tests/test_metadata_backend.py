@@ -241,6 +241,8 @@ class TestMaxNumSamplesLimit(unittest.TestCase):
         # With different seeds, selections should differ (statistically almost certain)
         # Use sets to compare regardless of order
         self.assertNotEqual(set(result1), set(result2))
+
+
 class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
     """Test that eval datasets use batch_size=1 for bucket pruning (issue #2475)."""
 
@@ -320,6 +322,120 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+
+class TestFilteringStatistics(unittest.TestCase):
+    """Test filtering_statistics storage and retrieval in metadata backends (issue #2474)."""
+
+    def setUp(self):
+        self.data_backend = MockDataBackend()
+        self.data_backend.id = "filtering_test"
+        self.accelerator = Mock()
+        self.data_backend.exists = Mock(return_value=False)
+        self.data_backend.write = Mock(return_value=True)
+        self.data_backend.list_files = Mock(return_value=[])
+        StateTracker.set_args(MagicMock())
+
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk",
+                return_value=True,
+            ),
+            patch("pathlib.Path.exists", return_value=False),
+        ):
+            self.metadata_backend = DiscoveryMetadataBackend(
+                id="filtering_test",
+                instance_data_dir="/some/fake/path",
+                cache_file="/some/fake/cache",
+                metadata_file="/some/fake/metadata.json",
+                batch_size=1,
+                data_backend=self.data_backend,
+                resolution=1,
+                resolution_type="area",
+                accelerator=self.accelerator,
+                repeats=0,
+            )
+
+    def test_filtering_statistics_initialized_to_none(self):
+        """filtering_statistics should be initialized to None."""
+        self.assertIsNone(self.metadata_backend.filtering_statistics)
+
+    def test_filtering_statistics_saved_in_cache(self):
+        """filtering_statistics should be included when save_cache is called."""
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
+        self.metadata_backend.filtering_statistics = {
+            "total_processed": 10,
+            "skipped": {
+                "already_exists": 0,
+                "metadata_missing": 0,
+                "not_found": 0,
+                "too_small": 3,
+                "too_long": 0,
+                "other": 0,
+            },
+        }
+
+        with patch.object(self.data_backend, "write") as mock_write:
+            self.metadata_backend.save_cache()
+
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args
+        written_data = json.loads(call_args[0][1])
+
+        self.assertIn("filtering_statistics", written_data)
+        self.assertEqual(written_data["filtering_statistics"]["total_processed"], 10)
+        self.assertEqual(written_data["filtering_statistics"]["skipped"]["too_small"], 3)
+
+    def test_filtering_statistics_not_saved_when_none(self):
+        """filtering_statistics should not be included in cache when None."""
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1"]}
+        self.metadata_backend.filtering_statistics = None
+
+        with patch.object(self.data_backend, "write") as mock_write:
+            self.metadata_backend.save_cache()
+
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args
+        written_data = json.loads(call_args[0][1])
+
+        self.assertNotIn("filtering_statistics", written_data)
+
+    def test_filtering_statistics_loaded_from_cache(self):
+        """filtering_statistics should be loaded from cache when present."""
+        cache_data = {
+            "aspect_ratio_bucket_indices": {"1.0": ["image1"]},
+            "filtering_statistics": {
+                "total_processed": 5,
+                "skipped": {
+                    "already_exists": 2,
+                    "metadata_missing": 0,
+                    "not_found": 0,
+                    "too_small": 1,
+                    "too_long": 0,
+                    "other": 0,
+                },
+            },
+        }
+        self.data_backend.exists = Mock(return_value=True)
+
+        with patch.object(self.data_backend, "read", return_value=json.dumps(cache_data)):
+            self.metadata_backend.reload_cache()
+
+        self.assertIsNotNone(self.metadata_backend.filtering_statistics)
+        self.assertEqual(self.metadata_backend.filtering_statistics["total_processed"], 5)
+        self.assertEqual(self.metadata_backend.filtering_statistics["skipped"]["too_small"], 1)
+
+    def test_filtering_statistics_none_when_not_in_cache(self):
+        """filtering_statistics should remain None if not present in cache."""
+        cache_data = {
+            "aspect_ratio_bucket_indices": {"1.0": ["image1"]},
+        }
+        self.data_backend.exists = Mock(return_value=True)
+
+        with patch.object(self.data_backend, "read", return_value=json.dumps(cache_data)):
+            self.metadata_backend.reload_cache()
+
+        self.assertIsNone(self.metadata_backend.filtering_statistics)
 
 
 if __name__ == "__main__":

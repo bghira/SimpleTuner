@@ -294,6 +294,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         data_backend_id=self.id,
                         config=self.config,
                     )
+            # Load filtering statistics if present
+            self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.debug("No cache file found, starting fresh.")
 
@@ -314,6 +316,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
+        # Include filtering statistics if available
+        if self.filtering_statistics is not None:
+            cache_data["filtering_statistics"] = self.filtering_statistics
         cache_data_str = json.dumps(cache_data)
         self.data_backend.write(self.cache_file, cache_data_str)
         logger.debug("Aspect ratio cache saved.")
@@ -785,6 +790,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             self.set_metadata_by_filepath(path, metadata, update_json=False)
 
         logger.info(f"Processing complete. Statistics: {statistics}")
+        self.filtering_statistics = statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:

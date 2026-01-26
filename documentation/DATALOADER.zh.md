@@ -598,6 +598,32 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **警告:** 此操作不可恢复，请谨慎使用。
 - **默认值:** 回退到训练器的 `--delete_problematic_images` 参数（默认：`false`）。
 
+### 查看过滤统计
+
+SimpleTuner 处理数据集时会追踪被过滤掉的文件数量及原因。这些统计信息保存在数据集缓存文件（`aspect_ratio_bucket_indices_*.json`）中，可在 WebUI 中查看。
+
+**统计追踪项：**
+- **total_processed**：已处理的文件数
+- **too_small**：因低于 `minimum_image_size` 而被过滤的文件
+- **too_long**：因超出时长限制而被过滤的文件（音频/视频）
+- **metadata_missing**：因缺少元数据而被跳过的文件
+- **not_found**：无法找到的文件
+- **already_exists**：缓存中已存在的文件（未重新处理）
+- **other**：因其他原因被过滤的文件
+
+**在 WebUI 中查看：**
+
+在 WebUI 文件浏览器中浏览数据集时，选择包含现有数据集的目录将显示过滤统计信息（如有）。这有助于诊断数据集可用样本少于预期的原因。
+
+**过滤文件故障排除：**
+
+如果大量文件被标记为 `too_small`：
+1. 检查 `minimum_image_size` 设置——应与 `resolution` 和 `resolution_type` 匹配
+2. 对于 `resolution_type=pixel`，`minimum_image_size` 是最小短边长度
+3. 对于 `resolution_type=area` 或 `pixel_area`，`minimum_image_size` 是最小总面积
+
+详见下方[故障排除](#故障排除-过滤后的数据集)部分。
+
 ### `slider_strength`
 
 - **取值:** 任意浮点值（正、负或零）

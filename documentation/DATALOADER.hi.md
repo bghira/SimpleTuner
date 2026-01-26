@@ -597,6 +597,32 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **Warning:** यह destructive है और undo नहीं किया जा सकता। सावधानी से उपयोग करें।
 - **Default:** trainer के `--delete_problematic_images` argument पर fallback करता है (डिफ़ॉल्ट: `false`)।
 
+### Filtering Statistics देखना
+
+जब SimpleTuner आपके dataset को process करता है, यह track करता है कि कितनी files filter हुईं और क्यों। ये statistics dataset के cache file (`aspect_ratio_bucket_indices_*.json`) में store होती हैं और WebUI में देखी जा सकती हैं।
+
+**Track की जाने वाली Statistics:**
+- **total_processed**: Process की गई files की संख्या
+- **too_small**: `minimum_image_size` से नीचे होने के कारण filter की गई files
+- **too_long**: duration limits से अधिक होने के कारण filter की गई files (audio/video)
+- **metadata_missing**: missing metadata के कारण skip की गई files
+- **not_found**: जो files locate नहीं हो सकीं
+- **already_exists**: cache में पहले से मौजूद files (reprocess नहीं हुईं)
+- **other**: अन्य कारणों से filter की गई files
+
+**WebUI में देखना:**
+
+WebUI file browser में datasets browse करते समय, किसी existing dataset वाली directory select करने पर filtering statistics दिखाई देंगी (यदि उपलब्ध हों)। यह diagnose करने में मदद करता है कि आपके dataset में expected से कम usable samples क्यों हैं।
+
+**Filtered files का Troubleshooting:**
+
+यदि बहुत सी files `too_small` के रूप में filter हो रही हैं:
+1. अपनी `minimum_image_size` setting check करें — यह `resolution` और `resolution_type` से match होनी चाहिए
+2. `resolution_type=pixel` के लिए, `minimum_image_size` minimum shorter edge length है
+3. `resolution_type=area` या `pixel_area` के लिए, `minimum_image_size` minimum total area है
+
+अधिक details के लिए नीचे [Troubleshooting](#filtered-datasets-का-troubleshooting) section देखें।
+
 ### `slider_strength`
 
 - **Values:** कोई भी float मान (positive, negative, या zero)
