@@ -285,22 +285,35 @@ def retrieve_validation_images():
         dict: A dictionary of shortname to image paths.
     """
     model = StateTracker.get_model()
-    if model.requires_validation_edit_captions() or model.requires_validation_i2v_samples():
+    args = StateTracker.get_args()
+
+    # For i2v models, allow using simple image datasets when validation_using_datasets is True.
+    # This bypasses the complex conditioning dataset pairing requirement.
+    use_simple_image_path_for_i2v = model.requires_validation_i2v_samples() and getattr(
+        args, "validation_using_datasets", False
+    )
+
+    if (
+        model.requires_validation_edit_captions() or model.requires_validation_i2v_samples()
+    ) and not use_simple_image_path_for_i2v:
         return retrieve_validation_edit_images()
 
     # Check for S2V models that need audio conditioning
     if getattr(model, "requires_s2v_validation_inputs", lambda: False)():
         return retrieve_validation_s2v_samples()
 
-    args = StateTracker.get_args()
-    requires_cond_input = any(
-        [
-            StateTracker.get_model().requires_conditioning_validation_inputs(),
-            args.controlnet,
-            args.control,
-        ]
+    # When using simple image path for i2v, we want image datasets, not conditioning datasets.
+    requires_cond_input = (
+        any(
+            [
+                model.requires_conditioning_validation_inputs(),
+                args.controlnet,
+                args.control,
+            ]
+        )
+        and not use_simple_image_path_for_i2v
     )
-    dataset_type = StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image"
+    dataset_type = model.conditioning_validation_dataset_type() if requires_cond_input else "image"
     data_backends = StateTracker.get_data_backends(
         _type=dataset_type, _types=None if requires_cond_input else ["image", "video", "audio"]
     )
@@ -316,8 +329,7 @@ def retrieve_validation_images():
         should_skip_dataset = data_backend_config.get("disable_validation", False)
         logger.debug(f"Backend {_data_backend}: {data_backend}")
         if "id" not in data_backend or (
-            requires_cond_input
-            and data_backend.get("dataset_type", None) != StateTracker.get_model().conditioning_validation_dataset_type()
+            requires_cond_input and data_backend.get("dataset_type", None) != model.conditioning_validation_dataset_type()
         ):
             logger.debug(f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}")
             continue
@@ -332,7 +344,7 @@ def retrieve_validation_images():
             validation_samples_from_sampler = [
                 _normalise_validation_sample(sample) for sample in validation_samples_from_sampler
             ]
-            validation_input_image_pixel_edge_len = StateTracker.get_model().validation_image_input_edge_length()
+            validation_input_image_pixel_edge_len = model.validation_image_input_edge_length()
             if validation_input_image_pixel_edge_len is not None:
                 logger.debug(
                     f"Resized validation image so that pixel edge length is {validation_input_image_pixel_edge_len}."

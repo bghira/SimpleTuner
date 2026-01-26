@@ -236,4 +236,20 @@ Esto puede acelerar el entrenamiento en ~25-40% dependiendo del ratio.
 Si usas sabores `i2v`:
 - SimpleTuner extrae automáticamente el primer frame de los videos de entrenamiento para usarlo como imagen de condicionamiento.
 - El pipeline enmascara automáticamente el primer frame durante el entrenamiento.
-- La validación requiere proporcionar una imagen de entrada, o SimpleTuner usará el primer frame de la generación de video de validación como conditioner.
+
+#### Opciones de Validación I2V
+
+Para validación con modelos i2v, tienes dos opciones:
+
+1. **Primer frame extraído automáticamente**: Por defecto, la validación usa el primer frame de las muestras de video.
+
+2. **Dataset de imágenes separado** (setup más simple): Usa `--validation_using_datasets=true` con `--eval_dataset_id` apuntando a un dataset de imágenes:
+
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
+
+Esto permite usar cualquier dataset de imágenes como input de condicionamiento del primer frame para videos de validación, sin necesidad de configurar el emparejamiento complejo de datasets de condicionamiento usado durante el entrenamiento.

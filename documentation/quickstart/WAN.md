@@ -53,6 +53,19 @@ resolves the compatibility issue.
 - Toggle `wan_validation_load_other_stage=true` to load the opposite stage alongside the one you train for validation renders.
 - Leave the flavour unset (or use `t2v-480p-1.3b-2.1`) for the standard Wan 2.1 text-to-video run.
 
+#### I2V Validation with Image Datasets
+
+For i2v validation, you can use a simple image dataset instead of requiring the full conditioning dataset pairing:
+
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
+
+This uses images from the specified dataset as first-frame conditioning inputs for validation video generation, without needing the complex conditioning setup used during training.
+
 Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
 ### Prerequisites

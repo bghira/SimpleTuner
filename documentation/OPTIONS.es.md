@@ -663,13 +663,15 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 ### `--validation_using_datasets`
 
 - **Qué**: Usa imágenes de datasets de entrenamiento para validación en lugar de generación pura de texto a imagen.
-- **Por qué**: Habilita el modo de validación imagen-a-imagen (img2img) donde el modelo des-ruido parcialmente imágenes de entrenamiento en lugar de generar desde ruido puro. Útil para:
+- **Por qué**: Habilita el modo de validación imagen-a-imagen (img2img) o imagen-a-video (i2v) donde el modelo usa imágenes de entrenamiento como entradas de conditioning. Útil para:
   - Probar modelos de edición/inpainting que requieren imágenes de entrada
   - Evaluar qué tan bien el modelo preserva la estructura de imagen
   - Modelos que soportan flujos duales texto-a-imagen E imagen-a-imagen (ej., Flux2, LTXVideo2)
+  - **Modelos de video I2V** (HunyuanVideo, WAN, Kandinsky5Video): Usa imágenes de un dataset de imágenes como entrada de conditioning del primer frame para validación de generación de video
 - **Notas**:
-  - Requiere que el modelo tenga un pipeline `IMG2IMG` registrado
+  - Requiere que el modelo tenga un pipeline `IMG2IMG` o `IMG2VIDEO` registrado
   - Puede combinarse con `--eval_dataset_id` para obtener imágenes de un dataset específico
+  - Para modelos i2v, permite usar un dataset de imágenes simple para validación sin la configuración compleja de emparejamiento de datasets de conditioning usada durante el entrenamiento
   - La fuerza de des-ruido se controla con los ajustes normales de timestep de validación
 
 ### `--eval_dataset_id`
@@ -705,21 +707,29 @@ Algunos modelos pueden operar en modos texto-a-imagen E imagen-a-imagen:
 - **Flux2**: Soporta entrenamiento dual T2I/I2I con imágenes de referencia opcionales
 - **LTXVideo2**: Soporta T2V e I2V (imagen-a-video) con conditioning de primer frame opcional
 - **LongCat-Video**: Soporta conditioning de frames opcional
+- **HunyuanVideo i2v**: Soporta I2V con conditioning de primer frame (flavours: `i2v-480p`, `i2v-720p`, etc.)
+- **WAN i2v**: Soporta I2V con conditioning de primer frame
+- **Kandinsky5Video i2v**: Soporta I2V con conditioning de primer frame
 
 Para estos modelos, PUEDES agregar datasets de conditioning pero no es obligatorio. La WebUI mostrará opciones de conditioning como opcionales.
+
+**Atajo de Validación I2V**: Para modelos de video i2v, puedes usar `--validation_using_datasets` con un dataset de imágenes (especificado via `--eval_dataset_id`) para obtener imágenes de conditioning de validación directamente, sin necesidad de configurar el emparejamiento completo de datasets de conditioning usado durante el entrenamiento.
 
 ### 3. Modos de Validación
 
 | Modo | Flag | Comportamiento |
 |------|------|----------------|
-| **Texto-a-Imagen** | (por defecto) | Genera solo desde prompts de texto |
-| **Basado en Dataset** | `--validation_using_datasets` | Des-ruido parcial de imágenes de datasets (img2img) |
+| **Texto-a-Imagen/Video** | (por defecto) | Genera solo desde prompts de texto |
+| **Basado en Dataset (img2img)** | `--validation_using_datasets` | Des-ruido parcial de imágenes de datasets |
+| **Basado en Dataset (i2v)** | `--validation_using_datasets` | Para modelos de video i2v, usa imágenes como conditioning de primer frame |
 | **Basado en Conditioning** | (auto cuando se configura conditioning) | Usa entradas de conditioning durante validación |
 
 **Combinando modos**: Cuando un modelo soporta conditioning Y `--validation_using_datasets` está habilitado:
 - El sistema de validación obtiene imágenes de datasets
 - Si esos datasets tienen datos de conditioning, se usan automáticamente
 - Usa `--eval_dataset_id` para controlar qué dataset provee entradas
+
+**Modelos I2V con `--validation_using_datasets`**: Para modelos de video i2v (HunyuanVideo, WAN, Kandinsky5Video), habilitar este flag permite usar un dataset de imágenes simple para validación. Las imágenes se usan como entradas de conditioning de primer frame para generar videos de validación, sin necesidad de la configuración compleja de emparejamiento de datasets de conditioning.
 
 ### Tipos de Datos de Conditioning
 
