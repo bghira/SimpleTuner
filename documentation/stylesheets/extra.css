@@ -26,3 +26,13 @@
 .md-nav__item .md-nav__link {
   font-size: 0.8rem;
 }
+
+/* Keep double-dash option names on one line in the TOC. */
+.md-nav--secondary .md-nav__link[href^="#-"] .md-ellipsis {
+  white-space: nowrap;
+}
+
+/* Expand layout width for wide screens. */
+.md-grid {
+  max-width: 90rem;
+}

@@ -13,7 +13,7 @@ Obrigado por ajudar a traduzir a documentacao do SimpleTuner! Este guia explica 
 
 ## Como a traducao funciona
 
-O SimpleTuner usa **i18n baseado em sufixo** com [mkdocs-static-i18n](https://github.com/ultrabug/mkdocs-static-i18n). As traducoes sao armazenadas ao lado dos arquivos originais com um sufixo de idioma:
+O SimpleTuner usa **i18n baseado em sufixo** com Zensical. As traducoes sao armazenadas ao lado dos arquivos originais com um sufixo de idioma:
 
 ```
 documentation/
@@ -98,10 +98,10 @@ Teste suas traducoes localmente:
 
 ```bash
 # Instalar dependencias
-pip install mkdocs mkdocs-material mkdocs-static-i18n pymdown-extensions
+pip install zensical
 
 # Servir com hot reload
-mkdocs serve
+zensical serve
 
 # Abra http://localhost:8000 e alterne idiomas
 ```
