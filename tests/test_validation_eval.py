@@ -73,6 +73,9 @@ class EvaluationDynamicEpochScheduleTests(unittest.TestCase):
         self._prev_args = StateTracker.get_args()
         self._prev_epoch = StateTracker.get_epoch()
         self._prev_global_step = StateTracker.get_global_step()
+        # Initialize to clean state to avoid interference from other tests
+        StateTracker.set_epoch(1)
+        StateTracker.set_global_step(0)
 
     def tearDown(self):
         StateTracker.set_args(self._prev_args)
@@ -95,11 +98,15 @@ class EvaluationDynamicEpochScheduleTests(unittest.TestCase):
 
     def test_epoch_progress_without_schedule(self):
         """Without epoch_batches_schedule, epoch_progress uses simple formula."""
-        evaluator = self._make_eval(num_update_steps_per_epoch=100)
+        evaluator = self._make_eval(
+            num_update_steps_per_epoch=100,
+            epoch_batches_schedule=None,  # Explicitly set to None
+        )
         training_state = {"global_step": 150, "current_epoch": 2}
         # Epoch 2, step 150 = 50 steps into epoch 2
         # epoch_progress = 1 + (50/100) = 1.5
         progress = evaluator._epoch_progress(training_state, 100)
+        self.assertIsNotNone(progress, "epoch_progress should not return None")
         self.assertAlmostEqual(progress, 1.5, places=2)
 
     def test_epoch_progress_with_dynamic_schedule(self):
