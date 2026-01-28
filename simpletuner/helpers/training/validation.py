@@ -3887,7 +3887,23 @@ class Evaluation:
             steps_per_epoch = float(steps_per_epoch)
             if steps_per_epoch <= 0:
                 return None
-            epoch_start_step = max(0.0, (float(current_epoch) - 1.0) * steps_per_epoch)
+
+            # Calculate epoch_start_step accounting for dynamic dataset scheduling.
+            # When datasets have different start_epoch values, each epoch can have
+            # a different step count. We must sum the actual steps from all previous
+            # epochs rather than assuming (current_epoch - 1) * steps_per_epoch.
+            epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
+            if epoch_batches_schedule:
+                epoch_start_step = 0.0
+                grad_accum = max(getattr(self.config, "gradient_accumulation_steps", 1) or 1, 1)
+                for e in range(1, int(current_epoch)):
+                    active_batches = sum(
+                        batches for start_epoch, batches in epoch_batches_schedule.items() if start_epoch <= e
+                    )
+                    epoch_start_step += math.ceil(active_batches / grad_accum)
+            else:
+                epoch_start_step = max(0.0, (float(current_epoch) - 1.0) * steps_per_epoch)
+
             epoch_steps_completed = max(0.0, global_step - epoch_start_step)
             epoch_fraction = epoch_steps_completed / steps_per_epoch
             return max(0.0, (float(current_epoch) - 1.0) + epoch_fraction)
