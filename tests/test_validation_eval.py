@@ -26,9 +26,13 @@ class EvaluationSchedulingTests(unittest.TestCase):
             "weight_dtype": None,
         }
         config_defaults.update(kwargs)
-        StateTracker.set_args(SimpleNamespace(**config_defaults))
+        config = SimpleNamespace(**config_defaults)
+        StateTracker.set_args(config)
         accelerator = SimpleNamespace(is_main_process=True)
-        return Evaluation(accelerator=accelerator)
+        evaluator = Evaluation(accelerator=accelerator)
+        # Directly set config to ensure test isolation
+        evaluator.config = config
+        return evaluator
 
     def test_would_evaluate_step_interval_triggers_on_multiple(self):
         evaluator = self._make_eval(eval_steps_interval=2)
@@ -92,9 +96,14 @@ class EvaluationDynamicEpochScheduleTests(unittest.TestCase):
             "weight_dtype": None,
         }
         config_defaults.update(kwargs)
-        StateTracker.set_args(SimpleNamespace(**config_defaults))
+        config = SimpleNamespace(**config_defaults)
+        StateTracker.set_args(config)
         accelerator = SimpleNamespace(is_main_process=True)
-        return Evaluation(accelerator=accelerator)
+        evaluator = Evaluation(accelerator=accelerator)
+        # Directly set config to ensure test isolation from other tests
+        # that may modify StateTracker state
+        evaluator.config = config
+        return evaluator
 
     def test_epoch_progress_without_schedule(self):
         """Without epoch_batches_schedule, epoch_progress uses simple formula."""
