@@ -3893,12 +3893,12 @@ class Evaluation:
             # a different step count. We must sum the actual steps from all previous
             # epochs rather than assuming (current_epoch - 1) * steps_per_epoch.
             epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
-            if epoch_batches_schedule:
+            if epoch_batches_schedule and isinstance(epoch_batches_schedule, dict):
                 epoch_start_step = 0.0
                 grad_accum = max(getattr(self.config, "gradient_accumulation_steps", 1) or 1, 1)
                 for e in range(1, int(current_epoch)):
                     active_batches = sum(
-                        batches for start_epoch, batches in epoch_batches_schedule.items() if start_epoch <= e
+                        batches for start_epoch, batches in epoch_batches_schedule.items() if int(start_epoch) <= e
                     )
                     epoch_start_step += math.ceil(active_batches / grad_accum)
             else:
@@ -3907,7 +3907,8 @@ class Evaluation:
             epoch_steps_completed = max(0.0, global_step - epoch_start_step)
             epoch_fraction = epoch_steps_completed / steps_per_epoch
             return max(0.0, (float(current_epoch) - 1.0) + epoch_fraction)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"_epoch_progress calculation failed: {exc}")
             return None
 
     def _should_eval_epoch(self, training_state: dict, epoch_interval: float | None) -> bool:
