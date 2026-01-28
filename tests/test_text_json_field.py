@@ -245,5 +245,64 @@ class TestTextJsonRoundTrip(unittest.TestCase):
         self.assertEqual(bundle.save_config["modelspec_comment"], original_array)
 
 
+class TestTextJsonConfigLoading(unittest.TestCase):
+    """Test TEXT_JSON fields survive JSON config → CLI args → argparse."""
+
+    def test_modelspec_comment_array_serialized_to_json(self):
+        """Array value in JSON config should be JSON-serialized, not split into multiple args."""
+        from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+
+        config = {
+            "modelspec_comment": ["line 1", "line 2", "line 3"],
+            "output_dir": "/tmp/output",
+        }
+
+        cli_args = mapping_to_cli_args(config)
+
+        # Should have exactly one --modelspec_comment arg, JSON-serialized
+        modelspec_args = [arg for arg in cli_args if arg.startswith("--modelspec_comment")]
+        self.assertEqual(len(modelspec_args), 1, f"Expected 1 modelspec_comment arg, got {modelspec_args}")
+
+        # The value should be JSON
+        arg_value = modelspec_args[0].split("=", 1)[1]
+        parsed = json.loads(arg_value)
+        self.assertEqual(parsed, ["line 1", "line 2", "line 3"])
+
+    def test_modelspec_comment_string_passed_through(self):
+        """String value should pass through normally."""
+        from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+
+        config = {
+            "modelspec_comment": "single line comment",
+        }
+
+        cli_args = mapping_to_cli_args(config)
+        modelspec_args = [arg for arg in cli_args if arg.startswith("--modelspec_comment")]
+        self.assertEqual(len(modelspec_args), 1)
+        self.assertEqual(modelspec_args[0], "--modelspec_comment=single line comment")
+
+    def test_modelspec_comment_full_pipeline(self):
+        """Test complete flow: JSON array → CLI args → _process_modelspec_comment → newline-joined string."""
+        from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+        from simpletuner.helpers.configuration.cmd_args import _process_modelspec_comment
+
+        # Simulate JSON config with array
+        config = {"modelspec_comment": ["line 1", "line 2"]}
+
+        # Step 1: Convert to CLI args
+        cli_args = mapping_to_cli_args(config)
+        modelspec_args = [arg for arg in cli_args if arg.startswith("--modelspec_comment")]
+        self.assertEqual(len(modelspec_args), 1)
+
+        # Step 2: Extract the value as argparse would receive it
+        arg_value = modelspec_args[0].split("=", 1)[1]
+
+        # Step 3: Process it (as done in post_load_process_args)
+        result = _process_modelspec_comment(arg_value)
+
+        # Should be newline-joined
+        self.assertEqual(result, "line 1\nline 2")
+
+
 if __name__ == "__main__":
     unittest.main()
