@@ -708,13 +708,18 @@ class MetadataBackend:
         except Exception:
             dataset_type_enum = DatasetType.IMAGE
 
-        grad_accumulation_for_bucketing = 1 if dataset_type_enum is DatasetType.EVAL else gradient_accumulation_steps
-        if dataset_type_enum is DatasetType.EVAL and gradient_accumulation_steps != 1:
-            logger.debug(
-                f"(id={self.id}) Ignoring gradient accumulation for eval dataset; using 1 instead of {gradient_accumulation_steps}."
-            )
-
-        effective_batch_size = self.batch_size * num_processes * grad_accumulation_for_bucketing
+        # Eval datasets use effective_batch_size=1 since they're not trained and validation
+        # retrieves images individually via retrieve_validation_set().
+        if dataset_type_enum is DatasetType.EVAL:
+            effective_batch_size = 1
+            if gradient_accumulation_steps != 1 or self.batch_size != 1:
+                logger.debug(
+                    f"(id={self.id}) Using effective_batch_size=1 for eval dataset "
+                    f"(ignoring batch_size={self.batch_size}, grad_accum={gradient_accumulation_steps})."
+                )
+        else:
+            grad_accumulation_for_bucketing = gradient_accumulation_steps
+            effective_batch_size = self.batch_size * num_processes * grad_accumulation_for_bucketing
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
