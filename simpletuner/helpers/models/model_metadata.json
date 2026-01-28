@@ -91,14 +91,6 @@
             "base"
         ]
     },
-    "heartmula": {
-        "class_name": "HeartMuLa",
-        "module_path": "simpletuner.helpers.models.heartmula.model",
-        "name": "HeartMuLa",
-        "flavour_choices": [
-            "3b"
-        ]
-    },
     "omnigen": {
         "class_name": "OmniGen",
         "module_path": "simpletuner.helpers.models.omnigen.model",
@@ -193,6 +185,15 @@
             "0.9.0"
         ]
     },
+    "heartmula": {
+        "class_name": "HeartMuLa",
+        "module_path": "simpletuner.helpers.models.heartmula.model",
+        "name": "HeartMuLa",
+        "prediction_type": "autoregressive_next_token",
+        "flavour_choices": [
+            "3b"
+        ]
+    },
     "longcat_video": {
         "class_name": "LongCatVideo",
         "module_path": "simpletuner.helpers.models.longcat_video.model",
@@ -222,6 +223,7 @@
         "name": "Z-Image",
         "prediction_type": "flow_matching",
         "flavour_choices": [
+            "base",
             "turbo",
             "turbo-ostris-v2",
             "ostris-de-turbo"
