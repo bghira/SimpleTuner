@@ -211,9 +211,22 @@ def _parse_json_like_option(raw_value, option_name: str):
 
 
 def _process_modelspec_comment(value) -> str | None:
-    """Process modelspec_comment: handle array, env placeholders."""
+    """Process modelspec_comment: handle array, JSON string, env placeholders."""
     if value is None:
         return None
+
+    # If it's a string that looks like JSON array, parse it first
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                import json
+
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    value = parsed
+            except (json.JSONDecodeError, ValueError):
+                pass  # Not valid JSON, treat as regular string
 
     if isinstance(value, list):
         value = "\n".join(str(item) for item in value)

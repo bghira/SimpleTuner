@@ -190,6 +190,8 @@ def mapping_to_cli_args(
             continue
 
         # Skip fields that are registered with arg_name=None (dataset-level configs, not CLI args)
+        # Also detect TEXT_JSON fields that need JSON serialization
+        field = None
         if field_registry is not None:
             canonical_key = key.lstrip("-") if isinstance(key, str) else key
             field = field_registry.get_field(canonical_key)
@@ -224,7 +226,17 @@ def mapping_to_cli_args(
                 continue
 
         # Special handling for webhook_config-like options: always JSON-serialize dicts/lists
-        if canonical_key in {"webhook_config", "deepspeed_config", "publishing_config", "peft_lora_target_modules"}:
+        # Also JSON-serialize TEXT_JSON fields from the registry (e.g., modelspec_comment)
+        is_text_json_field = False
+        if field is not None:
+            from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType
+
+            is_text_json_field = getattr(field, "field_type", None) == FieldType.TEXT_JSON
+
+        if (
+            canonical_key in {"webhook_config", "deepspeed_config", "publishing_config", "peft_lora_target_modules"}
+            or is_text_json_field
+        ):
             if isinstance(value, (Mapping, list)):
                 import json
 
