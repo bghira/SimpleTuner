@@ -212,6 +212,18 @@ class LTXVideo2(VideoModelFoundation):
         """LTX-2 supports training on audio-only datasets without video."""
         return True
 
+    def supports_conditioning_dataset(self) -> bool:
+        """
+        LTX-2 can optionally use reference video conditioning (IC-LoRA).
+        """
+        return True
+
+    def requires_conditioning_latents(self) -> bool:
+        """
+        IC-LoRA conditioning uses VAE latents when a conditioning dataset is present.
+        """
+        return True
+
     def uses_audio_latents(self) -> bool:
         return True
 
@@ -999,6 +1011,19 @@ class LTXVideo2(VideoModelFoundation):
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch_conditions(batch=batch, state=state)
 
+        conditioning_latents = batch.get("conditioning_latents")
+        conditioning_type = batch.get("conditioning_type")
+        if isinstance(conditioning_latents, list):
+            raise ValueError(
+                "LTX-2 IC-LoRA requires a single conditioning latent tensor. "
+                "Use reference_strict conditioning so reference videos align to one shape."
+            )
+        if conditioning_latents is not None and conditioning_type not in (None, "reference_strict", "reference_loose"):
+            raise ValueError(
+                f"Unsupported conditioning_type '{conditioning_type}' for LTX-2 IC-LoRA. "
+                "Use reference_strict or reference_loose."
+            )
+
         audio_latents = batch.get("audio_latent_batch")
         audio_mask = batch.get("audio_latent_mask")
         video_mask = batch.get("video_latent_mask")
@@ -1128,6 +1153,19 @@ class LTXVideo2(VideoModelFoundation):
         audio_noisy = prepared_batch.get("audio_noisy_latents")
         if audio_noisy is None:
             raise ValueError("LTX-2 requires audio latents for training.")
+        conditioning_latents = prepared_batch.get("conditioning_latents")
+        conditioning_type = prepared_batch.get("conditioning_type")
+        if conditioning_latents is not None:
+            if isinstance(conditioning_latents, list):
+                raise ValueError(
+                    "LTX-2 IC-LoRA expects a single conditioning latent tensor. "
+                    "Use reference_strict conditioning so all reference videos align to one shape."
+                )
+            if conditioning_type not in (None, "reference_strict", "reference_loose"):
+                raise ValueError(
+                    f"Unsupported conditioning_type '{conditioning_type}' for LTX-2 IC-LoRA. "
+                    "Use reference_strict or reference_loose."
+                )
 
         self._load_connectors(move_to_device=True)
         if self.connectors is None:
@@ -1139,7 +1177,60 @@ class LTXVideo2(VideoModelFoundation):
         patch_size = getattr(self.model.config, "patch_size", 1)
         patch_size_t = getattr(self.model.config, "patch_size_t", 1)
 
-        packed_noisy = pack_ltx2_latents(noisy_latents, patch_size, patch_size_t).to(self.config.weight_dtype)
+        packed_target_noisy = pack_ltx2_latents(noisy_latents, patch_size, patch_size_t).to(self.config.weight_dtype)
+        packed_noisy = packed_target_noisy
+        combined_timesteps = None
+        combined_video_coords = None
+        ref_seq_len = 0
+        if conditioning_latents is not None:
+            if conditioning_latents.ndim != 5:
+                raise ValueError(
+                    f"LTX-2 IC-LoRA conditioning latents must be 5D [B, C, F, H, W], got {conditioning_latents.shape}."
+                )
+            if conditioning_latents.shape[1] != noisy_latents.shape[1]:
+                raise ValueError(
+                    "LTX-2 IC-LoRA conditioning latents must match target latent channels. "
+                    f"Got {conditioning_latents.shape[1]} vs {noisy_latents.shape[1]}."
+                )
+            conditioning_latents = conditioning_latents.to(device=noisy_latents.device, dtype=noisy_latents.dtype)
+            ref_frames = conditioning_latents.shape[2]
+            ref_height = conditioning_latents.shape[3]
+            ref_width = conditioning_latents.shape[4]
+            packed_ref = pack_ltx2_latents(conditioning_latents, patch_size, patch_size_t).to(self.config.weight_dtype)
+            ref_seq_len = packed_ref.shape[1]
+            packed_noisy = torch.cat([packed_ref, packed_target_noisy], dim=1)
+
+            base_timesteps = prepared_batch["timesteps"].to(device=packed_noisy.device)
+            if base_timesteps.ndim != 1:
+                base_timesteps = base_timesteps.view(base_timesteps.shape[0], -1)[:, 0]
+            target_timesteps = base_timesteps[:, None].expand(base_timesteps.shape[0], packed_target_noisy.shape[1])
+            ref_timesteps = torch.zeros(
+                base_timesteps.shape[0],
+                ref_seq_len,
+                device=base_timesteps.device,
+                dtype=base_timesteps.dtype,
+            )
+            combined_timesteps = torch.cat([ref_timesteps, target_timesteps], dim=1)
+
+            if getattr(self.model, "rope", None) is not None:
+                fps = self.config.framerate or 25
+                ref_coords = self.model.rope.prepare_video_coords(
+                    packed_noisy.shape[0],
+                    ref_frames,
+                    ref_height,
+                    ref_width,
+                    packed_noisy.device,
+                    fps=fps,
+                )
+                target_coords = self.model.rope.prepare_video_coords(
+                    packed_noisy.shape[0],
+                    num_frames,
+                    height,
+                    width,
+                    packed_noisy.device,
+                    fps=fps,
+                )
+                combined_video_coords = torch.cat([ref_coords, target_coords], dim=2)
 
         audio_latents = prepared_batch["audio_latents"]
         audio_num_frames = audio_latents.shape[2]
@@ -1165,15 +1256,25 @@ class LTXVideo2(VideoModelFoundation):
         raw_force_keep = prepared_batch.get("force_keep_mask")
         if raw_force_keep is not None and getattr(self.config, "tread_config", None):
             force_keep_mask = self._prepare_force_keep_mask(noisy_latents, raw_force_keep)
+            if ref_seq_len:
+                ref_keep = torch.ones(
+                    force_keep_mask.shape[0],
+                    ref_seq_len,
+                    device=force_keep_mask.device,
+                    dtype=force_keep_mask.dtype,
+                )
+                force_keep_mask = torch.cat([ref_keep, force_keep_mask], dim=1)
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        if capture_hidden and ref_seq_len:
+            raise ValueError("CREPA hidden-state capture is not supported with IC-LoRA reference tokens enabled.")
         transformer_kwargs = {
             "hidden_states": packed_noisy,
             "audio_hidden_states": packed_audio_noisy,
             "encoder_hidden_states": connector_video_embeds,
             "audio_encoder_hidden_states": connector_audio_embeds,
-            "timestep": prepared_batch["timesteps"],
+            "timestep": combined_timesteps if combined_timesteps is not None else prepared_batch["timesteps"],
             "timestep_sign": (
                 prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
             ),
@@ -1186,6 +1287,8 @@ class LTXVideo2(VideoModelFoundation):
             "audio_num_frames": audio_num_frames,
             "return_dict": False,
         }
+        if combined_video_coords is not None:
+            transformer_kwargs["video_coords"] = combined_video_coords
         if force_keep_mask is not None:
             transformer_kwargs["force_keep_mask"] = force_keep_mask
         if capture_hidden:
@@ -1214,6 +1317,9 @@ class LTXVideo2(VideoModelFoundation):
                 video_pred, audio_pred = model_output
             else:
                 video_pred, audio_pred = model_output.sample, model_output.audio_sample
+
+        if ref_seq_len:
+            video_pred = video_pred[:, ref_seq_len:, :]
 
         video_pred = unpack_ltx2_latents(
             video_pred,

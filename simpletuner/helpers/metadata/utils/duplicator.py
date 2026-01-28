@@ -217,6 +217,12 @@ class DatasetDuplicator:
         # Remove conditioning from target config
         del target_cfg["conditioning"]
 
+        # Conditioning datasets don't use audio - remove audio settings
+        # (e.g., IC-LoRA reference videos are visual-only conditioning)
+        target_cfg.pop("audio", None)
+        target_cfg.pop("s2v_datasets", None)
+        target_cfg.pop("_s2v_audio_autoinjected", None)
+
         # Set core fields
         target_cfg["auto_generated"] = True
         target_cfg["source_dataset_id"] = source_id
