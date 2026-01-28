@@ -220,8 +220,6 @@ def _process_modelspec_comment(value) -> str | None:
         stripped = value.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
             try:
-                import json
-
                 parsed = json.loads(stripped)
                 if isinstance(parsed, list):
                     value = parsed
