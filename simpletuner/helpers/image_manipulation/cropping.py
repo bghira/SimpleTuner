@@ -179,12 +179,7 @@ class RandomCropping(BaseCropping):
 
 
 class FaceCropping(RandomCropping):
-    def crop(
-        self,
-        image: Union[Image.Image, np.ndarray],
-        target_width: int,
-        target_height: int,
-    ):
+    def crop(self, target_width, target_height):
         import numpy as np
         import trainingsample as tsr
 
@@ -192,9 +187,9 @@ class FaceCropping(RandomCropping):
         opencv_data_path = tsr.get_opencv_data_path_py()
         face_cascade = tsr.PyCascadeClassifier(opencv_data_path + "haarcascades/haarcascade_frontalface_default.xml")
 
-        if isinstance(image, np.ndarray):
+        if isinstance(self.image, np.ndarray):
             # Use the first frame for face detection in videos
-            sample_frame = image[0] if image.ndim == 4 else image
+            sample_frame = self.image[0] if self.image.ndim == 4 else self.image
 
             # Convert to grayscale for face detection
             if sample_frame.shape[-1] == 3:  # RGB
@@ -202,7 +197,7 @@ class FaceCropping(RandomCropping):
             else:
                 gray = sample_frame
 
-            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            faces = face_cascade.detect_multi_scale(gray, 1.1, 4)
 
             if len(faces) > 0:
                 # Get the largest face
@@ -217,10 +212,10 @@ class FaceCropping(RandomCropping):
                 top = max(0, face_center_y - target_height // 2)
 
                 # Ensure we don't go beyond image boundaries
-                if image.ndim == 4:  # video: (frames, height, width, channels)
-                    img_height, img_width = image.shape[1:3]
+                if self.image.ndim == 4:  # video: (frames, height, width, channels)
+                    img_height, img_width = self.image.shape[1:3]
                 else:
-                    img_height, img_width = image.shape[:2]
+                    img_height, img_width = self.image.shape[:2]
 
                 right = min(img_width, left + target_width)
                 bottom = min(img_height, top + target_height)
@@ -234,12 +229,12 @@ class FaceCropping(RandomCropping):
                 logger.debug(f"FaceCropping: detected face at ({x}, {y}, {w}, {h})")
                 logger.debug(f"FaceCropping: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})")
 
-                if image.ndim == 4:  # video: (frames, height, width, channels)
+                if self.image.ndim == 4:  # video: (frames, height, width, channels)
                     # Standard numpy slicing: [frames, height_slice, width_slice, channels]
-                    cropped = image[:, top:bottom, left:right, :]
+                    cropped = self.image[:, top:bottom, left:right, :]
                     logger.debug(f"FaceCropping video result shape: {cropped.shape}")
                 else:  # single image
-                    cropped = image[top:bottom, left:right, :]
+                    cropped = self.image[top:bottom, left:right, :]
                     logger.debug(f"FaceCropping image result shape: {cropped.shape}")
 
                 return cropped, (top, left)
@@ -247,11 +242,11 @@ class FaceCropping(RandomCropping):
                 logger.debug("FaceCropping: No faces detected, falling back to random cropping")
                 return super().crop(target_width, target_height)
 
-        elif isinstance(image, Image.Image):
-            image_rgb = image.convert("RGB")
+        elif isinstance(self.image, Image.Image):
+            image_rgb = self.image.convert("RGB")
             image_np = np.array(image_rgb)
             gray = tsr.cvt_color_py(image_np, 7)  # 7 = COLOR_RGB2GRAY
-            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            faces = face_cascade.detect_multi_scale(gray, 1.1, 4)
 
             if len(faces) > 0:
                 face = max(faces, key=lambda f: f[2] * f[3])
@@ -273,7 +268,7 @@ class FaceCropping(RandomCropping):
                 logger.debug(f"FaceCropping PIL: detected face at ({x}, {y}, {w}, {h})")
                 logger.debug(f"FaceCropping PIL: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})")
 
-                cropped_image = image.crop((left, top, right, bottom))
+                cropped_image = self.image.crop((left, top, right, bottom))
                 logger.debug(f"FaceCropping PIL result: {cropped_image.size}")
                 return cropped_image, (top, left)
             else:
