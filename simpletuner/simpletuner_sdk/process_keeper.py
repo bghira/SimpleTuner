@@ -110,7 +110,7 @@ class TrainerProcess:
 
         output_dir = None
         if isinstance(config, Mapping):
-            output_dir = config.get("output_dir")
+            output_dir = config.get("output_dir") or config.get("--output_dir")
         else:
             output_dir = getattr(config, "output_dir", None)
         output_path = _coerce_path(output_dir)
