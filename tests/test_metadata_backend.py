@@ -324,6 +324,118 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
 
 
+class TestSplitBucketsEvalDataset(unittest.TestCase):
+    """Test that eval datasets use effective_batch_size=1 for bucket splitting (issue #2507)."""
+
+    def test_eval_dataset_single_image_no_validation_error(self):
+        """Eval dataset with 1 image and batch_size=4 should NOT raise ValueError."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_split"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+        mock_backend.read_only = False
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+        mock_accelerator.process_index = 0
+        mock_accelerator.split_between_processes = MagicMock()
+        mock_accelerator.split_between_processes.return_value.__enter__ = MagicMock(return_value=["eval_img1.jpg"])
+        mock_accelerator.split_between_processes.return_value.__exit__ = MagicMock(return_value=False)
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(1, 0, 1),
+            ),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # Should NOT raise ValueError
+            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4, apply_padding=False)
+
+        # Bucket should still exist after splitting
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+    def test_training_dataset_single_image_raises_validation_error(self):
+        """Training dataset with 1 image and batch_size=4 should raise ValueError."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_training_split"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.IMAGE
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["train_img1.jpg"]}
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(1, 0, 1),
+            ),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # Should raise ValueError for training dataset
+            with self.assertRaises(ValueError) as context:
+                MetadataBackend.split_buckets_between_processes(
+                    mock_backend, gradient_accumulation_steps=1, apply_padding=False
+                )
+
+            self.assertIn("zero usable batches", str(context.exception))
+
+    def test_eval_dataset_ignores_gradient_accumulation(self):
+        """Eval dataset should use effective_batch_size=1 regardless of grad accum setting."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_grad_accum"
+        mock_backend.batch_size = 2
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+        mock_backend.read_only = False
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+        mock_accelerator.process_index = 0
+        mock_accelerator.split_between_processes = MagicMock()
+        mock_accelerator.split_between_processes.return_value.__enter__ = MagicMock(return_value=["eval_img1.jpg"])
+        mock_accelerator.split_between_processes.return_value.__exit__ = MagicMock(return_value=False)
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(1, 0, 1),
+            ),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # With grad_accum=8, training would need 16 samples (2*1*8)
+            # But eval should still work with 1 sample
+            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=8, apply_padding=False)
+
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+
 class TestFilteringStatistics(unittest.TestCase):
     """Test filtering_statistics storage and retrieval in metadata backends (issue #2474)."""
 
