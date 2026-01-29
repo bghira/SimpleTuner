@@ -585,6 +585,24 @@ This is particularly useful when:
 - Without oversubscription: Error raised
 - With `--allow_dataset_oversubscription`: Repeats automatically set to 1 (25 × 2 = 50 samples)
 
+### `max_num_samples`
+
+- **Description:** Limits the dataset to a maximum number of samples. When set, a deterministic random subset of the specified size is selected from the full dataset.
+- **Use case:** Useful for large regularization datasets where you want to use only a portion of the data to avoid overpowering smaller training sets.
+- **Deterministic selection:** The random selection uses the dataset `id` as a seed, ensuring the same subset is selected across training sessions for reproducibility.
+- **Default:** `null` (no limit, all samples are used)
+
+#### Example
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+This will deterministically select 1000 samples from the dataset, with the same selection used every time training is run.
+
 ### `start_epoch` / `start_step`
 
 - Schedule when a dataset begins sampling.
@@ -592,6 +610,38 @@ This is particularly useful when:
 - At least one dataset must have `start_epoch<=1` **and** `start_step<=1`; otherwise training will error because no data is available at startup.
 - Datasets that never meet their start condition (for example, `start_epoch` beyond `--num_train_epochs`) will be skipped and noted in the model card.
 - Progress-bar step estimates are approximate when scheduled datasets activate mid-run because epoch length can increase once new data comes online.
+
+### `end_epoch` / `end_step`
+
+- Schedule when a dataset **stops** sampling (complementing `start_epoch`/`start_step`).
+- `end_epoch` (default: `null` = no limit) stops sampling after this epoch; `end_step` (default: `null` = no limit) stops sampling after this optimizer step.
+- Either condition ending will stop the dataset; they work independently.
+- Useful for **curriculum learning** workflows where you want to:
+  - Train on lower-resolution data early, then switch to higher-resolution data.
+  - Phase out regularisation data after a certain point.
+  - Create multi-stage training within a single config file.
+
+**Example: Curriculum Learning**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+In this example, the 512px dataset is used for steps 1-300, then the 1024px dataset takes over from step 300 onward.
 
 ### `is_regularisation_data`
 
@@ -612,6 +662,32 @@ This is particularly useful when:
 - **Description:** When enabled, images that fail during VAE encoding (corrupted files, unsupported formats, etc.) are permanently deleted from the dataset directory.
 - **Warning:** This is destructive and cannot be undone. Use with caution.
 - **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
+
+### Viewing Filtering Statistics
+
+When SimpleTuner processes your dataset, it tracks how many files were filtered out and why. These statistics are stored in the dataset's cache file (`aspect_ratio_bucket_indices_*.json`) and can be viewed in the WebUI.
+
+**Statistics tracked:**
+- **total_processed**: Number of files that were processed
+- **too_small**: Files filtered because they were below `minimum_image_size`
+- **too_long**: Files filtered for exceeding duration limits (audio/video)
+- **metadata_missing**: Files skipped due to missing metadata
+- **not_found**: Files that couldn't be located
+- **already_exists**: Files already in the cache (not reprocessed)
+- **other**: Files filtered for other reasons
+
+**Viewing in the WebUI:**
+
+When browsing datasets in the WebUI file browser, selecting a directory with an existing dataset will display filtering statistics if available. This helps diagnose why your dataset may have fewer usable samples than expected.
+
+**Troubleshooting filtered files:**
+
+If many files are being filtered as `too_small`:
+1. Check your `minimum_image_size` setting - it should match your `resolution` and `resolution_type`
+2. For `resolution_type=pixel`, `minimum_image_size` is the minimum shorter edge length
+3. For `resolution_type=area` or `pixel_area`, `minimum_image_size` is the minimum total area
+
+See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for more details.
 
 ### `slider_strength`
 
@@ -1049,3 +1125,60 @@ For Stable Diffusion 1.5 / 2.0-base (512px) models, the following mapping will w
     "0.6": [576, 960]
 }
 ```
+
+## Troubleshooting filtered datasets
+
+When your dataset has fewer usable samples than expected, filtering statistics can help identify the cause.
+
+### Common filtering issues
+
+#### Many files filtered as "too_small"
+
+This is the most common issue. Files are filtered when they don't meet the `minimum_image_size` requirement.
+
+**For `resolution_type=pixel`:**
+- `minimum_image_size` is the minimum shorter edge length in pixels
+- Example: `minimum_image_size=1024` filters any image where the shorter edge is less than 1024px
+- A 768x1024 image would be filtered (shorter edge is 768)
+
+**For `resolution_type=area` or `pixel_area`:**
+- `minimum_image_size` is the minimum total pixel area
+- For `area`: measured in megapixels (e.g., `1.0` = ~1 million pixels)
+- For `pixel_area`: measured in pixels (e.g., `1024` means 1024² = ~1 million pixels)
+- Example: `minimum_image_size=1024` with `pixel_area` filters images with area less than 1,048,576 pixels
+
+**Solutions:**
+1. Lower your `minimum_image_size` value
+2. Upscale your images before training (recommended for quality)
+3. Set `minimum_image_size` equal to `resolution` to avoid upscaling
+
+#### Files filtered as "too_long"
+
+Applies to video and audio datasets when files exceed duration limits.
+
+**Solutions:**
+1. Check `video.max_frames` or `audio.max_duration_seconds` settings
+2. Trim your media files to acceptable lengths
+3. Increase the maximum duration limit if your hardware can handle it
+
+#### Files with "metadata_missing"
+
+Files were found but couldn't be read or lacked required metadata.
+
+**Solutions:**
+1. Check file permissions
+2. Verify files are not corrupted
+3. Ensure files are in supported formats (PNG, JPG, WEBP for images)
+
+### Viewing statistics in logs
+
+During dataset processing, statistics are logged:
+```
+Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, 'already_exists': 85, ...}}
+```
+
+### Viewing statistics in WebUI
+
+1. Open the WebUI and navigate to the Datasets tab
+2. Click "Add Dataset" and browse to your dataset directory
+3. If the dataset was previously processed, filtering statistics will be displayed

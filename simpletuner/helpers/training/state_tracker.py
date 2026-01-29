@@ -371,7 +371,14 @@ class StateTracker:
         cls.exhausted_backends = []
 
     @classmethod
-    def set_dataset_schedule(cls, data_backend_id: str, start_epoch: int | None = None, start_step: int | None = None):
+    def set_dataset_schedule(
+        cls,
+        data_backend_id: str,
+        start_epoch: int | None = None,
+        start_step: int | None = None,
+        end_epoch: int | None = None,
+        end_step: int | None = None,
+    ):
         schedule = cls.dataset_schedule.get(data_backend_id, {})
         if start_epoch is not None:
             try:
@@ -383,6 +390,21 @@ class StateTracker:
                 schedule["start_step"] = int(start_step)
             except (TypeError, ValueError):
                 schedule["start_step"] = 0
+        # end_epoch and end_step: None means infinite (no end)
+        if end_epoch is not None:
+            try:
+                schedule["end_epoch"] = int(end_epoch)
+            except (TypeError, ValueError):
+                schedule["end_epoch"] = None
+        else:
+            schedule["end_epoch"] = None
+        if end_step is not None:
+            try:
+                schedule["end_step"] = int(end_step)
+            except (TypeError, ValueError):
+                schedule["end_step"] = None
+        else:
+            schedule["end_step"] = None
         schedule.setdefault("start_epoch", 1)
         schedule.setdefault("start_step", 0)
         schedule.setdefault("reached", False)

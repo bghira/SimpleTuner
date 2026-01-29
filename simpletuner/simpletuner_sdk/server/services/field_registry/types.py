@@ -13,6 +13,7 @@ class FieldType(Enum):
     SELECT = "select"
     CHECKBOX = "checkbox"
     TEXTAREA = "textarea"
+    TEXT_JSON = "text_json"  # JSON value displayed/edited as text, parsed on save
     PASSWORD = "password"
     FILE = "file"
     MULTI_SELECT = "multi_select"

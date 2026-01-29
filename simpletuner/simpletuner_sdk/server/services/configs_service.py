@@ -1332,6 +1332,21 @@ class ConfigsService:
                 return list(value)
             return value
 
+        if field_type == FieldType.TEXT_JSON:
+            # TEXT_JSON fields store native JSON values (arrays, objects, strings, etc.)
+            # If the value is already a non-string type, return as-is
+            if not isinstance(value, str):
+                return value
+            cleaned = value.strip()
+            if not cleaned:
+                return default_value
+            # Parse JSON string back to native Python object
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                # If parsing fails, return the raw string (graceful degradation)
+                return cleaned
+
         # For TEXT, SELECT, TEXTAREA, etc.
         if isinstance(value, str):
             cleaned = value.strip()
@@ -1531,13 +1546,6 @@ class ConfigsService:
                         converted_value = json.loads(trimmed)
                     except json.JSONDecodeError:
                         # Keep original string if parsing fails; validation will surface errors later
-                        pass
-            if config_key in {"--tread_config", "tread_config"} and isinstance(converted_value, str):
-                trimmed = converted_value.strip()
-                if trimmed.startswith("{") or trimmed.startswith("["):
-                    try:
-                        converted_value = json.loads(trimmed)
-                    except json.JSONDecodeError:
                         pass
 
             config_dict[config_key] = converted_value

@@ -362,8 +362,76 @@ reset_all_circuit_breakers()
 - exception type `retryable_exceptions` में है या नहीं देखें
 - HTTP status code `retryable_status_codes` में है या नहीं देखें
 
+## GPU Circuit Breaker
+
+External service circuit breakers के अलावा, SimpleTuner में **GPU circuit breaker** भी शामिल है जो GPU hardware health को monitor करता है और training के दौरान CUDA failures detect करता है। यह cloud training के लिए विशेष रूप से उपयोगी है जहाँ GPU hardware faults को जल्दी detect न करने पर पैसे बर्बाद हो सकते हैं।
+
+### यह कैसे काम करता है
+
+NVIDIA GPUs पर training करते समय GPU circuit breaker **हमेशा enabled** (zero configuration) रहता है:
+
+1. **Background health monitoring** - PyNVML के माध्यम से हर 5 सेकंड में GPU metrics poll करता है
+2. **CUDA error detection** - Training के दौरान CUDA runtime errors को catch करता है
+3. **Webhook emission** - Orchestrators को notify करने के लिए `gpu.fault` event भेजता है
+
+### Monitored Metrics
+
+| Metric | Detection | Severity |
+|--------|-----------|----------|
+| **ECC errors** | Threshold से ऊपर uncorrectable (double-bit) errors | Critical |
+| **Temperature** | Shutdown threshold से 5°C के अंदर | Critical |
+| **Throttling** | Hardware slowdown, thermal throttling, power brake | Critical |
+| **CUDA errors** | Training के दौरान कोई भी CUDA runtime error | Critical |
+
+### Webhook Payload
+
+जब circuit open होता है, एक `gpu.fault` webhook emit होता है:
+
+```json
+{
+  "type": "gpu.fault",
+  "severity": "critical",
+  "job_id": "training-job-123",
+  "title": "GPU Fault: cuda_error",
+  "message": "CUDA driver error: unknown error",
+  "fault": {
+    "type": "cuda_error",
+    "gpu": {
+      "index": 0,
+      "name": "NVIDIA RTX 5090",
+      "temperature_celsius": 75.5,
+      "ecc_errors_double": 2,
+      "throttle_reasons": ["hw_thermal_slowdown"],
+      "memory_used_percent": 85.5
+    },
+    "action_taken": "circuit_opened",
+    "exception_type": "RuntimeError"
+  },
+  "timestamp": "2025-01-25T12:34:56.789Z"
+}
+```
+
+### Fault Types
+
+| Type | Trigger |
+|------|---------|
+| `cuda_error` | Training step के दौरान CUDA runtime error |
+| `ecc_error` | Threshold से ऊपर uncorrectable ECC errors |
+| `health_warning` | Temperature या throttling issues detected |
+| `circuit_open` | Previous fault से circuit पहले से open है |
+
+### Orchestrator Integration
+
+Cloud orchestrators (RunPod, Lambda Labs, etc.) `gpu.fault` webhook का उपयोग कर सकते हैं:
+
+- Billing से बचने के लिए container को automatically terminate करें
+- Hardware issues के बारे में operators को alert करें
+- Healthy instances पर failover trigger करें
+- Fleet health tracking के लिए GPU faults log करें
+
 ## See Also
 
 - [Operations Guide](OPERATIONS_TUTORIAL.md) - Production deployment और monitoring
 - [Cloud Training Tutorial](TUTORIAL.md) - Getting started गाइड
 - [Replicate Integration](REPLICATE.md) - Provider-specific configuration
+- [Distributed Training](../../DISTRIBUTED.md) - Multi-GPU और multi-node setup

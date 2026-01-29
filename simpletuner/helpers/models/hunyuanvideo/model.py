@@ -243,6 +243,12 @@ class HunyuanVideo(VideoModelFoundation):
     def requires_conditioning_latents(self) -> bool:
         return self._is_i2v_like_flavour()
 
+    def requires_conditioning_validation_inputs(self) -> bool:
+        return self._is_i2v_like_flavour() or super().requires_conditioning_validation_inputs()
+
+    def requires_validation_i2v_samples(self) -> bool:
+        return self._is_i2v_like_flavour() or super().requires_validation_i2v_samples()
+
     def setup_training_noise_schedule(self):
         self.noise_schedule = FlowMatchEulerDiscreteScheduler(
             num_train_timesteps=1000,

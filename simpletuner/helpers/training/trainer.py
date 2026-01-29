@@ -58,6 +58,8 @@ from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER 
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
 from simpletuner.helpers.training.evaluation import ModelEvaluator
+from simpletuner.helpers.training.exceptions import GPUHealthError
+from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
@@ -84,204 +86,27 @@ from simpletuner.helpers.webhooks.events import (
     attach_timestamp,
     checkpoint_event,
     error_event,
+    gpu_fault_event,
     lifecycle_stage_event,
     notification_event,
     training_status_event,
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
-
-
-def _format_signal_message(signal_num: int, signal_name: Optional[str] = None) -> str:
-    if signal_name is None:
-        try:
-            signal_name = signal.Signals(signal_num).name
-        except ValueError:
-            signal_name = None
-
-    sigkill_value = getattr(signal, "SIGKILL", None)
-    if signal_name == "SIGKILL" or (sigkill_value is not None and signal_num == sigkill_value):
-        return "Training subprocess was killed by SIGKILL (likely out of system memory or critical system condition)."
-    if signal_name:
-        return f"Training subprocess was killed by {signal_name} (signal {signal_num})."
-    return f"Training subprocess was killed by signal {signal_num}."
-
-
-def _format_signal_exit_message(exit_code: int) -> Optional[str]:
-    if exit_code >= 0:
-        return None
-    return _format_signal_message(-exit_code)
-
-
-def _default_callback_url() -> str:
-    ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"
-    protocol = "https" if ssl_enabled else "http"
-    host = os.environ.get("SIMPLETUNER_WEBHOOK_HOST", "localhost")
-    port = os.environ.get("SIMPLETUNER_WEBHOOK_PORT", "8001")
-    base_url = f"{protocol}://{host}:{port}"
-    return os.environ.get("SIMPLETUNER_WEBHOOK_CALLBACK_URL", f"{base_url}/callback")
+from simpletuner.simpletuner_sdk.server.services.webhook_defaults import get_default_callback_url
 
 
 def _webui_callback_exclusions() -> Optional[set[str]]:
+    """Return callback URLs to exclude when sending webhooks to avoid duplicates.
+
+    When running under the WebUI (process keeper), we exclude the WebUI's own
+    callback URL since errors are surfaced via direct webhook from train.py.
+    """
     if not os.environ.get("SIMPLETUNER_PARENT_PID"):
         return None
-    callback_url = _default_callback_url()
+    callback_url = get_default_callback_url()
     if not callback_url:
         return None
     return {callback_url}
-
-
-def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
-    """Derive a concise failure summary and optional log excerpt from accelerate output."""
-
-    cleaned: List[str] = [line.rstrip("\n") for line in lines]
-    non_empty = [line.strip() for line in cleaned if line and line.strip()]
-
-    best_index: Optional[int] = None
-    best_line: Optional[str] = None
-    exception_fallback: Optional[tuple[int, str]] = None
-    signal_fallback: Optional[tuple[int, str]] = None
-    signal_exit_message = _format_signal_exit_message(exit_code)
-
-    def _extract_exception_name(text: str) -> Optional[str]:
-        match = re.search(r"\b([A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit))\b", text)
-        return match.group(1) if match else None
-
-    exception_wrappers = (
-        "subprocess.CalledProcessError",
-        "ChildFailedError",
-        "torch.distributed.elastic.multiprocessing.errors.ChildFailedError",
-    )
-    wrapper_tokens = ("accelerate launch exited", "subprocess.calledprocesserror", "childfailederror")
-
-    def _is_wrapper_line(text: str) -> bool:
-        lowered = text.lower()
-        return any(token in lowered for token in wrapper_tokens)
-
-    for idx in range(len(cleaned) - 1, -1, -1):
-        candidate_raw = cleaned[idx].strip()
-        if not candidate_raw:
-            continue
-        match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", candidate_raw)
-        if match:
-            signal_name = match.group(1)
-            signal_num = int(match.group(2))
-            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
-            break
-        # Also match accelerate's format: "Signal 9 (SIGKILL) received by PID 12345"
-        match = re.search(r"Signal\s+(\d+)\s+\(([A-Z_]+)\)\s+received by PID", candidate_raw, re.IGNORECASE)
-        if match:
-            signal_num = int(match.group(1))
-            signal_name = match.group(2)
-            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
-            break
-
-    if signal_fallback is None and signal_exit_message is not None:
-        signal_fallback = (max(len(cleaned) - 1, 0), signal_exit_message)
-
-    for idx in range(len(cleaned) - 1, -1, -1):
-        candidate_raw = cleaned[idx].strip()
-        if not candidate_raw:
-            continue
-        lowered = candidate_raw.lower()
-        if "cuda out of memory" in lowered:
-            best_index = idx
-            best_line = candidate_raw
-            break
-        if "runtimeerror" in lowered and "cuda" in lowered:
-            if best_line is None:
-                best_index = idx
-                best_line = candidate_raw
-        if "childfailederror" in lowered:
-            if best_line is None:
-                best_index = idx
-                best_line = candidate_raw
-        if "error" in lowered and ("[error]" in lowered or lowered.startswith("error")):
-            if best_line is None:
-                best_index = idx
-                best_line = candidate_raw
-
-    prefer_exception = best_line is None
-    if best_line:
-        if _is_wrapper_line(best_line):
-            prefer_exception = True
-
-    if prefer_exception:
-        traceback_idx = None
-        for idx in range(len(cleaned) - 1, -1, -1):
-            if cleaned[idx].strip().startswith("Traceback (most recent call last):"):
-                traceback_idx = idx
-                break
-
-        def _find_exception_line(start_idx: int, end_idx: int) -> Optional[tuple[int, str]]:
-            nonlocal exception_fallback
-            for idx in range(end_idx, start_idx - 1, -1):
-                candidate_raw = cleaned[idx].strip()
-                if not candidate_raw:
-                    continue
-                exc_name = _extract_exception_name(candidate_raw)
-                if not exc_name:
-                    continue
-                if exc_name in exception_wrappers or _is_wrapper_line(candidate_raw):
-                    if exception_fallback is None:
-                        exception_fallback = (idx, candidate_raw)
-                    continue
-                return idx, candidate_raw
-            return None
-
-        preferred = None
-        if traceback_idx is not None:
-            preferred = _find_exception_line(traceback_idx + 1, len(cleaned) - 1)
-        if preferred is None:
-            preferred = _find_exception_line(0, len(cleaned) - 1)
-        if preferred is not None:
-            best_index, best_line = preferred
-        elif exception_fallback is not None:
-            best_index, best_line = exception_fallback
-        elif signal_fallback is not None:
-            best_index, best_line = signal_fallback
-
-    if best_line is not None and _is_wrapper_line(best_line) and signal_fallback is not None:
-        best_index, best_line = signal_fallback
-
-    # If we have signal info (SIGKILL, etc) and the best_line is just a generic RuntimeError,
-    # prefer the signal info as it's more useful for diagnosing OOM/killed processes
-    if signal_fallback is not None and best_line is not None:
-        signal_message = signal_fallback[1].lower()
-        best_lower = best_line.lower()
-        has_useful_signal_info = any(sig in signal_message for sig in ("sigkill", "sigterm", "signal"))
-        is_generic_runtime_error = (
-            best_lower.startswith("runtimeerror:") and "cuda" not in best_lower and "memory" not in best_lower
-        )
-        if has_useful_signal_info and is_generic_runtime_error:
-            best_index, best_line = signal_fallback
-
-    if best_line is None:
-        for idx in range(len(cleaned) - 1, -1, -1):
-            candidate = cleaned[idx].strip()
-            if candidate:
-                best_index = idx
-                best_line = candidate
-                break
-
-    summary = f"Accelerate launch exited with status {exit_code}"
-    if best_line:
-        summary = f"{summary}: {best_line.strip()}"
-    summary = summary[:512]
-
-    excerpt: Optional[str] = None
-    if best_index is not None:
-        start = max(0, best_index - 5)
-        end = min(len(cleaned), best_index + 6)
-        snippet_lines = [line.strip() for line in cleaned[start:end] if line.strip()]
-        if snippet_lines:
-            excerpt = "\n".join(snippet_lines)
-    elif non_empty:
-        excerpt = "\n".join(non_empty[-10:])
-
-    if excerpt and len(excerpt) > 4000:
-        excerpt = excerpt[-4000:]
-
-    return summary, excerpt
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
@@ -451,6 +276,11 @@ class Trainer:
         except Exception as e:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
+
+        if getattr(self, "config", None) is not None:
+            logger.info(
+                f"Trainer.__init__: model_type={getattr(self.config, 'model_type', 'NOT_SET')!r}, lora_type={getattr(self.config, 'lora_type', 'NOT_SET')!r}"
+            )
 
         if getattr(self, "config", None) is not None and self.config.model_family in ModelRegistry.model_families().keys():
             self.model = ModelRegistry.model_families()[self.config.model_family](self.config, self.accelerator)
@@ -2037,6 +1867,11 @@ class Trainer:
             webhook_config=webhook_config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
+        # Initialize GPU circuit breaker for hardware fault detection
+        self.gpu_circuit_breaker = get_gpu_circuit_breaker(
+            webhook_handler=self.webhook_handler,
+            job_id=self.job_id,
+        )
         if send_startup_message:
             self._send_webhook_msg(
                 message="SimpleTuner has launched. Hold onto your butts!",
@@ -3141,14 +2976,49 @@ class Trainer:
 
         self.config.total_num_batches = total_num_batches
         self.config.initial_num_batches = initial_num_batches
+
+        # Build epoch schedule map: epoch -> cumulative batches added at that epoch
+        # This allows dynamic calculation of steps per epoch based on current epoch
+        epoch_batches_map: dict[int, int] = {}
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+            if backend_type is DatasetType.EVAL or backend_type not in training_dataset_types:
+                continue
+            backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
+            probability = backend_config.get("probability", 1.0)
+            if probability is None:
+                probability_value = 1.0
+            else:
+                try:
+                    probability_value = float(probability)
+                except (TypeError, ValueError):
+                    probability_value = 0.0
+            if probability_value <= 0:
+                continue
+            try:
+                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
+            except Exception:
+                dataset_batches = 0
+            schedule = StateTracker.get_dataset_schedule(backend_id) or {}
+            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend_config.get("start_epoch", 1)))
+            # Accumulate batches by start_epoch
+            epoch_batches_map[start_epoch] = epoch_batches_map.get(start_epoch, 0) + dataset_batches
+
+        # Store the schedule for dynamic steps_per_epoch calculation
+        self.config.epoch_batches_schedule = epoch_batches_map
+
         if initial_num_batches < total_num_batches:
             logger.info(
                 f"Dataset scheduling detected: {initial_num_batches} batches available at start, "
                 f"{total_num_batches} once all schedules begin. Progress estimates may shift after activation."
             )
-        self.config.num_update_steps_per_epoch = math.ceil(
-            self.config.total_num_batches / max(self.config.gradient_accumulation_steps or 1, 1)
-        )
+
+        # Calculate initial steps per epoch (used during first epoch(s) before scheduled datasets activate)
+        grad_accum = max(self.config.gradient_accumulation_steps or 1, 1)
+        self.config.initial_num_update_steps_per_epoch = math.ceil(initial_num_batches / grad_accum)
+
+        # Full steps per epoch (used after all datasets are active)
+        self.config.num_update_steps_per_epoch = math.ceil(total_num_batches / grad_accum)
         steps_per_epoch = max(self.config.num_update_steps_per_epoch, 1)
         target_epochs = float(self.config.num_train_epochs or 0)
         if getattr(self.config, "overrode_max_train_steps", False):
@@ -3203,6 +3073,38 @@ class Trainer:
         self.config.total_batch_size = (
             self.config.train_batch_size * self.accelerator.num_processes * self.config.gradient_accumulation_steps
         )
+
+    def get_steps_per_epoch_for_epoch(self, epoch: int) -> int:
+        """
+        Calculate the number of steps per epoch for a specific epoch.
+
+        When datasets have different start_epoch values, the number of steps
+        per epoch varies. This method computes the correct value for a given epoch.
+
+        Args:
+            epoch: The epoch number (1-indexed) to calculate steps for.
+
+        Returns:
+            The number of update steps for that epoch.
+        """
+        epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
+        if epoch_batches_schedule is None:
+            # No schedule, use the cached value
+            return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
+
+        # Calculate total batches for this epoch by summing all datasets
+        # that have start_epoch <= epoch
+        active_batches = 0
+        for start_epoch, batches in epoch_batches_schedule.items():
+            if start_epoch <= epoch:
+                active_batches += batches
+
+        if active_batches <= 0:
+            # Fallback to cached value if no batches (shouldn't happen)
+            return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
+
+        grad_accum = max(self.config.gradient_accumulation_steps or 1, 1)
+        return max(math.ceil(active_batches / grad_accum), 1)
 
     def _setup_ramtorch_zero_state(self):
         if not self._ramtorch_distributed():
@@ -3980,9 +3882,9 @@ class Trainer:
 
         expected_family = str(getattr(self.config, "model_family", "") or "").strip().lower()
         expected_type = str(getattr(self.config, "model_type", "") or "").strip().lower()
-        expected_flavour = str(
-            getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", "")) or ""
-        ).strip().lower()
+        expected_flavour = (
+            str(getattr(self.config, "model_flavour", getattr(self.config, "model_flavor", "")) or "").strip().lower()
+        )
         expected_arch = None
         if getattr(self, "model_hooks", None) is not None:
             expected_arch = self.model_hooks.get_modelspec_architecture()
@@ -3993,19 +3895,13 @@ class Trainer:
         manifest_arch = str(metadata.get("modelspec_architecture", metadata.get("modelspec.architecture", "")) or "").strip()
 
         if expected_family and manifest_family and expected_family != manifest_family:
-            raise ValueError(
-                f"Checkpoint model_family mismatch (expected {expected_family}, got {manifest_family})."
-            )
+            raise ValueError(f"Checkpoint model_family mismatch (expected {expected_family}, got {manifest_family}).")
         if expected_type and manifest_type and expected_type != manifest_type:
             raise ValueError(f"Checkpoint model_type mismatch (expected {expected_type}, got {manifest_type}).")
         if expected_flavour and manifest_flavour and expected_flavour != manifest_flavour:
-            raise ValueError(
-                f"Checkpoint model_flavour mismatch (expected {expected_flavour}, got {manifest_flavour})."
-            )
+            raise ValueError(f"Checkpoint model_flavour mismatch (expected {expected_flavour}, got {manifest_flavour}).")
         if expected_arch and manifest_arch and expected_arch != manifest_arch:
-            raise ValueError(
-                f"Checkpoint architecture mismatch (expected {expected_arch}, got {manifest_arch})."
-            )
+            raise ValueError(f"Checkpoint architecture mismatch (expected {expected_arch}, got {manifest_arch}).")
         if expected_arch and not manifest_arch:
             logger.warning("Checkpoint manifest missing architecture metadata; skipping architecture validation.")
 
@@ -4829,6 +4725,17 @@ class Trainer:
         self.state["current_epoch"] = epoch
         StateTracker.set_epoch(epoch)
 
+        # Update steps per epoch for the current epoch based on active datasets.
+        # This handles dynamic dataset scheduling where datasets have different start_epoch values.
+        new_steps_per_epoch = self.get_steps_per_epoch_for_epoch(epoch)
+        old_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", new_steps_per_epoch)
+        if new_steps_per_epoch != old_steps_per_epoch:
+            logger.info(
+                f"Steps per epoch changed from {old_steps_per_epoch} to {new_steps_per_epoch} "
+                f"due to dataset scheduling (epoch {epoch})."
+            )
+        self.config.num_update_steps_per_epoch = new_steps_per_epoch
+
         if self.state["first_epoch"] == epoch:
             return
         logger.debug(
@@ -4915,6 +4822,12 @@ class Trainer:
         if self._cleanup_invoked:
             return
         self._cleanup_invoked = True
+
+        try:
+            if getattr(self, "gpu_circuit_breaker", None) is not None:
+                self.gpu_circuit_breaker.stop_monitoring()
+        except Exception as exc:
+            logger.debug("Failed to stop GPU health monitor during cleanup: %s", exc, exc_info=True)
 
         try:
             if getattr(self, "bf", None) is not None:
@@ -5250,6 +5163,9 @@ class Trainer:
         self.init_trackers()
         self._train_initial_msg()
         self.mark_optimizer_train()
+        # Start GPU health monitoring
+        if hasattr(self, "gpu_circuit_breaker") and self.gpu_circuit_breaker is not None:
+            self.gpu_circuit_breaker.start_monitoring()
 
         # Only show the progress bar once on each machine.
         show_progress_bar = True
@@ -5384,6 +5300,14 @@ class Trainer:
 
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
+                # Check GPU circuit breaker before training step
+                if hasattr(self, "gpu_circuit_breaker") and self.gpu_circuit_breaker is not None:
+                    if self.gpu_circuit_breaker.is_open:
+                        raise GPUHealthError(
+                            message="GPU circuit breaker is open due to hardware fault",
+                            fault_type="circuit_open",
+                            gpu_index=self.gpu_circuit_breaker._state.last_failure_gpu_index,
+                        )
                 with self.accelerator.accumulate(*training_models):
                     if self.model.uses_noise_schedule():
                         batch_label = "latents"
@@ -6542,18 +6466,6 @@ def run_trainer_job(config):
         if signal_file_path:
             launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
 
-        # Set up error file for structured error reporting from subprocess
-        from simpletuner.helpers.training.error_reporter import ERROR_FILE_ENV_VAR
-
-        error_file_path = None
-        if signal_dir:
-            error_file_path = Path(signal_dir) / "error.json"
-        else:
-            import tempfile
-
-            error_file_path = Path(tempfile.gettempdir()) / f"simpletuner_error_{os.getpid()}.json"
-        launch_env[ERROR_FILE_ENV_VAR] = str(error_file_path)
-
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
@@ -6627,6 +6539,13 @@ def run_trainer_job(config):
                     except Exception:
                         train_cli_payload.pop(config_key, None)
             from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+
+            # Debug: log model_type and lora_type before converting to CLI args
+            launch_logger.info(
+                "run_trainer_job: config_payload contains model_type=%r, lora_type=%r",
+                train_cli_payload.get("model_type") or train_cli_payload.get("--model_type"),
+                train_cli_payload.get("lora_type") or train_cli_payload.get("--lora_type"),
+            )
 
             cli_args = mapping_to_cli_args(train_cli_payload)
         if cli_args:
@@ -6717,24 +6636,32 @@ def run_trainer_job(config):
         returncode = process.wait()
         _cleanup_signal_relay()
         if returncode != 0:
-            # Try to read structured error file first
-            from simpletuner.helpers.training.error_reporter import cleanup_error_file, read_error
+            # Extract error from stdout
+            cleaned = [_strip_ansi(line.rstrip("\n")) for line in recent_lines]
+            excerpt_lines = [line.strip() for line in cleaned[-80:] if line.strip()]
+            excerpt = "\n".join(excerpt_lines) if excerpt_lines else None
 
-            error_data = read_error(error_file_path) if error_file_path else None
+            # Find the real exception, not subprocess.CalledProcessError wrapper
+            best_line = None
+            for line in reversed(excerpt_lines):
+                lowered = line.lower()
+                # Skip wrapper exceptions
+                if "subprocess.calledprocesserror" in lowered or "accelerate" in lowered:
+                    continue
+                # Look for actual exceptions
+                if any(x in line for x in ["Error:", "Exception:", "ValueError:", "RuntimeError:", "OSError:"]):
+                    best_line = line
+                    break
 
-            if error_data:
-                # Use structured error data from subprocess
-                summary = f"{error_data.get('exception_type', 'Error')}: {error_data.get('message', 'Unknown error')}"
-                excerpt = error_data.get("traceback")
-                cleanup_error_file(error_file_path)
-            else:
-                # Fallback: extract from stdout (last resort)
-                cleaned = [_strip_ansi(line.rstrip("\n")) for line in recent_lines]
-                excerpt_lines = [line.strip() for line in cleaned[-40:] if line.strip()]
-                excerpt = "\n".join(excerpt_lines) if excerpt_lines else None
-                summary = f"Accelerate launch exited with status {returncode}"
-                if excerpt_lines:
-                    summary = f"{summary}: {excerpt_lines[-1][:200]}"
+            summary = f"Accelerate launch exited with status {returncode}"
+            if best_line:
+                summary = f"{best_line[:400]}"
+            elif excerpt_lines:
+                # Last resort: use last non-wrapper line
+                for line in reversed(excerpt_lines):
+                    if "subprocess.calledprocesserror" not in line.lower():
+                        summary = f"{summary}: {line[:200]}"
+                        break
 
             launch_error = RuntimeError(summary[:512])
             if excerpt:
@@ -6742,12 +6669,6 @@ def run_trainer_job(config):
             if recent_lines:
                 setattr(launch_error, "_simpletuner_recent_log_lines", list(recent_lines))
             raise launch_error
-        # Clean up error file on success
-        if error_file_path and error_file_path.exists():
-            try:
-                error_file_path.unlink()
-            except Exception:
-                pass
         return returncode
 
     try:

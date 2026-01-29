@@ -551,6 +551,24 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - Oversubscription के बिना: Error आएगा
 - `--allow_dataset_oversubscription` के साथ: repeats स्वतः 1 पर सेट होंगे (25 × 2 = 50 samples)
 
+### `max_num_samples`
+
+- **विवरण:** Dataset को अधिकतम samples की संख्या तक सीमित करता है। सेट करने पर, पूर्ण dataset से निर्दिष्ट आकार का एक deterministic random subset चुना जाता है।
+- **उपयोग का मामला:** बड़े regularization datasets के लिए उपयोगी जहाँ आप छोटे training sets को overwhelm न करने के लिए डेटा का केवल एक हिस्सा उपयोग करना चाहते हैं।
+- **Deterministic selection:** Random selection dataset `id` को seed के रूप में उपयोग करता है, जिससे reproducibility के लिए training sessions में समान subset चुना जाना सुनिश्चित होता है।
+- **डिफ़ॉल्ट:** `null` (कोई सीमा नहीं, सभी samples उपयोग होते हैं)
+
+#### उदाहरण
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+यह dataset से 1000 samples को deterministically select करेगा, जिसमें हर बार training चलाने पर समान selection उपयोग होगी।
+
 ### `start_epoch` / `start_step`
 
 - यह schedule करता है कि dataset sampling कब शुरू होगी।
@@ -558,6 +576,38 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - कम से कम एक dataset में `start_epoch<=1` **और** `start_step<=1` होना चाहिए; अन्यथा startup पर कोई डेटा उपलब्ध नहीं होगा और training error देगी।
 - जिन datasets की start condition कभी पूरी नहीं होती (उदा., `start_epoch` `--num_train_epochs` से आगे), उन्हें skip किया जाएगा और model card में नोट किया जाएगा।
 - जब scheduled datasets mid‑run में active होते हैं, तो progress‑bar step estimates approximate हो जाते हैं क्योंकि epoch length बढ़ सकती है।
+
+### `end_epoch` / `end_step`
+
+- यह schedule करता है कि dataset sampling कब **बंद** होगी (`start_epoch`/`start_step` का पूरक)।
+- `end_epoch` (डिफ़ॉल्ट: `null` = कोई सीमा नहीं) इस epoch के बाद sampling बंद कर देता है; `end_step` (डिफ़ॉल्ट: `null` = कोई सीमा नहीं) इस optimizer step के बाद sampling बंद कर देता है।
+- कोई भी condition समाप्त होने पर dataset बंद हो जाएगा; वे स्वतंत्र रूप से काम करते हैं।
+- **Curriculum learning** workflows के लिए उपयोगी जहाँ आप चाहते हैं:
+  - पहले low-resolution data पर train करें, फिर high-resolution data पर switch करें।
+  - एक निश्चित बिंदु के बाद regularisation data को धीरे-धीरे हटाएं।
+  - एक single config file में multi-stage training बनाएं।
+
+**उदाहरण: Curriculum Learning**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+इस उदाहरण में, 512px dataset steps 1-300 के लिए उपयोग होता है, फिर 1024px dataset step 300 से आगे संभाल लेता है।
 
 ### `is_regularisation_data`
 
@@ -578,6 +628,32 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **Description:** सक्षम होने पर, VAE encoding के दौरान fail होने वाली images (corrupted files, unsupported formats, आदि) dataset directory से स्थायी रूप से delete कर दी जाती हैं।
 - **Warning:** यह destructive है और undo नहीं किया जा सकता। सावधानी से उपयोग करें।
 - **Default:** trainer के `--delete_problematic_images` argument पर fallback करता है (डिफ़ॉल्ट: `false`)।
+
+### Filtering Statistics देखना
+
+जब SimpleTuner आपके dataset को process करता है, यह track करता है कि कितनी files filter हुईं और क्यों। ये statistics dataset के cache file (`aspect_ratio_bucket_indices_*.json`) में store होती हैं और WebUI में देखी जा सकती हैं।
+
+**Track की जाने वाली Statistics:**
+- **total_processed**: Process की गई files की संख्या
+- **too_small**: `minimum_image_size` से नीचे होने के कारण filter की गई files
+- **too_long**: duration limits से अधिक होने के कारण filter की गई files (audio/video)
+- **metadata_missing**: missing metadata के कारण skip की गई files
+- **not_found**: जो files locate नहीं हो सकीं
+- **already_exists**: cache में पहले से मौजूद files (reprocess नहीं हुईं)
+- **other**: अन्य कारणों से filter की गई files
+
+**WebUI में देखना:**
+
+WebUI file browser में datasets browse करते समय, किसी existing dataset वाली directory select करने पर filtering statistics दिखाई देंगी (यदि उपलब्ध हों)। यह diagnose करने में मदद करता है कि आपके dataset में expected से कम usable samples क्यों हैं।
+
+**Filtered files का Troubleshooting:**
+
+यदि बहुत सी files `too_small` के रूप में filter हो रही हैं:
+1. अपनी `minimum_image_size` setting check करें — यह `resolution` और `resolution_type` से match होनी चाहिए
+2. `resolution_type=pixel` के लिए, `minimum_image_size` minimum shorter edge length है
+3. `resolution_type=area` या `pixel_area` के लिए, `minimum_image_size` minimum total area है
+
+अधिक details के लिए नीचे [Troubleshooting](#filtered-datasets-का-troubleshooting) section देखें।
 
 ### `slider_strength`
 

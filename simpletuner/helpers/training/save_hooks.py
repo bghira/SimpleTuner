@@ -202,14 +202,17 @@ class SaveHookManager:
 
     def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
         """
-        Scan all training captions, split into tags, and build frequency dict.
+        Scan all training captions and build frequency dict of trigger words.
+        Only includes tags that appear in more than 50% of all captions.
         Returns dict of dataset_id -> {tag: count}.
         """
         import re
 
         from simpletuner.helpers.prompts import PromptHandler
 
-        ss_tag_frequency = {}
+        # First pass: collect all captions and count tag presence across all backends
+        all_captions = []
+        backend_captions = {}
 
         for backend_id, backend in StateTracker.get_data_backends().items():
             if backend.get("data_backend") is None:
@@ -220,7 +223,6 @@ class SaveHookManager:
             if not caption_strategy:
                 continue
 
-            # Get caption config parameters
             prepend_instance_prompt = config.get(
                 "prepend_instance_prompt", getattr(self.args, "prepend_instance_prompt", False)
             )
@@ -246,17 +248,40 @@ class SaveHookManager:
                 logger.debug(f"Could not get captions for backend {backend_id}: {e}")
                 continue
 
+            valid_captions = [c for c in captions if c and c != "__caption_dropout__"]
+            backend_captions[backend_id] = valid_captions
+            all_captions.extend(valid_captions)
+
+        if not all_captions:
+            return {}
+
+        # Count how many captions each tag appears in (presence-based)
+        tag_caption_count = {}
+        for caption in all_captions:
+            tags = re.split(r"[,\n]+", str(caption))
+            seen_in_caption = set()
+            for tag in tags:
+                tag = tag.strip()
+                if tag and tag not in seen_in_caption:
+                    seen_in_caption.add(tag)
+                    tag_caption_count[tag] = tag_caption_count.get(tag, 0) + 1
+
+        # Filter to tags appearing in more than 50% of all captions
+        threshold = len(all_captions) / 2
+        frequent_tags = {tag for tag, count in tag_caption_count.items() if count > threshold}
+
+        if not frequent_tags:
+            return {}
+
+        # Build per-backend frequency dict with only frequent tags
+        ss_tag_frequency = {}
+        for backend_id, captions in backend_captions.items():
             tag_counts = {}
             for caption in captions:
-                if not caption or caption == "__caption_dropout__":
-                    continue
-
-                # Split by comma for booru-style tags, or keep as single trigger word
-                # Also handle newlines and other common separators
                 tags = re.split(r"[,\n]+", str(caption))
                 for tag in tags:
                     tag = tag.strip()
-                    if tag:
+                    if tag and tag in frequent_tags:
                         tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
             if tag_counts:
@@ -883,10 +908,21 @@ class SaveHookManager:
             and getattr(fsdp_plugin, "fsdp_version", 1) == 2
         )
 
+        logger.info(
+            f"load_model_hook: model_type={self.args.model_type!r}, lora_type={self.args.lora_type!r}, is_fsdp2_run={is_fsdp2_run}"
+        )
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
             self._load_lyrics_embedder_state(input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
             self._load_lycoris(models=models, input_dir=input_dir)
         elif not is_fsdp2_run:
+            # Check if this checkpoint looks like a LoRA checkpoint but we're trying to load it as full model
+            lora_weights_path = os.path.join(input_dir, "pytorch_lora_weights.safetensors")
+            if os.path.exists(lora_weights_path):
+                raise ValueError(
+                    f"Checkpoint at {input_dir} appears to be a LoRA checkpoint (contains pytorch_lora_weights.safetensors), "
+                    f"but the current config has model_type={self.args.model_type!r} and lora_type={self.args.lora_type!r}. "
+                    f"Set model_type='lora' and lora_type='standard' to resume this checkpoint."
+                )
             self._load_full_model(models=models, input_dir=input_dir)

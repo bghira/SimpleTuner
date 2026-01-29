@@ -43,7 +43,7 @@ def cmd_cloud_config_show(args) -> int:
     print("=" * 50)
 
     display_config = dict(config)
-    for key in ("api_token", "secret", "password"):
+    for key in ("api_token", "secret", "password", "access_token", "refresh_token"):
         if key in display_config and display_config[key]:
             display_config[key] = "***"
 
@@ -74,6 +74,12 @@ def cmd_cloud_config_set_token(args) -> int:
             "/api/cloud/providers/replicate/token",
             data={"api_token": token},
         )
+    elif provider == "simpletuner_io":
+        result = cloud_api_request(
+            "PUT",
+            "/api/cloud/providers/simpletuner_io/token",
+            data={"api_token": token},
+        )
     else:
         print(f"Error: Token management not supported for provider '{provider}'.")
         return 1
@@ -96,6 +102,8 @@ def cmd_cloud_config_delete_token(args) -> int:
 
     if provider == "replicate":
         result = cloud_api_request("DELETE", "/api/cloud/providers/replicate/token")
+    elif provider == "simpletuner_io":
+        result = cloud_api_request("DELETE", "/api/cloud/providers/simpletuner_io/token")
     else:
         print(f"Error: Token management not supported for provider '{provider}'.")
         return 1

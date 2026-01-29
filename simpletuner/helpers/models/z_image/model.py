@@ -55,6 +55,7 @@ class ZImage(ImageModelFoundation):
 
     # We do not bundle a default HF path; users must point at a released checkpoint.
     HUGGINGFACE_PATHS: dict = {
+        "base": "TONGYI-MAI/Z-Image",
         "turbo": "TONGYI-MAI/Z-Image-Turbo",
         "turbo-ostris-v2": "TONGYI-MAI/Z-Image-Turbo",
         "ostris-de-turbo": "TONGYI-MAI/Z-Image-Turbo",

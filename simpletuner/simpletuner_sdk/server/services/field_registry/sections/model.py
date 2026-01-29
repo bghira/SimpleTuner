@@ -683,12 +683,12 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             name="tread_config",
             arg_name="--tread_config",
             ui_label="TREAD Configuration",
-            field_type=FieldType.TEXT,
+            field_type=FieldType.TEXT_JSON,
             tab="model",
             section="architecture",
             subsection="advanced",
             default_value=None,
-            placeholder="path/to/tread_config.json",
+            placeholder='{"enable": true, "rank": 64}',
             dependencies=[
                 FieldDependency(
                     field="model_family",

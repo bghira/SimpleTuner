@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from .hardware_service import detect_gpu_inventory
@@ -73,7 +76,25 @@ class LocalGPUAllocator:
                 max_entries,
             )
 
+        boot_time = self._get_boot_time_utc()
+
         for job in jobs_to_check:
+            started_at = self._parse_job_time(getattr(job, "started_at", None)) or self._parse_job_time(
+                getattr(job, "created_at", None)
+            )
+            if boot_time and started_at and started_at < boot_time:
+                await job_repo.mark_failed(
+                    job.job_id,
+                    "Process ended after system reboot",
+                )
+                await self.release(job.job_id)
+                stats["orphaned"] += 1
+                logger.info(
+                    "Job %s marked as failed (started before system boot)",
+                    job.job_id,
+                )
+                continue
+
             pid = job.metadata.get("pid") if job.metadata else None
 
             if pid:
@@ -116,6 +137,39 @@ class LocalGPUAllocator:
 
         self._reconciled = True
         return stats
+
+    def _get_boot_time_utc(self) -> Optional[datetime]:
+        """Best-effort system boot time in UTC."""
+        try:
+            import psutil  # type: ignore
+
+            return datetime.fromtimestamp(psutil.boot_time(), timezone.utc)
+        except Exception:
+            pass
+
+        if sys.platform.startswith("linux"):
+            try:
+                with open("/proc/uptime", "r", encoding="utf-8") as handle:
+                    uptime_seconds = float(handle.readline().split()[0])
+                return datetime.fromtimestamp(time.time() - uptime_seconds, timezone.utc)
+            except Exception:
+                return None
+
+        return None
+
+    @staticmethod
+    def _parse_job_time(value: Optional[str]) -> Optional[datetime]:
+        """Parse ISO timestamps from stored job fields."""
+        if not value:
+            return None
+        try:
+            cleaned = value[:-1] + "+00:00" if value.endswith("Z") else value
+            parsed = datetime.fromisoformat(cleaned)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except Exception:
+            return None
 
     def _is_process_alive(self, pid: int) -> bool:
         """Check if a process with given PID is still running.

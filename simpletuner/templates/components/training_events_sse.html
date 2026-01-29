@@ -1485,11 +1485,6 @@
             var status = info.status;
             var message = info.message || '';
 
-            // Update connection status via centralized function (updates Alpine store + dispatches event)
-            if (typeof window.updateConnectionStatus === 'function') {
-                window.updateConnectionStatus(status, message);
-            }
-
             // Handle status-specific side effects
             if (status === 'connected') {
                 // Restore training state after reconnection

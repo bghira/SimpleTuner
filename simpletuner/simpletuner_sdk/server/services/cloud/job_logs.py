@@ -152,7 +152,7 @@ def _fetch_local_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
         return "(Log file not found - no training output directory exists)"
 
     try:
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(log_path, "rb") as f:
             f.seek(0, 2)
             size = f.tell()
             if size > max_bytes:
@@ -160,7 +160,7 @@ def _fetch_local_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
                 f.readline()  # Skip partial line
             else:
                 f.seek(0)
-            return f.read()
+            return f.read().decode("utf-8", errors="replace")
     except Exception as exc:
         return f"(Error reading log file: {exc})"
 

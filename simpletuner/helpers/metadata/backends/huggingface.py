@@ -71,6 +71,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         composite_image_column: str = "image",
         quality_filter: Optional[Dict[str, Any]] = None,
         dataset_type: str = "image",
+        max_num_samples: int = None,
     ):
         self.hf_config = hf_config
         self.dataset_type = dataset_type
@@ -136,6 +137,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
+            max_num_samples=max_num_samples,
         )
 
         if not hasattr(data_backend, "dataset"):
@@ -292,6 +294,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         data_backend_id=self.id,
                         config=self.config,
                     )
+            # Load filtering statistics if present
+            self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.debug("No cache file found, starting fresh.")
 
@@ -312,6 +316,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
+        # Include filtering statistics if available
+        if self.filtering_statistics is not None:
+            cache_data["filtering_statistics"] = self.filtering_statistics
         cache_data_str = json.dumps(cache_data)
         self.data_backend.write(self.cache_file, cache_data_str)
         logger.debug("Aspect ratio cache saved.")
@@ -371,6 +378,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         for idx in range(total_items):
             virtual_path = f"{idx}.{self.file_extension}"
             all_files.append(virtual_path)
+
+        # Apply max_num_samples limit deterministically before filtering
+        all_files = self._apply_max_num_samples_limit(all_files)
 
         if ignore_existing_cache:
             logger.debug("Ignoring existing cache, returning all files")
@@ -780,6 +790,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             self.set_metadata_by_filepath(path, metadata, update_json=False)
 
         logger.info(f"Processing complete. Statistics: {statistics}")
+        self.filtering_statistics = statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:

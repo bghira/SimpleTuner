@@ -121,6 +121,15 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
                 }
             )
 
+        if provider_id == "simpletuner_io":
+            simpletuner_config = await store.get_provider_config("simpletuner_io")
+            refresh_token = get_secrets_manager().get("SIMPLETUNER_IO_REFRESH_TOKEN")
+            org_id = simpletuner_config.get("org_id")
+            configured = bool(refresh_token and org_id)
+            provider_data["configured"] = configured
+            if configured:
+                provider_data["coming_soon"] = False
+
         providers.append(provider_data)
 
     return providers

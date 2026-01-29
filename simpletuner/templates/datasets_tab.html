@@ -93,21 +93,7 @@
 </style>
 
 <div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
-     x-data="{
-         ...datasetWizardComponent(),
-         ...window.HintMixin.createMultiHint({
-             useApi: false,
-             storageKey: 'st_datasets_hints',
-             hintKeys: ['hero']
-         }),
-         showHeroCTA() { return this.hints.hero; },
-         dismissHeroCTA() { this.dismissHint('hero'); },
-         restoreHeroCTA() { this.showHint('hero'); },
-         launchWizardFromHero() {
-             this.dismissHeroCTA();
-             this.$nextTick(() => this.openWizard());
-         }
-     }"
+     x-data="datasetWizardComponent()"
      x-init="loadHints(); init()">
 
     <!-- Hero CTA - Introduction to datasets -->

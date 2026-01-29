@@ -68,6 +68,7 @@ class ParquetMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        max_num_samples: int = None,
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
@@ -98,6 +99,7 @@ class ParquetMetadataBackend(MetadataBackend):
             num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
+            max_num_samples=max_num_samples,
         )
         self.load_parquet_database()
         self.caption_cache = self._extract_captions_to_fast_list()
@@ -244,8 +246,10 @@ class ParquetMetadataBackend(MetadataBackend):
 
         if ignore_existing_cache:
             self.aspect_ratio_bucket_indices = {}
-            return list(all_image_files)
+            return self._apply_max_num_samples_limit(list(all_image_files))
 
+        # Apply max_num_samples limit deterministically before filtering
+        all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
@@ -274,6 +278,8 @@ class ParquetMetadataBackend(MetadataBackend):
                         data_backend_id=self.id,
                         config=self.config,
                     )
+            # Load filtering statistics if present
+            self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.warning("No cache file found, starting a fresh one.")
 
@@ -293,6 +299,9 @@ class ParquetMetadataBackend(MetadataBackend):
             "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
+        # Include filtering statistics if available
+        if self.filtering_statistics is not None:
+            cache_data["filtering_statistics"] = self.filtering_statistics
         cache_data_str = json.dumps(cache_data)
         self.data_backend.write(self.cache_file, cache_data_str)
 
@@ -392,6 +401,7 @@ class ParquetMetadataBackend(MetadataBackend):
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
         logger.info(f"Sample processing statistics: {statistics}")
+        self.filtering_statistics = statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:

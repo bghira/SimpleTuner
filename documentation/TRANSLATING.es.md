@@ -13,7 +13,7 @@
 
 ## Cómo funciona la traducción
 
-SimpleTuner usa **i18n basado en sufijos** con [mkdocs-static-i18n](https://github.com/ultrabug/mkdocs-static-i18n). Las traducciones se almacenan junto a los archivos originales con un sufijo de idioma:
+SimpleTuner usa **i18n basado en sufijos** con Zensical. Las traducciones se almacenan junto a los archivos originales con un sufijo de idioma:
 
 ```
 documentation/
@@ -98,10 +98,10 @@ Prueba tus traducciones localmente:
 
 ```bash
 # Instalar dependencias
-pip install mkdocs mkdocs-material mkdocs-static-i18n pymdown-extensions
+pip install zensical
 
 # Servir con hot reload
-mkdocs serve
+zensical serve
 
 # Abrir http://localhost:8000 y cambiar idiomas
 ```

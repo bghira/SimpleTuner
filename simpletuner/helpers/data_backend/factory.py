@@ -85,7 +85,13 @@ from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
-from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active, normalize_start_epoch, normalize_start_step
+from simpletuner.helpers.data_backend.runtime.schedule import (
+    dataset_is_active,
+    normalize_end_epoch,
+    normalize_end_step,
+    normalize_start_epoch,
+    normalize_start_step,
+)
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
@@ -267,8 +273,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
     start_step = normalize_start_step(backend.get("start_step", 0))
+    end_epoch = normalize_end_epoch(backend.get("end_epoch"))
+    end_step = normalize_end_step(backend.get("end_step"))
     output["config"]["start_epoch"] = start_epoch
     output["config"]["start_step"] = start_step
+    output["config"]["end_epoch"] = end_epoch
+    output["config"]["end_step"] = end_step
 
     def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize audio configuration settings from backend definitions."""
@@ -698,15 +708,31 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
-        if model_family == "ltxvideo2":
-            for frame_value, frame_label in ((min_frames, "min_frames"), (num_frames, "num_frames")):
-                if frame_value % 8 != 1:
-                    raise ValueError(
-                        f"(id={backend['id']}) video->{frame_label} must satisfy frame_count % 8 == 1 for LTX-2 "
-                        f"(e.g., 49, 57, 65, 73, 81). Received {frame_label}={frame_value}. "
-                        f"Note: Individual videos are automatically trimmed to satisfy this constraint. "
-                        f"Videos shorter than min_frames after trimming will be skipped."
+
+        # Auto-adjust frame counts using model-specific constraints via adjust_video_frames()
+        from simpletuner.helpers.models import ModelRegistry
+
+        if model_family and model_family in ModelRegistry.model_families():
+            model_class = ModelRegistry.model_families()[model_family]
+            if hasattr(model_class, "adjust_video_frames"):
+                adjusted_min_frames = model_class.adjust_video_frames(min_frames)
+                adjusted_num_frames = model_class.adjust_video_frames(num_frames)
+
+                if adjusted_min_frames != min_frames:
+                    warning_log(
+                        f"(id={backend['id']}) Adjusted video->min_frames from {min_frames} to {adjusted_min_frames} "
+                        f"to satisfy {model_class.NAME} model constraints."
                     )
+                    output["config"]["video"]["min_frames"] = adjusted_min_frames
+                    min_frames = adjusted_min_frames
+
+                if adjusted_num_frames != num_frames:
+                    warning_log(
+                        f"(id={backend['id']}) Adjusted video->num_frames from {num_frames} to {adjusted_num_frames} "
+                        f"to satisfy {model_class.NAME} model constraints."
+                    )
+                    output["config"]["video"]["num_frames"] = adjusted_num_frames
+                    num_frames = adjusted_num_frames
 
         # Warn about resolution_frames bucket strategy with fixed num_frames
         bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
@@ -1585,11 +1611,19 @@ class FactoryRegistry:
             training_seen = True
             start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
             start_step = normalize_start_step(backend.get("start_step", 0))
+            end_epoch = normalize_end_epoch(backend.get("end_epoch"))
+            end_step = normalize_end_step(backend.get("end_step"))
             backend_id = backend.get("id", "unknown")
             if start_epoch <= 1 and start_step <= 1:
                 active_at_start.append(backend_id)
             else:
                 scheduled_later.append((backend_id, start_epoch, start_step))
+
+            # Validate end conditions
+            if end_epoch is not None and end_epoch < start_epoch:
+                raise ValueError(f"(id={backend_id}) end_epoch ({end_epoch}) must be >= start_epoch ({start_epoch}).")
+            if end_step is not None and start_step > 0 and end_step < start_step:
+                raise ValueError(f"(id={backend_id}) end_step ({end_step}) must be >= start_step ({start_step}).")
 
         if not training_seen:
             return
@@ -1984,6 +2018,11 @@ class FactoryRegistry:
                             virtual_backend["id"] = virtual_id
                             virtual_backend["dataset_type"] = "conditioning"
                             virtual_backend.pop("conditioning", None)
+                            # Conditioning datasets don't use audio - remove audio settings
+                            # (e.g., IC-LoRA reference videos are visual-only conditioning)
+                            virtual_backend.pop("audio", None)
+                            virtual_backend.pop("s2v_datasets", None)
+                            virtual_backend.pop("_s2v_audio_autoinjected", None)
                             virtual_backend["conditioning_data"] = []
                             virtual_backend["conditioning_type"] = "reference_strict"
                             virtual_backend["source_dataset_id"] = backend["id"]
@@ -2785,6 +2824,7 @@ class FactoryRegistry:
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             cache_file_suffix=backend.get("cache_file_suffix", init_backend["id"]),
             repeats=init_backend["config"].get("repeats", 0),
+            max_num_samples=backend.get("max_num_samples", None),
             **metadata_backend_args,
         )
 
@@ -3633,12 +3673,15 @@ class FactoryRegistry:
         write_batch_size = backend.get("write_batch_size")
         vae_batch_size = backend.get("vae_batch_size")
 
-        if dataset_type_enum is DatasetType.VIDEO:
+        # Video conditioning datasets (e.g., IC-LoRA reference videos) also need video-like batch sizes
+        is_video_conditioning = dataset_type_enum is DatasetType.CONDITIONING and video_config.get("num_frames") is not None
+        if dataset_type_enum is DatasetType.VIDEO or is_video_conditioning:
+            dataset_label = "video conditioning" if is_video_conditioning else "video"
             if process_queue_size is None:
                 process_queue_size = self.args.image_processing_batch_size
                 if process_queue_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting image_processing_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set image_processing_batch_size to override."
                     )
                 process_queue_size = 1
@@ -3647,7 +3690,7 @@ class FactoryRegistry:
                 read_batch_size = self.args.read_batch_size
                 if read_batch_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting read_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set read_batch_size to override."
                     )
                 read_batch_size = 1
@@ -3656,7 +3699,7 @@ class FactoryRegistry:
                 write_batch_size = self.args.write_batch_size
                 if write_batch_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting write_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set write_batch_size to override."
                     )
                 write_batch_size = 1
@@ -3665,7 +3708,7 @@ class FactoryRegistry:
                 vae_batch_size = self.args.vae_batch_size
                 if vae_batch_size != 1:
                     info_log(
-                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for video dataset "
+                        f"(id={init_backend['id']}) Defaulting vae_batch_size to 1 for {dataset_label} dataset "
                         "to reduce memory usage. Set vae_batch_size to override."
                     )
                 vae_batch_size = 1
@@ -4008,6 +4051,8 @@ class FactoryRegistry:
             data_backend_id=init_backend["id"],
             start_epoch=init_backend["config"].get("start_epoch"),
             start_step=init_backend["config"].get("start_step"),
+            end_epoch=init_backend["config"].get("end_epoch"),
+            end_step=init_backend["config"].get("end_step"),
         )
 
         preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)

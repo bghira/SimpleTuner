@@ -171,6 +171,29 @@ async def update_provider_config(provider: str, update: ProviderConfigUpdate) ->
     if update.s3_rate_limit_window is not None:
         config["s3_rate_limit_window"] = update.s3_rate_limit_window
 
+    # SimpleTuner.io settings
+    if update.org_id is not None:
+        org_id = update.org_id.strip() if isinstance(update.org_id, str) else update.org_id
+        if org_id:
+            config["org_id"] = org_id
+        else:
+            config.pop("org_id", None)
+    if update.api_base_url is not None:
+        if update.api_base_url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(update.api_base_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="api_base_url must include scheme and host (e.g., https://simpletuner.io)",
+                )
+            config["api_base_url"] = update.api_base_url.rstrip("/")
+        else:
+            config.pop("api_base_url", None)
+    if update.max_runtime_minutes is not None:
+        config["max_runtime_minutes"] = update.max_runtime_minutes
+
     await store.save_provider_config(provider, config)
 
     # Reload HTTP client factory to pick up new settings
@@ -505,6 +528,25 @@ async def validate_replicate_key() -> ValidateResponse:
         return ValidateResponse(valid=False, error=str(exc))
 
 
+@router.get("/providers/simpletuner_io/validate", response_model=ValidateResponse)
+async def validate_simpletuner_io_token() -> ValidateResponse:
+    """Check if SimpleTuner.io refresh token is set and valid."""
+    refresh_token = get_secrets_manager().get(SIMPLETUNER_IO_REFRESH_TOKEN_KEY)
+    if not refresh_token:
+        return ValidateResponse(valid=False, error="SIMPLETUNER_IO_REFRESH_TOKEN not set")
+
+    try:
+        client = ProviderFactory.get_provider("simpletuner_io")
+        user_info = await client.validate_credentials()
+
+        if user_info.get("error"):
+            return ValidateResponse(valid=False, error=user_info.get("error"))
+
+        return ValidateResponse(valid=True, user_info=user_info)
+    except Exception as exc:
+        return ValidateResponse(valid=False, error=str(exc))
+
+
 class SaveTokenRequest(BaseModel):
     """Request to save an API token."""
 
@@ -517,6 +559,9 @@ class SaveTokenResponse(BaseModel):
     success: bool
     file_path: Optional[str] = None
     error: Optional[str] = None
+
+
+SIMPLETUNER_IO_REFRESH_TOKEN_KEY = "SIMPLETUNER_IO_REFRESH_TOKEN"
 
 
 @router.put("/providers/replicate/token", response_model=SaveTokenResponse)
@@ -562,11 +607,57 @@ async def save_replicate_token(request: SaveTokenRequest) -> SaveTokenResponse:
         return SaveTokenResponse(success=True, file_path=file_path, error=f"Token saved but validation failed: {exc}")
 
 
+@router.put("/providers/simpletuner_io/token", response_model=SaveTokenResponse)
+async def save_simpletuner_io_token(request: SaveTokenRequest) -> SaveTokenResponse:
+    """Save the SimpleTuner.io CLI refresh token to the secrets file."""
+    token = request.api_token.strip()
+
+    if not token:
+        return SaveTokenResponse(success=False, error="Token cannot be empty")
+
+    secrets_mgr = get_secrets_manager()
+    success = secrets_mgr.set_secret(SIMPLETUNER_IO_REFRESH_TOKEN_KEY, token)
+
+    if not success:
+        return SaveTokenResponse(success=False, error="Failed to save token to file")
+
+    file_path = str(secrets_mgr.get_secrets_file_path())
+
+    # Validate token if org_id is configured
+    try:
+        store = get_job_store()
+        config = await store.get_provider_config("simpletuner_io")
+        if config.get("org_id"):
+            client = ProviderFactory.get_provider("simpletuner_io")
+            user_info = await client.validate_credentials()
+            if user_info.get("error"):
+                return SaveTokenResponse(
+                    success=True,
+                    file_path=file_path,
+                    error=f"Token saved but validation failed: {user_info.get('error')}",
+                )
+    except Exception as exc:
+        return SaveTokenResponse(success=True, file_path=file_path, error=f"Token saved but validation failed: {exc}")
+
+    return SaveTokenResponse(success=True, file_path=file_path)
+
+
 @router.delete("/providers/replicate/token", response_model=SaveTokenResponse)
 async def delete_replicate_token() -> SaveTokenResponse:
     """Delete the Replicate API token from the secrets file."""
     secrets_mgr = get_secrets_manager()
     success = secrets_mgr.delete_secret(secrets_mgr.REPLICATE_API_TOKEN)
+
+    if success:
+        return SaveTokenResponse(success=True, file_path=str(secrets_mgr.get_secrets_file_path()))
+    return SaveTokenResponse(success=False, error="Failed to delete token")
+
+
+@router.delete("/providers/simpletuner_io/token", response_model=SaveTokenResponse)
+async def delete_simpletuner_io_token() -> SaveTokenResponse:
+    """Delete the SimpleTuner.io CLI refresh token from the secrets file."""
+    secrets_mgr = get_secrets_manager()
+    success = secrets_mgr.delete_secret(SIMPLETUNER_IO_REFRESH_TOKEN_KEY)
 
     if success:
         return SaveTokenResponse(success=True, file_path=str(secrets_mgr.get_secrets_file_path()))

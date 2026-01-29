@@ -246,9 +246,24 @@ simpletuner train
 
 ### Image-to-Video (I2V)
 
-- Use `model_flavour="i2v-480p"`.
-- SimpleTuner automatically uses the first frame of your video dataset samples as the conditioning image.
-- Ensure your validation setup includes conditioning inputs or relies on the auto-extracted first frame.
+- Use `model_flavour="i2v-480p"` or `i2v-720p`.
+- SimpleTuner automatically uses the first frame of your video dataset samples as the conditioning image during training.
+
+#### I2V Validation Options
+
+For validation with i2v models, you have two options:
+
+1. **Auto-extracted first frame**: By default, validation uses the first frame from video samples in your dataset.
+
+2. **Separate image dataset** (simpler setup): Use `--validation_using_datasets=true` with `--eval_dataset_id` pointing to an image dataset. This allows you to use any image dataset as the first-frame conditioning input for validation videos, without needing to set up the complex conditioning dataset pairing used during training.
+
+Example config for option 2:
+```json
+{
+  "validation_using_datasets": true,
+  "eval_dataset_id": "my-image-dataset"
+}
+```
 
 ### Text Encoders
 

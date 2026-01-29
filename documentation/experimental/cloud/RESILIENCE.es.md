@@ -362,8 +362,76 @@ reset_all_circuit_breakers()
 - Verifica que el tipo de excepción esté en `retryable_exceptions`
 - Revisa si el código HTTP está en `retryable_status_codes`
 
+## Circuit Breaker de GPU
+
+Además de los circuit breakers para servicios externos, SimpleTuner incluye un **circuit breaker de GPU** que monitorea la salud del hardware de GPU y detecta fallos de CUDA durante el entrenamiento. Esto es especialmente útil para entrenamiento en la nube donde los fallos de hardware de GPU pueden desperdiciar dinero si no se detectan rápidamente.
+
+### Cómo funciona
+
+El circuit breaker de GPU está **siempre habilitado** (sin configuración) al entrenar en GPUs NVIDIA:
+
+1. **Monitoreo de salud en segundo plano** - Sondea métricas de GPU cada 5 segundos vía PyNVML
+2. **Detección de errores CUDA** - Captura errores de runtime CUDA durante el entrenamiento
+3. **Emisión de webhook** - Envía un evento `gpu.fault` para notificar a los orquestadores
+
+### Métricas monitoreadas
+
+| Métrica | Detección | Severidad |
+|---------|-----------|-----------|
+| **Errores ECC** | Errores incorregibles (doble bit) sobre el umbral | Crítico |
+| **Temperatura** | Dentro de 5°C del umbral de apagado | Crítico |
+| **Throttling** | Ralentización de hardware, throttling térmico, freno de potencia | Crítico |
+| **Errores CUDA** | Cualquier error de runtime CUDA durante el entrenamiento | Crítico |
+
+### Payload del webhook
+
+Cuando el circuito se abre, se emite un webhook `gpu.fault`:
+
+```json
+{
+  "type": "gpu.fault",
+  "severity": "critical",
+  "job_id": "training-job-123",
+  "title": "GPU Fault: cuda_error",
+  "message": "CUDA driver error: unknown error",
+  "fault": {
+    "type": "cuda_error",
+    "gpu": {
+      "index": 0,
+      "name": "NVIDIA RTX 5090",
+      "temperature_celsius": 75.5,
+      "ecc_errors_double": 2,
+      "throttle_reasons": ["hw_thermal_slowdown"],
+      "memory_used_percent": 85.5
+    },
+    "action_taken": "circuit_opened",
+    "exception_type": "RuntimeError"
+  },
+  "timestamp": "2025-01-25T12:34:56.789Z"
+}
+```
+
+### Tipos de fallo
+
+| Tipo | Disparador |
+|------|------------|
+| `cuda_error` | Error de runtime CUDA durante el paso de entrenamiento |
+| `ecc_error` | Errores ECC incorregibles sobre el umbral |
+| `health_warning` | Problemas de temperatura o throttling detectados |
+| `circuit_open` | El circuito ya está abierto por un fallo previo |
+
+### Integración con orquestadores
+
+Los orquestadores en la nube (RunPod, Lambda Labs, etc.) pueden usar el webhook `gpu.fault` para:
+
+- Terminar automáticamente el contenedor para evitar facturación
+- Alertar a operadores sobre problemas de hardware
+- Disparar failover a instancias saludables
+- Registrar fallos de GPU para seguimiento de salud de la flota
+
 ## Ver también
 
 - [Guía de operaciones](OPERATIONS_TUTORIAL.md) - Despliegue en producción y monitoreo
 - [Tutorial de entrenamiento en la nube](TUTORIAL.md) - Guía de inicio
 - [Integración con Replicate](REPLICATE.md) - Configuración específica del proveedor
+- [Entrenamiento distribuido](../../DISTRIBUTED.md) - Configuración multi-GPU y multi-nodo

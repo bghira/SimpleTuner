@@ -59,6 +59,10 @@ class ProviderConfigUpdate(BaseModel):
     webhook_rate_limit_window: Optional[int] = Field(None, ge=1, le=3600)
     s3_rate_limit_max: Optional[int] = Field(None, ge=1, le=10000)
     s3_rate_limit_window: Optional[int] = Field(None, ge=1, le=3600)
+    # SimpleTuner.io configuration
+    org_id: Optional[str] = None
+    api_base_url: Optional[str] = None
+    max_runtime_minutes: Optional[int] = Field(None, ge=1)
 
 
 class ValidateResponse(BaseModel):

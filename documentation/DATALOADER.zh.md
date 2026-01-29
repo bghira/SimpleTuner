@@ -552,6 +552,24 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - 不启用超订：报错
 - 启用 `--allow_dataset_oversubscription`：自动将 repeats 设为 1（25 × 2 = 50 样本）
 
+### `max_num_samples`
+
+- **描述：** 限制数据集的最大样本数。设置后，会从完整数据集中确定性地随机选择指定数量的子集。
+- **使用场景：** 适用于大型正则化数据集，当你只想使用部分数据以避免压倒较小的训练集时。
+- **确定性选择：** 随机选择使用数据集 `id` 作为种子，确保在训练会话之间选择相同的子集以保证可重现性。
+- **默认值：** `null`（无限制，使用所有样本）
+
+#### 示例
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+这将从数据集中确定性地选择 1000 个样本，每次运行训练时使用相同的选择。
+
 ### `start_epoch` / `start_step`
 
 - 规划数据集开始采样的时间点。
@@ -559,6 +577,38 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - 至少有一个数据集需要满足 `start_epoch<=1` **且** `start_step<=1`；否则启动时无数据可用，训练将报错。
 - 永远达不到开始条件的数据集（例如 `start_epoch` 超过 `--num_train_epochs`）会被跳过，并在模型卡中注明。
 - 当计划的数据集在训练中途激活时，epoch 长度可能增加，因此进度条步数估计为近似值。
+
+### `end_epoch` / `end_step`
+
+- 规划数据集**停止**采样的时间点（与 `start_epoch`/`start_step` 相辅相成）。
+- `end_epoch`（默认：`null` = 无限制）在此 epoch 后停止采样；`end_step`（默认：`null` = 无限制）在此优化器步数后停止采样。
+- 任一条件达成即停止数据集，两者独立工作。
+- 适用于**课程学习**工作流，例如：
+  - 早期使用低分辨率数据训练，然后切换到高分辨率数据。
+  - 在某个时间点后逐步淘汰正则化数据。
+  - 在单个配置文件中创建多阶段训练。
+
+**示例：课程学习**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+在此示例中，512px 数据集用于步骤 1-300，然后 1024px 数据集从步骤 300 开始接管。
 
 ### `is_regularisation_data`
 
@@ -579,6 +629,32 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **说明:** 启用后，VAE 编码失败的图像（损坏文件、不支持格式等）会从数据集目录中永久删除。
 - **警告:** 此操作不可恢复，请谨慎使用。
 - **默认值:** 回退到训练器的 `--delete_problematic_images` 参数（默认：`false`）。
+
+### 查看过滤统计
+
+SimpleTuner 处理数据集时会追踪被过滤掉的文件数量及原因。这些统计信息保存在数据集缓存文件（`aspect_ratio_bucket_indices_*.json`）中，可在 WebUI 中查看。
+
+**统计追踪项：**
+- **total_processed**：已处理的文件数
+- **too_small**：因低于 `minimum_image_size` 而被过滤的文件
+- **too_long**：因超出时长限制而被过滤的文件（音频/视频）
+- **metadata_missing**：因缺少元数据而被跳过的文件
+- **not_found**：无法找到的文件
+- **already_exists**：缓存中已存在的文件（未重新处理）
+- **other**：因其他原因被过滤的文件
+
+**在 WebUI 中查看：**
+
+在 WebUI 文件浏览器中浏览数据集时，选择包含现有数据集的目录将显示过滤统计信息（如有）。这有助于诊断数据集可用样本少于预期的原因。
+
+**过滤文件故障排除：**
+
+如果大量文件被标记为 `too_small`：
+1. 检查 `minimum_image_size` 设置——应与 `resolution` 和 `resolution_type` 匹配
+2. 对于 `resolution_type=pixel`，`minimum_image_size` 是最小短边长度
+3. 对于 `resolution_type=area` 或 `pixel_area`，`minimum_image_size` 是最小总面积
+
+详见下方[故障排除](#故障排除-过滤后的数据集)部分。
 
 ### `slider_strength`
 

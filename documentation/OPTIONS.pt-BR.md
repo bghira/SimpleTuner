@@ -659,13 +659,15 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 ### `--validation_using_datasets`
 
 - **O que**: Usa imagens dos datasets de treinamento para validacao ao inves de geracao pura texto-para-imagem.
-- **Por que**: Habilita modo de validacao imagem-para-imagem (img2img) onde o modelo faz denoise parcial das imagens de treinamento ao inves de gerar de ruido puro. Util para:
+- **Por que**: Habilita modo de validacao imagem-para-imagem (img2img) ou imagem-para-video (i2v) onde o modelo usa imagens de treinamento como entradas de conditioning. Util para:
   - Testar modelos de edicao/inpainting que requerem imagens de entrada
   - Avaliar quao bem o modelo preserva a estrutura da imagem
   - Modelos que suportam workflows duais texto-para-imagem E imagem-para-imagem (ex., Flux2, LTXVideo2)
+  - **Modelos de video I2V** (HunyuanVideo, WAN, Kandinsky5Video): Usa imagens de um dataset de imagens como entrada de conditioning do primeiro frame para validacao de geracao de video
 - **Notas**:
-  - Requer que o modelo tenha um pipeline `IMG2IMG` registrado
+  - Requer que o modelo tenha um pipeline `IMG2IMG` ou `IMG2VIDEO` registrado
   - Pode ser combinado com `--eval_dataset_id` para obter imagens de um dataset especifico
+  - Para modelos i2v, permite usar um dataset de imagens simples para validacao sem a configuracao complexa de pareamento de datasets de conditioning usada durante o treinamento
   - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
 
 ### `--eval_dataset_id`
@@ -701,21 +703,29 @@ Alguns modelos podem operar em modos texto-para-imagem E imagem-para-imagem:
 - **Flux2**: Suporta treinamento dual T2I/I2I com imagens de referencia opcionais
 - **LTXVideo2**: Suporta T2V e I2V (imagem-para-video) com conditioning de primeiro frame opcional
 - **LongCat-Video**: Suporta conditioning de frames opcional
+- **HunyuanVideo i2v**: Suporta I2V com conditioning de primeiro frame (flavours: `i2v-480p`, `i2v-720p`, etc.)
+- **WAN i2v**: Suporta I2V com conditioning de primeiro frame
+- **Kandinsky5Video i2v**: Suporta I2V com conditioning de primeiro frame
 
 Para estes modelos, voce PODE adicionar datasets de conditioning mas nao e obrigatorio. A WebUI mostrara opcoes de conditioning como opcionais.
+
+**Atalho de Validacao I2V**: Para modelos de video i2v, voce pode usar `--validation_using_datasets` com um dataset de imagens (especificado via `--eval_dataset_id`) para obter imagens de conditioning de validacao diretamente, sem precisar configurar o pareamento completo de datasets de conditioning usado durante o treinamento.
 
 ### 3. Modos de Validacao
 
 | Modo | Flag | Comportamento |
 |------|------|---------------|
-| **Texto-para-Imagem** | (padrao) | Gera apenas de prompts de texto |
-| **Baseado em Dataset** | `--validation_using_datasets` | Denoise parcial de imagens de datasets (img2img) |
+| **Texto-para-Imagem/Video** | (padrao) | Gera apenas de prompts de texto |
+| **Baseado em Dataset (img2img)** | `--validation_using_datasets` | Denoise parcial de imagens de datasets |
+| **Baseado em Dataset (i2v)** | `--validation_using_datasets` | Para modelos de video i2v, usa imagens como conditioning de primeiro frame |
 | **Baseado em Conditioning** | (auto quando conditioning configurado) | Usa entradas de conditioning durante validacao |
 
 **Combinando modos**: Quando um modelo suporta conditioning E `--validation_using_datasets` esta habilitado:
 - O sistema de validacao obtem imagens de datasets
 - Se esses datasets tem dados de conditioning, sao usados automaticamente
 - Use `--eval_dataset_id` para controlar qual dataset fornece entradas
+
+**Modelos I2V com `--validation_using_datasets`**: Para modelos de video i2v (HunyuanVideo, WAN, Kandinsky5Video), habilitar este flag permite usar um dataset de imagens simples para validacao. As imagens sao usadas como entradas de conditioning de primeiro frame para gerar videos de validacao, sem precisar da configuracao complexa de pareamento de datasets de conditioning.
 
 ### Tipos de Dados de Conditioning
 

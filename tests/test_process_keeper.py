@@ -630,6 +630,46 @@ class TestFailureCleanupRegression(ProcessKeeperTestCase):
             os.kill(child_pid, 0)
 
 
+class TestRuntimeBaseResolution(unittest.TestCase):
+    """Test that TrainerProcess._resolve_runtime_base handles config key variants."""
+
+    def test_output_dir_key_without_dashes(self):
+        """Config with 'output_dir' key should create runtime dir in output path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"output_dir": tmpdir}
+            process = TrainerProcess("test_job")
+            ipc_path = process._resolve_runtime_base(config)
+
+            # Should be under tmpdir/.simpletuner_runtime/trainer_test_job_*
+            self.assertTrue(str(ipc_path).startswith(os.path.join(tmpdir, ".simpletuner_runtime")))
+            self.assertIn("trainer_test_job_", str(ipc_path))
+
+    def test_output_dir_key_with_dashes(self):
+        """Config with '--output_dir' key should also create runtime dir in output path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"--output_dir": tmpdir}
+            process = TrainerProcess("test_job_dashes")
+            ipc_path = process._resolve_runtime_base(config)
+
+            # Should be under tmpdir/.simpletuner_runtime/trainer_test_job_dashes_*
+            self.assertTrue(
+                str(ipc_path).startswith(os.path.join(tmpdir, ".simpletuner_runtime")),
+                f"Expected path under {tmpdir}/.simpletuner_runtime but got {ipc_path}",
+            )
+            self.assertIn("trainer_test_job_dashes_", str(ipc_path))
+
+    def test_both_keys_prefers_without_dashes(self):
+        """When both keys exist, 'output_dir' takes precedence."""
+        with tempfile.TemporaryDirectory() as tmpdir1:
+            with tempfile.TemporaryDirectory() as tmpdir2:
+                config = {"output_dir": tmpdir1, "--output_dir": tmpdir2}
+                process = TrainerProcess("test_job_both")
+                ipc_path = process._resolve_runtime_base(config)
+
+                # Should prefer output_dir (without dashes)
+                self.assertTrue(str(ipc_path).startswith(os.path.join(tmpdir1, ".simpletuner_runtime")))
+
+
 def tearDownModule():
     cleanup_jobs([], timeout=_CLEANUP_TIMEOUT)
 

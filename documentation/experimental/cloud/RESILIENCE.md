@@ -362,8 +362,105 @@ reset_all_circuit_breakers()
 - Verify the exception type is in `retryable_exceptions`
 - Check if the HTTP status code is in `retryable_status_codes`
 
+## GPU Circuit Breaker
+
+In addition to external service circuit breakers, SimpleTuner includes a **GPU circuit breaker** that monitors GPU hardware health and detects CUDA failures during training. This is especially useful for cloud training where GPU hardware faults can waste money if not detected quickly.
+
+### How It Works
+
+The GPU circuit breaker is **always enabled** (zero configuration) when training on NVIDIA GPUs. It:
+
+1. **Background health monitoring** - Polls GPU metrics every 5 seconds via PyNVML
+2. **CUDA error detection** - Catches CUDA runtime errors during training
+3. **Webhook emission** - Sends a `gpu.fault` event to notify orchestrators
+
+### Monitored Metrics
+
+| Metric | Detection | Severity |
+|--------|-----------|----------|
+| **ECC errors** | Uncorrectable (double-bit) errors above threshold | Critical |
+| **Temperature** | Within 5°C of shutdown threshold | Critical |
+| **Throttling** | Hardware slowdown, thermal throttling, power brake | Critical |
+| **CUDA errors** | Any CUDA runtime error during training | Critical |
+
+### Webhook Payload
+
+When the circuit opens, a `gpu.fault` webhook is emitted:
+
+```json
+{
+  "type": "gpu.fault",
+  "severity": "critical",
+  "job_id": "training-job-123",
+  "title": "GPU Fault: cuda_error",
+  "message": "CUDA driver error: unknown error",
+  "fault": {
+    "type": "cuda_error",
+    "gpu": {
+      "index": 0,
+      "name": "NVIDIA RTX 5090",
+      "temperature_celsius": 75.5,
+      "ecc_errors_double": 2,
+      "throttle_reasons": ["hw_thermal_slowdown"],
+      "memory_used_percent": 85.5
+    },
+    "action_taken": "circuit_opened",
+    "exception_type": "RuntimeError"
+  },
+  "timestamp": "2025-01-25T12:34:56.789Z"
+}
+```
+
+### Fault Types
+
+| Type | Trigger |
+|------|---------|
+| `cuda_error` | CUDA runtime error during training step |
+| `ecc_error` | Uncorrectable ECC errors above threshold |
+| `health_warning` | Temperature or throttling issues detected |
+| `circuit_open` | Circuit already open from previous fault |
+
+### Orchestrator Integration
+
+Cloud orchestrators (RunPod, Lambda Labs, etc.) can use the `gpu.fault` webhook to:
+
+- Automatically terminate the container to avoid billing
+- Alert operators about hardware issues
+- Trigger failover to healthy instances
+- Log GPU faults for fleet health tracking
+
+### Programmatic Access
+
+```python
+from simpletuner.helpers.training.gpu_circuit_breaker import (
+    get_gpu_circuit_breaker,
+    is_cuda_error,
+)
+
+# Get the global circuit breaker instance
+breaker = get_gpu_circuit_breaker()
+
+# Check circuit state
+if breaker.is_open:
+    print("GPU fault detected, circuit is open")
+
+# Get status
+status = breaker.get_status()
+print(f"State: {status['state']}, Failures: {status['failure_count']}")
+```
+
+### Differences from Service Circuit Breakers
+
+| Aspect | Service Circuit Breaker | GPU Circuit Breaker |
+|--------|------------------------|---------------------|
+| **Purpose** | External API resilience | Hardware fault detection |
+| **Recovery** | Half-open → test → close | No recovery (hardware fault) |
+| **Configuration** | Configurable thresholds | Zero-config, always enabled |
+| **Response** | Block requests, retry later | Emit webhook, exit training |
+
 ## See Also
 
 - [Operations Guide](OPERATIONS_TUTORIAL.md) - Production deployment and monitoring
 - [Cloud Training Tutorial](TUTORIAL.md) - Getting started guide
 - [Replicate Integration](REPLICATE.md) - Provider-specific configuration
+- [Distributed Training](../../DISTRIBUTED.md) - Multi-GPU and multi-node setup

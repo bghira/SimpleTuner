@@ -51,6 +51,20 @@
     window.datasetWizardComponent = function() {
         console.log('[WIZARD] datasetWizardComponent function called (Alpine initializing component)');
         return {
+            // Hint management (must be spread inside component to preserve getters)
+            ...window.HintMixin.createMultiHint({
+                useApi: false,
+                storageKey: 'st_datasets_hints',
+                hintKeys: ['hero']
+            }),
+            showHeroCTA() { return this.hints.hero; },
+            dismissHeroCTA() { this.dismissHint('hero'); },
+            restoreHeroCTA() { this.showHint('hero'); },
+            launchWizardFromHero() {
+                this.dismissHeroCTA();
+                this.$nextTick(() => this.openWizard());
+            },
+
             // Modal state
             wizardOpen: false,
             wizardStep: 1,

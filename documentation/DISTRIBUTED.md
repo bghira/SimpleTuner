@@ -304,6 +304,66 @@ Lower batch sizes, lower resolution, and enabling torch compile can bring the sp
 - Enable torch compile with max-autotune
 - **Speed**: 2 iterations per second
 
+## GPU Health Monitoring
+
+SimpleTuner includes automatic GPU health monitoring to detect hardware faults early, which is especially important in distributed training where a single GPU failure can waste compute time and money across the entire cluster.
+
+### GPU Circuit Breaker
+
+The **GPU circuit breaker** is always enabled and monitors:
+
+- **ECC errors** - Detects uncorrectable memory errors (important for A100/H100 GPUs)
+- **Temperature** - Alerts when approaching thermal shutdown threshold
+- **Throttling** - Detects hardware slowdown from thermal or power issues
+- **CUDA errors** - Catches runtime errors during training
+
+When a GPU fault is detected:
+
+1. A `gpu.fault` webhook is emitted (if webhooks are configured)
+2. The circuit opens to prevent further training on faulty hardware
+3. Training exits cleanly so orchestrators can terminate the instance
+
+### Webhook Configuration
+
+Configure webhooks in your `config.json` to receive GPU fault alerts:
+
+```json
+{
+  "--webhook_config": "config/webhooks.json"
+}
+```
+
+Example `webhooks.json` for Discord alerts:
+
+```json
+{
+  "webhook_url": "https://discord.com/api/webhooks/...",
+  "webhook_type": "discord"
+}
+```
+
+Or for raw HTTP webhooks to an orchestrator:
+
+```json
+{
+  "webhook_url": "https://your-orchestrator.com/webhook",
+  "webhook_type": "raw"
+}
+```
+
+The orchestrator will receive a `gpu.fault` event with full GPU metrics, allowing automatic instance termination or failover.
+
+### Multi-Node Considerations
+
+In multi-node training:
+
+- Each node runs its own GPU health monitor
+- A GPU fault on any node will trigger a webhook from that node
+- The training job will fail on all nodes due to distributed communication failure
+- Orchestrators should monitor for faults from any node in the cluster
+
+See [Resilience Infrastructure](experimental/cloud/RESILIENCE.md#gpu-circuit-breaker) for detailed webhook payload format and programmatic access.
+
 ## Distributed training caveats
 
 - Every node must have the same number of accelerators available

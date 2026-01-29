@@ -8,6 +8,8 @@ except ModuleNotFoundError:
     from helpers.data import MockDataBackend
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -154,6 +156,398 @@ class TestMetadataBackend(unittest.TestCase):
             self.metadata_backend.aspect_ratio_bucket_indices,
             {"1.0": ["image1", "image2"], "1.5": ["image3"]},
         )
+
+
+class TestMaxNumSamplesLimit(unittest.TestCase):
+    """Test the max_num_samples limit feature for deterministic dataset limiting (issue #2469)."""
+
+    def test_max_num_samples_limit_applied(self):
+        """max_num_samples should limit the file list to the specified count."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_limit"
+        mock_backend.max_num_samples = 3
+
+        file_list = ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg", "img5.jpg"]
+        result = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(len(result), 3)
+        # All results should be from the original list
+        for item in result:
+            self.assertIn(item, file_list)
+
+    def test_max_num_samples_no_limit(self):
+        """When max_num_samples is None, the full list should be returned."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_no_limit"
+        mock_backend.max_num_samples = None
+
+        file_list = ["img1.jpg", "img2.jpg", "img3.jpg"]
+        result = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(result, file_list)
+
+    def test_max_num_samples_larger_than_list(self):
+        """When max_num_samples > len(file_list), return all files."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_larger_limit"
+        mock_backend.max_num_samples = 10
+
+        file_list = ["img1.jpg", "img2.jpg", "img3.jpg"]
+        result = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(result, file_list)
+
+    def test_max_num_samples_deterministic(self):
+        """Same dataset ID should produce same selection across multiple calls."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "deterministic_test"
+        mock_backend.max_num_samples = 3
+
+        file_list = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg", "g.jpg"]
+
+        # Call multiple times, should get same result
+        result1 = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+        result2 = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+        result3 = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+
+        self.assertEqual(result1, result2)
+        self.assertEqual(result2, result3)
+
+    def test_max_num_samples_different_ids_different_selection(self):
+        """Different dataset IDs should produce different selections."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        file_list = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg", "g.jpg"]
+
+        mock_backend1 = MagicMock(spec=MetadataBackend)
+        mock_backend1.id = "dataset_alpha"
+        mock_backend1.max_num_samples = 3
+
+        mock_backend2 = MagicMock(spec=MetadataBackend)
+        mock_backend2.id = "dataset_beta"
+        mock_backend2.max_num_samples = 3
+
+        result1 = MetadataBackend._apply_max_num_samples_limit(mock_backend1, file_list)
+        result2 = MetadataBackend._apply_max_num_samples_limit(mock_backend2, file_list)
+
+        # With different seeds, selections should differ (statistically almost certain)
+        # Use sets to compare regardless of order
+        self.assertNotEqual(set(result1), set(result2))
+
+
+class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
+    """Test that eval datasets use batch_size=1 for bucket pruning (issue #2475)."""
+
+    def test_eval_dataset_single_image_not_pruned(self):
+        """Eval dataset with 1 image and batch_size=4 should NOT be pruned."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+        self.assertEqual(mock_backend.aspect_ratio_bucket_indices["1.0"], ["eval_img1.jpg"])
+
+    def test_training_dataset_single_image_pruned(self):
+        """Training dataset with 1 image and batch_size=4 should be pruned."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_training"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.IMAGE
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["train_img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+    def test_eval_dataset_no_dataset_type_attribute(self):
+        """Backend without dataset_type attr defaults to IMAGE behavior."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_no_type"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        del mock_backend.dataset_type
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+    def test_eval_dataset_with_repeats(self):
+        """Eval dataset respects repeats but still uses batch_size=1."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_repeats"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 2
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.disable_bucket_pruning = False
+            mock_get_args.return_value = mock_args
+
+            MetadataBackend._prune_small_buckets(mock_backend, "1.0")
+
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+
+class TestSplitBucketsEvalDataset(unittest.TestCase):
+    """Test that eval datasets use effective_batch_size=1 for bucket splitting (issue #2507)."""
+
+    def test_eval_dataset_single_image_no_validation_error(self):
+        """Eval dataset with 1 image and batch_size=4 should NOT raise ValueError."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_split"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+        mock_backend.read_only = False
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+        mock_accelerator.process_index = 0
+        mock_accelerator.split_between_processes = MagicMock()
+        mock_accelerator.split_between_processes.return_value.__enter__ = MagicMock(return_value=["eval_img1.jpg"])
+        mock_accelerator.split_between_processes.return_value.__exit__ = MagicMock(return_value=False)
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(1, 0, 1),
+            ),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # Should NOT raise ValueError
+            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4, apply_padding=False)
+
+        # Bucket should still exist after splitting
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+    def test_training_dataset_single_image_raises_validation_error(self):
+        """Training dataset with 1 image and batch_size=4 should raise ValueError."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_training_split"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.IMAGE
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["train_img1.jpg"]}
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(1, 0, 1),
+            ),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # Should raise ValueError for training dataset
+            with self.assertRaises(ValueError) as context:
+                MetadataBackend.split_buckets_between_processes(
+                    mock_backend, gradient_accumulation_steps=1, apply_padding=False
+                )
+
+            self.assertIn("zero usable batches", str(context.exception))
+
+    def test_eval_dataset_ignores_gradient_accumulation(self):
+        """Eval dataset should use effective_batch_size=1 regardless of grad accum setting."""
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_grad_accum"
+        mock_backend.batch_size = 2
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["eval_img1.jpg"]}
+        mock_backend.read_only = False
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+        mock_accelerator.process_index = 0
+        mock_accelerator.split_between_processes = MagicMock()
+        mock_accelerator.split_between_processes.return_value.__enter__ = MagicMock(return_value=["eval_img1.jpg"])
+        mock_accelerator.split_between_processes.return_value.__exit__ = MagicMock(return_value=False)
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(1, 0, 1),
+            ),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # With grad_accum=8, training would need 16 samples (2*1*8)
+            # But eval should still work with 1 sample
+            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=8, apply_padding=False)
+
+        self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+
+class TestFilteringStatistics(unittest.TestCase):
+    """Test filtering_statistics storage and retrieval in metadata backends (issue #2474)."""
+
+    def setUp(self):
+        self.data_backend = MockDataBackend()
+        self.data_backend.id = "filtering_test"
+        self.accelerator = Mock()
+        self.data_backend.exists = Mock(return_value=False)
+        self.data_backend.write = Mock(return_value=True)
+        self.data_backend.list_files = Mock(return_value=[])
+        StateTracker.set_args(MagicMock())
+
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk",
+                return_value=True,
+            ),
+            patch("pathlib.Path.exists", return_value=False),
+        ):
+            self.metadata_backend = DiscoveryMetadataBackend(
+                id="filtering_test",
+                instance_data_dir="/some/fake/path",
+                cache_file="/some/fake/cache",
+                metadata_file="/some/fake/metadata.json",
+                batch_size=1,
+                data_backend=self.data_backend,
+                resolution=1,
+                resolution_type="area",
+                accelerator=self.accelerator,
+                repeats=0,
+            )
+
+    def test_filtering_statistics_initialized_to_none(self):
+        """filtering_statistics should be initialized to None."""
+        self.assertIsNone(self.metadata_backend.filtering_statistics)
+
+    def test_filtering_statistics_saved_in_cache(self):
+        """filtering_statistics should be included when save_cache is called."""
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
+        self.metadata_backend.filtering_statistics = {
+            "total_processed": 10,
+            "skipped": {
+                "already_exists": 0,
+                "metadata_missing": 0,
+                "not_found": 0,
+                "too_small": 3,
+                "too_long": 0,
+                "other": 0,
+            },
+        }
+
+        with patch.object(self.data_backend, "write") as mock_write:
+            self.metadata_backend.save_cache()
+
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args
+        written_data = json.loads(call_args[0][1])
+
+        self.assertIn("filtering_statistics", written_data)
+        self.assertEqual(written_data["filtering_statistics"]["total_processed"], 10)
+        self.assertEqual(written_data["filtering_statistics"]["skipped"]["too_small"], 3)
+
+    def test_filtering_statistics_not_saved_when_none(self):
+        """filtering_statistics should not be included in cache when None."""
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1"]}
+        self.metadata_backend.filtering_statistics = None
+
+        with patch.object(self.data_backend, "write") as mock_write:
+            self.metadata_backend.save_cache()
+
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args
+        written_data = json.loads(call_args[0][1])
+
+        self.assertNotIn("filtering_statistics", written_data)
+
+    def test_filtering_statistics_loaded_from_cache(self):
+        """filtering_statistics should be loaded from cache when present."""
+        cache_data = {
+            "aspect_ratio_bucket_indices": {"1.0": ["image1"]},
+            "filtering_statistics": {
+                "total_processed": 5,
+                "skipped": {
+                    "already_exists": 2,
+                    "metadata_missing": 0,
+                    "not_found": 0,
+                    "too_small": 1,
+                    "too_long": 0,
+                    "other": 0,
+                },
+            },
+        }
+        self.data_backend.exists = Mock(return_value=True)
+
+        with patch.object(self.data_backend, "read", return_value=json.dumps(cache_data)):
+            self.metadata_backend.reload_cache()
+
+        self.assertIsNotNone(self.metadata_backend.filtering_statistics)
+        self.assertEqual(self.metadata_backend.filtering_statistics["total_processed"], 5)
+        self.assertEqual(self.metadata_backend.filtering_statistics["skipped"]["too_small"], 1)
+
+    def test_filtering_statistics_none_when_not_in_cache(self):
+        """filtering_statistics should remain None if not present in cache."""
+        cache_data = {
+            "aspect_ratio_bucket_indices": {"1.0": ["image1"]},
+        }
+        self.data_backend.exists = Mock(return_value=True)
+
+        with patch.object(self.data_backend, "read", return_value=json.dumps(cache_data)):
+            self.metadata_backend.reload_cache()
+
+        self.assertIsNone(self.metadata_backend.filtering_statistics)
 
 
 if __name__ == "__main__":

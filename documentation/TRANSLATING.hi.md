@@ -13,7 +13,7 @@ SimpleTuner दस्तावेज़ों के अनुवाद मे�
 
 ## अनुवाद कैसे काम करता है
 
-SimpleTuner [mkdocs-static-i18n](https://github.com/ultrabug/mkdocs-static-i18n) के साथ **suffix-based i18n** का उपयोग करता है। अनुवाद मूल फ़ाइलों के साथ भाषा suffix के रूप में संग्रहीत होते हैं:
+SimpleTuner Zensical के साथ **suffix-based i18n** का उपयोग करता है। अनुवाद मूल फ़ाइलों के साथ भाषा suffix के रूप में संग्रहीत होते हैं:
 
 ```
 documentation/
@@ -98,10 +98,10 @@ cp documentation/INSTALL.md documentation/INSTALL.zh.md
 
 ```bash
 # Install dependencies
-pip install mkdocs mkdocs-material mkdocs-static-i18n pymdown-extensions
+pip install zensical
 
 # Serve with hot reload
-mkdocs serve
+zensical serve
 
 # Open http://localhost:8000 and switch languages
 ```

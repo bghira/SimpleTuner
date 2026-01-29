@@ -27,6 +27,8 @@ from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizer, GemmaTokenizerFast
 
+from simpletuner.helpers.image_manipulation.load import load_video
+from simpletuner.helpers.multiaspect.video import resize_video_frames
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     convert_comfyui_to_diffusers,
@@ -86,6 +88,18 @@ EXAMPLE_DOC_STRING = """
         ... )
         ```
 """
+
+
+# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
+def retrieve_latents(encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"):
+    if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
+        return encoder_output.latent_dist.sample(generator)
+    elif hasattr(encoder_output, "latent_dist") and sample_mode == "argmax":
+        return encoder_output.latent_dist.mode()
+    elif hasattr(encoder_output, "latents"):
+        return encoder_output.latents
+    else:
+        raise AttributeError("Could not access latents of provided encoder_output")
 
 
 # Copied from diffusers.pipelines.flux.pipeline_flux.calculate_shift
@@ -747,6 +761,86 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         latents = self._pack_latents(latents, self.transformer_spatial_patch_size, self.transformer_temporal_patch_size)
         return latents
 
+    def _prepare_video_conditioning(
+        self,
+        video_conditioning: Optional[List[tuple[str, float]]],
+        batch_size: int,
+        num_frames: int,
+        height: int,
+        width: int,
+        frame_rate: float,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+        if not video_conditioning:
+            return None, None, None
+        if not isinstance(video_conditioning, list):
+            raise ValueError("video_conditioning must be a list of (path, strength) tuples.")
+
+        ref_tokens = []
+        ref_masks = []
+        ref_coords = []
+
+        for entry in video_conditioning:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                raise ValueError("Each video_conditioning entry must be (path, strength).")
+            video_path, strength = entry
+            frames = load_video(video_path)
+            if frames is None or not hasattr(frames, "shape"):
+                raise ValueError(f"Unable to load conditioning video from {video_path}.")
+            if frames.ndim != 4:
+                raise ValueError(f"Conditioning video must be 4D [F, H, W, C], got {frames.shape}.")
+            if frames.shape[0] < num_frames:
+                raise ValueError(f"Conditioning video has {frames.shape[0]} frames, expected at least {num_frames}.")
+            if frames.shape[0] > num_frames:
+                frames = frames[:num_frames]
+
+            frames = resize_video_frames(frames, (width, height))
+            video = torch.from_numpy(frames).to(device=device, dtype=torch.float32)
+            if video.max() > 1.0:
+                video = video / 255.0
+            video = video * 2.0 - 1.0
+            video = video.permute(0, 3, 1, 2)  # [F, C, H, W]
+            video = video.unsqueeze(0).permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
+            if batch_size > 1:
+                video = video.repeat(batch_size, 1, 1, 1, 1)
+
+            encoded = self.vae.encode(video)
+            ref_latents = retrieve_latents(encoded, None, "argmax")
+            ref_latents = self._normalize_latents(ref_latents, self.vae.latents_mean, self.vae.latents_std)
+
+            packed_ref = self._pack_latents(
+                ref_latents,
+                self.transformer_spatial_patch_size,
+                self.transformer_temporal_patch_size,
+            ).to(dtype)
+            if packed_ref.shape[0] != batch_size:
+                packed_ref = packed_ref.repeat(batch_size, 1, 1)
+
+            strength_value = float(strength)
+            ref_mask = torch.full(
+                (batch_size, packed_ref.shape[1]),
+                strength_value,
+                device=packed_ref.device,
+                dtype=dtype,
+            )
+
+            ref_tokens.append(packed_ref)
+            ref_masks.append(ref_mask)
+
+            ref_coords.append(
+                self.transformer.rope.prepare_video_coords(
+                    batch_size,
+                    ref_latents.shape[2],
+                    ref_latents.shape[3],
+                    ref_latents.shape[4],
+                    packed_ref.device,
+                    fps=frame_rate,
+                )
+            )
+
+        return torch.cat(ref_tokens, dim=1), torch.cat(ref_masks, dim=1), torch.cat(ref_coords, dim=2)
+
     def prepare_audio_latents(
         self,
         batch_size: int = 1,
@@ -829,6 +923,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
         audio_latents: Optional[torch.Tensor] = None,
+        video_conditioning: Optional[List[tuple[str, float]]] = None,
         prompt_embeds: Optional[torch.Tensor] = None,
         prompt_attention_mask: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
@@ -889,6 +984,8 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                 Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for audio
                 generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
                 tensor will be generated by sampling using the supplied random `generator`.
+            video_conditioning (`List[Tuple[str, float]]`, *optional*):
+                Reference videos for IC-LoRA-style conditioning, provided as (path, strength) tuples.
             prompt_embeds (`torch.Tensor`, *optional*):
                 Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
                 provided, text embeddings will be generated from `prompt` input argument.
@@ -1008,6 +1105,32 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
             generator,
             latents,
         )
+        reference_tokens = None
+        conditioning_mask = None
+        ref_seq_len = 0
+        ref_coords = None
+        target_seq_len = latents.shape[1]
+        if video_conditioning:
+            reference_tokens, ref_mask, ref_coords = self._prepare_video_conditioning(
+                video_conditioning=video_conditioning,
+                batch_size=latents.shape[0],
+                num_frames=num_frames,
+                height=height,
+                width=width,
+                frame_rate=frame_rate,
+                device=device,
+                dtype=latents.dtype,
+            )
+            if reference_tokens is not None:
+                ref_seq_len = reference_tokens.shape[1]
+                latents = torch.cat([reference_tokens, latents], dim=1)
+                target_mask = torch.zeros(
+                    latents.shape[0],
+                    target_seq_len,
+                    device=latents.device,
+                    dtype=latents.dtype,
+                )
+                conditioning_mask = torch.cat([ref_mask, target_mask], dim=1)
 
         num_mel_bins = self.audio_vae.config.mel_bins if getattr(self, "audio_vae", None) is not None else 64
         latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
@@ -1074,9 +1197,13 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         video_coords = self.transformer.rope.prepare_video_coords(
             latents.shape[0], latent_num_frames, latent_height, latent_width, latents.device, fps=frame_rate
         )
+        if ref_coords is not None:
+            video_coords = torch.cat([ref_coords, video_coords], dim=2)
         audio_coords = self.transformer.audio_rope.prepare_audio_coords(
             audio_latents.shape[0], audio_num_frames, audio_latents.device, fps=frame_rate
         )
+        if conditioning_mask is not None and self.do_classifier_free_guidance:
+            conditioning_mask = torch.cat([conditioning_mask, conditioning_mask])
 
         # 7. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1095,6 +1222,9 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
+                video_timestep = (
+                    timestep.unsqueeze(-1) * (1 - conditioning_mask) if conditioning_mask is not None else timestep
+                )
 
                 with self.transformer.cache_context("cond_uncond"):
                     noise_pred_video, noise_pred_audio = self.transformer(
@@ -1102,7 +1232,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                         audio_hidden_states=audio_latent_model_input,
                         encoder_hidden_states=connector_prompt_embeds,
                         audio_encoder_hidden_states=connector_audio_prompt_embeds,
-                        timestep=timestep,
+                        timestep=video_timestep,
                         encoder_attention_mask=connector_attention_mask,
                         audio_encoder_attention_mask=connector_attention_mask,
                         num_frames=latent_num_frames,
@@ -1141,6 +1271,8 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred_video, t, latents, return_dict=False)[0]
+                if reference_tokens is not None and ref_seq_len:
+                    latents[:, :ref_seq_len] = reference_tokens
                 # NOTE: for now duplicate scheduler for audio latents in case self.scheduler sets internal state in
                 # the step method (such as _step_index)
                 audio_latents = audio_scheduler.step(noise_pred_audio, t, audio_latents, return_dict=False)[0]
@@ -1160,6 +1292,9 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
 
                 if XLA_AVAILABLE:
                     xm.mark_step()
+
+        if ref_seq_len:
+            latents = latents[:, ref_seq_len:]
 
         if output_type == "latent":
             video = latents

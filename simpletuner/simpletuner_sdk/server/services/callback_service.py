@@ -466,6 +466,8 @@ class CallbackService:
         APIState.set_state("training_progress", None)
         self._clear_startup_stages()
         self._broadcast_progress_reset(job_id, status="failed")
+        # Immediately broadcast the error details so WebUI can display them
+        self._broadcast_error(event, job_id)
         if job_id:
             self._job_status[job_id] = "failed"
         current_job = APIState.get_state("current_job_id")
@@ -609,6 +611,26 @@ class CallbackService:
 
         manager = get_sse_manager()
         manager.broadcast_threadsafe(payload, event_type="training.progress")
+
+    def _broadcast_error(self, event: CallbackEvent, job_id: str | None) -> None:
+        """Broadcast error events immediately via SSE for fast delivery to WebUI."""
+        payload = {
+            "type": "error",
+            "job_id": job_id,
+            "title": event.title,
+            "message": event.message,
+            "severity": event.severity.value if hasattr(event.severity, "value") else str(event.severity),
+            "timestamp": event.timestamp.isoformat() if event.timestamp else None,
+        }
+
+        # Include traceback if available in the raw data
+        if isinstance(event.raw, Mapping) and "traceback" in event.raw:
+            payload["traceback"] = event.raw["traceback"]
+
+        logger.info(f"Broadcasting error event for job {job_id}: {event.title or event.message}")
+
+        manager = get_sse_manager()
+        manager.broadcast_threadsafe(payload, event_type="error")
 
     def _should_suppress_event(self, event: CallbackEvent) -> bool:
         if not event:

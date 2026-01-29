@@ -1,6 +1,7 @@
 import logging
 import numbers
 import os
+import random
 import threading
 import time
 from math import ceil, floor
@@ -121,6 +122,7 @@ class MetadataBackend:
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        max_num_samples: int = None,
     ):
         self.id = id
         if self.id != data_backend.id:
@@ -174,6 +176,33 @@ class MetadataBackend:
         # When a multi-gpu system splits the buckets, we no longer update.
         self.read_only = False
         self.bucket_report = None
+        self.max_num_samples = int(max_num_samples) if max_num_samples else None
+        # Filtering statistics from dataset processing (too_small, too_long, etc.)
+        self.filtering_statistics = None
+
+    def _apply_max_num_samples_limit(self, file_list: list) -> list:
+        """
+        Apply a deterministic limit to the file list if max_num_samples is set.
+
+        Uses a seeded random generator based on the dataset ID for reproducibility,
+        ensuring the same subset is selected across training sessions.
+
+        Args:
+            file_list: List of file paths to potentially limit
+
+        Returns:
+            list: Limited list of file paths (or original if no limit set)
+        """
+        if self.max_num_samples is None or len(file_list) <= self.max_num_samples:
+            return file_list
+
+        # Use dataset ID as seed for deterministic selection
+        rng = random.Random(self.id)
+        shuffled = list(file_list)
+        rng.shuffle(shuffled)
+        limited = shuffled[: self.max_num_samples]
+        logger.info(f"({self.id}) Applied max_num_samples limit: selected {len(limited)} of {len(file_list)} samples")
+        return limited
 
     def load_metadata(self):
         raise NotImplementedError
@@ -475,6 +504,7 @@ class MetadataBackend:
                 for filepath, meta in metadata_updates.items():
                     self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
                 logger.info(f"Processed {statistics['total_processed']} audio files. Statistics: {statistics}")
+                self.filtering_statistics = statistics
                 self.save_image_metadata()
 
             # Rebuild buckets from all metadata (existing + new)
@@ -528,6 +558,7 @@ class MetadataBackend:
         if not new_files:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
+            self.filtering_statistics = aggregated_statistics
             if self.bucket_report:
                 self.bucket_report.update_statistics(aggregated_statistics)
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
@@ -623,6 +654,7 @@ class MetadataBackend:
         for worker in workers:
             worker.join()
         logger.info(f"Sample processing statistics: {aggregated_statistics}")
+        self.filtering_statistics = aggregated_statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
@@ -676,13 +708,18 @@ class MetadataBackend:
         except Exception:
             dataset_type_enum = DatasetType.IMAGE
 
-        grad_accumulation_for_bucketing = 1 if dataset_type_enum is DatasetType.EVAL else gradient_accumulation_steps
-        if dataset_type_enum is DatasetType.EVAL and gradient_accumulation_steps != 1:
-            logger.debug(
-                f"(id={self.id}) Ignoring gradient accumulation for eval dataset; using 1 instead of {gradient_accumulation_steps}."
-            )
-
-        effective_batch_size = self.batch_size * num_processes * grad_accumulation_for_bucketing
+        # Eval datasets use effective_batch_size=1 since they're not trained and validation
+        # retrieves images individually via retrieve_validation_set().
+        if dataset_type_enum is DatasetType.EVAL:
+            effective_batch_size = 1
+            if gradient_accumulation_steps != 1 or self.batch_size != 1:
+                logger.debug(
+                    f"(id={self.id}) Using effective_batch_size=1 for eval dataset "
+                    f"(ignoring batch_size={self.batch_size}, grad_accum={gradient_accumulation_steps})."
+                )
+        else:
+            grad_accumulation_for_bucketing = gradient_accumulation_steps
+            effective_batch_size = self.batch_size * num_processes * grad_accumulation_for_bucketing
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
@@ -960,9 +997,15 @@ class MetadataBackend:
         if StateTracker.get_args().disable_bucket_pruning:
             logger.warning("Not pruning small buckets, as --disable_bucket_pruning is provided.")
             return
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type) if dataset_type is not None else DatasetType.IMAGE
+        except Exception:
+            dataset_type_enum = DatasetType.IMAGE
+        effective_batch_size = 1 if dataset_type_enum is DatasetType.EVAL else self.batch_size
         if (
             bucket in self.aspect_ratio_bucket_indices
-            and (len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)) < self.batch_size
+            and (len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)) < effective_batch_size
         ):
             bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
             if self.bucket_report:
@@ -970,12 +1013,12 @@ class MetadataBackend:
                     bucket=bucket,
                     reason="insufficient_for_batch",
                     removed=bucket_sample_count,
-                    batch_size=self.batch_size,
+                    batch_size=effective_batch_size,
                     repeats=int(self.repeats),
                 )
             del self.aspect_ratio_bucket_indices[bucket]
             logger.warning(
-                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={bucket_sample_count})."
+                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={effective_batch_size} > sample_count={bucket_sample_count})."
             )
 
     def _iterate_buckets_with_progress(self, desc: str):

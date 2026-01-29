@@ -6,7 +6,6 @@ from pathlib import Path
 
 # Import WebhookLogger setup FIRST before creating any loggers
 from simpletuner.helpers.logging import get_logger
-from simpletuner.helpers.training.error_reporter import write_error as write_error_file
 
 # Quiet down, you.
 ds_logger1 = logging.getLogger("DeepSpeed")
@@ -26,6 +25,7 @@ environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from simpletuner.helpers import log_format
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
+from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.trainer import Trainer
@@ -237,8 +237,18 @@ if __name__ == "__main__":
     except Exception as e:
         import traceback
 
-        # Write structured error file for parent process to read
-        write_error_file(e, traceback.format_exc())
+        # Check if this is a CUDA/GPU error and trigger circuit breaker
+        if is_cuda_error(e):
+            try:
+                circuit_breaker = get_gpu_circuit_breaker(
+                    webhook_handler=StateTracker.get_webhook_handler(),
+                    job_id=StateTracker.get_job_id(),
+                )
+                gpu_idx = get_current_gpu_index()
+                circuit_breaker.record_cuda_error(e, gpu_idx)
+                logger.error(f"GPU circuit breaker triggered by CUDA error on GPU {gpu_idx}: {e}")
+            except Exception as cb_err:
+                logger.warning(f"Failed to trigger GPU circuit breaker: {cb_err}")
 
         # If webhook handler isn't configured yet (crash happened early), try to configure it now
         if StateTracker.get_webhook_handler() is None:
@@ -251,8 +261,20 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
+            # Send error event with proper message type so WebUI displays it correctly
             StateTracker.get_webhook_handler().send_raw(
-                structured_data={"status": "failed", "error": str(e), "traceback": traceback.format_exc()},
+                structured_data={
+                    "title": f"Training failed: {type(e).__name__}",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+                message_type="error",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
+            )
+            # Also send status update to update job state
+            StateTracker.get_webhook_handler().send_raw(
+                structured_data={"status": "failed"},
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),

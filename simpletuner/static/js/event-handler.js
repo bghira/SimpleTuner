@@ -1523,19 +1523,6 @@ class EventHandler {
             eventStatus.innerHTML = statusContent;
         }
 
-        // Determine the status string
-        let status = 'disconnected';
-        if (connected) {
-            status = 'connected';
-        } else if (message && message.toLowerCase().includes('reconnect')) {
-            status = 'reconnecting';
-        }
-
-        // Update via centralized function (updates Alpine store + dispatches event)
-        if (typeof window.updateConnectionStatus === 'function') {
-            window.updateConnectionStatus(status, connected ? '' : (message || 'Disconnected'));
-        }
-
         // Only show message in event list if requested
         if (showMessage) {
             this.updateEventList([{
@@ -1761,8 +1748,8 @@ class EventHandler {
                 }
             } else if (event.type === 'error') {
                 baseEvent.message_type = 'error';
-                baseEvent.message = event.data?.message || 'Unknown error';
-                this.notifyTrainingState('error', { ...event.data, job_id: jobId }, { resetProgress: true });
+                baseEvent.message = event.message || event.data?.message || 'Unknown error';
+                this.notifyTrainingState('error', { message: baseEvent.message, ...event.data, job_id: jobId }, { resetProgress: true });
             } else if (event.type === 'webhook') {
                 baseEvent.message_type = 'info';
                 baseEvent.message = event.data?.message || '';

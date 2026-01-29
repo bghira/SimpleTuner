@@ -551,6 +551,24 @@ Esto es especialmente útil cuando:
 - Sin sobresuscripción: se lanza un error
 - Con `--allow_dataset_oversubscription`: repeats ajustado automáticamente a 1 (25 × 2 = 50 muestras)
 
+### `max_num_samples`
+
+- **Descripción:** Limita el dataset a un número máximo de muestras. Cuando se establece, se selecciona un subconjunto aleatorio determinista del tamaño especificado del dataset completo.
+- **Caso de uso:** Útil para grandes datasets de regularización donde deseas usar solo una parte de los datos para evitar dominar conjuntos de entrenamiento más pequeños.
+- **Selección determinista:** La selección aleatoria usa el `id` del dataset como semilla, asegurando que el mismo subconjunto sea seleccionado entre sesiones de entrenamiento para reproducibilidad.
+- **Por defecto:** `null` (sin límite, se usan todas las muestras)
+
+#### Ejemplo
+```json
+{
+  "id": "regularization-data",
+  "max_num_samples": 1000,
+  ...
+}
+```
+
+Esto seleccionará de forma determinista 1000 muestras del dataset, con la misma selección utilizada cada vez que se ejecute el entrenamiento.
+
 ### `start_epoch` / `start_step`
 
 - Programa cuándo un dataset empieza a muestrear.
@@ -558,6 +576,38 @@ Esto es especialmente útil cuando:
 - Al menos un dataset debe tener `start_epoch<=1` **y** `start_step<=1`; de lo contrario, el entrenamiento fallará porque no hay datos disponibles al inicio.
 - Los datasets que nunca cumplen su condición de inicio (por ejemplo, `start_epoch` más allá de `--num_train_epochs`) se omitirán y se anotarán en la model card.
 - Las estimaciones de pasos en la barra de progreso son aproximadas cuando los datasets programados se activan a mitad de ejecución porque la longitud de la época puede aumentar cuando nuevos datos entran en línea.
+
+### `end_epoch` / `end_step`
+
+- Programa cuándo un dataset **deja** de muestrear (complementando `start_epoch`/`start_step`).
+- `end_epoch` (default: `null` = sin límite) detiene el muestreo después de esta época; `end_step` (default: `null` = sin límite) detiene el muestreo después de este paso de optimizador.
+- Cualquiera de las condiciones que termine detendrá el dataset; funcionan de forma independiente.
+- Útil para flujos de trabajo de **aprendizaje curricular** donde deseas:
+  - Entrenar con datos de baja resolución primero, luego cambiar a datos de mayor resolución.
+  - Eliminar gradualmente los datos de regularización después de cierto punto.
+  - Crear entrenamiento multi-etapa dentro de un solo archivo de configuración.
+
+**Ejemplo: Aprendizaje Curricular**
+```json
+[
+  {
+    "id": "lowres-512",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/512",
+    "end_step": 300
+  },
+  {
+    "id": "highres-1024",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/1024",
+    "start_step": 300
+  }
+]
+```
+
+En este ejemplo, el dataset de 512px se usa para los pasos 1-300, luego el dataset de 1024px toma el control desde el paso 300 en adelante.
 
 ### `is_regularisation_data`
 
@@ -578,6 +628,32 @@ Esto es especialmente útil cuando:
 - **Descripción:** Cuando está habilitado, las imágenes que fallen durante la codificación VAE (archivos corruptos, formatos no compatibles, etc.) se eliminan permanentemente del directorio del dataset.
 - **Advertencia:** Esto es destructivo y no se puede deshacer. Úsalo con cuidado.
 - **Default:** Usa el argumento `--delete_problematic_images` del trainer (default: `false`).
+
+### Ver Estadísticas de Filtrado
+
+Cuando SimpleTuner procesa tu dataset, rastrea cuántos archivos fueron filtrados y por qué. Estas estadísticas se almacenan en el archivo de caché del dataset (`aspect_ratio_bucket_indices_*.json`) y pueden verse en la WebUI.
+
+**Estadísticas rastreadas:**
+- **total_processed**: Número de archivos procesados
+- **too_small**: Archivos filtrados por estar debajo de `minimum_image_size`
+- **too_long**: Archivos filtrados por exceder límites de duración (audio/video)
+- **metadata_missing**: Archivos omitidos por falta de metadatos
+- **not_found**: Archivos que no se pudieron localizar
+- **already_exists**: Archivos ya en caché (no reprocesados)
+- **other**: Archivos filtrados por otras razones
+
+**Ver en la WebUI:**
+
+Al navegar por datasets en el explorador de archivos de la WebUI, seleccionar un directorio con un dataset existente mostrará estadísticas de filtrado si están disponibles. Esto ayuda a diagnosticar por qué tu dataset puede tener menos muestras utilizables de lo esperado.
+
+**Solución de problemas de archivos filtrados:**
+
+Si muchos archivos están siendo filtrados como `too_small`:
+1. Verifica tu configuración de `minimum_image_size` — debe coincidir con `resolution` y `resolution_type`
+2. Para `resolution_type=pixel`, `minimum_image_size` es la longitud mínima del borde más corto
+3. Para `resolution_type=area` o `pixel_area`, `minimum_image_size` es el área total mínima
+
+Consulta la sección [Solución de Problemas](#solución-de-problemas-de-datasets-filtrados) a continuación para más detalles.
 
 ### `slider_strength`
 
