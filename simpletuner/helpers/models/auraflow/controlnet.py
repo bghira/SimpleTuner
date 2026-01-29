@@ -186,6 +186,10 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
         self.register_tokens = nn.Parameter(torch.randn(1, 8, self.inner_dim) * 0.02)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
         if dim not in [0, 1]:
@@ -374,8 +378,15 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
 
                     return custom_forward
 
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                encoder_hidden_states, hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
@@ -405,8 +416,15 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
 
                         return custom_forward
 
+                    if self.gradient_checkpointing_backend == "unsloth":
+                        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                        checkpoint_fn = offloaded_checkpoint
+                    else:
+                        checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                     ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                    combined_hidden_states = torch.utils.checkpoint.checkpoint(
+                    combined_hidden_states = checkpoint_fn(
                         create_custom_forward(block),
                         combined_hidden_states,
                         temb,

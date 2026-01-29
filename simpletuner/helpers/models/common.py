@@ -2576,6 +2576,18 @@ class ModelFoundation(ABC):
 
         self.configure_chunked_feed_forward()
 
+        # Set gradient checkpointing backend
+        checkpoint_backend = getattr(self.config, "gradient_checkpointing_backend", "torch")
+        if checkpoint_backend == "unsloth" and not torch.cuda.is_available():
+            logger.warning("Unsloth gradient checkpointing backend requires CUDA, falling back to torch")
+            checkpoint_backend = "torch"
+
+        from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+
+        set_checkpoint_backend(checkpoint_backend)
+        if checkpoint_backend == "unsloth":
+            logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
+
         if (
             self.config.gradient_checkpointing_interval is not None
             and self.config.gradient_checkpointing_interval > 1
@@ -2597,6 +2609,11 @@ class ModelFoundation(ABC):
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+
+        # Set gradient checkpointing backend on model if supported
+        if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_backend"):
+            self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
+
         self.fuse_qkv_projections()
         self.post_model_load_setup()
 
