@@ -1729,6 +1729,12 @@ function trainerComponent() {
                 dataset.video = this.normalizeVideoOptions(dataset.video);
             }
 
+            if (dataset.dataset_type === 'audio') {
+                dataset.audio = this.normalizeAudioOptions(dataset.audio);
+            } else if (dataset.audio && typeof dataset.audio === 'object') {
+                dataset.audio = this.normalizeAudioOptions(dataset.audio);
+            }
+
             if (dataset.dataset_type === 'conditioning') {
                 // Default to 'controlnet' if ControlNet training is enabled, otherwise 'reference_strict'
                 const defaultConditioningType = this.modelContext?.controlnetEnabled ? 'controlnet' : 'reference_strict';
@@ -1813,6 +1819,15 @@ function trainerComponent() {
             );
             dataset.crop_aspect_buckets = buckets;
             dataset._cropAspectBucketsText = buckets.length ? buckets.join(', ') : '';
+
+            // Handle audio_caption_fields array <-> text conversion
+            const audioCaptionFields = this.parseCommaSeparatedText(
+                typeof dataset._audioCaptionFieldsText === 'string' && dataset._audioCaptionFieldsText.trim() !== ''
+                    ? dataset._audioCaptionFieldsText
+                    : dataset.audio_caption_fields,
+            );
+            dataset.audio_caption_fields = audioCaptionFields;
+            dataset._audioCaptionFieldsText = audioCaptionFields.length ? audioCaptionFields.join(', ') : '';
 
             if (Array.isArray(dataset.skip_file_discovery)) {
                 dataset.skip_file_discovery = dataset.skip_file_discovery.join(' ');
@@ -1946,6 +1961,41 @@ function trainerComponent() {
                 } else if (typeof value.is_i2v === 'string' && value.is_i2v.trim() !== '') {
                     result.is_i2v = value.is_i2v.trim().toLowerCase() === 'true';
                 }
+                if (value.bucket_strategy && typeof value.bucket_strategy === 'string') {
+                    result.bucket_strategy = value.bucket_strategy;
+                }
+                const frameInterval = this._coerceInt(value.frame_interval);
+                if (Number.isFinite(frameInterval) && frameInterval > 0) {
+                    result.frame_interval = frameInterval;
+                }
+            }
+            return result;
+        },
+        normalizeAudioOptions(value) {
+            const result = {};
+            if (value && typeof value === 'object') {
+                const minDuration = this._coerceFloat(value.min_duration_seconds);
+                const maxDuration = this._coerceFloat(value.max_duration_seconds);
+                const durationInterval = this._coerceFloat(value.duration_interval);
+                const channels = this._coerceInt(value.channels);
+                if (Number.isFinite(minDuration) && minDuration > 0) {
+                    result.min_duration_seconds = minDuration;
+                }
+                if (Number.isFinite(maxDuration) && maxDuration > 0) {
+                    result.max_duration_seconds = maxDuration;
+                }
+                if (Number.isFinite(durationInterval) && durationInterval > 0) {
+                    result.duration_interval = durationInterval;
+                }
+                if (Number.isFinite(channels) && channels > 0) {
+                    result.channels = channels;
+                }
+                if (value.bucket_strategy && typeof value.bucket_strategy === 'string') {
+                    result.bucket_strategy = value.bucket_strategy;
+                }
+                if (value.truncation_mode && typeof value.truncation_mode === 'string') {
+                    result.truncation_mode = value.truncation_mode;
+                }
             }
             return result;
         },
@@ -2016,6 +2066,20 @@ function trainerComponent() {
                     }
                 });
             return buckets;
+        },
+        parseCommaSeparatedText(text) {
+            if (Array.isArray(text)) {
+                return text
+                    .map((entry) => this._coerceString(entry))
+                    .filter((entry) => entry !== '');
+            }
+            if (typeof text !== 'string' || !text.trim()) {
+                return [];
+            }
+            return text
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter((entry) => entry !== '');
         },
         normalizeSkipList(value) {
             if (Array.isArray(value)) {
@@ -2268,6 +2332,43 @@ function trainerComponent() {
                 } else if (typeof options.is_i2v === 'string' && options.is_i2v.trim() !== '') {
                     cleaned.is_i2v = options.is_i2v.trim().toLowerCase() === 'true';
                 }
+                if (options.bucket_strategy && typeof options.bucket_strategy === 'string' && options.bucket_strategy.trim()) {
+                    cleaned.bucket_strategy = options.bucket_strategy.trim();
+                }
+                const frameInterval = this._coerceInt(options.frame_interval);
+                if (Number.isFinite(frameInterval) && frameInterval > 0) {
+                    cleaned.frame_interval = frameInterval;
+                }
+                return Object.keys(cleaned).length ? cleaned : undefined;
+            };
+
+            const sanitizeAudioOptions = (options) => {
+                if (!options || typeof options !== 'object') {
+                    return undefined;
+                }
+                const cleaned = {};
+                const minDuration = this._coerceFloat(options.min_duration_seconds);
+                const maxDuration = this._coerceFloat(options.max_duration_seconds);
+                const durationInterval = this._coerceFloat(options.duration_interval);
+                const channels = this._coerceInt(options.channels);
+                if (Number.isFinite(minDuration) && minDuration > 0) {
+                    cleaned.min_duration_seconds = minDuration;
+                }
+                if (Number.isFinite(maxDuration) && maxDuration > 0) {
+                    cleaned.max_duration_seconds = maxDuration;
+                }
+                if (Number.isFinite(durationInterval) && durationInterval > 0) {
+                    cleaned.duration_interval = durationInterval;
+                }
+                if (Number.isFinite(channels) && channels > 0) {
+                    cleaned.channels = channels;
+                }
+                if (options.bucket_strategy && typeof options.bucket_strategy === 'string' && options.bucket_strategy.trim()) {
+                    cleaned.bucket_strategy = options.bucket_strategy.trim();
+                }
+                if (options.truncation_mode && typeof options.truncation_mode === 'string' && options.truncation_mode.trim()) {
+                    cleaned.truncation_mode = options.truncation_mode.trim();
+                }
                 return Object.keys(cleaned).length ? cleaned : undefined;
             };
 
@@ -2350,6 +2451,13 @@ function trainerComponent() {
                     }
                 }
 
+                if (cleaned.dataset_type === 'audio') {
+                    const audioOptions = sanitizeAudioOptions(dataset.audio);
+                    if (audioOptions) {
+                        cleaned.audio = audioOptions;
+                    }
+                }
+
                 if (cleaned.type !== 'local') {
                     delete cleaned.instance_data_dir;
                 }
@@ -2422,6 +2530,25 @@ function trainerComponent() {
                         cleaned.crop_aspect_buckets = bucketValues;
                     } else {
                         delete cleaned.crop_aspect_buckets;
+                    }
+                }
+
+                // Handle audio_caption_fields for audio datasets
+                if (dataset.dataset_type === 'audio') {
+                    const audioCaptionSource = typeof dataset._audioCaptionFieldsText === 'string' && dataset._audioCaptionFieldsText.trim() !== ''
+                        ? dataset._audioCaptionFieldsText
+                        : dataset.audio_caption_fields;
+                    const audioCaptionValues = this.parseCommaSeparatedText(audioCaptionSource);
+                    if (audioCaptionValues.length) {
+                        cleaned.audio_caption_fields = audioCaptionValues;
+                    } else {
+                        delete cleaned.audio_caption_fields;
+                    }
+
+                    if (dataset.lyrics_column && dataset.lyrics_column.trim()) {
+                        cleaned.lyrics_column = dataset.lyrics_column.trim();
+                    } else {
+                        delete cleaned.lyrics_column;
                     }
                 }
 
@@ -3518,6 +3645,9 @@ function trainerComponent() {
                     maximum_aspect_ratio: null,
                     crop_aspect_buckets: [],
                     _cropAspectBucketsText: '',
+                    audio_caption_fields: [],
+                    _audioCaptionFieldsText: '',
+                    lyrics_column: '',
                     skip_file_discovery: '',
                     hash_filenames: true,
                     preserve_data_backend_cache: false,
@@ -3531,6 +3661,8 @@ function trainerComponent() {
                     text_embeds: '',
                     image_embeds: '',
                     parquet: {},
+                    video: {},
+                    audio: {},
                     aws_bucket_name: '',
                     aws_data_prefix: '',
                     aws_region_name: '',

@@ -179,6 +179,17 @@
                        placeholder="0">
                 <div class="form-text small">0 = single pass, 1+ = extra sweeps</div>
             </div>
+            <div class="col-md-4">
+                <label class="form-label small">Max Samples <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#max_num_samples') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.max_num_samples"
+                       @input="markAsUnsaved()"
+                       placeholder="No limit">
+                <div class="form-text small">Limit dataset size</div>
+            </div>
             <div class="col-md-4" :class="{'opacity-50': !dangerModeEnabled()}">
                 <label class="form-label small">Probability</label>
                 <input type="number"

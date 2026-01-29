@@ -1066,9 +1066,21 @@ if (!window.checkpointsManager) {
                     visibility: visible !important;
                 `;
 
-                const img = document.createElement('img');
-                img.src = imageSrc;
-                img.style.cssText = `
+                const isVideo = imageSrc && imageSrc.startsWith('data:video/');
+                let mediaElement;
+
+                if (isVideo) {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = imageSrc;
+                    mediaElement.controls = true;
+                    mediaElement.autoplay = true;
+                    mediaElement.loop = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = imageSrc;
+                }
+
+                mediaElement.style.cssText = `
                     max-width: 90vw !important;
                     max-height: 90vh !important;
                     object-fit: contain !important;
@@ -1103,11 +1115,11 @@ if (!window.checkpointsManager) {
                     }
                 };
 
-                img.onclick = (e) => {
+                mediaElement.onclick = (e) => {
                     e.stopPropagation();
                 };
 
-                testLightbox.appendChild(img);
+                testLightbox.appendChild(mediaElement);
                 testLightbox.appendChild(closeBtn);
                 document.body.appendChild(testLightbox);
                 document.body.style.overflow = 'hidden';
