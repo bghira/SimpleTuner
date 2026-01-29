@@ -457,8 +457,43 @@ class LTX2VideoTransformerBlock(nn.Module):
         audio_encoder_attention_mask: Optional[torch.Tensor] = None,
         a2v_cross_attention_mask: Optional[torch.Tensor] = None,
         v2a_cross_attention_mask: Optional[torch.Tensor] = None,
+        audio_only: bool = False,
     ) -> torch.Tensor:
-        batch_size = hidden_states.size(0)
+        batch_size = audio_hidden_states.size(0)
+
+        if audio_only:
+            norm_audio_hidden_states = self.audio_norm1(audio_hidden_states)
+
+            num_audio_ada_params = self.audio_scale_shift_table.shape[0]
+            audio_ada_values = self.audio_scale_shift_table[None, None].to(temb_audio.device) + temb_audio.reshape(
+                batch_size, temb_audio.size(1), num_audio_ada_params, -1
+            )
+            audio_shift_msa, audio_scale_msa, audio_gate_msa, audio_shift_mlp, audio_scale_mlp, audio_gate_mlp = (
+                audio_ada_values.unbind(dim=2)
+            )
+            norm_audio_hidden_states = norm_audio_hidden_states * (1 + audio_scale_msa) + audio_shift_msa
+
+            attn_audio_hidden_states = self.audio_attn1(
+                hidden_states=norm_audio_hidden_states,
+                encoder_hidden_states=None,
+                query_rotary_emb=audio_rotary_emb,
+            )
+            audio_hidden_states = audio_hidden_states + attn_audio_hidden_states * audio_gate_msa
+
+            norm_audio_hidden_states = self.audio_norm2(audio_hidden_states)
+            attn_audio_hidden_states = self.audio_attn2(
+                norm_audio_hidden_states,
+                encoder_hidden_states=audio_encoder_hidden_states,
+                query_rotary_emb=None,
+                attention_mask=audio_encoder_attention_mask,
+            )
+            audio_hidden_states = audio_hidden_states + attn_audio_hidden_states
+
+            norm_audio_hidden_states = self.audio_norm3(audio_hidden_states) * (1 + audio_scale_mlp) + audio_shift_mlp
+            audio_ff_output = self.audio_ff(norm_audio_hidden_states)
+            audio_hidden_states = audio_hidden_states + audio_ff_output * audio_gate_mlp
+
+            return hidden_states, audio_hidden_states
 
         # 1. Video and Audio Self-Attention
         norm_hidden_states = self.norm1(hidden_states)
@@ -1191,6 +1226,7 @@ class LTX2VideoTransformer3DModel(
         audio_num_frames: Optional[int] = None,
         video_coords: Optional[torch.Tensor] = None,
         audio_coords: Optional[torch.Tensor] = None,
+        audio_only: bool = False,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
@@ -1229,6 +1265,122 @@ class LTX2VideoTransformer3DModel(
         else:
             if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
                 logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
+
+        if audio_only:
+            if output_hidden_states:
+                raise ValueError("Audio-only mode does not support output_hidden_states.")
+            if force_keep_mask is not None:
+                raise ValueError("Audio-only mode does not support force_keep_mask.")
+
+            if audio_encoder_attention_mask is not None and audio_encoder_attention_mask.ndim == 2:
+                audio_encoder_attention_mask = (1 - audio_encoder_attention_mask.to(audio_hidden_states.dtype)) * -10000.0
+                audio_encoder_attention_mask = audio_encoder_attention_mask.unsqueeze(1)
+
+            batch_size = audio_hidden_states.size(0)
+            if audio_coords is None:
+                audio_coords = self.audio_rope.prepare_audio_coords(
+                    batch_size, audio_num_frames, audio_hidden_states.device, fps=fps
+                )
+            audio_rotary_emb = self.audio_rope(audio_coords, device=audio_hidden_states.device)
+
+            audio_hidden_states = self.audio_proj_in(audio_hidden_states)
+            temb_audio, audio_embedded_timestep = self.audio_time_embed(
+                audio_timestep.flatten() if audio_timestep is not None else timestep.flatten(),
+                batch_size=batch_size,
+                hidden_dtype=audio_hidden_states.dtype,
+            )
+            temb_audio = temb_audio.view(batch_size, -1, temb_audio.size(-1))
+            audio_embedded_timestep = audio_embedded_timestep.view(batch_size, -1, audio_embedded_timestep.size(-1))
+            if timestep_sign is not None:
+                if self.audio_time_sign_embed is None:
+                    raise ValueError(
+                        "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                        "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                    )
+                sign_idx = (timestep_sign.view(-1) < 0).long().to(device=audio_hidden_states.device)
+                audio_sign_emb = self.audio_time_sign_embed(sign_idx).to(
+                    dtype=audio_embedded_timestep.dtype, device=audio_hidden_states.device
+                )
+                audio_sign_emb = audio_sign_emb.view(batch_size, 1, -1).expand_as(audio_embedded_timestep)
+                audio_embedded_timestep = audio_embedded_timestep + audio_sign_emb
+
+            audio_encoder_hidden_states = self.audio_caption_projection(audio_encoder_hidden_states)
+            audio_encoder_hidden_states = audio_encoder_hidden_states.view(batch_size, -1, audio_hidden_states.size(-1))
+
+            grad_enabled = torch.is_grad_enabled()
+            musubi_manager = self._musubi_block_swap
+            musubi_offload_active = False
+            if musubi_manager is not None:
+                musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
+            for block_idx, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                    musubi_manager.stream_in(block, hidden_states.device)
+
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    hidden_states, audio_hidden_states = self._gradient_checkpointing_func(
+                        block,
+                        hidden_states,
+                        audio_hidden_states,
+                        audio_encoder_hidden_states,
+                        audio_encoder_hidden_states,
+                        temb_audio,
+                        temb_audio,
+                        temb_audio,
+                        temb_audio,
+                        temb_audio,
+                        temb_audio,
+                        None,
+                        audio_rotary_emb,
+                        None,
+                        None,
+                        None,
+                        audio_encoder_attention_mask,
+                        None,
+                        None,
+                        True,
+                    )
+                else:
+                    hidden_states, audio_hidden_states = block(
+                        hidden_states=hidden_states,
+                        audio_hidden_states=audio_hidden_states,
+                        encoder_hidden_states=audio_encoder_hidden_states,
+                        audio_encoder_hidden_states=audio_encoder_hidden_states,
+                        temb=temb_audio,
+                        temb_audio=temb_audio,
+                        temb_ca_scale_shift=temb_audio,
+                        temb_ca_audio_scale_shift=temb_audio,
+                        temb_ca_gate=temb_audio,
+                        temb_ca_audio_gate=temb_audio,
+                        video_rotary_emb=None,
+                        audio_rotary_emb=audio_rotary_emb,
+                        ca_video_rotary_emb=None,
+                        ca_audio_rotary_emb=None,
+                        encoder_attention_mask=None,
+                        audio_encoder_attention_mask=audio_encoder_attention_mask,
+                        audio_only=True,
+                    )
+
+                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                    musubi_manager.stream_out(block)
+
+            audio_scale_shift_values = (
+                self.audio_scale_shift_table[None, None].to(audio_embedded_timestep.device)
+                + audio_embedded_timestep[:, :, None]
+            )
+            audio_shift, audio_scale = audio_scale_shift_values[:, :, 0], audio_scale_shift_values[:, :, 1]
+
+            audio_hidden_states = self.audio_norm_out(audio_hidden_states)
+            audio_hidden_states = audio_hidden_states * (1 + audio_scale) + audio_shift
+            audio_output = self.audio_proj_out(audio_hidden_states)
+            output = hidden_states.new_zeros(hidden_states.shape[0], hidden_states.shape[1], self.proj_out.out_features)
+
+            if USE_PEFT_BACKEND:
+                unscale_lora_layers(self, lora_scale)
+
+            if not return_dict:
+                return (output, audio_output)
+            return AudioVisualModelOutput(sample=output, audio_sample=audio_output)
 
         # Determine timestep for audio.
         audio_timestep = audio_timestep if audio_timestep is not None else timestep
@@ -1513,7 +1665,9 @@ class LTX2VideoTransformer3DModel(
         hidden_states = hidden_states * (1 + scale) + shift
         output = self.proj_out(hidden_states)
 
-        audio_scale_shift_values = self.audio_scale_shift_table[None, None].to(audio_embedded_timestep.device) + audio_embedded_timestep[:, :, None]
+        audio_scale_shift_values = (
+            self.audio_scale_shift_table[None, None].to(audio_embedded_timestep.device) + audio_embedded_timestep[:, :, None]
+        )
         audio_shift, audio_scale = audio_scale_shift_values[:, :, 0], audio_scale_shift_values[:, :, 1]
 
         audio_hidden_states = self.audio_norm_out(audio_hidden_states)

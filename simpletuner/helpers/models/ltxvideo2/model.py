@@ -140,6 +140,35 @@ class LTXVideo2(VideoModelFoundation):
             return list(self.AUDIO_LORA_TARGETS)
         return []
 
+    def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+
+        lora_type = getattr(self.config, "lora_type", "standard")
+        if str(lora_type).lower() != "standard":
+            return super().get_lora_target_layers()
+
+        if self._data_has_audio and not self._data_has_video:
+            targets = [
+                "audio_attn1.to_k",
+                "audio_attn1.to_q",
+                "audio_attn1.to_v",
+                "audio_attn1.to_out.0",
+                "audio_attn2.to_k",
+                "audio_attn2.to_q",
+                "audio_attn2.to_v",
+                "audio_attn2.to_out.0",
+                "audio_ff.net.0.proj",
+                "audio_ff.net.2",
+            ]
+            for extra in self.AUDIO_LORA_TARGETS:
+                if extra not in targets:
+                    targets.append(extra)
+            return targets
+
+        return super().get_lora_target_layers()
+
     def _configure_gemma_path(self) -> None:
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
         if not gemma_path:
@@ -1155,6 +1184,22 @@ class LTXVideo2(VideoModelFoundation):
             raise ValueError("LTX-2 requires audio latents for training.")
         conditioning_latents = prepared_batch.get("conditioning_latents")
         conditioning_type = prepared_batch.get("conditioning_type")
+        video_mask = prepared_batch.get("video_latent_mask")
+        is_audio_only = bool(prepared_batch.get("is_audio_only", False))
+        if video_mask is not None and torch.all(video_mask == 0):
+            is_audio_only = True
+
+        if is_audio_only:
+            if conditioning_latents is not None:
+                raise ValueError("Audio-only mode does not support IC-LoRA conditioning latents.")
+            if prepared_batch.get("force_keep_mask") is not None:
+                raise ValueError("Audio-only mode does not support force_keep_mask.")
+            tread_config = getattr(self.config, "tread_config", None) or {}
+            if isinstance(tread_config, dict) and tread_config.get("routes"):
+                raise ValueError("Audio-only mode does not support TREAD routing.")
+            crepa = getattr(self, "crepa_regularizer", None)
+            if crepa is not None and crepa.wants_hidden_states():
+                raise ValueError("Audio-only mode does not support CREPA hidden-state capture.")
         if conditioning_latents is not None:
             if isinstance(conditioning_latents, list):
                 raise ValueError(
@@ -1296,6 +1341,8 @@ class LTXVideo2(VideoModelFoundation):
             transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        if is_audio_only:
+            transformer_kwargs["audio_only"] = True
 
         model_output = self.model(**transformer_kwargs)
         if capture_hidden:
