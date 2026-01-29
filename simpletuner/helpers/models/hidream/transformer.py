@@ -979,6 +979,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         self.max_seq = max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
 
         total_layers = num_layers + num_single_layers
         self._musubi_block_swap = MusubiBlockSwapManager.build(
@@ -996,6 +997,9 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         """Set TREAD router and routes for token reduction during training."""
         self._tread_router = router
         self._tread_routes = routes
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def _set_gradient_checkpointing(self, module, value=False):
         """
@@ -1174,10 +1178,17 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             # Process T5 embeddings with checkpointing
-            processed_t5_embeddings = torch.utils.checkpoint.checkpoint(
+            processed_t5_embeddings = checkpoint_fn(
                 create_custom_forward_t5(t5_hidden_states),
                 self.caption_projection[-1],
                 **ckpt_kwargs,
@@ -1187,7 +1198,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
                 if i < len(self.caption_projection) - 1:  # Reserve last one for T5
-                    processed_emb = torch.utils.checkpoint.checkpoint(
+                    processed_emb = checkpoint_fn(
                         create_custom_forward_llama(llama_emb, i),
                         self.caption_projection[i],
                         **ckpt_kwargs,
@@ -1279,19 +1290,26 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
             sign = timestep_sign
             if sign is not None:
                 sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype).view(timesteps.shape[0])
-            timesteps_emb = torch.utils.checkpoint.checkpoint(
+            timesteps_emb = checkpoint_fn(
                 create_custom_forward_timestep(timesteps, sign),
                 self.t_embedder,
                 **ckpt_kwargs,
             )
 
-            pooled_emb = torch.utils.checkpoint.checkpoint(
+            pooled_emb = checkpoint_fn(
                 create_custom_forward_pooled(pooled_embeds),
                 self.p_embedder,
                 **ckpt_kwargs,
@@ -1319,9 +1337,16 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
-            hidden_states = torch.utils.checkpoint.checkpoint(
+            hidden_states = checkpoint_fn(
                 create_custom_forward_embed(hidden_states),
                 self.x_embedder,
                 **ckpt_kwargs,
@@ -1357,10 +1382,17 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             # Process T5 embeddings with checkpointing
-            processed_t5_embeddings = torch.utils.checkpoint.checkpoint(
+            processed_t5_embeddings = checkpoint_fn(
                 create_custom_forward_t5(t5_hidden_states),
                 self.caption_projection[-1],
                 **ckpt_kwargs,
@@ -1370,7 +1402,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
                 if i < len(self.caption_projection) - 1:  # Reserve last one for T5
-                    processed_emb = torch.utils.checkpoint.checkpoint(
+                    processed_emb = checkpoint_fn(
                         create_custom_forward_llama(llama_emb, i),
                         self.caption_projection[i],
                         **ckpt_kwargs,
@@ -1407,6 +1439,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             txt_ids = torch.zeros(
@@ -1418,7 +1457,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             )
             ids = torch.cat((img_ids, txt_ids), dim=1)
 
-            rope = torch.utils.checkpoint.checkpoint(create_custom_forward_rope(ids), self.pe_embedder, **ckpt_kwargs)
+            rope = checkpoint_fn(create_custom_forward_rope(ids), self.pe_embedder, **ckpt_kwargs)
         else:
             txt_ids = torch.zeros(
                 batch_size,
@@ -1502,8 +1541,15 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                     return custom_forward
 
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                hidden_states, initial_encoder_hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states, initial_encoder_hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     image_tokens_masks,
@@ -1624,8 +1670,15 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                     return custom_forward
 
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     image_tokens_masks,
@@ -1703,9 +1756,16 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
-            output = torch.utils.checkpoint.checkpoint(
+            output = checkpoint_fn(
                 create_custom_forward_final(hidden_states),
                 self.final_layer,
                 **ckpt_kwargs,

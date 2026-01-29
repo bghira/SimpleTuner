@@ -1760,6 +1760,12 @@
     padding: var(--spacing-md);
 }
 
+#dataloaderSection .dataset-list-item-expanded .list-item-expanded-footer {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.1);
+}
+
 /* Section body - sections flow horizontally when room, wrap when not */
 #dataloaderSection .dataset-list-item-expanded .modal-section-body {
     display: flex;

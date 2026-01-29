@@ -830,9 +830,11 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     """Move text encoders to the target device."""
     if text_encoders is None or (not args.offload_during_startup and not force_move):
         return
-    # Don't move text encoders to GPU if ramtorch is handling them
+    # Don't move text encoders when ramtorch is handling them; partial ramtorch
+    # requires some layers to stay on the accelerator, and full ramtorch relies
+    # on CPU-bouncing modules for correctness.
     ramtorch_text_encoders = getattr(args, "ramtorch", False) and getattr(args, "ramtorch_text_encoder", False)
-    if ramtorch_text_encoders and target_device not in ("cpu", "meta"):
+    if ramtorch_text_encoders:
         logger.debug("Skipping text encoder move to %s - ramtorch_text_encoder is enabled", target_device)
         return
     # we'll move text encoder only if their precision arg is no_change

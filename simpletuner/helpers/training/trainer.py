@@ -5148,6 +5148,46 @@ class Trainer:
         self._run_post_checkpoint_script(local_path=save_path)
         return save_path
 
+    def _populate_checkpoint_assets(self, checkpoint_path: str) -> None:
+        """Copy validation images/videos from this step to the checkpoint's assets folder."""
+        if not checkpoint_path or not os.path.exists(checkpoint_path):
+            return
+
+        checkpoint_name = os.path.basename(checkpoint_path)
+        match = re.search(r"checkpoint-(\d+)", checkpoint_name)
+        if not match:
+            return
+        checkpoint_step = int(match.group(1))
+
+        validation_dir = os.path.join(self.config.output_dir, "validation_images")
+        if not os.path.exists(validation_dir):
+            return
+
+        step_pattern = f"step_{checkpoint_step}_"
+        supported_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".mov", ".webm"}
+
+        matching_files = []
+        for filename in os.listdir(validation_dir):
+            if step_pattern in filename:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in supported_extensions:
+                    matching_files.append(filename)
+
+        if not matching_files:
+            return
+
+        assets_dir = os.path.join(checkpoint_path, "assets")
+        try:
+            os.makedirs(assets_dir, exist_ok=True)
+            for idx, filename in enumerate(sorted(matching_files)):
+                src = os.path.join(validation_dir, filename)
+                ext = os.path.splitext(filename)[1]
+                dst = os.path.join(assets_dir, f"image_{idx}{ext}")
+                shutil.copy2(src, dst)
+            logger.debug(f"Copied {len(matching_files)} validation assets to {assets_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to copy validation assets to checkpoint: {e}")
+
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
             return self.checkpoint_manager.get_latest_checkpoint()
@@ -5702,13 +5742,14 @@ class Trainer:
                     scheduled_checkpoint_due = (
                         checkpoint_step_interval and self.state["global_step"] % checkpoint_step_interval == 0
                     )
+                    step_checkpoint_path = None
                     if manual_checkpoint_requested or scheduled_checkpoint_due:
                         checkpoint_message = (
                             f"Manual checkpoint requested. {webhook_pending_msg}"
                             if manual_checkpoint_requested
                             else webhook_pending_msg
                         )
-                        self._run_standard_checkpoint(
+                        step_checkpoint_path = self._run_standard_checkpoint(
                             webhook_message=checkpoint_message,
                             parent_loss=parent_loss,
                             epoch=epoch,
@@ -5845,6 +5886,8 @@ class Trainer:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
+                    if step_checkpoint_path:
+                        self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
@@ -5869,6 +5912,7 @@ class Trainer:
                 )
                 if checkpoint_dir:
                     self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
+                    self._populate_checkpoint_assets(checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs

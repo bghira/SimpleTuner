@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import torch
 import torch.nn as nn
 
 from simpletuner.helpers.configuration import cmd_args
@@ -71,6 +72,7 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIsInstance(model.linear1, nn.Linear)
         self.assertIsInstance(model.block[0], nn.Linear)
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_replace_linear_with_percent_50(self):
         """Test that percent=50 replaces only half (rounded up) of eligible layers."""
 
@@ -118,6 +120,7 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertEqual(replaced, 2)
         self.assertEqual(replace_all_calls["count"], 1)  # Should use replace_all for efficiency
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_replace_linear_with_percent_0(self):
         """Test that percent=0 replaces no layers."""
 
@@ -142,6 +145,7 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIsInstance(model.linear1, nn.Linear)
         self.assertIsInstance(model.linear2, nn.Linear)
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_replace_linear_with_percent_and_patterns(self):
         """Test that percent works together with target_patterns."""
 

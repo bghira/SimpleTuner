@@ -267,6 +267,27 @@
                        placeholder="hf_...">
             </div>
         </div>
+        <!-- Audio-specific HuggingFace options -->
+        <div class="row g-2 mt-2" x-show="editingDataset.dataset_type === 'audio'" x-cloak>
+            <div class="col-md-6">
+                <label class="form-label small">Audio Caption Fields <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-captions-hugging-face') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset._audioCaptionFieldsText"
+                       @input="markAsUnsaved()"
+                       placeholder="prompt, tags">
+                <div class="form-text small">Comma-separated columns joined for caption</div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Lyrics Column <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-captions-hugging-face') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.lyrics_column"
+                       @input="markAsUnsaved()"
+                       placeholder="lyrics">
+                <div class="form-text small">Column for lyrics (used by lyric encoder)</div>
+            </div>
+        </div>
     </div>
 
     <!-- VAE Cache Directory (for non-local backends) -->

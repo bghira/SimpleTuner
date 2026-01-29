@@ -370,7 +370,7 @@ function dataloaderSectionComponent() {
     getListTab(dataset) {
         if (dataset._listTab) return dataset._listTab;
         // Default to 'storage' for types without a Basic tab
-        const noBasicTypes = ['text_embeds', 'image_embeds', 'audio'];
+        const noBasicTypes = ['text_embeds', 'image_embeds'];
         return noBasicTypes.includes(dataset.dataset_type) ? 'storage' : 'basic';
     },
 
