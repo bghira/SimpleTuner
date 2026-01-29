@@ -1433,11 +1433,13 @@ class FactoryRegistry:
 
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
-        Validate that Qwen edit models have at least one reference conditioning dataset.
+        Validate conditioning datasets for Qwen edit models.
 
-        For Qwen edit models (edit-v1 and edit-v2), at least one conditioning dataset must use
-        conditioning_type of either 'reference_strict' or 'reference_loose' to provide latents
-        for the model. Additional mask/segmentation conditioning datasets are allowed for loss masking.
+        For Qwen edit models (edit-v1 and edit-v2):
+        1. Each conditioning dataset must use a valid conditioning_type
+           (reference_strict, reference_loose, mask, or segmentation)
+        2. At least one conditioning dataset must use reference_strict or reference_loose
+           to provide latents for the model
         """
         # Check if this is a Qwen edit model
         model_family = _get_arg_value(self.args, "model_family", "")
@@ -1457,8 +1459,10 @@ class FactoryRegistry:
         if not is_edit_model:
             return
 
-        # For edit models, ensure at least one reference conditioning dataset exists
+        # Valid conditioning types for edit models
         reference_conditioning_types = {"reference_strict", "reference_loose"}
+        mask_conditioning_types = {"mask", "segmentation"}
+        valid_conditioning_types = reference_conditioning_types | mask_conditioning_types
         has_reference_conditioning = False
 
         for backend in data_backend_config:
@@ -1467,9 +1471,20 @@ class FactoryRegistry:
                 continue
 
             conditioning_type = backend.get("conditioning_type", "")
+            backend_id = backend.get("id", "unknown")
+
+            # Reject invalid conditioning types
+            if conditioning_type and conditioning_type not in valid_conditioning_types:
+                raise ValueError(
+                    f"Invalid conditioning_type='{conditioning_type}' for Qwen edit model in dataset '{backend_id}'. "
+                    f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose' "
+                    f"for model conditioning, or 'mask'/'segmentation' for loss masking. "
+                    f"Using 'controlnet' or other values will cause dimension mismatches during training. "
+                    f"Please update your dataset configuration."
+                )
+
             if conditioning_type in reference_conditioning_types:
                 has_reference_conditioning = True
-                break
 
         if not has_reference_conditioning:
             raise ValueError(

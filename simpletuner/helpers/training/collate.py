@@ -836,8 +836,18 @@ def collate_fn(batch):
         mask_backends = [
             b for b in conditioning_backends if conditioning_types_by_backend.get(b["id"]) in MASK_CONDITIONING_TYPES
         ]
+        # Backends with None or unrecognized conditioning types are treated as untyped
+        # and processed based on model requirements (backwards compatibility)
+        untyped_backends = [
+            b
+            for b in conditioning_backends
+            if conditioning_types_by_backend.get(b["id"]) not in REFERENCE_CONDITIONING_TYPES
+            and conditioning_types_by_backend.get(b["id"]) not in MASK_CONDITIONING_TYPES
+        ]
         debug_log(
-            f"Reference backends: {[b['id'] for b in reference_backends]}, Mask backends: {[b['id'] for b in mask_backends]}"
+            f"Reference backends: {[b['id'] for b in reference_backends]}, "
+            f"Mask backends: {[b['id'] for b in mask_backends]}, "
+            f"Untyped backends: {[b['id'] for b in untyped_backends]}"
         )
 
         # Determine the conditioning types for model input and loss masking
@@ -855,11 +865,15 @@ def collate_fn(batch):
             requires_conditioning_latents = model.requires_conditioning_latents() or is_i2v_data
             needs_reference_pixels = getattr(model, "requires_text_embed_image_context", lambda: False)()
 
-            # Collect latents from reference backends (for model input)
-            if reference_backends and requires_conditioning_latents:
+            # Combine reference and untyped backends for latent/pixel collection
+            # Untyped backends are processed like reference backends for backwards compatibility
+            latent_source_backends = reference_backends + untyped_backends
+
+            # Collect latents from reference/untyped backends (for model input)
+            if latent_source_backends and requires_conditioning_latents:
                 conditioning_latents = []
-                debug_log("Compute conditioning latents from reference backends")
-                for backend_cfg in reference_backends:
+                debug_log("Compute conditioning latents from reference/untyped backends")
+                for backend_cfg in latent_source_backends:
                     backend_id = backend_cfg["id"]
                     backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
                     if not backend_pairs:
@@ -914,12 +928,12 @@ def collate_fn(batch):
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
 
-            # Collect pixels from reference backends if needed for text embed image context
-            if reference_backends and needs_reference_pixels:
+            # Collect pixels from reference/untyped backends if needed for text embed image context
+            if latent_source_backends and needs_reference_pixels:
                 if conditioning_pixel_values is None:
                     conditioning_pixel_values = []
-                debug_log("Collect conditioning pixel values from reference backends for text embed image context")
-                for backend_cfg in reference_backends:
+                debug_log("Collect conditioning pixel values from reference/untyped backends for text embed image context")
+                for backend_cfg in latent_source_backends:
                     backend_id = backend_cfg["id"]
                     backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
                     if not backend_pairs:
