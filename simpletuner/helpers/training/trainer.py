@@ -92,199 +92,21 @@ from simpletuner.helpers.webhooks.events import (
     training_status_event,
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
-
-
-def _format_signal_message(signal_num: int, signal_name: Optional[str] = None) -> str:
-    if signal_name is None:
-        try:
-            signal_name = signal.Signals(signal_num).name
-        except ValueError:
-            signal_name = None
-
-    sigkill_value = getattr(signal, "SIGKILL", None)
-    if signal_name == "SIGKILL" or (sigkill_value is not None and signal_num == sigkill_value):
-        return "Training subprocess was killed by SIGKILL (likely out of system memory or critical system condition)."
-    if signal_name:
-        return f"Training subprocess was killed by {signal_name} (signal {signal_num})."
-    return f"Training subprocess was killed by signal {signal_num}."
-
-
-def _format_signal_exit_message(exit_code: int) -> Optional[str]:
-    if exit_code >= 0:
-        return None
-    return _format_signal_message(-exit_code)
-
-
-def _default_callback_url() -> str:
-    ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"
-    protocol = "https" if ssl_enabled else "http"
-    host = os.environ.get("SIMPLETUNER_WEBHOOK_HOST", "localhost")
-    port = os.environ.get("SIMPLETUNER_WEBHOOK_PORT", "8001")
-    base_url = f"{protocol}://{host}:{port}"
-    return os.environ.get("SIMPLETUNER_WEBHOOK_CALLBACK_URL", f"{base_url}/callback")
+from simpletuner.simpletuner_sdk.server.services.webhook_defaults import get_default_callback_url
 
 
 def _webui_callback_exclusions() -> Optional[set[str]]:
+    """Return callback URLs to exclude when sending webhooks to avoid duplicates.
+
+    When running under the WebUI (process keeper), we exclude the WebUI's own
+    callback URL since errors are surfaced via direct webhook from train.py.
+    """
     if not os.environ.get("SIMPLETUNER_PARENT_PID"):
         return None
-    callback_url = _default_callback_url()
+    callback_url = get_default_callback_url()
     if not callback_url:
         return None
     return {callback_url}
-
-
-def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
-    """Derive a concise failure summary and optional log excerpt from accelerate output."""
-
-    cleaned: List[str] = [line.rstrip("\n") for line in lines]
-    non_empty = [line.strip() for line in cleaned if line and line.strip()]
-
-    best_index: Optional[int] = None
-    best_line: Optional[str] = None
-    exception_fallback: Optional[tuple[int, str]] = None
-    signal_fallback: Optional[tuple[int, str]] = None
-    signal_exit_message = _format_signal_exit_message(exit_code)
-
-    def _extract_exception_name(text: str) -> Optional[str]:
-        match = re.search(r"\b([A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit))\b", text)
-        return match.group(1) if match else None
-
-    exception_wrappers = (
-        "subprocess.CalledProcessError",
-        "ChildFailedError",
-        "torch.distributed.elastic.multiprocessing.errors.ChildFailedError",
-    )
-    wrapper_tokens = ("accelerate launch exited", "subprocess.calledprocesserror", "childfailederror")
-
-    def _is_wrapper_line(text: str) -> bool:
-        lowered = text.lower()
-        return any(token in lowered for token in wrapper_tokens)
-
-    for idx in range(len(cleaned) - 1, -1, -1):
-        candidate_raw = cleaned[idx].strip()
-        if not candidate_raw:
-            continue
-        match = re.search(r"died with <Signals\.([A-Z0-9_]+):\s*(\d+)>", candidate_raw)
-        if match:
-            signal_name = match.group(1)
-            signal_num = int(match.group(2))
-            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
-            break
-        # Also match accelerate's format: "Signal 9 (SIGKILL) received by PID 12345"
-        match = re.search(r"Signal\s+(\d+)\s+\(([A-Z_]+)\)\s+received by PID", candidate_raw, re.IGNORECASE)
-        if match:
-            signal_num = int(match.group(1))
-            signal_name = match.group(2)
-            signal_fallback = (idx, _format_signal_message(signal_num, signal_name))
-            break
-
-    if signal_fallback is None and signal_exit_message is not None:
-        signal_fallback = (max(len(cleaned) - 1, 0), signal_exit_message)
-
-    for idx in range(len(cleaned) - 1, -1, -1):
-        candidate_raw = cleaned[idx].strip()
-        if not candidate_raw:
-            continue
-        lowered = candidate_raw.lower()
-        if "cuda out of memory" in lowered:
-            best_index = idx
-            best_line = candidate_raw
-            break
-        if "runtimeerror" in lowered and "cuda" in lowered:
-            if best_line is None:
-                best_index = idx
-                best_line = candidate_raw
-        if "childfailederror" in lowered:
-            if best_line is None:
-                best_index = idx
-                best_line = candidate_raw
-        if "error" in lowered and ("[error]" in lowered or lowered.startswith("error")):
-            if best_line is None:
-                best_index = idx
-                best_line = candidate_raw
-
-    prefer_exception = best_line is None
-    if best_line:
-        if _is_wrapper_line(best_line):
-            prefer_exception = True
-
-    if prefer_exception:
-        traceback_idx = None
-        for idx in range(len(cleaned) - 1, -1, -1):
-            if cleaned[idx].strip().startswith("Traceback (most recent call last):"):
-                traceback_idx = idx
-                break
-
-        def _find_exception_line(start_idx: int, end_idx: int) -> Optional[tuple[int, str]]:
-            nonlocal exception_fallback
-            for idx in range(end_idx, start_idx - 1, -1):
-                candidate_raw = cleaned[idx].strip()
-                if not candidate_raw:
-                    continue
-                exc_name = _extract_exception_name(candidate_raw)
-                if not exc_name:
-                    continue
-                if exc_name in exception_wrappers or _is_wrapper_line(candidate_raw):
-                    if exception_fallback is None:
-                        exception_fallback = (idx, candidate_raw)
-                    continue
-                return idx, candidate_raw
-            return None
-
-        preferred = None
-        if traceback_idx is not None:
-            preferred = _find_exception_line(traceback_idx + 1, len(cleaned) - 1)
-        if preferred is None:
-            preferred = _find_exception_line(0, len(cleaned) - 1)
-        if preferred is not None:
-            best_index, best_line = preferred
-        elif exception_fallback is not None:
-            best_index, best_line = exception_fallback
-        elif signal_fallback is not None:
-            best_index, best_line = signal_fallback
-
-    if best_line is not None and _is_wrapper_line(best_line) and signal_fallback is not None:
-        best_index, best_line = signal_fallback
-
-    # If we have signal info (SIGKILL, etc) and the best_line is just a generic RuntimeError,
-    # prefer the signal info as it's more useful for diagnosing OOM/killed processes
-    if signal_fallback is not None and best_line is not None:
-        signal_message = signal_fallback[1].lower()
-        best_lower = best_line.lower()
-        has_useful_signal_info = any(sig in signal_message for sig in ("sigkill", "sigterm", "signal"))
-        is_generic_runtime_error = (
-            best_lower.startswith("runtimeerror:") and "cuda" not in best_lower and "memory" not in best_lower
-        )
-        if has_useful_signal_info and is_generic_runtime_error:
-            best_index, best_line = signal_fallback
-
-    if best_line is None:
-        for idx in range(len(cleaned) - 1, -1, -1):
-            candidate = cleaned[idx].strip()
-            if candidate:
-                best_index = idx
-                best_line = candidate
-                break
-
-    summary = f"Accelerate launch exited with status {exit_code}"
-    if best_line:
-        summary = f"{summary}: {best_line.strip()}"
-    summary = summary[:512]
-
-    excerpt: Optional[str] = None
-    if best_index is not None:
-        start = max(0, best_index - 5)
-        end = min(len(cleaned), best_index + 6)
-        snippet_lines = [line.strip() for line in cleaned[start:end] if line.strip()]
-        if snippet_lines:
-            excerpt = "\n".join(snippet_lines)
-    elif non_empty:
-        excerpt = "\n".join(non_empty[-10:])
-
-    if excerpt and len(excerpt) > 4000:
-        excerpt = excerpt[-4000:]
-
-    return summary, excerpt
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
@@ -454,6 +276,11 @@ class Trainer:
         except Exception as e:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
+
+        if getattr(self, "config", None) is not None:
+            logger.info(
+                f"Trainer.__init__: model_type={getattr(self.config, 'model_type', 'NOT_SET')!r}, lora_type={getattr(self.config, 'lora_type', 'NOT_SET')!r}"
+            )
 
         if getattr(self, "config", None) is not None and self.config.model_family in ModelRegistry.model_families().keys():
             self.model = ModelRegistry.model_families()[self.config.model_family](self.config, self.accelerator)
@@ -6639,18 +6466,6 @@ def run_trainer_job(config):
         if signal_file_path:
             launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
 
-        # Set up error file for structured error reporting from subprocess
-        from simpletuner.helpers.training.error_reporter import ERROR_FILE_ENV_VAR
-
-        error_file_path = None
-        if signal_dir:
-            error_file_path = Path(signal_dir) / "error.json"
-        else:
-            import tempfile
-
-            error_file_path = Path(tempfile.gettempdir()) / f"simpletuner_error_{os.getpid()}.json"
-        launch_env[ERROR_FILE_ENV_VAR] = str(error_file_path)
-
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
@@ -6724,6 +6539,13 @@ def run_trainer_job(config):
                     except Exception:
                         train_cli_payload.pop(config_key, None)
             from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+
+            # Debug: log model_type and lora_type before converting to CLI args
+            launch_logger.info(
+                "run_trainer_job: config_payload contains model_type=%r, lora_type=%r",
+                train_cli_payload.get("model_type") or train_cli_payload.get("--model_type"),
+                train_cli_payload.get("lora_type") or train_cli_payload.get("--lora_type"),
+            )
 
             cli_args = mapping_to_cli_args(train_cli_payload)
         if cli_args:
@@ -6814,24 +6636,32 @@ def run_trainer_job(config):
         returncode = process.wait()
         _cleanup_signal_relay()
         if returncode != 0:
-            # Try to read structured error file first
-            from simpletuner.helpers.training.error_reporter import cleanup_error_file, read_error
+            # Extract error from stdout
+            cleaned = [_strip_ansi(line.rstrip("\n")) for line in recent_lines]
+            excerpt_lines = [line.strip() for line in cleaned[-80:] if line.strip()]
+            excerpt = "\n".join(excerpt_lines) if excerpt_lines else None
 
-            error_data = read_error(error_file_path) if error_file_path else None
+            # Find the real exception, not subprocess.CalledProcessError wrapper
+            best_line = None
+            for line in reversed(excerpt_lines):
+                lowered = line.lower()
+                # Skip wrapper exceptions
+                if "subprocess.calledprocesserror" in lowered or "accelerate" in lowered:
+                    continue
+                # Look for actual exceptions
+                if any(x in line for x in ["Error:", "Exception:", "ValueError:", "RuntimeError:", "OSError:"]):
+                    best_line = line
+                    break
 
-            if error_data:
-                # Use structured error data from subprocess
-                summary = f"{error_data.get('exception_type', 'Error')}: {error_data.get('message', 'Unknown error')}"
-                excerpt = error_data.get("traceback")
-                cleanup_error_file(error_file_path)
-            else:
-                # Fallback: extract from stdout (last resort)
-                cleaned = [_strip_ansi(line.rstrip("\n")) for line in recent_lines]
-                excerpt_lines = [line.strip() for line in cleaned[-40:] if line.strip()]
-                excerpt = "\n".join(excerpt_lines) if excerpt_lines else None
-                summary = f"Accelerate launch exited with status {returncode}"
-                if excerpt_lines:
-                    summary = f"{summary}: {excerpt_lines[-1][:200]}"
+            summary = f"Accelerate launch exited with status {returncode}"
+            if best_line:
+                summary = f"{best_line[:400]}"
+            elif excerpt_lines:
+                # Last resort: use last non-wrapper line
+                for line in reversed(excerpt_lines):
+                    if "subprocess.calledprocesserror" not in line.lower():
+                        summary = f"{summary}: {line[:200]}"
+                        break
 
             launch_error = RuntimeError(summary[:512])
             if excerpt:
@@ -6839,12 +6669,6 @@ def run_trainer_job(config):
             if recent_lines:
                 setattr(launch_error, "_simpletuner_recent_log_lines", list(recent_lines))
             raise launch_error
-        # Clean up error file on success
-        if error_file_path and error_file_path.exists():
-            try:
-                error_file_path.unlink()
-            except Exception:
-                pass
         return returncode
 
     try:

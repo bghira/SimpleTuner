@@ -852,61 +852,6 @@ class TestTrainer(unittest.TestCase):
         for path in removed_paths:
             shutil.rmtree(path, ignore_errors=True)
 
-    def test_accelerate_failure_summary_highlights_oom(self):
-        from simpletuner.helpers.training import trainer as trainer_module
-
-        lines = [
-            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
-            "2025-11-04 16:21:12,846 [ERROR] Error encoding images ['16.jpg']: CUDA out of memory. Tried to allocate 256.00 MiB.",
-            "RuntimeError: Accelerate launch exited with status 1",
-        ]
-
-        summary, excerpt = trainer_module._summarize_accelerate_failure(1, lines)
-
-        self.assertIn("CUDA out of memory", summary)
-        self.assertIsNotNone(excerpt)
-        if excerpt is None:  # pragma: no cover - defensive guard
-            self.fail("Expected excerpt to be populated")
-        self.assertIn("CUDA out of memory", excerpt)
-
-    def test_accelerate_failure_summary_highlights_signal_exit(self):
-        from simpletuner.helpers.training import trainer as trainer_module
-
-        lines = [
-            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
-        ]
-
-        summary, excerpt = trainer_module._summarize_accelerate_failure(-9, lines)
-
-        self.assertIn("Accelerate launch exited with status -9", summary)
-        self.assertTrue("SIGKILL" in summary or "signal 9" in summary)
-        self.assertIsNotNone(excerpt)
-
-    def test_accelerate_failure_summary_highlights_signal_received_by_pid(self):
-        """Test parsing of accelerate's 'Signal N (SIGNAME) received by PID' format."""
-        from simpletuner.helpers.training import trainer as trainer_module
-
-        lines = [
-            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
-            "traceback : Signal 9 (SIGKILL) received by PID 2963915",
-            "RuntimeError: Some wrapper error",
-        ]
-
-        summary, excerpt = trainer_module._summarize_accelerate_failure(1, lines)
-
-        # Should extract the SIGKILL message even though exit code is 1
-        self.assertIn("SIGKILL", summary)
-        self.assertIsNotNone(excerpt)
-
-    def test_launch_with_accelerate_fallback_imports(self):
-        from simpletuner.helpers.training import trainer as trainer_module
-
-        helper = getattr(trainer_module, "_summarize_accelerate_failure", None)
-        self.assertIsNotNone(helper)
-
-        returned = helper(1, ["foo", "bar"])
-        self.assertIsInstance(returned, tuple)
-
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",

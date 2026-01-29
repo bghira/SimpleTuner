@@ -908,10 +908,21 @@ class SaveHookManager:
             and getattr(fsdp_plugin, "fsdp_version", 1) == 2
         )
 
+        logger.info(
+            f"load_model_hook: model_type={self.args.model_type!r}, lora_type={self.args.lora_type!r}, is_fsdp2_run={is_fsdp2_run}"
+        )
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
             self._load_lyrics_embedder_state(input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
             self._load_lycoris(models=models, input_dir=input_dir)
         elif not is_fsdp2_run:
+            # Check if this checkpoint looks like a LoRA checkpoint but we're trying to load it as full model
+            lora_weights_path = os.path.join(input_dir, "pytorch_lora_weights.safetensors")
+            if os.path.exists(lora_weights_path):
+                raise ValueError(
+                    f"Checkpoint at {input_dir} appears to be a LoRA checkpoint (contains pytorch_lora_weights.safetensors), "
+                    f"but the current config has model_type={self.args.model_type!r} and lora_type={self.args.lora_type!r}. "
+                    f"Set model_type='lora' and lora_type='standard' to resume this checkpoint."
+                )
             self._load_full_model(models=models, input_dir=input_dir)
