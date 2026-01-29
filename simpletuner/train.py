@@ -6,7 +6,6 @@ from pathlib import Path
 
 # Import WebhookLogger setup FIRST before creating any loggers
 from simpletuner.helpers.logging import get_logger
-from simpletuner.helpers.training.error_reporter import write_error as write_error_file
 
 # Quiet down, you.
 ds_logger1 = logging.getLogger("DeepSpeed")
@@ -251,9 +250,6 @@ if __name__ == "__main__":
             except Exception as cb_err:
                 logger.warning(f"Failed to trigger GPU circuit breaker: {cb_err}")
 
-        # Write structured error file for parent process to read
-        write_error_file(e, traceback.format_exc())
-
         # If webhook handler isn't configured yet (crash happened early), try to configure it now
         if StateTracker.get_webhook_handler() is None:
             try:
@@ -265,8 +261,20 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
+            # Send error event with proper message type so WebUI displays it correctly
             StateTracker.get_webhook_handler().send_raw(
-                structured_data={"status": "failed", "error": str(e), "traceback": traceback.format_exc()},
+                structured_data={
+                    "title": f"Training failed: {type(e).__name__}",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+                message_type="error",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
+            )
+            # Also send status update to update job state
+            StateTracker.get_webhook_handler().send_raw(
+                structured_data={"status": "failed"},
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),

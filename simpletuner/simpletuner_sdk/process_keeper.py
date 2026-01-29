@@ -542,7 +542,7 @@ except Exception as e:
     traceback_str = traceback.format_exc() if log_level == logging.ERROR else ""
     if log_level == logging.ERROR:
         logger.error(traceback_str)
-    # Extract log excerpt if available (attached by _summarize_accelerate_failure)
+    # Extract log excerpt if available (attached by run_trainer_job error handling)
     log_excerpt = getattr(e, "_simpletuner_log_excerpt", None)
     recent_lines = getattr(e, "_simpletuner_recent_log_lines", None)
     error_payload = {{"message": error_message, "traceback": traceback_str}}
