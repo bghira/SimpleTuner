@@ -37,6 +37,24 @@
         </div>
     </div>
 
+    <!-- Text File Options -->
+    <div class="section-group" x-show="editingDataset.caption_strategy === 'textfile' && matchesParamFilter('textfile', 'multiline', 'split', 'newline')" x-cloak>
+        <h6 class="modal-section-title">Text File Options</h6>
+        <div class="form-check">
+            <input class="form-check-input"
+                   type="checkbox"
+                   :id="'disable-multiline-' + editingDataset.id"
+                   x-model="editingDataset.disable_multiline_split"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label small" :for="'disable-multiline-' + editingDataset.id">
+                Disable multiline split <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#disable_multiline_split') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+            </label>
+        </div>
+        <div class="form-text small text-muted ps-4">
+            Preserve line breaks in captions instead of treating each line as a variant
+        </div>
+    </div>
+
     <!-- Trigger Words -->
     <div class="section-group" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && matchesParamFilter('trigger', 'word', 'instance', 'prompt', 'prepend')">
         <h6 class="modal-section-title">Trigger Words</h6>

@@ -72,6 +72,24 @@
         </div>
     </div>
 
+    <!-- Metadata Refresh -->
+    <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type) && matchesParamFilter('metadata', 'update', 'interval', 'refresh')">
+        <h6 class="modal-section-title">Metadata Refresh</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Update Interval (seconds) <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#metadata_update_interval') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.metadata_update_interval"
+                       @input="markAsUnsaved()"
+                       placeholder="Use global setting">
+                <div class="form-text small">How often to refresh dataset metadata during training</div>
+            </div>
+        </div>
+    </div>
+
     <!-- VAE Cache Behavior -->
     <div class="section-group" x-show="!['text_embeds','image_embeds','audio'].includes(editingDataset.dataset_type) && matchesParamFilter('vae', 'cache', 'epoch', 'clear', 'random', 'crop')">
         <h6 class="modal-section-title">VAE Cache Behavior</h6>
@@ -108,6 +126,37 @@
                     <div class="form-text small text-muted ps-4" x-text="option.hint"></div>
                 </div>
             </template>
+        </div>
+    </div>
+
+    <!-- Destructive Options -->
+    <div class="section-group" x-show="!['text_embeds','image_embeds','audio'].includes(editingDataset.dataset_type) && matchesParamFilter('delete', 'unwanted', 'problematic', 'remove', 'cleanup')">
+        <h6 class="modal-section-title text-danger"><i class="fas fa-exclamation-triangle me-1"></i>Destructive Options</h6>
+        <div class="form-check mb-2">
+            <input class="form-check-input"
+                   type="checkbox"
+                   :id="'delete-unwanted-' + editingDataset.id"
+                   x-model="editingDataset.delete_unwanted_images"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label small" :for="'delete-unwanted-' + editingDataset.id">
+                Delete unwanted images <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#delete_unwanted_images') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+            </label>
+        </div>
+        <div class="form-text small text-warning ps-4 mb-2">
+            <i class="fas fa-exclamation-triangle me-1"></i>Permanently deletes images that fail size or aspect ratio filters
+        </div>
+        <div class="form-check">
+            <input class="form-check-input"
+                   type="checkbox"
+                   :id="'delete-problematic-' + editingDataset.id"
+                   x-model="editingDataset.delete_problematic_images"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label small" :for="'delete-problematic-' + editingDataset.id">
+                Delete problematic images <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#delete_problematic_images') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+            </label>
+        </div>
+        <div class="form-text small text-warning ps-4">
+            <i class="fas fa-exclamation-triangle me-1"></i>Permanently deletes images that fail VAE encoding (corrupted files)
         </div>
     </div>
 </div>

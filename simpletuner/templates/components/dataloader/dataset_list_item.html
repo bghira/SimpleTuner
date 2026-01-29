@@ -149,7 +149,7 @@
         <button type="button"
                 :class="{'active': getListTab(dataset) === 'basic'}"
                 @click="setListTab(dataset, 'basic')"
-                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'audio'">
+                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
             <i class="fas fa-sliders-h"></i>
             <span>Basic</span>
         </button>
@@ -243,6 +243,20 @@
         <!-- Scheduling Tab -->
         <div x-show="getListTab(dataset) === 'scheduling'" x-cloak>
             {% include 'components/dataloader/sections/scheduling_body.html' %}
+        </div>
+    </div>
+
+    <!-- Expanded Footer -->
+    <div class="list-item-expanded-footer">
+        <div class="form-check form-check-inline mb-0">
+            <input type="checkbox"
+                   class="form-check-input"
+                   :id="'list-dataset-disabled-' + dataset.id"
+                   x-model="dataset.disabled"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label small" :for="'list-dataset-disabled-' + dataset.id">
+                Disable dataset
+            </label>
         </div>
     </div>
 </div>
