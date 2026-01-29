@@ -263,15 +263,15 @@ class Sana(ImageModelFoundation):
 
         loss = weighting * (model_pred.float() - target.float()) ** 2
 
-        conditioning_type = prepared_batch.get("conditioning_type")
-        if conditioning_type == "mask" and apply_conditioning_mask:
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        if loss_mask_type == "mask" and apply_conditioning_mask:
             mask_image = (
                 prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
             )
             mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
-        elif conditioning_type == "segmentation" and apply_conditioning_mask:
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
             if random.random() < self.config.masked_loss_probability:
                 mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
                 mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3

@@ -23,6 +23,10 @@ from torchvision.transforms import ToTensor
 # Convert PIL Image to PyTorch Tensor
 to_tensor = ToTensor()
 
+# Conditioning type categories for routing
+REFERENCE_CONDITIONING_TYPES = {"reference_strict", "reference_loose"}
+MASK_CONDITIONING_TYPES = {"mask", "segmentation"}
+
 
 def debug_log(msg: str):
     logger.debug(f"{rank_text}{msg}")
@@ -709,7 +713,9 @@ def collate_fn(batch):
                 conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
 
     conditioning_pairs_by_backend: dict[str, list[tuple[TrainingSample, str, dict | TrainingSample]]] = defaultdict(list)
+    conditioning_types_by_backend: dict[str, str] = {}
     conditioning_type = None
+    loss_mask_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
 
@@ -795,13 +801,7 @@ def collate_fn(batch):
                 continue
 
             cond_type = cond_example.get_conditioning_type()
-            if conditioning_type is None:
-                conditioning_type = cond_type
-            elif cond_type != conditioning_type:
-                raise ValueError(
-                    f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
-                    "\n-> Ensure all conditioning samples are of the same type."
-                )
+            conditioning_types_by_backend[backend_id] = cond_type
 
             try:
                 training_pair_path = cond_example.training_sample_path(training_dataset_id=data_backend_id)
@@ -829,18 +829,37 @@ def collate_fn(batch):
         backend_pair_counts = {backend_id: len(pairs) for backend_id, pairs in conditioning_pairs_by_backend.items()}
         debug_log(f"Counted conditioning pairs per backend: {backend_pair_counts}")
 
-        assert model is not None
-        if conditioning_type is not None or model.requires_conditioning_dataset():
-            conditioning_latents = []
-            requires_conditioning_latents = model.requires_conditioning_latents() or is_i2v_data
-            needs_conditioning_pixels = (
-                not requires_conditioning_latents or getattr(model, "requires_text_embed_image_context", lambda: False)()
-            )
+        # Separate backends by conditioning type category
+        reference_backends = [
+            b for b in conditioning_backends if conditioning_types_by_backend.get(b["id"]) in REFERENCE_CONDITIONING_TYPES
+        ]
+        mask_backends = [
+            b for b in conditioning_backends if conditioning_types_by_backend.get(b["id"]) in MASK_CONDITIONING_TYPES
+        ]
+        debug_log(
+            f"Reference backends: {[b['id'] for b in reference_backends]}, Mask backends: {[b['id'] for b in mask_backends]}"
+        )
 
-            if requires_conditioning_latents:
-                # Kontext / other latent-conditioned models / adapters
-                debug_log("Compute conditioning latents")
-                for backend_cfg in conditioning_backends:
+        # Determine the conditioning types for model input and loss masking
+        conditioning_type = None
+        loss_mask_type = None
+        for backend_id, cond_type in conditioning_types_by_backend.items():
+            if cond_type in REFERENCE_CONDITIONING_TYPES:
+                conditioning_type = cond_type
+            elif cond_type in MASK_CONDITIONING_TYPES:
+                loss_mask_type = cond_type
+
+        assert model is not None
+        has_conditioning_backends = bool(conditioning_types_by_backend) or model.requires_conditioning_dataset()
+        if has_conditioning_backends:
+            requires_conditioning_latents = model.requires_conditioning_latents() or is_i2v_data
+            needs_reference_pixels = getattr(model, "requires_text_embed_image_context", lambda: False)()
+
+            # Collect latents from reference backends (for model input)
+            if reference_backends and requires_conditioning_latents:
+                conditioning_latents = []
+                debug_log("Compute conditioning latents from reference backends")
+                for backend_cfg in reference_backends:
                     backend_id = backend_cfg["id"]
                     backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
                     if not backend_pairs:
@@ -860,21 +879,21 @@ def collate_fn(batch):
                     if isinstance(_latents[0], dict):
                         _latents = [v["latents"] for v in _latents]
 
+                    backend_cond_type = conditioning_types_by_backend.get(backend_id)
                     _latents = check_latent_shapes(
                         _latents,
                         _filepaths,
                         backend_id,
                         _examples,
-                        is_conditioning=(conditioning_type == "reference_loose"),
+                        is_conditioning=(backend_cond_type == "reference_loose"),
                     )
                     conditioning_latents.append(_latents)
-            else:
-                needs_conditioning_pixels = True
 
-            if needs_conditioning_pixels:
-                debug_log("Collect conditioning pixel values for prompt encoding.")
+            # Collect pixels from mask backends (for loss masking)
+            if mask_backends:
                 conditioning_pixel_values = []
-                for backend_cfg in conditioning_backends:
+                debug_log("Collect conditioning pixel values from mask backends for loss masking")
+                for backend_cfg in mask_backends:
                     backend_id = backend_cfg["id"]
                     backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
                     if not backend_pairs:
@@ -890,7 +909,33 @@ def collate_fn(batch):
                         backend_id,
                         data_backend_id,
                     )
-                    debug_log(f"Found {len(_pixel_values)} conditioning pixel values.")
+                    debug_log(f"Found {len(_pixel_values)} mask pixel values.")
+                    conditioning_pixel_values.append(
+                        torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
+                    )
+
+            # Collect pixels from reference backends if needed for text embed image context
+            if reference_backends and needs_reference_pixels:
+                if conditioning_pixel_values is None:
+                    conditioning_pixel_values = []
+                debug_log("Collect conditioning pixel values from reference backends for text embed image context")
+                for backend_cfg in reference_backends:
+                    backend_id = backend_cfg["id"]
+                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
+                    if not backend_pairs:
+                        continue
+                    _examples = [pair[0] for pair in backend_pairs]
+                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
+                    paired_training_paths = [pair[1] for pair in backend_pairs]
+                    paired_training_examples = [pair[2] for pair in backend_pairs]
+                    _pixel_values = conditioning_pixels(
+                        _filepaths,
+                        paired_training_paths,
+                        paired_training_examples,
+                        backend_id,
+                        data_backend_id,
+                    )
+                    debug_log(f"Found {len(_pixel_values)} reference pixel values for image context.")
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
@@ -1137,6 +1182,7 @@ def collate_fn(batch):
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,
+        "loss_mask_type": loss_mask_type,
         "audio_latent_batch": audio_latent_batch,
         "audio_latent_mask": audio_latent_mask,
         "video_latent_mask": video_latent_mask,
