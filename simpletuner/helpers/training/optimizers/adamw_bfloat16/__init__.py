@@ -63,19 +63,29 @@ class AdamWBF16(Optimizer):
                     if len(state) == 0:
                         assert p.dtype == torch.bfloat16, "only bfloat 16 is supported."
                         state["step"] = 0.0
+                        # Create state on gradient's device to support RamTorch (weights on CPU, grads on GPU)
+                        grad_device = p.grad.device
                         # Exponential moving average of gradient values
-                        state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                        state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format, device=grad_device)
                         # Exponential moving average of squared gradient values
-                        state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                        state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format, device=grad_device)
                         # accumulated shift that should be added to p, but wasn't because of truncation
                         # true value is p + shift
-                        state["shift"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                        state["shift"] = torch.zeros_like(p, memory_format=torch.preserve_format, device=grad_device)
                         # using decay at each step will work only for float32, so we just remember how much owe to decay
                         # and decay once in n iterations
                         # Each weight has its own starting point to avoid simultaneous updates in all weights
                         state["accumulated_decay"] = float(torch.rand([]) * self.decay_threshold)
 
                     grad = p.grad
+                    grad_device = grad.device
+
+                    # Migrate state to gradient device if needed (handles checkpoint resume)
+                    if state["exp_avg"].device != grad_device:
+                        state["exp_avg"] = state["exp_avg"].to(grad_device)
+                        state["exp_avg_sq"] = state["exp_avg_sq"].to(grad_device)
+                        state["shift"] = state["shift"].to(grad_device)
+
                     state["step"] += 1
                     lr = group["lr"]
 
@@ -114,6 +124,10 @@ def _make_step(
     decay_this_iteration: float,
     zero_grad: bool,
 ):
+    # Handle RamTorch case where p is on CPU but state/grads are on GPU
+    p_device = p.device
+    state_device = shift.device
+
     # Originally:
     # exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
     exp_avg.mul_(beta1)
@@ -136,19 +150,31 @@ def _make_step(
         value=-lr * denom_correction,
     )
 
-    buffer = p.clone()
-    # Originally:
-    # p.add_(shift)
-    add_stochastic_(p, shift)
+    # For RamTorch: move shift to parameter device, update p, then compute error
+    if p_device != state_device:
+        # Move shift to CPU for parameter update
+        shift_on_p = shift.to(p_device)
+        buffer = p.clone()
+        add_stochastic_(p, shift_on_p)
+        # Compute truncation error and move back to state device
+        error = buffer.sub_(p).to(state_device)
+        add_stochastic_(shift, error)
+        if decay_this_iteration > 0:
+            shift.add_(p.to(state_device), alpha=-decay_this_iteration)
+    else:
+        buffer = p.clone()
+        # Originally:
+        # p.add_(shift)
+        add_stochastic_(p, shift)
 
-    # Originally:
-    # shift.add_(buffer.sub_(p))
-    add_stochastic_(shift, buffer.sub_(p))
+        # Originally:
+        # shift.add_(buffer.sub_(p))
+        add_stochastic_(shift, buffer.sub_(p))
 
-    if decay_this_iteration > 0:
-        shift.add_(p, alpha=-decay_this_iteration)
-        # Do NOT do this, it will cause the model to become unstable.
-        # add_stochastic_(shift, p, alpha=-decay_this_iteration)
+        if decay_this_iteration > 0:
+            shift.add_(p, alpha=-decay_this_iteration)
+            # Do NOT do this, it will cause the model to become unstable.
+            # add_stochastic_(shift, p, alpha=-decay_this_iteration)
 
     if zero_grad:
         grad.zero_()
