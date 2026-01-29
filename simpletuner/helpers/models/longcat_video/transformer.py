@@ -965,6 +965,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.final_layer = FinalLayer_FP32(hidden_size, math.prod(self.patch_size), out_channels, adaln_tembed_dim)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self.text_tokens_zero_pad = text_tokens_zero_pad
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=depth,
@@ -972,6 +973,9 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def forward(
         self,
@@ -1072,7 +1076,14 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 musubi_manager.stream_in(block, hidden_states.device)
 
             if grad_enabled and self.gradient_checkpointing:
-                block_outputs = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                block_outputs = checkpoint_fn(
                     block,
                     hidden_states,
                     encoder_hidden_states,
@@ -1083,6 +1094,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     return_kv,
                     kv_cache_dict.get(i, None),
                     skip_crs_attn,
+                    use_reentrant=False,
                 )
             else:
                 block_outputs = block(

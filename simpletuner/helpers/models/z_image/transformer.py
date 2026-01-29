@@ -428,6 +428,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.rope_theta = rope_theta
         self.t_scale = t_scale
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
 
         assert len(all_patch_size) == len(all_f_patch_size)
 
@@ -499,6 +500,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -681,8 +685,15 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             x_attn_mask[i, :seq_len] = 1
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             for layer in self.noise_refiner:
-                x = self._gradient_checkpointing_func(layer, x, x_attn_mask, x_freqs_cis, adaln_input)
+                x = checkpoint_fn(layer, x, x_attn_mask, x_freqs_cis, adaln_input, use_reentrant=False)
         else:
             for layer in self.noise_refiner:
                 x = layer(x, x_attn_mask, x_freqs_cis, adaln_input)
@@ -705,8 +716,15 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             cap_attn_mask[i, :seq_len] = 1
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             for layer in self.context_refiner:
-                cap_feats = self._gradient_checkpointing_func(layer, cap_feats, cap_attn_mask, cap_freqs_cis)
+                cap_feats = checkpoint_fn(layer, cap_feats, cap_attn_mask, cap_freqs_cis, use_reentrant=False)
         else:
             for layer in self.context_refiner:
                 cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis)
@@ -760,7 +778,14 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         def apply_layer(layer_module, h, attn_mask, freqs):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                return self._gradient_checkpointing_func(layer_module, h, attn_mask, freqs, adaln_input)
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                return checkpoint_fn(layer_module, h, attn_mask, freqs, adaln_input, use_reentrant=False)
             return layer_module(h, attn_mask, freqs, adaln_input)
 
         skip_set = set(skip_layers) if skip_layers is not None else set()
