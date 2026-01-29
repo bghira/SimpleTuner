@@ -507,6 +507,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         self.gradient_checkpointing = False
         # optional interval for gradient checkpointing
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_backend = "torch"
         total_layers = num_layers + num_single_layers
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=total_layers,
@@ -517,6 +518,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -791,8 +795,15 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                     return custom_forward
 
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                encoder_hidden_states, hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
@@ -899,8 +910,15 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                     return custom_forward
 
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     temb,

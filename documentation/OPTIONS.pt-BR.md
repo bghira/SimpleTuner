@@ -204,6 +204,14 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Faz checkpoint apenas a cada *n* blocos, onde *n* e um valor maior que zero. Um valor 1 e efetivamente o mesmo que deixar `--gradient_checkpointing` habilitado, e 2 faz checkpoint a cada outro bloco.
 - **Nota**: SDXL e Flux sao atualmente os unicos modelos que suportam essa opcao. SDXL usa uma implementacao meio hack.
 
+### `--gradient_checkpointing_backend`
+
+- **Opcoes**: `torch`, `unsloth`
+- **O que**: Seleciona a implementacao para gradient checkpointing.
+  - `torch` (padrao): Checkpointing PyTorch padrao que recalcula ativacoes durante o backward pass. ~20% de overhead de tempo.
+  - `unsloth`: Descarrega ativacoes para CPU de forma assincrona em vez de recalcular. ~30% mais economia de memoria com apenas ~2% de overhead. Requer banda PCIe rapida.
+- **Nota**: So funciona quando `--gradient_checkpointing` esta habilitado. O backend `unsloth` requer CUDA.
+
 ### `--refiner_training`
 
 - **O que**: Habilita treinamento de uma serie de modelos mixture-of-experts customizada. Veja [Mixture-of-Experts](MIXTURE_OF_EXPERTS.md) para mais informacoes sobre essas opcoes.

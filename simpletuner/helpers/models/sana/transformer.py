@@ -443,6 +443,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_backend = "torch"
 
         # tread support
         self._tread_router = None
@@ -469,6 +470,9 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 The interval at which to checkpoint the gradients.
         """
         self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     @staticmethod
     def _coerce_module_output(output: Union[torch.Tensor, Transformer2DModelOutput, Tuple, List]):
@@ -669,7 +673,14 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                     return custom_forward
 
-                hidden_states = torch.utils.checkpoint.checkpoint(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     attention_mask,

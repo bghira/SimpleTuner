@@ -204,6 +204,14 @@ simpletuner configure config/foo/config.json
 - **What**: हर *n* blocks पर checkpoint करें, जहाँ *n* शून्य से बड़ा मान है। 1 का मान `--gradient_checkpointing` enabled जैसा है, और 2 हर दूसरे block पर checkpoint करेगा।
 - **Note**: यह विकल्प फिलहाल केवल SDXL और Flux में समर्थित है। SDXL इसमें hackish implementation उपयोग करता है।
 
+### `--gradient_checkpointing_backend`
+
+- **Choices**: `torch`, `unsloth`
+- **What**: Gradient checkpointing के लिए implementation चुनें।
+  - `torch` (default): Standard PyTorch checkpointing जो backward pass के दौरान activations को recalculate करता है। ~20% time overhead।
+  - `unsloth`: Recalculate करने के बजाय activations को asynchronously CPU पर offload करता है। ~30% अधिक memory बचत केवल ~2% overhead के साथ। Fast PCIe bandwidth आवश्यक है।
+- **Note**: केवल `--gradient_checkpointing` enabled होने पर प्रभावी। `unsloth` backend के लिए CUDA आवश्यक है।
+
 ### `--refiner_training`
 
 - **What**: custom mixture‑of‑experts मॉडल श्रृंखला training सक्षम करता है। इन विकल्पों पर अधिक जानकारी के लिए [Mixture-of-Experts](MIXTURE_OF_EXPERTS.md) देखें।

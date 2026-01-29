@@ -205,6 +205,14 @@ simpletuner configure config/foo/config.json
 - **内容**：每 *n* 个块进行一次 checkpoint，*n* 必须大于 0。1 等同于启用 `--gradient_checkpointing`，2 则每隔一个块进行一次。
 - **说明**：目前仅 SDXL 与 Flux 支持此选项。SDXL 使用较为权宜的实现。
 
+### `--gradient_checkpointing_backend`
+
+- **选项**：`torch`、`unsloth`
+- **内容**：选择梯度 checkpoint 的实现方式。
+  - `torch`（默认）：标准 PyTorch checkpoint，在反向传播时重新计算激活值。约 20% 时间开销。
+  - `unsloth`：异步将激活值卸载到 CPU 而非重新计算。额外节省约 30% 显存，仅约 2% 开销。需要较快的 PCIe 带宽。
+- **说明**：仅在启用 `--gradient_checkpointing` 时生效。`unsloth` 后端需要 CUDA。
+
 ### `--refiner_training`
 
 - **内容**：启用自定义混合专家模型系列训练。详情参见 [Mixture-of-Experts](MIXTURE_OF_EXPERTS.md)。

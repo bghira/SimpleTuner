@@ -205,6 +205,14 @@ simpletuner configure config/foo/config.json
 - **内容**: *n* ブロックごとにチェックポイントを作成します。値は 0 より大きい必要があります。1 は `--gradient_checkpointing` と同等で、2 は隔ブロックでチェックポイントを作成します。
 - **注記**: 現在このオプションに対応しているのは SDXL と Flux のみです。SDXL は暫定的な実装です。
 
+### `--gradient_checkpointing_backend`
+
+- **選択肢**: `torch`、`unsloth`
+- **内容**: 勾配チェックポイントの実装を選択します。
+  - `torch`（デフォルト）: 標準の PyTorch チェックポイント。逆伝播時に活性化を再計算します。約 20% の時間オーバーヘッド。
+  - `unsloth`: 再計算の代わりに活性化を非同期で CPU にオフロードします。約 30% のメモリ節約、約 2% のオーバーヘッドのみ。高速な PCIe 帯域が必要です。
+- **注記**: `--gradient_checkpointing` が有効な場合のみ機能します。`unsloth` バックエンドは CUDA が必要です。
+
 ### `--refiner_training`
 
 - **内容**: カスタムの Mixture-of-Experts モデル系列の学習を有効化します。詳細は [Mixture-of-Experts](MIXTURE_OF_EXPERTS.md) を参照してください。
