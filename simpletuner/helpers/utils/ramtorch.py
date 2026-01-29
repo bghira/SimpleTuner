@@ -171,11 +171,13 @@ def replace_linear_layers_with_ramtorch(
         return 0
 
     # Calculate how many to replace based on percentage
+    remaining = []
     if use_percent:
         total_eligible = len(eligible)
         num_to_replace = math.ceil(total_eligible * percent / 100)
         if num_to_replace == 0 and percent > 0:
             num_to_replace = 1  # At least one if percent > 0
+        remaining = eligible[num_to_replace:]
         eligible = eligible[:num_to_replace]
         logger.info(
             "RamTorch percentage mode: replacing %d of %d eligible Linear layers (%.1f%%).",
@@ -213,6 +215,15 @@ def replace_linear_layers_with_ramtorch(
 
         setattr(parent, child_name, new_layer)
         replaced += 1
+
+    if remaining or patterns is not None:
+        for _, child in module.named_modules():
+            if not isinstance(child, nn.Linear) or isinstance(child, ramtorch_linear):
+                continue
+            for param in child.parameters(recurse=False):
+                if param.device.type == "cpu":
+                    child.to(resolved_device)
+                    break
 
     return replaced
 
