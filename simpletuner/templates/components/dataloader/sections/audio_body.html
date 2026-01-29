@@ -1,39 +1,49 @@
 <!-- Audio Settings Body (for modal) -->
-<div class="modal-section-body">
+<div class="modal-section-body" x-init="editingDataset.audio = editingDataset.audio || {}">
     <!-- Duration Settings -->
-    <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate')">
-        <h6 class="modal-section-title">Duration</h6>
+    <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate', 'bucket')">
+        <h6 class="modal-section-title">Duration & Bucketing</h6>
         <div class="row g-2">
-            <div class="col-md-4">
-                <label class="form-label small">Min (seconds)</label>
+            <div class="col-md-3">
+                <label class="form-label small">Min (seconds) <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
-                       x-model.number.lazy="editingDataset.audio_min_duration_seconds"
+                       x-model.number.lazy="editingDataset.audio.min_duration_seconds"
                        @input="markAsUnsaved()"
                        step="0.1"
                        min="0"
                        placeholder="0">
             </div>
-            <div class="col-md-4">
-                <label class="form-label small">Max (seconds)</label>
+            <div class="col-md-3">
+                <label class="form-label small">Max (seconds) <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
-                       x-model.number.lazy="editingDataset.audio_max_duration_seconds"
+                       x-model.number.lazy="editingDataset.audio.max_duration_seconds"
                        @input="markAsUnsaved()"
                        step="0.1"
                        min="0"
-                       placeholder="30">
+                       placeholder="No limit">
+                <div class="form-text small">Clips longer than this are skipped</div>
             </div>
-            <div class="col-md-4">
-                <label class="form-label small">Interval</label>
+            <div class="col-md-3">
+                <label class="form-label small">Duration Interval <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
-                       x-model.number.lazy="editingDataset.audio_duration_interval"
+                       x-model.number.lazy="editingDataset.audio.duration_interval"
                        @input="markAsUnsaved()"
                        step="0.1"
                        min="0.1"
                        placeholder="3.0">
-                <div class="form-text small">Truncate to nearest multiple</div>
+                <div class="form-text small">Bucket rounding (seconds)</div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Bucket Strategy <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.audio.bucket_strategy"
+                        @change="markAsUnsaved()">
+                    <option value="">Duration (default)</option>
+                    <option value="duration">Duration</option>
+                </select>
             </div>
         </div>
     </div>
@@ -43,23 +53,25 @@
         <h6 class="modal-section-title">Format</h6>
         <div class="row g-2">
             <div class="col-md-6">
-                <label class="form-label small">Channels</label>
+                <label class="form-label small">Channels <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
-                        x-model.number.lazy="editingDataset.audio_channels"
+                        x-model.number.lazy="editingDataset.audio.channels"
                         @change="markAsUnsaved()">
                     <option value="1">1 (Mono)</option>
                     <option value="2">2 (Stereo)</option>
                 </select>
             </div>
             <div class="col-md-6">
-                <label class="form-label small">Truncation Mode</label>
+                <label class="form-label small">Truncation Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <select class="form-select form-select-sm"
-                        x-model="editingDataset.audio_truncation_mode"
+                        x-model="editingDataset.audio.truncation_mode"
                         @change="markAsUnsaved()">
+                    <option value="">Beginning (default)</option>
                     <option value="beginning">Beginning</option>
                     <option value="end">End</option>
                     <option value="random">Random</option>
                 </select>
+                <div class="form-text small">Which part of clip to keep when truncating</div>
             </div>
         </div>
     </div>
