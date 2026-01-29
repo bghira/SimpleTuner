@@ -851,13 +851,28 @@ def collate_fn(batch):
         )
 
         # Determine the conditioning types for model input and loss masking
-        conditioning_type = None
-        loss_mask_type = None
-        for backend_id, cond_type in conditioning_types_by_backend.items():
-            if cond_type in REFERENCE_CONDITIONING_TYPES:
-                conditioning_type = cond_type
-            elif cond_type in MASK_CONDITIONING_TYPES:
-                loss_mask_type = cond_type
+        # Use explicit precedence order when multiple types of same category exist
+        ref_types_present = {
+            cond_type for cond_type in conditioning_types_by_backend.values() if cond_type in REFERENCE_CONDITIONING_TYPES
+        }
+        mask_types_present = {
+            cond_type for cond_type in conditioning_types_by_backend.values() if cond_type in MASK_CONDITIONING_TYPES
+        }
+
+        if len(ref_types_present) > 1:
+            logger.warning(
+                f"Multiple reference conditioning types in batch: {sorted(ref_types_present)}. "
+                "Using first by precedence order."
+            )
+        if len(mask_types_present) > 1:
+            logger.warning(
+                f"Multiple loss-mask conditioning types in batch: {sorted(mask_types_present)}. "
+                "Using first by precedence order."
+            )
+
+        # Select types by precedence (order defined in constants)
+        conditioning_type = next((t for t in REFERENCE_CONDITIONING_TYPES if t in ref_types_present), None)
+        loss_mask_type = next((t for t in MASK_CONDITIONING_TYPES if t in mask_types_present), None)
 
         assert model is not None
         has_conditioning_backends = bool(conditioning_types_by_backend) or model.requires_conditioning_dataset()
@@ -903,35 +918,10 @@ def collate_fn(batch):
                     )
                     conditioning_latents.append(_latents)
 
-            # Collect pixels from mask backends (for loss masking)
-            if mask_backends:
-                conditioning_pixel_values = []
-                debug_log("Collect conditioning pixel values from mask backends for loss masking")
-                for backend_cfg in mask_backends:
-                    backend_id = backend_cfg["id"]
-                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
-                    if not backend_pairs:
-                        continue
-                    _examples = [pair[0] for pair in backend_pairs]
-                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
-                    paired_training_paths = [pair[1] for pair in backend_pairs]
-                    paired_training_examples = [pair[2] for pair in backend_pairs]
-                    _pixel_values = conditioning_pixels(
-                        _filepaths,
-                        paired_training_paths,
-                        paired_training_examples,
-                        backend_id,
-                        data_backend_id,
-                    )
-                    debug_log(f"Found {len(_pixel_values)} mask pixel values.")
-                    conditioning_pixel_values.append(
-                        torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
-                    )
-
-            # Collect pixels from reference/untyped backends if needed for text embed image context
+            # Collect pixels from reference/untyped backends FIRST if needed for text embed image context
+            # (must be first since _conditioning_pixel_value_for_example uses index 0)
             if latent_source_backends and needs_reference_pixels:
-                if conditioning_pixel_values is None:
-                    conditioning_pixel_values = []
+                conditioning_pixel_values = []
                 debug_log("Collect conditioning pixel values from reference/untyped backends for text embed image context")
                 for backend_cfg in latent_source_backends:
                     backend_id = backend_cfg["id"]
@@ -950,6 +940,32 @@ def collate_fn(batch):
                         data_backend_id,
                     )
                     debug_log(f"Found {len(_pixel_values)} reference pixel values for image context.")
+                    conditioning_pixel_values.append(
+                        torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
+                    )
+
+            # Collect pixels from mask backends (for loss masking)
+            if mask_backends:
+                if conditioning_pixel_values is None:
+                    conditioning_pixel_values = []
+                debug_log("Collect conditioning pixel values from mask backends for loss masking")
+                for backend_cfg in mask_backends:
+                    backend_id = backend_cfg["id"]
+                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
+                    if not backend_pairs:
+                        continue
+                    _examples = [pair[0] for pair in backend_pairs]
+                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
+                    paired_training_paths = [pair[1] for pair in backend_pairs]
+                    paired_training_examples = [pair[2] for pair in backend_pairs]
+                    _pixel_values = conditioning_pixels(
+                        _filepaths,
+                        paired_training_paths,
+                        paired_training_examples,
+                        backend_id,
+                        data_backend_id,
+                    )
+                    debug_log(f"Found {len(_pixel_values)} mask pixel values.")
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )

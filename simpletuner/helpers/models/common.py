@@ -4601,6 +4601,11 @@ class ModelFoundation(ABC):
 
         # Apply conditioning mask if needed
         loss_mask_type = prepared_batch.get("loss_mask_type")
+        # Backwards compatibility: fall back to conditioning_type if loss_mask_type not set
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
         if loss_mask_type == "mask" and apply_conditioning_mask:
             logger.debug("Applying conditioning mask to loss.")
             mask_image = (
