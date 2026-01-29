@@ -111,15 +111,23 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
         if torch.cuda.is_available():
             tensor = torch.randn(4, 4, device="cuda")
             packed = hooks.pack(tensor)
-            self.assertEqual(packed.device.type, "cpu")
+            # Pack returns (cpu_tensor, original_device) tuple
+            self.assertIsInstance(packed, tuple)
+            self.assertEqual(len(packed), 2)
+            cpu_tensor, original_device = packed
+            self.assertEqual(cpu_tensor.device.type, "cpu")
+            self.assertEqual(original_device.type, "cuda")
 
             unpacked = hooks.unpack(packed)
             self.assertEqual(unpacked.device.type, "cuda")
         else:
-            # On CPU, tensors should pass through unchanged
+            # On CPU, tensors should pass through with None device
             tensor = torch.randn(4, 4)
             packed = hooks.pack(tensor)
-            self.assertEqual(packed.device.type, "cpu")
+            self.assertIsInstance(packed, tuple)
+            cpu_tensor, original_device = packed
+            self.assertEqual(cpu_tensor.device.type, "cpu")
+            self.assertIsNone(original_device)
 
 
 class TestGradientCheckpointingInterval(unittest.TestCase):
@@ -145,11 +153,23 @@ class TestGradientCheckpointingInterval(unittest.TestCase):
             # Restore original
             set_checkpoint_backend(original)
 
+    def test_set_checkpoint_backend_validation(self):
+        """Test that invalid backend values raise ValueError."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+
+        with self.assertRaises(ValueError) as cm:
+            set_checkpoint_backend("invalid_backend")
+
+        self.assertIn("invalid_backend", str(cm.exception))
+        self.assertIn("torch", str(cm.exception))
+        self.assertIn("unsloth", str(cm.exception))
+
     def test_checkpoint_wrapper_uses_backend(self):
         """Test that checkpoint wrapper respects the backend setting."""
         from simpletuner.helpers.training.gradient_checkpointing_interval import (
             checkpoint_wrapper,
             get_checkpoint_backend,
+            reset_checkpoint_counter,
             set_checkpoint_backend,
             set_checkpoint_interval,
         )
@@ -159,6 +179,7 @@ class TestGradientCheckpointingInterval(unittest.TestCase):
         try:
             # Set interval to 1 so checkpointing always happens
             set_checkpoint_interval(1)
+            reset_checkpoint_counter()
 
             module = SimpleModule(32)
             x = torch.randn(2, 32)
@@ -177,6 +198,8 @@ class TestGradientCheckpointingInterval(unittest.TestCase):
                 self.assertTrue(torch.allclose(result_torch.cpu(), result_unsloth.cpu(), atol=1e-5))
         finally:
             set_checkpoint_backend(original_backend)
+            set_checkpoint_interval(4)  # Restore default interval
+            reset_checkpoint_counter()
 
 
 class TestConfigFieldIntegration(unittest.TestCase):

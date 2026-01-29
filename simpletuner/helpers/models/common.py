@@ -2578,15 +2578,15 @@ class ModelFoundation(ABC):
 
         # Set gradient checkpointing backend
         checkpoint_backend = getattr(self.config, "gradient_checkpointing_backend", "torch")
-        if checkpoint_backend == "unsloth":
-            if not torch.cuda.is_available():
-                logger.warning("Unsloth gradient checkpointing backend requires CUDA, falling back to torch")
-                checkpoint_backend = "torch"
-            else:
-                from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+        if checkpoint_backend == "unsloth" and not torch.cuda.is_available():
+            logger.warning("Unsloth gradient checkpointing backend requires CUDA, falling back to torch")
+            checkpoint_backend = "torch"
 
-                set_checkpoint_backend("unsloth")
-                logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
+        from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+
+        set_checkpoint_backend(checkpoint_backend)
+        if checkpoint_backend == "unsloth":
+            logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
         if (
             self.config.gradient_checkpointing_interval is not None

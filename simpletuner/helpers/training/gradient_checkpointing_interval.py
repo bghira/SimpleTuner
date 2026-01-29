@@ -20,9 +20,14 @@ def set_checkpoint_interval(n):
     _checkpoint_interval = n
 
 
+_VALID_BACKENDS = ("torch", "unsloth")
+
+
 def set_checkpoint_backend(backend: str):
     """Set the gradient checkpointing backend globally."""
     global _checkpoint_backend, _offloaded_checkpoint
+    if backend not in _VALID_BACKENDS:
+        raise ValueError(f"Invalid checkpoint backend '{backend}'. Must be one of: {_VALID_BACKENDS}")
     _checkpoint_backend = backend
     if backend == "unsloth" and _offloaded_checkpoint is None:
         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint

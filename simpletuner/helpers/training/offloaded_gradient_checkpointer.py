@@ -7,6 +7,7 @@ This trades PCIe bandwidth for GPU memory savings.
 """
 
 import torch
+from diffusers.utils.torch_utils import is_torch_version
 
 # Import the ORIGINAL checkpoint function before monkeypatching
 # This is stored in gradient_checkpointing_interval.py
@@ -17,19 +18,33 @@ class CPUOffloadHooks:
     """Context manager hooks that offload saved tensors to CPU during checkpointing."""
 
     def __init__(self):
-        self.device = None
+        # No global device state; device is tracked per saved tensor via pack/unpack payloads.
+        pass
 
-    def pack(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Called when a tensor is saved for backward - offload to CPU."""
+    def pack(self, tensor: torch.Tensor):
+        """Called when a tensor is saved for backward - offload to CPU.
+
+        Returns a payload (cpu_tensor, original_device) so that unpack() can
+        restore only tensors that were actually offloaded, and to their
+        correct original devices.
+        """
         if tensor.device.type == "cuda":
-            self.device = tensor.device
-            return tensor.to("cpu", non_blocking=True)
-        return tensor
+            cpu_tensor = tensor.to("cpu", non_blocking=True)
+            return cpu_tensor, tensor.device
+        # Tensor is already on CPU (or a non-CUDA device); mark as not offloaded.
+        return tensor, None
 
-    def unpack(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Called when a tensor is needed for backward - restore to GPU."""
-        if self.device is not None and tensor.device.type == "cpu":
-            return tensor.to(self.device, non_blocking=True)
+    def unpack(self, payload) -> torch.Tensor:
+        """Called when a tensor is needed for backward - restore to original device if needed."""
+        # Expect payload of the form (cpu_tensor, original_device).
+        try:
+            tensor, original_device = payload
+        except (TypeError, ValueError):
+            # Fallback: if payload is not in the expected form, return it as-is.
+            return payload
+
+        if original_device is not None and tensor.device.type == "cpu":
+            return tensor.to(original_device, non_blocking=True)
         return tensor
 
 
@@ -56,4 +71,8 @@ def offloaded_checkpoint(function, *args, use_reentrant: bool = False, **kwargs)
     """
     hooks = CPUOffloadHooks()
     with torch.autograd.graph.saved_tensors_hooks(hooks.pack, hooks.unpack):
-        return torch_checkpoint(function, *args, use_reentrant=use_reentrant, **kwargs)
+        # Only pass use_reentrant on PyTorch >= 1.11.0
+        if is_torch_version(">=", "1.11.0"):
+            return torch_checkpoint(function, *args, use_reentrant=use_reentrant, **kwargs)
+        else:
+            return torch_checkpoint(function, *args, **kwargs)
