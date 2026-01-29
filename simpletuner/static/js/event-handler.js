@@ -1523,19 +1523,6 @@ class EventHandler {
             eventStatus.innerHTML = statusContent;
         }
 
-        // Determine the status string
-        let status = 'disconnected';
-        if (connected) {
-            status = 'connected';
-        } else if (message && message.toLowerCase().includes('reconnect')) {
-            status = 'reconnecting';
-        }
-
-        // Update via centralized function (updates Alpine store + dispatches event)
-        if (typeof window.updateConnectionStatus === 'function') {
-            window.updateConnectionStatus(status, connected ? '' : (message || 'Disconnected'));
-        }
-
         // Only show message in event list if requested
         if (showMessage) {
             this.updateEventList([{
