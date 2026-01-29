@@ -230,6 +230,32 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Gradient Checkpointing Backend
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_backend",
+            arg_name="--gradient_checkpointing_backend",
+            ui_label="Gradient Checkpointing Backend",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="memory_optimization",
+            default_value="torch",
+            choices=[
+                {"value": "torch", "label": "PyTorch (recompute)"},
+                {"value": "unsloth", "label": "Unsloth (CPU offload)"},
+            ],
+            dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="show")],
+            validation_rules=[
+                ValidationRule(ValidationRuleType.CHOICES, value=["torch", "unsloth"]),
+            ],
+            help_text="Backend for gradient checkpointing. PyTorch recomputes activations; Unsloth offloads to CPU.",
+            tooltip="Unsloth uses async CPU offload (~30% more memory savings, ~2% overhead). Requires fast PCIe.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            documentation="OPTIONS.md#--gradient_checkpointing_backend",
+        )
+    )
+
     # Group Offloading
     registry._add_field(
         ConfigField(
