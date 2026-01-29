@@ -4522,6 +4522,8 @@ class Trainer:
         save_path = None
         if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
             save_path = self.checkpoint_state_save(self.config.output_dir)
+            if save_path:
+                self._populate_checkpoint_assets(save_path)
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
         if hub_upload_planned:
@@ -5147,6 +5149,46 @@ class Trainer:
         self._emit_event(event)
         self._run_post_checkpoint_script(local_path=save_path)
         return save_path
+
+    def _populate_checkpoint_assets(self, checkpoint_path: str) -> None:
+        """Copy validation images/videos from this step to the checkpoint's assets folder."""
+        if not checkpoint_path or not os.path.exists(checkpoint_path):
+            return
+
+        checkpoint_name = os.path.basename(checkpoint_path)
+        match = re.search(r"checkpoint-(\d+)", checkpoint_name)
+        if not match:
+            return
+        checkpoint_step = int(match.group(1))
+
+        validation_dir = os.path.join(self.config.output_dir, "validation_images")
+        if not os.path.exists(validation_dir):
+            return
+
+        step_pattern = f"step_{checkpoint_step}_"
+        supported_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".mov", ".webm"}
+
+        matching_files = []
+        for filename in os.listdir(validation_dir):
+            if step_pattern in filename:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in supported_extensions:
+                    matching_files.append(filename)
+
+        if not matching_files:
+            return
+
+        assets_dir = os.path.join(checkpoint_path, "assets")
+        try:
+            os.makedirs(assets_dir, exist_ok=True)
+            for idx, filename in enumerate(sorted(matching_files)):
+                src = os.path.join(validation_dir, filename)
+                ext = os.path.splitext(filename)[1]
+                dst = os.path.join(assets_dir, f"image_{idx}{ext}")
+                shutil.copy2(src, dst)
+            logger.debug(f"Copied {len(matching_files)} validation assets to {assets_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to copy validation assets to checkpoint: {e}")
 
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
