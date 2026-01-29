@@ -267,6 +267,10 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
@@ -470,8 +474,15 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
                     return custom_forward
 
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,

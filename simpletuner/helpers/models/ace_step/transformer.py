@@ -324,8 +324,12 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         self.final_layer = T2IFinalLayer(self.inner_dim, patch_size=patch_size, out_channels=out_channels)
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self._mps_fp32 = False
         self._logged_dtype_mismatch = False
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
@@ -510,7 +514,14 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
             if self.training and self.gradient_checkpointing:
 
-                hidden_states = torch.utils.checkpoint.checkpoint(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                hidden_states = checkpoint_fn(
                     block,
                     hidden_states=hidden_states,
                     attention_mask=attention_mask,
