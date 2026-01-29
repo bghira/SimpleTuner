@@ -352,14 +352,18 @@ class CheckpointsService:
         checkpoint_path = checkpoint.get("path")
         cache_key = f"{environment_id}:{name}"
         mtime = None
+        assets_mtime = None
         if checkpoint_path and os.path.exists(checkpoint_path):
             try:
                 mtime = os.path.getmtime(checkpoint_path)
+                assets_dir = os.path.join(checkpoint_path, "assets")
+                if os.path.exists(assets_dir):
+                    assets_mtime = os.path.getmtime(assets_dir)
             except OSError:
                 mtime = None
 
         cached = self._preview_cache.get(cache_key)
-        if cached and cached.get("mtime") == mtime:
+        if cached and cached.get("mtime") == mtime and cached.get("assets_mtime") == assets_mtime:
             cached_data = cached.get("data")
             if cached_data:
                 return dict(cached_data)
@@ -397,7 +401,7 @@ class CheckpointsService:
         if "size_bytes" in preview:
             preview["size"] = preview["size_bytes"]
 
-        self._preview_cache[cache_key] = {"mtime": mtime, "data": dict(preview)}
+        self._preview_cache[cache_key] = {"mtime": mtime, "assets_mtime": assets_mtime, "data": dict(preview)}
 
         if len(self._preview_cache) > 128:
             excess = len(self._preview_cache) - 128
@@ -415,29 +419,29 @@ class CheckpointsService:
         if not assets_dir.exists() or not assets_dir.is_dir():
             return assets
 
-        supported_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        supported_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".mov", ".webm"}
         candidates = sorted(
             (path for path in assets_dir.iterdir() if path.suffix.lower() in supported_suffixes),
             key=lambda p: p.name,
         )
 
-        for image_path in candidates[:limit]:
-            encoded = self._encode_image(image_path)
+        for asset_path in candidates[:limit]:
+            encoded = self._encode_asset(asset_path)
             if encoded:
                 assets.append(encoded)
 
         return assets
 
-    def _encode_image(self, image_path: Path) -> Optional[Dict[str, Any]]:
+    def _encode_asset(self, asset_path: Path) -> Optional[Dict[str, Any]]:
         try:
-            data = image_path.read_bytes()
-            mime = self._guess_mime(image_path.suffix)
+            data = asset_path.read_bytes()
+            mime = self._guess_mime(asset_path.suffix)
             encoded = base64.b64encode(data).decode("utf-8")
             return {
-                "name": image_path.name,
+                "name": asset_path.name,
                 "mime": mime,
                 "data": f"data:{mime};base64,{encoded}",
-                "size": image_path.stat().st_size,
+                "size": asset_path.stat().st_size,
             }
         except Exception:
             return None
@@ -451,6 +455,14 @@ class CheckpointsService:
             return "image/webp"
         if suffix == ".gif":
             return "image/gif"
+        if suffix == ".mp4":
+            return "video/mp4"
+        if suffix == ".avi":
+            return "video/x-msvideo"
+        if suffix == ".mov":
+            return "video/quicktime"
+        if suffix == ".webm":
+            return "video/webm"
         return "image/png"
 
     def _load_checkpoint_readme(
