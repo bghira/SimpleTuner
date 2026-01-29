@@ -2570,8 +2570,14 @@ class ModelFoundation(ABC):
                     "All model parameters remain on the meta device after reload."
                 )
         if self._ramtorch_enabled() and self.model is not None:
-            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value, percent=self._ramtorch_transformer_percent())
-        if move_to_device and self.model is not None:
+            self._apply_ramtorch_layers(
+                self.model,
+                self.MODEL_TYPE.value,
+                percent=self._ramtorch_transformer_percent(),
+                full_ramtorch=True,  # Convert all layer types including RMSNorm
+            )
+        if move_to_device and self.model is not None and not self._ramtorch_enabled():
+            # Skip device move when ramtorch is enabled - ramtorch keeps weights on CPU
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
         self.configure_chunked_feed_forward()
@@ -3088,15 +3094,41 @@ class ModelFoundation(ABC):
                         counts.get("linear", 0),
                         counts.get("other", 0),
                     )
+                # Log diagnostic info about ramtorch conversion
+                ramtorch_params = 0
+                ramtorch_elements = 0
+                non_ramtorch_params = 0
+                non_ramtorch_elements = 0
+                for name, param in module.named_parameters():
+                    if getattr(param, "is_ramtorch", False):
+                        ramtorch_params += 1
+                        ramtorch_elements += param.numel()
+                    else:
+                        non_ramtorch_params += 1
+                        non_ramtorch_elements += param.numel()
+                        if non_ramtorch_params <= 10:
+                            logger.debug(
+                                "Non-ramtorch param: %s (%d elements, device=%s)", name, param.numel(), param.device
+                            )
+                logger.info(
+                    "RamTorch conversion stats for %s: %d ramtorch params (%.2f GB), %d non-ramtorch params (%.2f GB)",
+                    component_label,
+                    ramtorch_params,
+                    ramtorch_elements * 2 / 1e9,  # bf16 = 2 bytes
+                    non_ramtorch_params,
+                    non_ramtorch_elements * 2 / 1e9,
+                )
+
                 # Move any remaining non-ramtorch modules to GPU (e.g., custom LayerNorm classes)
                 # and buffers (e.g., position_ids)
                 moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
                 if moved:
-                    logger.debug(
-                        "Moved %s remaining non-RamTorch layers to %s for %s.",
+                    logger.info(
+                        "Moved %s remaining non-RamTorch params to %s for %s (%.2f GB).",
                         moved,
                         self._ramtorch_device(),
                         component_label,
+                        non_ramtorch_elements * 2 / 1e9,
                     )
                 return total
             else:
