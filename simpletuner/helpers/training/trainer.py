@@ -4522,8 +4522,6 @@ class Trainer:
         save_path = None
         if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
             save_path = self.checkpoint_state_save(self.config.output_dir)
-            if save_path:
-                self._populate_checkpoint_assets(save_path)
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
         if hub_upload_planned:
@@ -5744,13 +5742,14 @@ class Trainer:
                     scheduled_checkpoint_due = (
                         checkpoint_step_interval and self.state["global_step"] % checkpoint_step_interval == 0
                     )
+                    step_checkpoint_path = None
                     if manual_checkpoint_requested or scheduled_checkpoint_due:
                         checkpoint_message = (
                             f"Manual checkpoint requested. {webhook_pending_msg}"
                             if manual_checkpoint_requested
                             else webhook_pending_msg
                         )
-                        self._run_standard_checkpoint(
+                        step_checkpoint_path = self._run_standard_checkpoint(
                             webhook_message=checkpoint_message,
                             parent_loss=parent_loss,
                             epoch=epoch,
@@ -5887,6 +5886,8 @@ class Trainer:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
+                    if step_checkpoint_path:
+                        self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
@@ -5911,6 +5912,7 @@ class Trainer:
                 )
                 if checkpoint_dir:
                     self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
+                    self._populate_checkpoint_assets(checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
