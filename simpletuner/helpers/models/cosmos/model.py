@@ -375,7 +375,7 @@ class Cosmos2Image(VideoModelFoundation):
         loss = F.mse_loss(x0_pred, x0, reduction="none") * w
 
         if apply_conditioning_mask:
-            ctype = prepared_batch.get("conditioning_type")
+            ctype = prepared_batch.get("loss_mask_type")
             if ctype == "mask":
                 m = prepared_batch["conditioning_pixel_values"][:, :1]
                 m = torch.nn.functional.interpolate(m, size=loss.shape[2:], mode="area")

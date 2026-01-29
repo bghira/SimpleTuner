@@ -832,7 +832,7 @@ class Flux2(ImageModelFoundation):
             getattr(self.config, "tread_config", None) is not None
             and "conditioning_pixel_values" in prepared_batch
             and prepared_batch["conditioning_pixel_values"] is not None
-            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+            and prepared_batch.get("loss_mask_type") in ("mask", "segmentation")
         ):
             with torch.no_grad():
                 h_tokens = prepared_batch["latents"].shape[2]

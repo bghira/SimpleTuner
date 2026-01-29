@@ -4617,8 +4617,13 @@ class ModelFoundation(ABC):
             raise NotImplementedError(f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}.")
 
         # Apply conditioning mask if needed
-        conditioning_type = prepared_batch.get("conditioning_type")
-        if conditioning_type == "mask" and apply_conditioning_mask:
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        # Backwards compatibility: fall back to conditioning_type if loss_mask_type not set
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
+        if loss_mask_type == "mask" and apply_conditioning_mask:
             logger.debug("Applying conditioning mask to loss.")
             mask_image = (
                 prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
@@ -4626,7 +4631,7 @@ class ModelFoundation(ABC):
             mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
-        elif conditioning_type == "segmentation" and apply_conditioning_mask:
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
             if random.random() < self.config.masked_loss_probability:
                 mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
                 mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
