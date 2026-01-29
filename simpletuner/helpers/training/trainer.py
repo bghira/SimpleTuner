@@ -2578,13 +2578,28 @@ class Trainer:
             elif self.config.base_model_default_dtype == "fp16":
                 raise ValueError("fp16 mixed precision training is not supported.")
             if not preprocessing_models_only:
-                logger.info(
-                    f"Moving {self.model.MODEL_TYPE.value} to dtype={self.config.base_weight_dtype}, device={quantization_device}"
-                )
-                self.model.model.to(quantization_device, dtype=self.config.base_weight_dtype)
-                if self.config.controlnet:
-                    logger.info(f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}")
-                    self.model.controlnet.to(quantization_device, dtype=self.config.base_weight_dtype)
+                # Skip device move when ramtorch is enabled - ramtorch handles device placement
+                # Only do dtype conversion for ramtorch models
+                ramtorch_enabled = getattr(self.config, "ramtorch", False)
+                if ramtorch_enabled:
+                    logger.info(
+                        f"Converting {self.model.MODEL_TYPE.value} dtype to {self.config.base_weight_dtype} (ramtorch handles device placement)"
+                    )
+                    # Only convert dtype, don't move device - ramtorch keeps weights on CPU
+                    self.model.model.to(dtype=self.config.base_weight_dtype)
+                    if self.config.controlnet:
+                        logger.info(f"Converting ControlNet dtype to {self.config.base_weight_dtype}")
+                        self.model.controlnet.to(dtype=self.config.base_weight_dtype)
+                else:
+                    logger.info(
+                        f"Moving {self.model.MODEL_TYPE.value} to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                    )
+                    self.model.model.to(quantization_device, dtype=self.config.base_weight_dtype)
+                    if self.config.controlnet:
+                        logger.info(
+                            f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                        )
+                        self.model.controlnet.to(quantization_device, dtype=self.config.base_weight_dtype)
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
