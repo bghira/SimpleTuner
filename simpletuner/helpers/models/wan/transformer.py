@@ -681,6 +681,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self.force_v2_1_time_embedding: bool = False
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
@@ -699,6 +700,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         self.force_v2_1_time_embedding = bool(force_2_1_time_embedding)
         if self.force_v2_1_time_embedding:
             logger.info("WanTransformer3DModel: Forcing Wan 2.1 style time embedding.")
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Set the TREAD router and routing configuration."""
@@ -868,12 +872,20 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             # 3. Feed-forward on video tokens
             # Only video tokens are routed; text tokens always remain full sequence
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                hidden_states = checkpoint_fn(
                     block,
                     hidden_states,  # video tokens (possibly routed)
                     encoder_hidden_states,  # text tokens (always full sequence)
                     timestep_proj,
                     current_rope,  # rotary embeddings (possibly routed)
+                    use_reentrant=False,
                 )
             else:
                 hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, current_rope)

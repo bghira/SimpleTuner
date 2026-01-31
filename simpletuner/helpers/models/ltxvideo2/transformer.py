@@ -1167,6 +1167,7 @@ class LTX2VideoTransformer3DModel(
         self.audio_proj_out = nn.Linear(audio_inner_dim, audio_out_channels)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self.time_sign_embed: Optional[nn.Embedding] = None
         self.audio_time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -1184,6 +1185,9 @@ class LTX2VideoTransformer3DModel(
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict[str, Any]]] = None):
         """Attach a TREAD router and route definitions."""
@@ -1574,7 +1578,14 @@ class LTX2VideoTransformer3DModel(
                 musubi_manager.stream_in(block, hidden_states.device)
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states, audio_hidden_states = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                hidden_states, audio_hidden_states = checkpoint_fn(
                     block,
                     hidden_states,
                     audio_hidden_states,
@@ -1592,6 +1603,7 @@ class LTX2VideoTransformer3DModel(
                     audio_cross_attn_rotary_emb,
                     encoder_attention_mask,
                     audio_encoder_attention_mask,
+                    use_reentrant=False,
                 )
             else:
                 hidden_states, audio_hidden_states = block(

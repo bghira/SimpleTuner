@@ -5299,6 +5299,7 @@ class Trainer:
 
             while True:
                 checkpoint_saved_this_step = False
+                step_checkpoint_path = None
                 self._exit_on_signal()
                 step += 1
                 # Fetch the batch with CP-aware sampling. When context parallelism is

@@ -675,6 +675,7 @@ class HunyuanVideo15Transformer3DModel(
         self.proj_out = nn.Linear(inner_dim, patch_size_t * patch_size * patch_size * out_channels)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -834,16 +835,24 @@ class HunyuanVideo15Transformer3DModel(
         # 4. Transformer blocks
         capture_idx = 0
         if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if self.gradient_checkpointing_backend == "unsloth":
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
+
             for idx, block in enumerate(self.transformer_blocks):
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_in(block, hidden_states.device)
-                hidden_states, encoder_hidden_states = self._gradient_checkpointing_func(
+                hidden_states, encoder_hidden_states = checkpoint_fn(
                     block,
                     hidden_states,
                     encoder_hidden_states,
                     temb,
                     encoder_attention_mask,
                     image_rotary_emb,
+                    use_reentrant=False,
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
@@ -893,3 +902,6 @@ class HunyuanVideo15Transformer3DModel(
 
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend

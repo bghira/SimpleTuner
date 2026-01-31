@@ -703,12 +703,16 @@ class Kandinsky5Transformer3DModel(
         # Initialize output layer
         self.out_layer = Kandinsky5OutLayer(model_dim, time_dim, out_visual_dim, patch_size)
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_text_blocks + num_visual_blocks,
             blocks_to_swap=musubi_blocks_to_swap,
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Attach a TREAD router and route definitions."""
@@ -787,7 +791,14 @@ class Kandinsky5Transformer3DModel(
 
         for text_transformer_block in self.text_transformer_blocks:
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                text_embed = self._gradient_checkpointing_func(text_transformer_block, text_embed, time_embed, text_rope)
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                text_embed = checkpoint_fn(text_transformer_block, text_embed, time_embed, text_rope, use_reentrant=False)
             else:
                 text_embed = text_transformer_block(text_embed, time_embed, text_rope)
 
@@ -863,13 +874,21 @@ class Kandinsky5Transformer3DModel(
                 routing_now = True
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                visual_embed = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                visual_embed = checkpoint_fn(
                     visual_transformer_block,
                     visual_embed,
                     text_embed,
                     time_embed,
                     current_rope,
                     sparse_params,
+                    use_reentrant=False,
                 )
             else:
                 visual_embed = visual_transformer_block(visual_embed, text_embed, time_embed, current_rope, sparse_params)
