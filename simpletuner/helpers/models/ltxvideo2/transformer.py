@@ -460,6 +460,13 @@ class LTX2VideoTransformerBlock(nn.Module):
         audio_only: bool = False,
     ) -> torch.Tensor:
         batch_size = audio_hidden_states.size(0)
+        video_batch_size = hidden_states.size(0)
+        if batch_size != video_batch_size:
+            raise ValueError(
+                f"Batch size mismatch: audio_hidden_states has batch {batch_size}, "
+                f"hidden_states has batch {video_batch_size}. "
+                f"audio shape: {audio_hidden_states.shape}, video shape: {hidden_states.shape}"
+            )
 
         if audio_only:
             norm_audio_hidden_states = self.audio_norm1(audio_hidden_states)
@@ -764,7 +771,6 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
         batch_size: int,
         num_frames: int,
         device: torch.device,
-        fps: float = 25.0,
         shift: int = 0,
     ) -> torch.Tensor:
         """
@@ -790,11 +796,9 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
         """
 
         # 1. Generate coordinates in the frame (time) dimension.
-        audio_duration_s = num_frames / fps
-        latent_frames = int(audio_duration_s * self.audio_latents_per_second)
         # Always compute rope in fp32
         grid_f = torch.arange(
-            start=shift, end=latent_frames + shift, step=self.patch_size_t, dtype=torch.float32, device=device
+            start=shift, end=num_frames + shift, step=self.patch_size_t, dtype=torch.float32, device=device
         )
 
         # 2. Calculate start timstamps in seconds with respect to the original spectrogram grid
@@ -856,7 +860,6 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
                 num_frames,
                 device=device,
                 shift=shift,
-                fps=fps,
             )
         # Number of spatiotemporal dimensions (3 for video, 1 (temporal) for audio and cross attn)
         num_pos_dims = coords.shape[1]
@@ -1278,9 +1281,7 @@ class LTX2VideoTransformer3DModel(
 
             batch_size = audio_hidden_states.size(0)
             if audio_coords is None:
-                audio_coords = self.audio_rope.prepare_audio_coords(
-                    batch_size, audio_num_frames, audio_hidden_states.device, fps=fps
-                )
+                audio_coords = self.audio_rope.prepare_audio_coords(batch_size, audio_num_frames, audio_hidden_states.device)
             audio_rotary_emb = self.audio_rope(audio_coords, device=audio_hidden_states.device)
 
             audio_hidden_states = self.audio_proj_in(audio_hidden_states)
@@ -1413,9 +1414,7 @@ class LTX2VideoTransformer3DModel(
                 batch_size, num_frames, height, width, hidden_states.device, fps=fps
             )
         if audio_coords is None:
-            audio_coords = self.audio_rope.prepare_audio_coords(
-                batch_size, audio_num_frames, audio_hidden_states.device, fps=fps
-            )
+            audio_coords = self.audio_rope.prepare_audio_coords(batch_size, audio_num_frames, audio_hidden_states.device)
 
         video_rotary_emb = self.rope(video_coords, fps=fps, device=hidden_states.device)
         audio_rotary_emb = self.audio_rope(audio_coords, device=audio_hidden_states.device)
