@@ -2588,21 +2588,6 @@ class ModelFoundation(ABC):
         if checkpoint_backend == "unsloth":
             logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
-        if (
-            self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 1
-            and self.MODEL_TYPE is ModelTypes.UNET
-        ):
-            logger.warning(
-                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of {}".format(
-                    self.config.gradient_checkpointing_interval
-                )
-            )
-            # monkey-patch gradient checkpointing for nth call intervals - easier than modifying diffusers blocks
-            from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_interval
-
-            set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
-
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
                 logger.info("Setting gradient checkpointing interval..")
@@ -3457,6 +3442,9 @@ class ModelFoundation(ABC):
     def calculate_dynamic_shift_mu(self, noise_scheduler, latents: torch.Tensor | None):
         """
         Compute resolution-dependent shift value for schedulers that support dynamic shifting.
+
+        Handles both image latents [B, C, H, W] and video latents [B, C, F, H, W].
+        For video, the sequence length includes the temporal dimension.
         """
         if latents is None:
             return None
@@ -3481,12 +3469,19 @@ class ModelFoundation(ABC):
         if patch_size is None or patch_size <= 0:
             raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
 
-        height, width = latents.shape[-2:]
-        image_seq_len = (int(height) // int(patch_size)) * (int(width) // int(patch_size))
+        # Handle video latents [B, C, F, H, W] vs image latents [B, C, H, W]
+        if latents.ndim == 5:
+            num_frames, height, width = latents.shape[-3:]
+        else:
+            num_frames = 1
+            height, width = latents.shape[-2:]
+
+        # Compute sequence length (spatiotemporal for video, spatial for images)
+        seq_len = num_frames * (int(height) // int(patch_size)) * (int(width) // int(patch_size))
         from simpletuner.helpers.models.sd3.pipeline import calculate_shift
 
         return calculate_shift(
-            image_seq_len,
+            seq_len,
             scheduler_config.base_image_seq_len,
             scheduler_config.max_image_seq_len,
             scheduler_config.base_shift,

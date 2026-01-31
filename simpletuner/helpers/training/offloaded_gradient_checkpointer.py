@@ -8,10 +8,7 @@ This trades PCIe bandwidth for GPU memory savings.
 
 import torch
 from diffusers.utils.torch_utils import is_torch_version
-
-# Import the ORIGINAL checkpoint function before monkeypatching
-# This is stored in gradient_checkpointing_interval.py
-from simpletuner.helpers.training.gradient_checkpointing_interval import original_checkpoint as torch_checkpoint
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 
 class CPUOffloadHooks:

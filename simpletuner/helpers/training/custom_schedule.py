@@ -447,12 +447,26 @@ def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
         # Static shift value for every resolution
         shift = args.flow_schedule_shift
     elif args.flow_schedule_auto_shift:
-        # Resolution-dependent shift value calculation used by official Flux inference implementation
-        image_seq_len = (noise.shape[-1] * noise.shape[-2]) // 4
+        # Resolution-dependent shift value calculation used by official Flux inference implementation.
+        # Handle video latents [B, C, F, H, W] vs image latents [B, C, H, W].
+        if noise.ndim == 5:
+            num_frames, height, width = noise.shape[-3:]
+        else:
+            num_frames = 1
+            height, width = noise.shape[-2:]
+
+        # Get patch_size from scheduler config, default to 2 (Flux default).
+        patch_size = getattr(noise_scheduler.config, "patch_size", 2)
+        if patch_size is None or patch_size <= 0:
+            patch_size = 2
+
+        # Compute sequence length (spatiotemporal for video, spatial for images).
+        seq_len = num_frames * (height // patch_size) * (width // patch_size)
+
         if calculate_shift_flux is None:
-            raise RuntimeError("Flux flow schedule shift requires flux models and their dependencies.")
+            raise RuntimeError("Flow schedule auto shift requires flux models and their dependencies.")
         mu = calculate_shift_flux(
-            (noise.shape[-1] * noise.shape[-2]) // 4,
+            seq_len,
             noise_scheduler.config.base_image_seq_len,
             noise_scheduler.config.max_image_seq_len,
             noise_scheduler.config.base_shift,

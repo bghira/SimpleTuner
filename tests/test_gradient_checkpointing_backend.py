@@ -130,8 +130,8 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
             self.assertIsNone(original_device)
 
 
-class TestGradientCheckpointingInterval(unittest.TestCase):
-    """Tests for the gradient checkpointing interval module with backend support."""
+class TestGradientCheckpointingBackend(unittest.TestCase):
+    """Tests for the gradient checkpointing backend module."""
 
     def test_set_checkpoint_backend(self):
         """Test that checkpoint backend can be set."""
@@ -164,42 +164,76 @@ class TestGradientCheckpointingInterval(unittest.TestCase):
         self.assertIn("torch", str(cm.exception))
         self.assertIn("unsloth", str(cm.exception))
 
-    def test_checkpoint_wrapper_uses_backend(self):
-        """Test that checkpoint wrapper respects the backend setting."""
+    def test_get_checkpoint_function_torch(self):
+        """Test that get_checkpoint_function returns torch checkpoint for torch backend."""
         from simpletuner.helpers.training.gradient_checkpointing_interval import (
-            checkpoint_wrapper,
             get_checkpoint_backend,
-            reset_checkpoint_counter,
+            get_checkpoint_function,
             set_checkpoint_backend,
-            set_checkpoint_interval,
         )
 
         original_backend = get_checkpoint_backend()
 
         try:
-            # Set interval to 1 so checkpointing always happens
-            set_checkpoint_interval(1)
-            reset_checkpoint_counter()
+            set_checkpoint_backend("torch")
+            checkpoint_fn = get_checkpoint_function()
+            self.assertEqual(checkpoint_fn, torch.utils.checkpoint.checkpoint)
+        finally:
+            set_checkpoint_backend(original_backend)
 
+    def test_get_checkpoint_function_unsloth(self):
+        """Test that get_checkpoint_function returns offloaded checkpoint for unsloth backend."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import (
+            get_checkpoint_backend,
+            get_checkpoint_function,
+            set_checkpoint_backend,
+        )
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+        original_backend = get_checkpoint_backend()
+
+        try:
+            set_checkpoint_backend("unsloth")
+            checkpoint_fn = get_checkpoint_function()
+            self.assertEqual(checkpoint_fn, offloaded_checkpoint)
+        finally:
+            set_checkpoint_backend(original_backend)
+
+    def test_checkpoint_function_produces_correct_output(self):
+        """Test that checkpoint functions produce correct forward output."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import (
+            get_checkpoint_backend,
+            get_checkpoint_function,
+            set_checkpoint_backend,
+        )
+
+        original_backend = get_checkpoint_backend()
+
+        try:
             module = SimpleModule(32)
             x = torch.randn(2, 32)
 
+            # Direct forward
+            expected = module(x)
+
             # Test with torch backend
             set_checkpoint_backend("torch")
-            result_torch = checkpoint_wrapper(module, x, use_reentrant=False)
+            checkpoint_fn = get_checkpoint_function()
+            result_torch = checkpoint_fn(module, x, use_reentrant=False)
+            self.assertTrue(torch.allclose(expected, result_torch, atol=1e-6))
 
             # Test with unsloth backend (only if CUDA available)
             if torch.cuda.is_available():
                 module = module.cuda()
                 x = x.cuda()
-                set_checkpoint_backend("unsloth")
-                result_unsloth = checkpoint_wrapper(module, x, use_reentrant=False)
+                expected = module(x)
 
-                self.assertTrue(torch.allclose(result_torch.cpu(), result_unsloth.cpu(), atol=1e-5))
+                set_checkpoint_backend("unsloth")
+                checkpoint_fn = get_checkpoint_function()
+                result_unsloth = checkpoint_fn(module, x, use_reentrant=False)
+                self.assertTrue(torch.allclose(expected, result_unsloth, atol=1e-6))
         finally:
             set_checkpoint_backend(original_backend)
-            set_checkpoint_interval(4)  # Restore default interval
-            reset_checkpoint_counter()
 
 
 class TestConfigFieldIntegration(unittest.TestCase):

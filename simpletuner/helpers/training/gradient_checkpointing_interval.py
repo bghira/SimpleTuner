@@ -1,24 +1,16 @@
-import torch
-from torch.utils.checkpoint import checkpoint as original_checkpoint
+"""
+Gradient checkpointing backend selection.
 
-# Global variables to keep track of the checkpointing state
-_checkpoint_call_count = 0
-_checkpoint_interval = 4
+This module provides the ability to select between different gradient checkpointing
+backends (torch native vs unsloth CPU offload).
+
+Note: Per-layer interval checkpointing is implemented directly in transformer models
+that support it (Flux, Chroma, SD3, Sana, AuraFlow, etc.) via their
+`set_gradient_checkpointing_interval` method.
+"""
+
 _checkpoint_backend = "torch"  # "torch" or "unsloth"
 _offloaded_checkpoint = None  # Lazy import
-
-
-def reset_checkpoint_counter():
-    """Resets the checkpoint call counter. Call this at the beginning of the forward pass."""
-    global _checkpoint_call_count
-    _checkpoint_call_count = 0
-
-
-def set_checkpoint_interval(n):
-    """Sets the interval at which checkpointing is skipped."""
-    global _checkpoint_interval
-    _checkpoint_interval = n
-
 
 _VALID_BACKENDS = ("torch", "unsloth")
 
@@ -40,22 +32,10 @@ def get_checkpoint_backend() -> str:
     return _checkpoint_backend
 
 
-def checkpoint_wrapper(function, *args, **kwargs):
-    """Wrapper function for torch.utils.checkpoint.checkpoint."""
-    global _checkpoint_call_count
-    _checkpoint_call_count += 1
-    use_reentrant = kwargs.pop("use_reentrant", False)
+def get_checkpoint_function():
+    """Get the appropriate checkpoint function for the current backend."""
+    import torch
 
-    if _checkpoint_interval > 0 and (_checkpoint_call_count % _checkpoint_interval) == 0:
-        # Use the configured checkpoint backend
-        if _checkpoint_backend == "unsloth" and _offloaded_checkpoint is not None:
-            return _offloaded_checkpoint(function, *args, use_reentrant=use_reentrant, **kwargs)
-        return original_checkpoint(function, *args, use_reentrant=use_reentrant, **kwargs)
-    else:
-        # Skip checkpointing: execute the function directly
-        # Do not pass 'use_reentrant' to the function
-        return function(*args, **kwargs)
-
-
-# Monkeypatch torch.utils.checkpoint.checkpoint
-torch.utils.checkpoint.checkpoint = checkpoint_wrapper
+    if _checkpoint_backend == "unsloth" and _offloaded_checkpoint is not None:
+        return _offloaded_checkpoint
+    return torch.utils.checkpoint.checkpoint
