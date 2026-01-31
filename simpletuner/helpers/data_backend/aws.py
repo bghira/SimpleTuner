@@ -294,11 +294,27 @@ class S3DataBackend(BaseDataBackend):
 
         # Check extension
         ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
-        if ext in audio_file_extensions:
+
+        # Determine dataset type to handle ambiguous extensions (e.g., .mpeg is both audio and video)
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        except ValueError:
+            dataset_type_enum = DatasetType.IMAGE
+
+        is_video_dataset = dataset_type_enum is DatasetType.VIDEO
+        is_video_extension = ext in video_file_extensions
+
+        # Only load as audio if it's an audio dataset OR (audio extension AND not a video extension)
+        should_load_as_audio = dataset_type_enum is DatasetType.AUDIO or (
+            ext in audio_file_extensions and not is_video_extension
+        )
+
+        if should_load_as_audio and not is_video_dataset:
             from simpletuner.helpers.audio import load_audio
 
             return load_audio(buffer)
-        if ext in video_file_extensions:
+        if is_video_extension:
             return load_video(buffer)
         else:
             return load_image(buffer)
@@ -312,6 +328,14 @@ class S3DataBackend(BaseDataBackend):
         output_images = []
         available_keys = []
 
+        # Determine dataset type to handle ambiguous extensions (e.g., .mpeg is both audio and video)
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        except ValueError:
+            dataset_type_enum = DatasetType.IMAGE
+        is_video_dataset = dataset_type_enum is DatasetType.VIDEO
+
         for s3_key, data in zip(s3_keys, batch):
             if data is None:
                 logger.warning(f"Unable to load image '{s3_key}', skipping (no data).")
@@ -320,11 +344,17 @@ class S3DataBackend(BaseDataBackend):
                 # Check extension to decide loader
                 ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
                 buffer = BytesIO(data)
-                if ext in audio_file_extensions:
+
+                is_video_extension = ext in video_file_extensions
+                should_load_as_audio = dataset_type_enum is DatasetType.AUDIO or (
+                    ext in audio_file_extensions and not is_video_extension
+                )
+
+                if should_load_as_audio and not is_video_dataset:
                     from simpletuner.helpers.audio import load_audio
 
                     image_data = load_audio(buffer)
-                elif ext in video_file_extensions:
+                elif is_video_extension:
                     image_data = load_video(buffer)
                 else:
                     image_data = load_image(buffer)
