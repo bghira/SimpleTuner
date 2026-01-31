@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import scipy.io.wavfile
 import torch
-import torchaudio
 
 import wandb
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -17,22 +16,39 @@ logger = logging.getLogger(__name__)
 
 def save_audio(save_dir, validation_audios, validation_shortname, sample_rate=44100):
     """
-    Save validation audio to disk.
+    Save validation audio to disk using scipy (no torchcodec dependency).
     validation_audios: dict where key is shortname, value is list of audio tensors (C, T) or (T,)
     """
     audio_list = validation_audios.get(validation_shortname, [])
     saved_paths = []
 
     for idx, audio in enumerate(audio_list):
-        audio = _coerce_audio_tensor(audio)
-        if audio is None:
+        tensor = _coerce_audio_tensor(audio)
+        if tensor is None:
             continue
+
+        logger.warning(
+            f"AUDIO DEBUG - tensor shape: {tensor.shape}, dtype: {tensor.dtype}, "
+            f"min: {tensor.min().item():.6f}, max: {tensor.max().item():.6f}, "
+            f"mean: {tensor.mean().item():.6f}, std: {tensor.std().item():.6f}"
+        )
 
         filename = f"step_{StateTracker.get_global_step()}_{validation_shortname}_{idx}.wav"
         save_path = os.path.join(save_dir, filename)
 
         try:
-            torchaudio.save(save_path, audio, sample_rate)
+            # Transpose to (Time, Channels) for scipy and ensure numpy
+            audio_np = tensor.numpy().T
+            if audio_np.shape[1] == 1:
+                audio_np = audio_np.squeeze(1)
+            if np.issubdtype(audio_np.dtype, np.floating):
+                audio_np = np.clip(audio_np, -1.0, 1.0)
+                audio_np = (audio_np * 32767.0).astype(np.int16)
+            logger.warning(
+                f"AUDIO DEBUG - after processing: shape={audio_np.shape}, dtype={audio_np.dtype}, "
+                f"min={audio_np.min()}, max={audio_np.max()}"
+            )
+            scipy.io.wavfile.write(save_path, sample_rate, audio_np)
             saved_paths.append(save_path)
         except Exception as e:
             logger.error(f"Failed to save validation audio to {save_path}: {e}")
