@@ -729,7 +729,8 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
     @staticmethod
     # Copied from diffusers.pipelines.ltx2.pipeline_ltx2.LTX2Pipeline._denormalize_audio_latents
     def _denormalize_audio_latents(latents: torch.Tensor, audio_vae: AutoencoderKLLTX2Audio):
-        if hasattr(audio_vae, "per_channel_statistics"):
+        # Only skip denormalization if per_channel_statistics is truthy (not just exists)
+        if getattr(audio_vae, "per_channel_statistics", None):
             return latents
         latents_mean = getattr(audio_vae, "latents_mean", None)
         latents_std = getattr(audio_vae, "latents_std", None)
@@ -977,6 +978,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         decode_timestep: Union[float, List[float]] = 0.0,
         decode_noise_scale: Optional[Union[float, List[float]]] = None,
+        audio_only: bool = False,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -1049,6 +1051,8 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
                 The timestep at which generated video is decoded.
             decode_noise_scale (`float`, defaults to `None`):
                 The interpolation factor between random noise and denoised latents at the decode timestep.
+            audio_only (`bool`, *optional*, defaults to `False`):
+                When enabled, skips video generation and decoding, returning audio only.
             output_type (`str`, *optional*, defaults to `"pil"`):
                 The output format of the generate image. Choose between
                 [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
@@ -1130,6 +1134,9 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
             prompt_attention_mask = torch.cat([negative_prompt_attention_mask, prompt_attention_mask], dim=0)
+
+        if audio_only and (image is not None or video_conditioning):
+            raise ValueError("audio_only cannot be used with image conditioning or video_conditioning.")
 
         additive_attention_mask = (1 - prompt_attention_mask.to(prompt_embeds.dtype)) * -1000000.0
         connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.connectors(
@@ -1242,13 +1249,15 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
             self.vae_spatial_compression_ratio,
         )
         # Pre-compute video and audio positional ids as they will be the same at each step of the denoising loop
-        video_coords = self.transformer.rope.prepare_video_coords(
-            latents.shape[0], latent_num_frames, latent_height, latent_width, latents.device, fps=frame_rate
-        )
-        if ref_coords is not None:
-            video_coords = torch.cat([ref_coords, video_coords], dim=2)
+        video_coords = None
+        if not audio_only:
+            video_coords = self.transformer.rope.prepare_video_coords(
+                latents.shape[0], latent_num_frames, latent_height, latent_width, latents.device, fps=frame_rate
+            )
+            if ref_coords is not None:
+                video_coords = torch.cat([ref_coords, video_coords], dim=2)
         audio_coords = self.transformer.audio_rope.prepare_audio_coords(
-            audio_latents.shape[0], audio_num_frames, audio_latents.device, fps=frame_rate
+            audio_latents.shape[0], audio_num_frames, audio_latents.device
         )
 
         # 7. Denoising loop
@@ -1286,7 +1295,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
                         audio_num_frames=audio_num_frames,
                         video_coords=video_coords,
                         audio_coords=audio_coords,
-                        # rope_interpolation_scale=rope_interpolation_scale,
+                        audio_only=audio_only,
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
                     )
@@ -1294,61 +1303,53 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
                 noise_pred_audio = noise_pred_audio.float()
 
                 if self.do_classifier_free_guidance:
-                    noise_pred_video_uncond, noise_pred_video_text = noise_pred_video.chunk(2)
-                    noise_pred_video = noise_pred_video_uncond + self.guidance_scale * (
-                        noise_pred_video_text - noise_pred_video_uncond
-                    )
-
                     noise_pred_audio_uncond, noise_pred_audio_text = noise_pred_audio.chunk(2)
                     noise_pred_audio = noise_pred_audio_uncond + self.guidance_scale * (
                         noise_pred_audio_text - noise_pred_audio_uncond
                     )
 
                     if self.guidance_rescale > 0:
-                        # Based on 3.4. in https://huggingface.co/papers/2305.08891
-                        noise_pred_video = rescale_noise_cfg(
-                            noise_pred_video, noise_pred_video_text, guidance_rescale=self.guidance_rescale
-                        )
                         noise_pred_audio = rescale_noise_cfg(
                             noise_pred_audio, noise_pred_audio_text, guidance_rescale=self.guidance_rescale
                         )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                ref_latents = None
-                if ref_seq_len:
-                    ref_latents = latents[:, :ref_seq_len]
-                    latents_target = latents[:, ref_seq_len:]
-                    noise_pred_video = noise_pred_video[:, ref_seq_len:]
-                else:
-                    latents_target = latents
+                if not audio_only:
+                    ref_latents = None
+                    if ref_seq_len:
+                        ref_latents = latents[:, :ref_seq_len]
+                        latents_target = latents[:, ref_seq_len:]
+                        noise_pred_video = noise_pred_video[:, ref_seq_len:]
+                    else:
+                        latents_target = latents
 
-                noise_pred_video = self._unpack_latents(
-                    noise_pred_video,
-                    latent_num_frames,
-                    latent_height,
-                    latent_width,
-                    self.transformer_spatial_patch_size,
-                    self.transformer_temporal_patch_size,
-                )
-                latents_target = self._unpack_latents(
-                    latents_target,
-                    latent_num_frames,
-                    latent_height,
-                    latent_width,
-                    self.transformer_spatial_patch_size,
-                    self.transformer_temporal_patch_size,
-                )
+                    noise_pred_video = self._unpack_latents(
+                        noise_pred_video,
+                        latent_num_frames,
+                        latent_height,
+                        latent_width,
+                        self.transformer_spatial_patch_size,
+                        self.transformer_temporal_patch_size,
+                    )
+                    latents_target = self._unpack_latents(
+                        latents_target,
+                        latent_num_frames,
+                        latent_height,
+                        latent_width,
+                        self.transformer_spatial_patch_size,
+                        self.transformer_temporal_patch_size,
+                    )
 
-                noise_pred_video = noise_pred_video[:, :, 1:]
-                noise_latents = latents_target[:, :, 1:]
-                pred_latents = self.scheduler.step(noise_pred_video, t, noise_latents, return_dict=False)[0]
+                    noise_pred_video = noise_pred_video[:, :, 1:]
+                    noise_latents = latents_target[:, :, 1:]
+                    pred_latents = self.scheduler.step(noise_pred_video, t, noise_latents, return_dict=False)[0]
 
-                latents_target = torch.cat([latents_target[:, :, :1], pred_latents], dim=2)
-                latents = self._pack_latents(
-                    latents_target, self.transformer_spatial_patch_size, self.transformer_temporal_patch_size
-                )
-                if ref_latents is not None:
-                    latents = torch.cat([reference_tokens, latents], dim=1)
+                    latents_target = torch.cat([latents_target[:, :, :1], pred_latents], dim=2)
+                    latents = self._pack_latents(
+                        latents_target, self.transformer_spatial_patch_size, self.transformer_temporal_patch_size
+                    )
+                    if ref_latents is not None:
+                        latents = torch.cat([reference_tokens, latents], dim=1)
 
                 # NOTE: for now duplicate scheduler for audio latents in case self.scheduler sets internal state in
                 # the step method (such as _step_index)
@@ -1370,46 +1371,49 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
                 if XLA_AVAILABLE:
                     xm.mark_step()
 
-        if ref_seq_len:
+        if ref_seq_len and not audio_only:
             latents = latents[:, ref_seq_len:]
 
         if output_type == "latent":
-            video = latents
+            video = None if audio_only else latents
             audio = audio_latents
         else:
-            latents = self._unpack_latents(
-                latents,
-                latent_num_frames,
-                latent_height,
-                latent_width,
-                self.transformer_spatial_patch_size,
-                self.transformer_temporal_patch_size,
-            )
-            latents = self._denormalize_latents(
-                latents, self.vae.latents_mean, self.vae.latents_std, self.vae.config.scaling_factor
-            )
-            latents = latents.to(prompt_embeds.dtype)
+            if not audio_only:
+                latents = self._unpack_latents(
+                    latents,
+                    latent_num_frames,
+                    latent_height,
+                    latent_width,
+                    self.transformer_spatial_patch_size,
+                    self.transformer_temporal_patch_size,
+                )
+                latents = self._denormalize_latents(
+                    latents, self.vae.latents_mean, self.vae.latents_std, self.vae.config.scaling_factor
+                )
+                latents = latents.to(prompt_embeds.dtype)
 
-            if not self.vae.config.timestep_conditioning:
-                timestep = None
+                if not self.vae.config.timestep_conditioning:
+                    timestep = None
+                else:
+                    noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=latents.dtype)
+                    if not isinstance(decode_timestep, list):
+                        decode_timestep = [decode_timestep] * batch_size
+                    if decode_noise_scale is None:
+                        decode_noise_scale = decode_timestep
+                    elif not isinstance(decode_noise_scale, list):
+                        decode_noise_scale = [decode_noise_scale] * batch_size
+
+                    timestep = torch.tensor(decode_timestep, device=device, dtype=latents.dtype)
+                    decode_noise_scale = torch.tensor(decode_noise_scale, device=device, dtype=latents.dtype)[
+                        :, None, None, None, None
+                    ]
+                    latents = (1 - decode_noise_scale) * latents + decode_noise_scale * noise
+
+                latents = latents.to(self.vae.dtype)
+                video = self.vae.decode(latents, timestep, return_dict=False)[0]
+                video = self.video_processor.postprocess_video(video, output_type=output_type)
             else:
-                noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=latents.dtype)
-                if not isinstance(decode_timestep, list):
-                    decode_timestep = [decode_timestep] * batch_size
-                if decode_noise_scale is None:
-                    decode_noise_scale = decode_timestep
-                elif not isinstance(decode_noise_scale, list):
-                    decode_noise_scale = [decode_noise_scale] * batch_size
-
-                timestep = torch.tensor(decode_timestep, device=device, dtype=latents.dtype)
-                decode_noise_scale = torch.tensor(decode_noise_scale, device=device, dtype=latents.dtype)[
-                    :, None, None, None, None
-                ]
-                latents = (1 - decode_noise_scale) * latents + decode_noise_scale * noise
-
-            latents = latents.to(self.vae.dtype)
-            video = self.vae.decode(latents, timestep, return_dict=False)[0]
-            video = self.video_processor.postprocess_video(video, output_type=output_type)
+                video = None
 
             audio_latents = audio_latents.to(self.audio_vae.dtype)
             audio_latents = self._denormalize_audio_latents(audio_latents, self.audio_vae)
