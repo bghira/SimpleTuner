@@ -879,6 +879,24 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Validation Audio Only (LTX-2)
+    registry._add_field(
+        ConfigField(
+            name="validation_audio_only",
+            arg_name="--validation_audio_only",
+            ui_label="Validation Audio Only",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Disable video generation during validation and emit audio only.",
+            tooltip="LTX-2 only: skips video generation during validation so only audio outputs are produced.",
+            importance=ImportanceLevel.ADVANCED,
+            order=17,
+            model_specific=["ltxvideo2"],
+        )
+    )
+
     # Validation Resolution
     registry._add_field(
         ConfigField(
@@ -892,7 +910,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Override resolution for validation images (pixels or megapixels)",
             tooltip="Enter a pixel size like 512 or a megapixel value like 0.5 to auto-convert.",
             importance=ImportanceLevel.ADVANCED,
-            order=17,
+            order=18,
             documentation="OPTIONS.md#--validation_resolution",
         )
     )
@@ -914,7 +932,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Source device used to generate validation seeds",
             tooltip="Use CPU-based or GPU-based RNG when deriving validation seeds.",
             importance=ImportanceLevel.ADVANCED,
-            order=18,
+            order=19,
             subsection="advanced",
         )
     )

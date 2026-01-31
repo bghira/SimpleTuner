@@ -70,20 +70,34 @@ def save_videos(
     config,
     validation_audios=None,
     audio_sample_rate=None,
+    audio_only=False,
 ):
     """
     Save validation videos to disk (with audio if provided).
-    Returns a list of video paths.
+    If audio_only=True and there are no videos but there is audio, saves audio files directly.
+    Returns a list of video/audio paths.
     """
     validation_img_idx = 0
     video_paths = []
     audio_list = None
     if validation_audios is not None:
         audio_list = validation_audios.get(validation_shortname)
-        if audio_list is not None:
-            expected = len(validation_images.get(validation_shortname, []))
-            if len(audio_list) != expected:
-                raise ValueError(f"Validation audio count ({len(audio_list)}) does not match video count ({expected}).")
+
+    # Handle audio-only mode: save audio files directly without video
+    video_count = len(validation_images.get(validation_shortname, []))
+    if audio_only and video_count == 0 and audio_list is not None:
+        audio_paths = validation_audio.save_audio(
+            save_dir,
+            validation_audios,
+            validation_shortname,
+            sample_rate=audio_sample_rate,
+        )
+        return audio_paths
+
+    # Validate audio/video count match for normal video+audio mode
+    if audio_list is not None:
+        if len(audio_list) != video_count:
+            raise ValueError(f"Validation audio count ({len(audio_list)}) does not match video count ({video_count}).")
 
     # validation_images[validation_shortname] is a list of image lists (frames) or single images
     for validation_image in validation_images.get(validation_shortname, []):

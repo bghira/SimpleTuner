@@ -1995,10 +1995,11 @@ class Validation:
             if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":
                     self.config.validation_noise_scheduler = "flow_matching"
-                # The Beta schedule looks WAY better...
-                if not self.model.pipeline.scheduler.config.get("use_karras_sigmas", False):
-                    scheduler_args["use_beta_sigmas"] = True
-                scheduler_args["shift"] = self.config.flow_schedule_shift
+                # Only set static shift if the model doesn't use dynamic shifting.
+                # Models with dynamic shifting (like LTX-2) compute shift via `mu` at set_timesteps time.
+                uses_dynamic_shift = getattr(self.model, "USES_DYNAMIC_SHIFT", False)
+                if not uses_dynamic_shift:
+                    scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
                 scheduler_args["prediction_type"] = "flow_prediction"
                 scheduler_args["use_flow_sigmas"] = True
@@ -2659,6 +2660,7 @@ class Validation:
                 )
         elif isinstance(self.model, VideoModelFoundation):
             audio_sample_rate = None
+            audio_only = bool(getattr(self.config, "validation_audio_only", False))
             if audio_results:
                 audio_sample_rate = self.model.validation_audio_sample_rate()
                 if audio_sample_rate is None:
@@ -2671,6 +2673,7 @@ class Validation:
                 self.config,
                 validation_audios=validation_audios if audio_results else None,
                 audio_sample_rate=audio_sample_rate,
+                audio_only=audio_only,
             )
             self.validation_video_paths[decorated_shortname] = video_paths
             validation_video.log_videos_to_webhook(
@@ -3426,6 +3429,8 @@ class Validation:
                         current_results = None
                         if hasattr(pipeline_result, "frames"):
                             current_results = pipeline_result.frames
+                            if current_results is None and getattr(self.config, "validation_audio_only", False):
+                                current_results = []
                         elif hasattr(pipeline_result, "images"):
                             current_results = pipeline_result.images
                         elif hasattr(pipeline_result, "audios"):
@@ -3440,11 +3445,14 @@ class Validation:
                             current_results = []
                         all_validation_type_results[current_validation_type] = current_results
                         if isinstance(self.model, VideoModelFoundation):
+                            audio_only_validation = bool(getattr(self.config, "validation_audio_only", False))
                             expected_count = None
                             if isinstance(current_results, list):
-                                expected_count = len(current_results)
+                                if current_results or not audio_only_validation:
+                                    expected_count = len(current_results)
                             elif hasattr(current_results, "shape") and len(getattr(current_results, "shape", [])) > 0:
-                                expected_count = current_results.shape[0]
+                                if not audio_only_validation:
+                                    expected_count = current_results.shape[0]
                             audio_results = self.model.extract_validation_audio(pipeline_result, expected_count)
                             if audio_results is not None:
                                 all_validation_type_audio[current_validation_type] = audio_results

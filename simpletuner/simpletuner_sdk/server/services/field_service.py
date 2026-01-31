@@ -117,6 +117,7 @@ class FieldService:
     }
     _VIDEO_ONLY_FIELDS = {
         "framerate",
+        "validation_audio_only",
         "validation_num_video_frames",
     }
     _EVALUATION_FIELDS = {

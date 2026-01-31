@@ -54,6 +54,9 @@ class Flux(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTO_LORA_FORMAT_DETECTION = True
+    # Flux Dev uses dynamic shifting (use_dynamic_shifting: true in scheduler config).
+    # Schnell has use_dynamic_shifting: false, so the flag here just prevents static override.
+    USES_DYNAMIC_SHIFT = True
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")

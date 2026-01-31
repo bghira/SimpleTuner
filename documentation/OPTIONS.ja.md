@@ -1389,6 +1389,7 @@ usage: train.py [-h] --model_family
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
                 [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}]
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
+                [--validation_audio_only [VALIDATION_AUDIO_ONLY]]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
                 [--i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]]
@@ -1825,6 +1826,9 @@ options:
                         Noise scheduler for validation
   --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
                         Number of frames for video validation
+  --validation_audio_only [VALIDATION_AUDIO_ONLY]
+                        Disable video generation during validation and emit
+                        audio only
   --validation_resolution VALIDATION_RESOLUTION
                         Override resolution for validation images (pixels or
                         megapixels)
