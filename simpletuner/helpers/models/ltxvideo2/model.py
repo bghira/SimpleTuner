@@ -77,6 +77,8 @@ class LTXVideo2(VideoModelFoundation):
         "audio_proj_out",
         "audio_caption_projection.linear_1",
         "audio_caption_projection.linear_2",
+        "audio_ff.net.0.proj",
+        "audio_ff.net.2",
     ]
 
     @classmethod
@@ -150,6 +152,7 @@ class LTXVideo2(VideoModelFoundation):
             return super().get_lora_target_layers()
 
         if self._data_has_audio and not self._data_has_video:
+            # Audio-only: target just audio layers, not video layers
             targets = [
                 "audio_attn1.to_k",
                 "audio_attn1.to_q",
@@ -735,8 +738,9 @@ class LTXVideo2(VideoModelFoundation):
 
         if self.config.framerate is None:
             self.config.framerate = 25
+        validation_audio_only = bool(getattr(self.config, "validation_audio_only", False))
         validation_frames = getattr(self.config, "validation_num_video_frames", None)
-        if validation_frames is not None and validation_frames % 8 != 1:
+        if not validation_audio_only and validation_frames is not None and validation_frames % 8 != 1:
             raise ValueError(
                 f"{self.NAME} requires validation_num_video_frames to satisfy frames % 8 == 1 (e.g., 49, 57, 65, 73, 81). "
                 f"Received {validation_frames}. Training videos are automatically adjusted, but validation frame "
@@ -746,6 +750,8 @@ class LTXVideo2(VideoModelFoundation):
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)
         pipeline_kwargs["frame_rate"] = self.config.framerate or 25
+        if getattr(self.config, "validation_audio_only", False):
+            pipeline_kwargs["audio_only"] = True
         conditioning = pipeline_kwargs.pop("_s2v_conditioning", None)
         if conditioning is not None:
             audio_path = conditioning.get("audio_path")
