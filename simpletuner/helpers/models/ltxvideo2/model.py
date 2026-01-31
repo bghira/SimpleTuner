@@ -66,6 +66,8 @@ class LTXVideo2(VideoModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKLLTX2Video
     LATENT_CHANNEL_COUNT = 128
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
+    # LTX-2 uses dynamic shifting with exponential time shift - don't override with static shift.
+    USES_DYNAMIC_SHIFT = True
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
@@ -109,11 +111,11 @@ class LTXVideo2(VideoModelFoundation):
         "text_encoder": {
             "name": "Gemma3",
             "tokenizer": GemmaTokenizerFast,
-            "subfolder": None,
-            "tokenizer_subfolder": None,
+            # "subfolder": None,
+            # "tokenizer_subfolder": None,
             "use_fast": True,
             "model": Gemma3ForConditionalGeneration,
-            "path": "google/gemma-3-12b-it-qat-q4_0-unquantized",
+            # "path": "google/gemma-3-12b-it-qat-q4_0-unquantized",
         },
     }
 
@@ -593,19 +595,6 @@ class LTXVideo2(VideoModelFoundation):
         del state_dict
 
         self.configure_chunked_feed_forward()
-
-        if (
-            self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 1
-            and self.MODEL_TYPE is ModelTypes.UNET
-        ):
-            logger.warning(
-                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of %s",
-                self.config.gradient_checkpointing_interval,
-            )
-            from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_interval
-
-            set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
 
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):

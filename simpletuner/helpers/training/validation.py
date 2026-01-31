@@ -1995,10 +1995,11 @@ class Validation:
             if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":
                     self.config.validation_noise_scheduler = "flow_matching"
-                # The Beta schedule looks WAY better...
-                if not self.model.pipeline.scheduler.config.get("use_karras_sigmas", False):
-                    scheduler_args["use_beta_sigmas"] = True
-                scheduler_args["shift"] = self.config.flow_schedule_shift
+                # Only set static shift if the model doesn't use dynamic shifting.
+                # Models with dynamic shifting (like LTX-2) compute shift via `mu` at set_timesteps time.
+                uses_dynamic_shift = getattr(self.model, "USES_DYNAMIC_SHIFT", False)
+                if not uses_dynamic_shift:
+                    scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
                 scheduler_args["prediction_type"] = "flow_prediction"
                 scheduler_args["use_flow_sigmas"] = True
