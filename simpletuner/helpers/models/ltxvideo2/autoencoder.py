@@ -150,19 +150,29 @@ class LTX2VideoCausalConv3d(nn.Module):
         split_indices = _find_temporal_split_indices(t_frames, part_num, stride)
         if len(split_indices) == 0 or kernel_size == 1:
             input_chunks = torch.tensor_split(hidden_states, split_indices, dim=2) if split_indices else [hidden_states]
+            output_chunks = [self.conv(chunk) for chunk in input_chunks]
         else:
             boundaries = [0] + split_indices + [t_frames]
-            input_chunks = []
+            output_chunks = []
             for i in range(len(boundaries) - 1):
                 start = boundaries[i]
                 end = boundaries[i + 1]
                 overlap_start = max(start - kernel_size + 1, 0)
                 if i == 0:
-                    input_chunks.append(hidden_states[:, :, start:end])
+                    chunk = hidden_states[:, :, start:end]
+                    out = self.conv(chunk)
+                    output_chunks.append(out)
                 else:
-                    input_chunks.append(hidden_states[:, :, overlap_start:end])
+                    chunk = hidden_states[:, :, overlap_start:end]
+                    out = self.conv(chunk)
+                    # Trim the overlap portion from the output
+                    # The overlap in input is (start - overlap_start) frames
+                    # After conv with stride, this becomes (start - overlap_start) // stride output frames
+                    overlap_output_frames = (start - overlap_start) // stride
+                    if overlap_output_frames > 0:
+                        out = out[:, :, overlap_output_frames:]
+                    output_chunks.append(out)
 
-        output_chunks = [self.conv(chunk) for chunk in input_chunks]
         return torch.cat(output_chunks, dim=2)
 
 
