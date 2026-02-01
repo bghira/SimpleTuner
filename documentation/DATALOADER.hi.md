@@ -186,6 +186,50 @@ Metadata discovery के दौरान loader प्रत्येक file �
 - उपयोगी जब आपके captions में intentional line breaks हों जिन्हें एक single caption के रूप में संरक्षित रखना हो।
 - Default: `false` (captions newlines द्वारा split होते हैं)
 
+### `caption_shuffle`
+
+Data augmentation के लिए tag-based captions के deterministic shuffled variants generate करता है। यह model को सिखाता है कि tag order महत्वपूर्ण नहीं है और specific tag sequences पर overfitting कम करता है।
+
+**Configuration:**
+
+```json
+{
+  "caption_shuffle": {
+    "enable": true,
+    "count": 3,
+    "seed": 42,
+    "split_on": "comma",
+    "position_start": 1,
+    "include_original": true
+  }
+}
+```
+
+**Parameters:**
+
+- `enable` (bool): Caption shuffling enable करना है या नहीं। Default: `false`
+- `count` (int): प्रति caption generate करने के लिए shuffled variants की संख्या। Default: `1`
+- `seed` (int): Deterministic shuffling के लिए seed। यदि specify नहीं किया गया, तो global `--seed` value उपयोग होता है।
+- `split_on` (string): Captions को tags में split करने के लिए delimiter। Options: `comma`, `space`, `period`। Default: `comma`
+- `position_start` (int): पहले N tags को उनकी original position में रखें (subject/style tags को पहले रखने के लिए उपयोगी)। Default: `0`
+- `include_original` (bool): Shuffled variants के साथ unshuffled original caption include करना है या नहीं। Default: `true`
+
+**Example:**
+
+`split_on: "comma"`, `position_start: 1`, `count: 2` के साथ:
+
+- Original: `"dog, running, park, sunny day"`
+- Result: `["dog, running, park, sunny day", "dog, park, sunny day, running", "dog, sunny day, running, park"]`
+
+पहला tag "dog" fixed रहता है जबकि बाकी tags shuffle होते हैं।
+
+**Notes:**
+
+- Shuffling text embed pre-caching के दौरान apply होता है, इसलिए सभी variants एक बार में calculate होते हैं।
+- Training के दौरान, प्रति sample एक variant randomly select होता है।
+- यदि caption में `position_start + 2` से कम tags हैं, तो shuffling skip होता है (shuffle करने के लिए कुछ meaningful नहीं)।
+- जब `include_original: false` लेकिन shuffling possible नहीं है, तो warning के साथ original include होता है।
+
 ### `metadata_backend`
 
 - **Values:** `discovery` | `parquet` | `huggingface`

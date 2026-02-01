@@ -186,6 +186,50 @@ Tanto `textfile` quanto `parquet` suportam multi-captions:
 - Útil quando suas captions contêm quebras de linha intencionais que devem ser preservadas como uma única caption.
 - Padrão: `false` (captions são divididas por novas linhas)
 
+### `caption_shuffle`
+
+Gera variantes embaralhadas determinísticas de captions baseadas em tags para aumento de dados. Isso ajuda o modelo a aprender que a ordem das tags não importa e reduz o overfitting em sequências específicas de tags.
+
+**Configuração:**
+
+```json
+{
+  "caption_shuffle": {
+    "enable": true,
+    "count": 3,
+    "seed": 42,
+    "split_on": "comma",
+    "position_start": 1,
+    "include_original": true
+  }
+}
+```
+
+**Parâmetros:**
+
+- `enable` (bool): Se deve habilitar o embaralhamento de captions. Padrão: `false`
+- `count` (int): Número de variantes embaralhadas a gerar por caption. Padrão: `1`
+- `seed` (int): Seed para embaralhamento determinístico. Se não especificado, usa o valor global `--seed`.
+- `split_on` (string): Delimitador para dividir captions em tags. Opções: `comma`, `space`, `period`. Padrão: `comma`
+- `position_start` (int): Manter as primeiras N tags em sua posição original (útil para manter tags de assunto/estilo primeiro). Padrão: `0`
+- `include_original` (bool): Se deve incluir a caption original não embaralhada junto com as variantes embaralhadas. Padrão: `true`
+
+**Exemplo:**
+
+Com `split_on: "comma"`, `position_start: 1`, `count: 2`:
+
+- Original: `"dog, running, park, sunny day"`
+- Resultado: `["dog, running, park, sunny day", "dog, park, sunny day, running", "dog, sunny day, running, park"]`
+
+A primeira tag "dog" permanece fixa enquanto as tags restantes são embaralhadas.
+
+**Notas:**
+
+- O embaralhamento é aplicado durante o pré-cache de embeddings de texto, então todas as variantes são calculadas de uma vez.
+- Durante o treinamento, uma variante é selecionada aleatoriamente por amostra.
+- Se uma caption tiver menos tags que `position_start + 2`, o embaralhamento é pulado (nada significativo para embaralhar).
+- Quando `include_original: false` mas o embaralhamento não é possível, a original é incluída mesmo assim com um aviso.
+
 ### `metadata_backend`
 
 - **Valores:** `discovery` | `parquet` | `huggingface`

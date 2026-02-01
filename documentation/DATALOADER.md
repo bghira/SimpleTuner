@@ -220,6 +220,50 @@ Both `textfile` and `parquet` support multi-captions:
 - Useful when your captions contain intentional line breaks that should be preserved as a single caption.
 - Default: `false` (captions are split by newlines)
 
+### `caption_shuffle`
+
+Generates deterministic shuffled variants of tag-based captions for data augmentation. This helps the model learn that tag order doesn't matter and reduces overfitting to specific tag sequences.
+
+**Configuration:**
+
+```json
+{
+  "caption_shuffle": {
+    "enable": true,
+    "count": 3,
+    "seed": 42,
+    "split_on": "comma",
+    "position_start": 1,
+    "include_original": true
+  }
+}
+```
+
+**Parameters:**
+
+- `enable` (bool): Whether to enable caption shuffling. Default: `false`
+- `count` (int): Number of shuffled variants to generate per caption. Default: `1`
+- `seed` (int): Seed for deterministic shuffling. If not specified, uses the global `--seed` value.
+- `split_on` (string): Delimiter for splitting captions into tags. Options: `comma`, `space`, `period`. Default: `comma`
+- `position_start` (int): Keep the first N tags in their original position (useful for keeping subject/style tags first). Default: `0`
+- `include_original` (bool): Whether to include the unshuffled original caption alongside shuffled variants. Default: `true`
+
+**Example:**
+
+With `split_on: "comma"`, `position_start: 1`, `count: 2`:
+
+- Original: `"dog, running, park, sunny day"`
+- Result: `["dog, running, park, sunny day", "dog, park, sunny day, running", "dog, sunny day, running, park"]`
+
+The first tag "dog" stays fixed while the remaining tags are shuffled.
+
+**Notes:**
+
+- Shuffling is applied during text embed pre-caching, so all variants are computed once upfront.
+- During training, one variant is randomly selected per sample.
+- If a caption has fewer tags than `position_start + 2`, shuffling is skipped (nothing meaningful to shuffle).
+- When `include_original: false` but shuffling isn't possible, the original is included anyway with a warning.
+
 ### `metadata_backend`
 
 - **Values:** `discovery` | `parquet` | `huggingface`

@@ -186,6 +186,50 @@ Hugging Face の音声データセットでは、キャプション（プロン�
 - 意図的な改行を含むキャプションを単一のキャプションとして保持したい場合に便利です。
 - デフォルト: `false`（改行でキャプションを分割）
 
+### `caption_shuffle`
+
+タグベースのキャプションの決定論的シャッフルバリアントを生成し、データ拡張に使用します。これにより、モデルはタグの順序が重要でないことを学習し、特定のタグシーケンスへの過学習を軽減します。
+
+**設定：**
+
+```json
+{
+  "caption_shuffle": {
+    "enable": true,
+    "count": 3,
+    "seed": 42,
+    "split_on": "comma",
+    "position_start": 1,
+    "include_original": true
+  }
+}
+```
+
+**パラメータ：**
+
+- `enable` (bool): キャプションシャッフルを有効にするかどうか。デフォルト: `false`
+- `count` (int): キャプションごとに生成するシャッフルバリアントの数。デフォルト: `1`
+- `seed` (int): 決定論的シャッフルのシード。指定されていない場合、グローバル `--seed` 値を使用します。
+- `split_on` (string): キャプションをタグに分割する区切り文字。オプション: `comma`、`space`、`period`。デフォルト: `comma`
+- `position_start` (int): 最初の N 個のタグを元の位置に保持（主題/スタイルタグを先頭に保持するのに便利）。デフォルト: `0`
+- `include_original` (bool): シャッフルされていない元のキャプションをバリアントに含めるかどうか。デフォルト: `true`
+
+**例：**
+
+`split_on: "comma"`、`position_start: 1`、`count: 2` の場合：
+
+- 元: `"dog, running, park, sunny day"`
+- 結果: `["dog, running, park, sunny day", "dog, park, sunny day, running", "dog, sunny day, running, park"]`
+
+最初のタグ「dog」は固定されたまま、残りのタグがシャッフルされます。
+
+**注意：**
+
+- シャッフルはテキスト埋め込みのプリキャッシュ時に適用されるため、すべてのバリアントは一度に計算されます。
+- トレーニング中、サンプルごとに 1 つのバリアントがランダムに選択されます。
+- キャプションのタグ数が `position_start + 2` より少ない場合、シャッフルはスキップされます（意味のあるシャッフルができないため）。
+- `include_original: false` だがシャッフルできない場合、警告とともに元のキャプションが含まれます。
+
 ### `metadata_backend`
 
 - **値:** `discovery` | `parquet` | `huggingface`
