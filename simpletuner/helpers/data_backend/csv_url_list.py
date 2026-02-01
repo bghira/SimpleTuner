@@ -215,11 +215,27 @@ class CSVDataBackend(BaseDataBackend):
         try:
             file_data = self.read(filepath, as_byteIO=True)
             ext = os.path.splitext(filepath)[1].lower().strip(".")
-            if ext in audio_file_extensions:
+
+            # Determine dataset type to handle ambiguous extensions (e.g., .mpeg is both audio and video)
+            dataset_type = getattr(self, "dataset_type", None)
+            try:
+                dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+            except ValueError:
+                dataset_type_enum = DatasetType.IMAGE
+
+            is_video_dataset = dataset_type_enum is DatasetType.VIDEO
+            is_video_extension = ext in video_file_extensions
+
+            # Only load as audio if it's an audio dataset OR (audio extension AND not a video extension)
+            should_load_as_audio = dataset_type_enum is DatasetType.AUDIO or (
+                ext in audio_file_extensions and not is_video_extension
+            )
+
+            if should_load_as_audio and not is_video_dataset:
                 from simpletuner.helpers.audio import load_audio
 
                 image = load_audio(file_data)
-            elif ext in video_file_extensions:
+            elif is_video_extension:
                 image = load_video(file_data)
             else:
                 image = load_image(file_data)

@@ -19,6 +19,7 @@
     "minimum_image_size": 0,
     "mixed_precision": "bf16",
     "model_family": "z_image",
+    "model_flavour": "base",
     "model_type": "lora",
     "num_eval_images": 25,
     "num_train_epochs": 0,

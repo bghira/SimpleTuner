@@ -170,6 +170,20 @@ simpletuner configure config/foo/config.json
 - **Why**: जब `--ramtorch_text_encoder` enabled हो तब text encoders की partial offloading की अनुमति देता है।
 - **Notes**: केवल तब लागू होता है जब `--ramtorch_text_encoder` enabled हो।
 
+### `--ramtorch_disable_sync_hooks`
+
+- **What**: RamTorch layers के बाद add किए गए CUDA synchronization hooks को disable करता है।
+- **Default**: `False` (sync hooks enabled)
+- **Why**: Sync hooks RamTorch के ping-pong buffering system में race conditions को fix करते हैं जो non-deterministic outputs का कारण बन सकते हैं। Disable करने से performance बेहतर हो सकता है लेकिन incorrect results का risk है।
+- **Notes**: केवल तब disable करें जब sync hooks में समस्या हो या उनके बिना test करना हो।
+
+### `--ramtorch_disable_extensions`
+
+- **What**: केवल Linear layers पर RamTorch apply करता है, Embedding/RMSNorm/LayerNorm/Conv को skip करता है।
+- **Default**: `True` (extensions disabled)
+- **Why**: SimpleTuner RamTorch को Linear layers से आगे बढ़ाकर Embedding, RMSNorm, LayerNorm, और Conv layers को include करता है। इन extensions को disable करके केवल Linear layers offload करने के लिए इसका उपयोग करें।
+- **Notes**: VRAM savings कम हो सकती है लेकिन extended layer types की समस्याओं को debug करने में मदद कर सकता है।
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: pretrained model का path या <https://huggingface.co/models> से उसका identifier.
@@ -203,6 +217,14 @@ simpletuner configure config/foo/config.json
 
 - **What**: हर *n* blocks पर checkpoint करें, जहाँ *n* शून्य से बड़ा मान है। 1 का मान `--gradient_checkpointing` enabled जैसा है, और 2 हर दूसरे block पर checkpoint करेगा।
 - **Note**: यह विकल्प फिलहाल केवल SDXL और Flux में समर्थित है। SDXL इसमें hackish implementation उपयोग करता है।
+
+### `--gradient_checkpointing_backend`
+
+- **Choices**: `torch`, `unsloth`
+- **What**: Gradient checkpointing के लिए implementation चुनें।
+  - `torch` (default): Standard PyTorch checkpointing जो backward pass के दौरान activations को recalculate करता है। ~20% time overhead।
+  - `unsloth`: Recalculate करने के बजाय activations को asynchronously CPU पर offload करता है। ~30% अधिक memory बचत केवल ~2% overhead के साथ। Fast PCIe bandwidth आवश्यक है।
+- **Note**: केवल `--gradient_checkpointing` enabled होने पर प्रभावी। `unsloth` backend के लिए CUDA आवश्यक है।
 
 ### `--refiner_training`
 
@@ -1377,6 +1399,7 @@ usage: train.py [-h] --model_family
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
                 [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}]
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
+                [--validation_audio_only [VALIDATION_AUDIO_ONLY]]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
                 [--i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]]
@@ -1813,6 +1836,9 @@ options:
                         Noise scheduler for validation
   --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
                         Number of frames for video validation
+  --validation_audio_only [VALIDATION_AUDIO_ONLY]
+                        Disable video generation during validation and emit
+                        audio only
   --validation_resolution VALIDATION_RESOLUTION
                         Override resolution for validation images (pixels or
                         megapixels)

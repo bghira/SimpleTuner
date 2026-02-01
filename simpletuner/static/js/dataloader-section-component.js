@@ -220,6 +220,20 @@ function dataloaderSectionComponent() {
         ).toString().toLowerCase();
         return family === 'ace_step';
     },
+    get supportsAudioInputs() {
+        // Check if the model supports audio inputs (for video models that can use audio conditioning)
+        const context = this.modelContext || {};
+        const capabilities = context.capabilities || {};
+        return this.normalizeBoolean(capabilities.supports_audio_inputs) ||
+               this.normalizeBoolean(context.supportsAudioInputs);
+    },
+    get requiresS2VDatasets() {
+        // Check if the model requires S2V (sound-to-video) datasets
+        const context = this.modelContext || {};
+        const capabilities = context.capabilities || {};
+        return this.normalizeBoolean(capabilities.requires_s2v_datasets) ||
+               this.normalizeBoolean(context.requiresS2VDatasets);
+    },
     get requiresStrictI2VDatasets() {
         const context = this.modelContext || {};
         const active = this.normalizeBoolean(context.strictI2VActive);
@@ -370,7 +384,7 @@ function dataloaderSectionComponent() {
     getListTab(dataset) {
         if (dataset._listTab) return dataset._listTab;
         // Default to 'storage' for types without a Basic tab
-        const noBasicTypes = ['text_embeds', 'image_embeds', 'audio'];
+        const noBasicTypes = ['text_embeds', 'image_embeds'];
         return noBasicTypes.includes(dataset.dataset_type) ? 'storage' : 'basic';
     },
 

@@ -258,6 +258,8 @@ class TestLTXVideo2AudioLoraTargets(unittest.TestCase):
             "audio_proj_out",
             "audio_caption_projection.linear_1",
             "audio_caption_projection.linear_2",
+            "audio_ff.net.0.proj",
+            "audio_ff.net.2",
         ]
         self.assertEqual(LTXVideo2.AUDIO_LORA_TARGETS, expected)
 

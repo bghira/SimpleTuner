@@ -191,13 +191,6 @@ class ZImage(ImageModelFoundation):
         if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None and flavour in override_map:
             self.config.pretrained_transformer_model_name_or_path = override_map[flavour]
 
-    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
-        args = super().pretrained_load_args(pretrained_load_args)
-        # Default to full-weight loading to avoid meta tensors from diffusers low_cpu_mem_usage defaults.
-        if "low_cpu_mem_usage" not in args:
-            args["low_cpu_mem_usage"] = bool(getattr(self.config, "low_cpu_mem_usage", False))
-        return args
-
     def tread_init(self):
         """Initialize the TREAD router when training with token routing enabled."""
         from simpletuner.helpers.training.tread import TREADRouter

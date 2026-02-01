@@ -198,9 +198,9 @@ def _build_quanto_fp8uz_config(
 
 
 TORCHAO_PIPELINE_PRESET_MAP = {
-    "int4-torchao": "int4wo",
-    "int8-torchao": "int8wo",
-    "fp8-torchao": "float8wo_e4m3",
+    "int4-torchao": "int4_weight_only",
+    "int8-torchao": "int8_weight_only",
+    "fp8-torchao": "float8_weight_only",
 }
 QUANTO_PIPELINE_PRESET_MAP = {
     "int8-quanto": "int8",
@@ -328,6 +328,16 @@ def _quanto_model(
         logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
         return model
 
+    # Check if model has ramtorch modules - skip quantization entirely if so
+    # RamTorch keeps weights on CPU and streams to GPU, which is incompatible with quantization
+    has_ramtorch = any(getattr(p, "is_ramtorch", False) for p in model.parameters())
+    if has_ramtorch:
+        logger.info(
+            f"Skipping quanto quantization for {model.__class__.__name__} - model uses RamTorch for CPU offloading. "
+            "RamTorch and quantization are incompatible approaches to memory management."
+        )
+        return model
+
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     weight_quant = _quanto_type_map(model_precision)
     extra_quanto_args = {}
@@ -427,6 +437,16 @@ def _torchao_model(
         return model
     if model_precision == "no_change" or model_precision is None:
         logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+
+    # Check if model has ramtorch modules - skip quantization entirely if so
+    # RamTorch keeps weights on CPU and streams to GPU, which is incompatible with quantization
+    has_ramtorch = any(getattr(p, "is_ramtorch", False) for p in model.parameters())
+    if has_ramtorch:
+        logger.info(
+            f"Skipping torchao quantization for {model.__class__.__name__} - model uses RamTorch for CPU offloading. "
+            "RamTorch and quantization are incompatible approaches to memory management."
+        )
         return model
 
     try:

@@ -300,6 +300,9 @@ class Wan(VideoModelFoundation):
         },
     }
 
+    def requires_special_scheduler_setup(self) -> bool:
+        return True
+
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
         """Adjust frame count to satisfy frames % 8 == 1 constraint."""
@@ -1201,7 +1204,7 @@ class Wan(VideoModelFoundation):
             and self.config.tread_config is not None
             and "conditioning_pixel_values" in prepared_batch
             and prepared_batch["conditioning_pixel_values"] is not None
-            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+            and prepared_batch.get("loss_mask_type") in ("mask", "segmentation")
         ):
             with torch.no_grad():
                 # For video: B, C, T, H, W

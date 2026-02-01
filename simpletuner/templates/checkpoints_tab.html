@@ -200,9 +200,15 @@
                                 </div>
                             </div>
                             <div class="checkpoint-preview-image" x-show="visibilitySettings.images">
-                                <img x-show="checkpoint.assets && checkpoint.assets.length > 0"
-                                     :src="checkpoint.assets[checkpoint.assets.length - 1]?.data"
-                                     :alt="checkpoint.assets[checkpoint.assets.length - 1]?.name"
+                                <video x-show="checkpoint.assets && checkpoint.assets.length > 0 && checkpoint.assets[checkpoint.assets.length - 1]?.mime?.startsWith('video/')"
+                                       :src="checkpoint.assets && checkpoint.assets.length > 0 ? checkpoint.assets[checkpoint.assets.length - 1]?.data : ''"
+                                       @click="handleImageClick($event, checkpoint)"
+                                       style="cursor: pointer;"
+                                       muted loop autoplay playsinline>
+                                </video>
+                                <img x-show="checkpoint.assets && checkpoint.assets.length > 0 && !checkpoint.assets[checkpoint.assets.length - 1]?.mime?.startsWith('video/')"
+                                     :src="checkpoint.assets && checkpoint.assets.length > 0 ? checkpoint.assets[checkpoint.assets.length - 1]?.data : ''"
+                                     :alt="checkpoint.assets && checkpoint.assets.length > 0 ? checkpoint.assets[checkpoint.assets.length - 1]?.name : ''"
                                      @click="handleImageClick($event, checkpoint)"
                                      style="cursor: pointer;">
                                 <div x-show="!checkpoint.assets || checkpoint.assets.length === 0"

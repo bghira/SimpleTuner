@@ -170,6 +170,20 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Por que**: Permite descarregamento parcial de codificadores de texto quando `--ramtorch_text_encoder` esta habilitado.
 - **Notas**: Aplica-se apenas quando `--ramtorch_text_encoder` esta habilitado.
 
+### `--ramtorch_disable_sync_hooks`
+
+- **O que**: Desativa os hooks de sincronizacao CUDA adicionados apos as camadas RamTorch.
+- **Padrao**: `False` (hooks de sincronizacao habilitados)
+- **Por que**: Os hooks de sincronizacao corrigem condicoes de corrida no sistema de buffering ping-pong do RamTorch que podem causar saidas nao deterministicas. Desativar pode melhorar o desempenho, mas arrisca resultados incorretos.
+- **Notas**: Desative apenas se tiver problemas com os hooks de sincronizacao ou quiser testar sem eles.
+
+### `--ramtorch_disable_extensions`
+
+- **O que**: Aplica RamTorch apenas a camadas Linear, pula Embedding/RMSNorm/LayerNorm/Conv.
+- **Padrao**: `True` (extensoes desabilitadas)
+- **Por que**: O SimpleTuner estende o RamTorch alem das camadas Linear para incluir camadas Embedding, RMSNorm, LayerNorm e Conv. Use isso para desativar essas extensoes e descarregar apenas camadas Linear.
+- **Notas**: Pode reduzir a economia de VRAM, mas pode ajudar a depurar problemas com os tipos de camadas estendidas.
+
 ### `--pretrained_model_name_or_path`
 
 - **O que**: Caminho para o modelo pre-treinado ou seu identificador em <https://huggingface.co/models>.
@@ -203,6 +217,14 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 - **O que**: Faz checkpoint apenas a cada *n* blocos, onde *n* e um valor maior que zero. Um valor 1 e efetivamente o mesmo que deixar `--gradient_checkpointing` habilitado, e 2 faz checkpoint a cada outro bloco.
 - **Nota**: SDXL e Flux sao atualmente os unicos modelos que suportam essa opcao. SDXL usa uma implementacao meio hack.
+
+### `--gradient_checkpointing_backend`
+
+- **Opcoes**: `torch`, `unsloth`
+- **O que**: Seleciona a implementacao para gradient checkpointing.
+  - `torch` (padrao): Checkpointing PyTorch padrao que recalcula ativacoes durante o backward pass. ~20% de overhead de tempo.
+  - `unsloth`: Descarrega ativacoes para CPU de forma assincrona em vez de recalcular. ~30% mais economia de memoria com apenas ~2% de overhead. Requer banda PCIe rapida.
+- **Nota**: So funciona quando `--gradient_checkpointing` esta habilitado. O backend `unsloth` requer CUDA.
 
 ### `--refiner_training`
 
@@ -1375,6 +1397,7 @@ usage: train.py [-h] --model_family
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
                 [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}]
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
+                [--validation_audio_only [VALIDATION_AUDIO_ONLY]]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
                 [--i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]]
@@ -1811,6 +1834,9 @@ options:
                         Noise scheduler for validation
   --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
                         Number of frames for video validation
+  --validation_audio_only [VALIDATION_AUDIO_ONLY]
+                        Disable video generation during validation and emit
+                        audio only
   --validation_resolution VALIDATION_RESOLUTION
                         Override resolution for validation images (pixels or
                         megapixels)

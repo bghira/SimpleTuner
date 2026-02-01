@@ -1740,6 +1740,40 @@ class Validation:
         self.current_epoch = StateTracker.get_epoch()
         self.current_epoch_step = StateTracker.get_epoch_step()
 
+    def _epoch_relative_step(self, steps_per_epoch: int) -> int | None:
+        """
+        Return the 1-indexed step within the current epoch based on global_step.
+
+        When datasets are scheduled to start at different epochs, the number of
+        steps per epoch changes. In that case, compute the epoch start step by
+        summing prior epochs using the schedule, then offset global_step.
+        """
+        if steps_per_epoch <= 0:
+            return None
+        try:
+            current_epoch = int(self.current_epoch or StateTracker.get_epoch() or 1)
+        except Exception:
+            return None
+        try:
+            global_step = int(self.global_step or StateTracker.get_global_step() or 0)
+        except Exception:
+            global_step = 0
+
+        epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
+        if epoch_batches_schedule and isinstance(epoch_batches_schedule, dict):
+            epoch_start_step = 0
+            grad_accum = max(int(getattr(self.config, "gradient_accumulation_steps", 1) or 1), 1)
+            for e in range(1, current_epoch):
+                active_batches = sum(
+                    batches for start_epoch, batches in epoch_batches_schedule.items() if int(start_epoch) <= e
+                )
+                epoch_start_step += math.ceil(active_batches / grad_accum)
+        else:
+            epoch_start_step = max(0, (current_epoch - 1) * steps_per_epoch)
+
+        epoch_relative_step = max(0, global_step - epoch_start_step)
+        return int(epoch_relative_step)
+
     def would_validate(
         self,
         step: int = 0,
@@ -1912,15 +1946,13 @@ class Validation:
 
         epoch_step_ready = False
         num_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", None)
-        if num_steps_per_epoch is not None and self.current_epoch_step is not None and self.current_epoch_step > 0:
+        if num_steps_per_epoch is not None:
             try:
                 steps_per_epoch_int = int(num_steps_per_epoch)
                 if steps_per_epoch_int > 0:
-                    # Calculate epoch-relative step to handle epoch boundaries correctly.
-                    # This converts global step to position within the current epoch (1-indexed).
-                    # Example with 244 steps/epoch: step 244 -> 244, step 245 -> 1, step 488 -> 244
-                    epoch_relative_step = ((self.current_epoch_step - 1) % steps_per_epoch_int) + 1
-                    epoch_step_ready = epoch_relative_step == steps_per_epoch_int
+                    epoch_relative_step = self._epoch_relative_step(steps_per_epoch_int)
+                    if epoch_relative_step is not None:
+                        epoch_step_ready = epoch_relative_step == steps_per_epoch_int
             except (TypeError, ValueError):
                 epoch_step_ready = False
 
@@ -1979,6 +2011,10 @@ class Validation:
             logger.info(f"TwinFlow validation using UCGM scheduler for {twinflow_steps}-step generation")
             return scheduler
 
+        if self.model.requires_special_scheduler_setup():
+            # allow the model's pipeline to initialise the scheduler itself
+            return
+
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
         }
@@ -1995,10 +2031,11 @@ class Validation:
             if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":
                     self.config.validation_noise_scheduler = "flow_matching"
-                # The Beta schedule looks WAY better...
-                if not self.model.pipeline.scheduler.config.get("use_karras_sigmas", False):
-                    scheduler_args["use_beta_sigmas"] = True
-                scheduler_args["shift"] = self.config.flow_schedule_shift
+                # Only set static shift if the model doesn't use dynamic shifting.
+                # Models with dynamic shifting (like LTX-2) compute shift via `mu` at set_timesteps time.
+                uses_dynamic_shift = getattr(self.model, "USES_DYNAMIC_SHIFT", False)
+                if not uses_dynamic_shift:
+                    scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
                 scheduler_args["prediction_type"] = "flow_prediction"
                 scheduler_args["use_flow_sigmas"] = True
@@ -2659,6 +2696,7 @@ class Validation:
                 )
         elif isinstance(self.model, VideoModelFoundation):
             audio_sample_rate = None
+            audio_only = bool(getattr(self.config, "validation_audio_only", False))
             if audio_results:
                 audio_sample_rate = self.model.validation_audio_sample_rate()
                 if audio_sample_rate is None:
@@ -2671,6 +2709,7 @@ class Validation:
                 self.config,
                 validation_audios=validation_audios if audio_results else None,
                 audio_sample_rate=audio_sample_rate,
+                audio_only=audio_only,
             )
             self.validation_video_paths[decorated_shortname] = video_paths
             validation_video.log_videos_to_webhook(
@@ -3426,6 +3465,8 @@ class Validation:
                         current_results = None
                         if hasattr(pipeline_result, "frames"):
                             current_results = pipeline_result.frames
+                            if current_results is None and getattr(self.config, "validation_audio_only", False):
+                                current_results = []
                         elif hasattr(pipeline_result, "images"):
                             current_results = pipeline_result.images
                         elif hasattr(pipeline_result, "audios"):
@@ -3440,11 +3481,14 @@ class Validation:
                             current_results = []
                         all_validation_type_results[current_validation_type] = current_results
                         if isinstance(self.model, VideoModelFoundation):
+                            audio_only_validation = bool(getattr(self.config, "validation_audio_only", False))
                             expected_count = None
                             if isinstance(current_results, list):
-                                expected_count = len(current_results)
+                                if current_results or not audio_only_validation:
+                                    expected_count = len(current_results)
                             elif hasattr(current_results, "shape") and len(getattr(current_results, "shape", [])) > 0:
-                                expected_count = current_results.shape[0]
+                                if not audio_only_validation:
+                                    expected_count = current_results.shape[0]
                             audio_results = self.model.extract_validation_audio(pipeline_result, expected_count)
                             if audio_results is not None:
                                 all_validation_type_audio[current_validation_type] = audio_results
@@ -3978,7 +4022,7 @@ class Evaluation:
         accept_mu = "mu" in set(inspect.signature(noise_scheduler.set_timesteps).parameters.keys())
         scheduler_kwargs = {}
         dynamic_shift = getattr(noise_scheduler.config, "use_dynamic_shifting", False)
-        if accept_mu and (self.config.flow_schedule_auto_shift or dynamic_shift):
+        if accept_mu and dynamic_shift:
             model = StateTracker.get_model()
             mu = None
             if model is not None and hasattr(model, "calculate_dynamic_shift_mu"):

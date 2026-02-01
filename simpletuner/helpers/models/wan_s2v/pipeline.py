@@ -403,6 +403,10 @@ class WanS2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         timesteps = self.scheduler.timesteps
 
         # Denoising loop
+        # Set begin index to avoid timestep lookup in scheduler.step() which can fail due to
+        # floating-point precision issues. See: https://github.com/huggingface/diffusers/pull/11696
+        if hasattr(self.scheduler, "set_begin_index"):
+            self.scheduler.set_begin_index(0)
         for i, t in enumerate(timesteps):
             latent_model_input = latents
 

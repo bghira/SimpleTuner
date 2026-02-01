@@ -66,6 +66,8 @@ class LTXVideo2(VideoModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKLLTX2Video
     LATENT_CHANNEL_COUNT = 128
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
+    # LTX-2 uses dynamic shifting with exponential time shift - don't override with static shift.
+    USES_DYNAMIC_SHIFT = True
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
@@ -77,6 +79,8 @@ class LTXVideo2(VideoModelFoundation):
         "audio_proj_out",
         "audio_caption_projection.linear_1",
         "audio_caption_projection.linear_2",
+        "audio_ff.net.0.proj",
+        "audio_ff.net.2",
     ]
 
     @classmethod
@@ -107,11 +111,11 @@ class LTXVideo2(VideoModelFoundation):
         "text_encoder": {
             "name": "Gemma3",
             "tokenizer": GemmaTokenizerFast,
-            "subfolder": None,
-            "tokenizer_subfolder": None,
+            # "subfolder": None,
+            # "tokenizer_subfolder": None,
             "use_fast": True,
             "model": Gemma3ForConditionalGeneration,
-            "path": "google/gemma-3-12b-it-qat-q4_0-unquantized",
+            # "path": "google/gemma-3-12b-it-qat-q4_0-unquantized",
         },
     }
 
@@ -139,6 +143,36 @@ class LTXVideo2(VideoModelFoundation):
         if self._data_has_audio:
             return list(self.AUDIO_LORA_TARGETS)
         return []
+
+    def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+
+        lora_type = getattr(self.config, "lora_type", "standard")
+        if str(lora_type).lower() != "standard":
+            return super().get_lora_target_layers()
+
+        if self._data_has_audio and not self._data_has_video:
+            # Audio-only: target just audio layers, not video layers
+            targets = [
+                "audio_attn1.to_k",
+                "audio_attn1.to_q",
+                "audio_attn1.to_v",
+                "audio_attn1.to_out.0",
+                "audio_attn2.to_k",
+                "audio_attn2.to_q",
+                "audio_attn2.to_v",
+                "audio_attn2.to_out.0",
+                "audio_ff.net.0.proj",
+                "audio_ff.net.2",
+            ]
+            for extra in self.AUDIO_LORA_TARGETS:
+                if extra not in targets:
+                    targets.append(extra)
+            return targets
+
+        return super().get_lora_target_layers()
 
     def _configure_gemma_path(self) -> None:
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
@@ -562,19 +596,6 @@ class LTXVideo2(VideoModelFoundation):
 
         self.configure_chunked_feed_forward()
 
-        if (
-            self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 1
-            and self.MODEL_TYPE is ModelTypes.UNET
-        ):
-            logger.warning(
-                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of %s",
-                self.config.gradient_checkpointing_interval,
-            )
-            from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_interval
-
-            set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
-
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
                 logger.info("Setting gradient checkpointing interval..")
@@ -706,8 +727,9 @@ class LTXVideo2(VideoModelFoundation):
 
         if self.config.framerate is None:
             self.config.framerate = 25
+        validation_audio_only = bool(getattr(self.config, "validation_audio_only", False))
         validation_frames = getattr(self.config, "validation_num_video_frames", None)
-        if validation_frames is not None and validation_frames % 8 != 1:
+        if not validation_audio_only and validation_frames is not None and validation_frames % 8 != 1:
             raise ValueError(
                 f"{self.NAME} requires validation_num_video_frames to satisfy frames % 8 == 1 (e.g., 49, 57, 65, 73, 81). "
                 f"Received {validation_frames}. Training videos are automatically adjusted, but validation frame "
@@ -717,6 +739,8 @@ class LTXVideo2(VideoModelFoundation):
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)
         pipeline_kwargs["frame_rate"] = self.config.framerate or 25
+        if getattr(self.config, "validation_audio_only", False):
+            pipeline_kwargs["audio_only"] = True
         conditioning = pipeline_kwargs.pop("_s2v_conditioning", None)
         if conditioning is not None:
             audio_path = conditioning.get("audio_path")
@@ -1155,6 +1179,22 @@ class LTXVideo2(VideoModelFoundation):
             raise ValueError("LTX-2 requires audio latents for training.")
         conditioning_latents = prepared_batch.get("conditioning_latents")
         conditioning_type = prepared_batch.get("conditioning_type")
+        video_mask = prepared_batch.get("video_latent_mask")
+        is_audio_only = bool(prepared_batch.get("is_audio_only", False))
+        if video_mask is not None and torch.all(video_mask == 0):
+            is_audio_only = True
+
+        if is_audio_only:
+            if conditioning_latents is not None:
+                raise ValueError("Audio-only mode does not support IC-LoRA conditioning latents.")
+            if prepared_batch.get("force_keep_mask") is not None:
+                raise ValueError("Audio-only mode does not support force_keep_mask.")
+            tread_config = getattr(self.config, "tread_config", None) or {}
+            if isinstance(tread_config, dict) and tread_config.get("routes"):
+                raise ValueError("Audio-only mode does not support TREAD routing.")
+            crepa = getattr(self, "crepa_regularizer", None)
+            if crepa is not None and crepa.wants_hidden_states():
+                raise ValueError("Audio-only mode does not support CREPA hidden-state capture.")
         if conditioning_latents is not None:
             if isinstance(conditioning_latents, list):
                 raise ValueError(
@@ -1296,6 +1336,8 @@ class LTXVideo2(VideoModelFoundation):
             transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        if is_audio_only:
+            transformer_kwargs["audio_only"] = True
 
         model_output = self.model(**transformer_kwargs)
         if capture_hidden:

@@ -830,9 +830,11 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     """Move text encoders to the target device."""
     if text_encoders is None or (not args.offload_during_startup and not force_move):
         return
-    # Don't move text encoders to GPU if ramtorch is handling them
+    # Don't move text encoders when ramtorch is handling them; partial ramtorch
+    # requires some layers to stay on the accelerator, and full ramtorch relies
+    # on CPU-bouncing modules for correctness.
     ramtorch_text_encoders = getattr(args, "ramtorch", False) and getattr(args, "ramtorch_text_encoder", False)
-    if ramtorch_text_encoders and target_device not in ("cpu", "meta"):
+    if ramtorch_text_encoders:
         logger.debug("Skipping text encoder move to %s - ramtorch_text_encoder is enabled", target_device)
         return
     # we'll move text encoder only if their precision arg is no_change
@@ -1433,11 +1435,13 @@ class FactoryRegistry:
 
     def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
-        Validate that Qwen edit models use appropriate conditioning_type values.
+        Validate conditioning datasets for Qwen edit models.
 
-        For Qwen edit models (edit-v1 and edit-v2), conditioning datasets must use
-        conditioning_type of either 'reference_strict' or 'reference_loose'.
-        Using 'controlnet' or other values will cause dimension mismatches during training.
+        For Qwen edit models (edit-v1 and edit-v2):
+        1. Each conditioning dataset must use a valid conditioning_type
+           (reference_strict, reference_loose, mask, or segmentation)
+        2. At least one conditioning dataset must use reference_strict or reference_loose
+           to provide latents for the model
         """
         # Check if this is a Qwen edit model
         model_family = _get_arg_value(self.args, "model_family", "")
@@ -1457,8 +1461,11 @@ class FactoryRegistry:
         if not is_edit_model:
             return
 
-        # Validate conditioning datasets
-        valid_conditioning_types = {"reference_strict", "reference_loose"}
+        # Valid conditioning types for edit models
+        reference_conditioning_types = {"reference_strict", "reference_loose"}
+        mask_conditioning_types = {"mask", "segmentation"}
+        valid_conditioning_types = reference_conditioning_types | mask_conditioning_types
+        has_reference_conditioning = False
 
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", "image")
@@ -1468,13 +1475,25 @@ class FactoryRegistry:
             conditioning_type = backend.get("conditioning_type", "")
             backend_id = backend.get("id", "unknown")
 
+            # Reject invalid conditioning types
             if conditioning_type and conditioning_type not in valid_conditioning_types:
                 raise ValueError(
                     f"Invalid conditioning_type='{conditioning_type}' for Qwen edit model in dataset '{backend_id}'. "
-                    f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose'. "
+                    f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose' "
+                    f"for model conditioning, or 'mask'/'segmentation' for loss masking. "
                     f"Using 'controlnet' or other values will cause dimension mismatches during training. "
                     f"Please update your dataset configuration."
                 )
+
+            if conditioning_type in reference_conditioning_types:
+                has_reference_conditioning = True
+
+        if not has_reference_conditioning:
+            raise ValueError(
+                "Qwen edit models require at least one conditioning dataset with conditioning_type "
+                "'reference_strict' or 'reference_loose' to provide reference image latents. "
+                "Mask/segmentation datasets can be added alongside for loss masking."
+            )
 
     def _validate_audio_only_datasets(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
@@ -3248,6 +3267,13 @@ class FactoryRegistry:
     ) -> None:
         """Process text embeddings for captions."""
         if not self._uses_text_embeddings_cache():
+            return
+        # Skip text embed processing for audio datasets that source from video.
+        # These datasets inherit captions from their parent dataset during training
+        # (see MultiAspectSampler.__getitem__ where source_dataset_id triggers caption lookup from parent).
+        audio_config = backend.get("audio", {})
+        if audio_config.get("source_from_video", False):
+            info_log(f"(id={init_backend['id']}) Skipping text embedding processing for source_from_video audio dataset.")
             return
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
         # caption_strategy is stored in init_backend["config"], not directly in backend

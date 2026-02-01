@@ -171,6 +171,20 @@ simpletuner configure config/foo/config.json
 - **原因**：当启用 `--ramtorch_text_encoder` 时，允许部分卸载文本编码器。
 - **说明**：仅在启用 `--ramtorch_text_encoder` 时适用。
 
+### `--ramtorch_disable_sync_hooks`
+
+- **内容**：禁用 RamTorch 层后添加的 CUDA 同步钩子。
+- **默认**：`False`（同步钩子已启用）
+- **原因**：同步钩子修复了 RamTorch 乒乓缓冲系统中可能导致非确定性输出的竞争条件。禁用可能提高性能，但有结果不正确的风险。
+- **说明**：仅在同步钩子出现问题或想要测试时才禁用。
+
+### `--ramtorch_disable_extensions`
+
+- **内容**：仅对 Linear 层应用 RamTorch，跳过 Embedding/RMSNorm/LayerNorm/Conv。
+- **默认**：`True`（扩展已禁用）
+- **原因**：SimpleTuner 将 RamTorch 扩展到 Linear 层之外，包括 Embedding、RMSNorm、LayerNorm 和 Conv 层。使用此选项禁用这些扩展，仅卸载 Linear 层。
+- **说明**：可能减少显存节省，但有助于调试扩展层类型的问题。
+
 ### `--pretrained_model_name_or_path`
 
 - **内容**：预训练模型路径或 <https://huggingface.co/models> 上的标识符。
@@ -204,6 +218,14 @@ simpletuner configure config/foo/config.json
 
 - **内容**：每 *n* 个块进行一次 checkpoint，*n* 必须大于 0。1 等同于启用 `--gradient_checkpointing`，2 则每隔一个块进行一次。
 - **说明**：目前仅 SDXL 与 Flux 支持此选项。SDXL 使用较为权宜的实现。
+
+### `--gradient_checkpointing_backend`
+
+- **选项**：`torch`、`unsloth`
+- **内容**：选择梯度 checkpoint 的实现方式。
+  - `torch`（默认）：标准 PyTorch checkpoint，在反向传播时重新计算激活值。约 20% 时间开销。
+  - `unsloth`：异步将激活值卸载到 CPU 而非重新计算。额外节省约 30% 显存，仅约 2% 开销。需要较快的 PCIe 带宽。
+- **说明**：仅在启用 `--gradient_checkpointing` 时生效。`unsloth` 后端需要 CUDA。
 
 ### `--refiner_training`
 
@@ -1383,6 +1405,7 @@ usage: train.py [-h] --model_family
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
                 [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}]
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
+                [--validation_audio_only [VALIDATION_AUDIO_ONLY]]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
                 [--i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]]
@@ -1819,6 +1842,9 @@ options:
                         Noise scheduler for validation
   --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
                         Number of frames for video validation
+  --validation_audio_only [VALIDATION_AUDIO_ONLY]
+                        Disable video generation during validation and emit
+                        audio only
   --validation_resolution VALIDATION_RESOLUTION
                         Override resolution for validation images (pixels or
                         megapixels)

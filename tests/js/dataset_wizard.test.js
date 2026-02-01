@@ -501,3 +501,134 @@ describe('HintMixin Integration', () => {
         expect(component.showHeroCTA()).toBe(false);
     });
 });
+
+describe('Model Audio Capabilities', () => {
+    let component;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        const factory = window.datasetWizardComponent;
+        component = factory();
+        component.$nextTick = jest.fn((cb) => cb());
+    });
+
+    describe('supportsAudioInputs getter', () => {
+        test('supportsAudioInputs is a reactive getter', () => {
+            const descriptor = Object.getOwnPropertyDescriptor(component, 'supportsAudioInputs');
+            expect(descriptor).toBeDefined();
+            expect(typeof descriptor.get).toBe('function');
+        });
+
+        test('returns false when trainer store is unavailable', () => {
+            global.Alpine.store = jest.fn(() => null);
+            expect(component.supportsAudioInputs).toBe(false);
+        });
+
+        test('returns false when modelContext has no audio capabilities', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    capabilities: {}
+                },
+                configValues: {}
+            }));
+            expect(component.supportsAudioInputs).toBe(false);
+        });
+
+        test('returns true when capabilities.supports_audio_inputs is true', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    capabilities: {
+                        supports_audio_inputs: true
+                    }
+                },
+                configValues: {}
+            }));
+            expect(component.supportsAudioInputs).toBe(true);
+        });
+
+        test('returns true when modelContext.supportsAudioInputs is true', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    supportsAudioInputs: true,
+                    capabilities: {}
+                },
+                configValues: {}
+            }));
+            expect(component.supportsAudioInputs).toBe(true);
+        });
+
+        test('returns false when supports_audio_inputs is explicitly false', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    capabilities: {
+                        supports_audio_inputs: false
+                    }
+                },
+                configValues: {}
+            }));
+            expect(component.supportsAudioInputs).toBe(false);
+        });
+    });
+
+    describe('isVideoModel getter', () => {
+        test('returns true when modelContext.isVideoModel is true', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    isVideoModel: true
+                },
+                configValues: {}
+            }));
+            expect(component.isVideoModel).toBe(true);
+        });
+
+        test('returns true when modelContext.supportsVideo is true', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    supportsVideo: true
+                },
+                configValues: {}
+            }));
+            expect(component.isVideoModel).toBe(true);
+        });
+
+        test('returns false when neither flag is set', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {},
+                configValues: {}
+            }));
+            expect(component.isVideoModel).toBe(false);
+        });
+    });
+
+    describe('isAudioModel getter', () => {
+        test('returns true when modelContext.isAudioModel is true', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {
+                    isAudioModel: true
+                },
+                configValues: {}
+            }));
+            expect(component.isAudioModel).toBe(true);
+        });
+
+        test('returns true for ace_step model family', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {},
+                configValues: {
+                    model_family: 'ace_step'
+                }
+            }));
+            expect(component.isAudioModel).toBe(true);
+        });
+
+        test('returns false for non-audio model family', () => {
+            global.Alpine.store = jest.fn(() => ({
+                modelContext: {},
+                configValues: {
+                    model_family: 'flux'
+                }
+            }));
+            expect(component.isAudioModel).toBe(false);
+        });
+    });
+});

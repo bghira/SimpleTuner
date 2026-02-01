@@ -204,6 +204,27 @@ class ModelsService:
             supports_preview = current_method is not base_method
         capabilities["supports_validation_preview"] = supports_preview
 
+        # Check if model supports audio inputs (for video models that can use audio conditioning)
+        supports_audio_inputs = False
+        base_audio_method = getattr(ModelFoundation, "supports_audio_inputs", None)
+        current_audio_method = getattr(model_cls, "supports_audio_inputs", base_audio_method)
+        if current_audio_method is not base_audio_method:
+            # Method is overridden - try to call it
+            try:
+                supports_audio_inputs = bool(current_audio_method(None))
+            except Exception:
+                supports_audio_inputs = False
+        capabilities["supports_audio_inputs"] = supports_audio_inputs
+
+        # Check if model requires S2V (sound-to-video) datasets (mandatory audio for models like WanS2V)
+        requires_s2v_datasets = False
+        if hasattr(model_cls, "requires_s2v_datasets"):
+            try:
+                requires_s2v_datasets = bool(model_cls.requires_s2v_datasets(None))
+            except Exception:
+                requires_s2v_datasets = False
+        capabilities["requires_s2v_datasets"] = requires_s2v_datasets
+
         default_flavour = getattr(model_cls, "DEFAULT_MODEL_FLAVOUR", None)
         if default_flavour is None:
             hf_paths = getattr(model_cls, "HUGGINGFACE_PATHS", None)

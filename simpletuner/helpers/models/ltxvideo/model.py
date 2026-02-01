@@ -218,6 +218,9 @@ class LTXVideo(VideoModelFoundation):
 
         return pipeline_kwargs
 
+    def requires_special_scheduler_setup(self) -> bool:
+        return True
+
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Models can optionally format the stored text embedding, eg. in a dict, or

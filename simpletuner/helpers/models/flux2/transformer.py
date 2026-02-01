@@ -834,6 +834,7 @@ class Flux2Transformer2DModel(
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=False)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         total_layers = num_layers + num_single_layers
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=total_layers,
@@ -845,6 +846,9 @@ class Flux2Transformer2DModel(
         # TREAD router for efficient training
         self._tread_router = None
         self._tread_routes = None
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router, routes: List[Dict[str, Any]]):
         """
@@ -1053,14 +1057,29 @@ class Flux2Transformer2DModel(
             )
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
-                    block,
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs)
+
+                    return custom_forward
+
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                encoder_hidden_states, hidden_states = checkpoint_fn(
+                    create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
                     double_stream_mod_img,
                     double_stream_mod_txt,
                     current_concat_rotary_emb,
                     joint_attention_kwargs,
+                    use_reentrant=False,
                 )
             else:
                 encoder_hidden_states, hidden_states = block(
@@ -1145,13 +1164,28 @@ class Flux2Transformer2DModel(
                     current_concat_pe = concat_rotary_emb
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(
-                    block,
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs)
+
+                    return custom_forward
+
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                hidden_states = checkpoint_fn(
+                    create_custom_forward(block),
                     hidden_states,
                     None,
                     single_stream_mod,
                     current_concat_pe,
                     joint_attention_kwargs,
+                    use_reentrant=False,
                 )
             else:
                 hidden_states = block(

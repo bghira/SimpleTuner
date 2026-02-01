@@ -1205,6 +1205,13 @@ class ModelFoundation(ABC):
         """
         return False
 
+    def requires_special_scheduler_setup(self) -> bool:
+        """
+        Returns True when validation should skip scheduler replacement and let
+        the model pipeline configure its own scheduler.
+        """
+        return False
+
     def conditioning_validation_dataset_type(self) -> str:
         """
         Returns the dataset type to use for conditioning during validation.
@@ -2570,26 +2577,29 @@ class ModelFoundation(ABC):
                     "All model parameters remain on the meta device after reload."
                 )
         if self._ramtorch_enabled() and self.model is not None:
-            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value, percent=self._ramtorch_transformer_percent())
-        if move_to_device and self.model is not None:
+            self._apply_ramtorch_layers(
+                self.model,
+                self.MODEL_TYPE.value,
+                percent=self._ramtorch_transformer_percent(),
+                full_ramtorch=True,  # Convert all layer types including RMSNorm
+            )
+        if move_to_device and self.model is not None and not self._ramtorch_enabled():
+            # Skip device move when ramtorch is enabled - ramtorch keeps weights on CPU
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
         self.configure_chunked_feed_forward()
 
-        if (
-            self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 1
-            and self.MODEL_TYPE is ModelTypes.UNET
-        ):
-            logger.warning(
-                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of {}".format(
-                    self.config.gradient_checkpointing_interval
-                )
-            )
-            # monkey-patch gradient checkpointing for nth call intervals - easier than modifying diffusers blocks
-            from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_interval
+        # Set gradient checkpointing backend
+        checkpoint_backend = getattr(self.config, "gradient_checkpointing_backend", "torch")
+        if checkpoint_backend == "unsloth" and not torch.cuda.is_available():
+            logger.warning("Unsloth gradient checkpointing backend requires CUDA, falling back to torch")
+            checkpoint_backend = "torch"
 
-            set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
+        from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+
+        set_checkpoint_backend(checkpoint_backend)
+        if checkpoint_backend == "unsloth":
+            logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
@@ -2597,6 +2607,11 @@ class ModelFoundation(ABC):
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+
+        # Set gradient checkpointing backend on model if supported
+        if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_backend"):
+            self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
+
         self.fuse_qkv_projections()
         self.post_model_load_setup()
 
@@ -3028,6 +3043,14 @@ class ModelFoundation(ABC):
             return None
         return float(percent) if percent < 100 else None
 
+    def _ramtorch_sync_hooks_enabled(self) -> bool:
+        """Check if sync hooks should be added to ramtorch layers."""
+        return not bool(getattr(self.config, "ramtorch_disable_sync_hooks", False))
+
+    def _ramtorch_extensions_enabled(self) -> bool:
+        """Check if ramtorch extensions (Embedding, RMSNorm, etc.) should be used."""
+        return not bool(getattr(self.config, "ramtorch_disable_extensions", True))
+
     def _apply_ramtorch_layers(
         self,
         module,
@@ -3051,8 +3074,13 @@ class ModelFoundation(ABC):
         if module is None or not self._ramtorch_enabled():
             return 0
 
+        # Check if extensions are disabled via --ramtorch_disable_extensions
+        use_full_ramtorch = full_ramtorch and self._ramtorch_extensions_enabled()
+        # Check if sync hooks are enabled (default True, disabled via --ramtorch_disable_sync_hooks)
+        use_sync_hooks = self._ramtorch_sync_hooks_enabled()
+
         try:
-            if full_ramtorch:
+            if use_full_ramtorch:
                 # Replace all supported layer types with bouncing versions
                 counts = ramtorch_utils.replace_all_layers_with_ramtorch(
                     module,
@@ -3062,24 +3090,53 @@ class ModelFoundation(ABC):
                     include_conv=True,
                     include_layernorm=True,
                     percent=percent,
+                    add_sync_hooks=use_sync_hooks,
                 )
                 total = counts.get("linear", 0) + counts.get("other", 0)
+                sync_hooks = counts.get("sync_hooks", [])
                 if total:
                     logger.info(
-                        "Applied full RamTorch to %s: %d Linear, %d other layers.",
+                        "Applied full RamTorch to %s: %d Linear, %d other layers%s.",
                         component_label,
                         counts.get("linear", 0),
                         counts.get("other", 0),
+                        f", {len(sync_hooks)} sync hooks" if use_sync_hooks else "",
                     )
+                # Log diagnostic info about ramtorch conversion
+                ramtorch_params = 0
+                ramtorch_elements = 0
+                non_ramtorch_params = 0
+                non_ramtorch_elements = 0
+                for name, param in module.named_parameters():
+                    if getattr(param, "is_ramtorch", False):
+                        ramtorch_params += 1
+                        ramtorch_elements += param.numel()
+                    else:
+                        non_ramtorch_params += 1
+                        non_ramtorch_elements += param.numel()
+                        if non_ramtorch_params <= 10:
+                            logger.debug(
+                                "Non-ramtorch param: %s (%d elements, device=%s)", name, param.numel(), param.device
+                            )
+                logger.info(
+                    "RamTorch conversion stats for %s: %d ramtorch params (%.2f GB), %d non-ramtorch params (%.2f GB)",
+                    component_label,
+                    ramtorch_params,
+                    ramtorch_elements * 2 / 1e9,  # bf16 = 2 bytes
+                    non_ramtorch_params,
+                    non_ramtorch_elements * 2 / 1e9,
+                )
+
                 # Move any remaining non-ramtorch modules to GPU (e.g., custom LayerNorm classes)
                 # and buffers (e.g., position_ids)
                 moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
                 if moved:
-                    logger.debug(
-                        "Moved %s remaining non-RamTorch layers to %s for %s.",
+                    logger.info(
+                        "Moved %s remaining non-RamTorch params to %s for %s (%.2f GB).",
                         moved,
                         self._ramtorch_device(),
                         component_label,
+                        non_ramtorch_elements * 2 / 1e9,
                     )
                 return total
             else:
@@ -3092,7 +3149,18 @@ class ModelFoundation(ABC):
                     percent=percent,
                 )
                 if replaced:
-                    logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
+                    if use_sync_hooks:
+                        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_sync_hooks
+
+                        hooks = add_ramtorch_sync_hooks(module)
+                        logger.info(
+                            "Applied RamTorch to %s Linear layers on %s, %d sync hooks.",
+                            replaced,
+                            component_label,
+                            len(hooks),
+                        )
+                    else:
+                        logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
 
                 # Move non-ramtorch layers to GPU so they can process GPU activations
                 moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
@@ -3440,6 +3508,9 @@ class ModelFoundation(ABC):
     def calculate_dynamic_shift_mu(self, noise_scheduler, latents: torch.Tensor | None):
         """
         Compute resolution-dependent shift value for schedulers that support dynamic shifting.
+
+        Handles both image latents [B, C, H, W] and video latents [B, C, F, H, W].
+        For video, the sequence length includes the temporal dimension.
         """
         if latents is None:
             return None
@@ -3464,12 +3535,19 @@ class ModelFoundation(ABC):
         if patch_size is None or patch_size <= 0:
             raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
 
-        height, width = latents.shape[-2:]
-        image_seq_len = (int(height) // int(patch_size)) * (int(width) // int(patch_size))
+        # Handle video latents [B, C, F, H, W] vs image latents [B, C, H, W]
+        if latents.ndim == 5:
+            num_frames, height, width = latents.shape[-3:]
+        else:
+            num_frames = 1
+            height, width = latents.shape[-2:]
+
+        # Compute sequence length (spatiotemporal for video, spatial for images)
+        seq_len = num_frames * (int(height) // int(patch_size)) * (int(width) // int(patch_size))
         from simpletuner.helpers.models.sd3.pipeline import calculate_shift
 
         return calculate_shift(
-            image_seq_len,
+            seq_len,
             scheduler_config.base_image_seq_len,
             scheduler_config.max_image_seq_len,
             scheduler_config.base_shift,
@@ -4600,8 +4678,13 @@ class ModelFoundation(ABC):
             raise NotImplementedError(f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}.")
 
         # Apply conditioning mask if needed
-        conditioning_type = prepared_batch.get("conditioning_type")
-        if conditioning_type == "mask" and apply_conditioning_mask:
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        # Backwards compatibility: fall back to conditioning_type if loss_mask_type not set
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
+        if loss_mask_type == "mask" and apply_conditioning_mask:
             logger.debug("Applying conditioning mask to loss.")
             mask_image = (
                 prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
@@ -4609,7 +4692,7 @@ class ModelFoundation(ABC):
             mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
-        elif conditioning_type == "segmentation" and apply_conditioning_mask:
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
             if random.random() < self.config.masked_loss_probability:
                 mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
                 mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3

@@ -616,6 +616,16 @@ class TestFailureCleanupRegression(ProcessKeeperTestCase):
 
                 self.assertEqual(status, "failed", f"status remained {status}")
 
+                # Wait for the child process to write its pid file
+                pid_file_deadline = time.time() + 2
+                while time.time() < pid_file_deadline:
+                    if os.path.exists(pid_file):
+                        break
+                    time.sleep(0.05)
+
+                if not os.path.exists(pid_file):
+                    self.skipTest("Child process did not write pid file in time (platform may not support fork)")
+
                 with open(pid_file, "r", encoding="utf-8") as handle:
                     pid_str = handle.read().strip()
                 child_pid, _child_pgid = (int(part) for part in pid_str.split(",", maxsplit=1))

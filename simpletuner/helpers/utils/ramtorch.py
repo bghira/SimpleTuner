@@ -229,6 +229,7 @@ def replace_all_layers_with_ramtorch(
     target_patterns: Optional[Sequence[str]] = None,
     name_prefix: str = "",
     percent: Optional[float] = None,
+    add_sync_hooks: bool = False,
 ) -> dict:
     """
     Replace all supported layer types with CPU-bouncing RamTorch versions.
@@ -247,10 +248,13 @@ def replace_all_layers_with_ramtorch(
         target_patterns: Optional glob patterns to filter which modules are replaced.
         name_prefix: Optional prefix for module names.
         percent: Optional percentage (0-100) of eligible Linear layers to replace.
+        add_sync_hooks: Add CUDA synchronization hooks after each ramtorch layer
+            to fix race conditions. Adds overhead but ensures deterministic execution.
 
     Returns:
-        Dict with counts of each layer type replaced.
+        Dict with counts of each layer type replaced, plus 'sync_hooks' list if enabled.
     """
+    from simpletuner.helpers.ramtorch_extensions import add_ramtorch_sync_hooks as _add_sync_hooks
     from simpletuner.helpers.ramtorch_extensions import replace_module_with_ramtorch
 
     resolved_device = _normalize_device(device)
@@ -275,6 +279,10 @@ def replace_all_layers_with_ramtorch(
         include_layernorm=include_layernorm,
         include_rmsnorm=include_rmsnorm,
     )
+
+    # Add sync hooks if requested (fixes race conditions in ramtorch)
+    if add_sync_hooks:
+        counts["sync_hooks"] = _add_sync_hooks(module)
 
     return counts
 

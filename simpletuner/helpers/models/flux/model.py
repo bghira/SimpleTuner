@@ -54,6 +54,9 @@ class Flux(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTO_LORA_FORMAT_DETECTION = True
+    # Flux Dev uses dynamic shifting (use_dynamic_shifting: true in scheduler config).
+    # Schnell has use_dynamic_shifting: false, so the flag here just prevents static override.
+    USES_DYNAMIC_SHIFT = True
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
@@ -654,7 +657,7 @@ class Flux(ImageModelFoundation):
             and self.config.tread_config is not None
             and "conditioning_pixel_values" in prepared_batch
             and prepared_batch["conditioning_pixel_values"] is not None
-            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+            and prepared_batch.get("loss_mask_type") in ("mask", "segmentation")
         ):
             with torch.no_grad():
                 h_tokens = prepared_batch["latents"].shape[2] // 2  # H_latent // 2

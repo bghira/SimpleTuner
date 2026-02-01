@@ -230,6 +230,32 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Gradient Checkpointing Backend
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_backend",
+            arg_name="--gradient_checkpointing_backend",
+            ui_label="Gradient Checkpointing Backend",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="memory_optimization",
+            default_value="torch",
+            choices=[
+                {"value": "torch", "label": "PyTorch (recompute)"},
+                {"value": "unsloth", "label": "Unsloth (CPU offload)"},
+            ],
+            dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="show")],
+            validation_rules=[
+                ValidationRule(ValidationRuleType.CHOICES, value=["torch", "unsloth"]),
+            ],
+            help_text="Backend for gradient checkpointing. PyTorch recomputes activations; Unsloth offloads to CPU.",
+            tooltip="Unsloth uses async CPU offload (~30% more memory savings, ~2% overhead). Requires fast PCIe.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            documentation="OPTIONS.md#--gradient_checkpointing_backend",
+        )
+    )
+
     # Group Offloading
     registry._add_field(
         ConfigField(
@@ -390,6 +416,42 @@ def register_training_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="ramtorch_disable_sync_hooks",
+            arg_name="--ramtorch_disable_sync_hooks",
+            ui_label="Disable RamTorch Sync Hooks",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Disable CUDA synchronization hooks added after RamTorch layers.",
+            tooltip="Sync hooks fix race conditions in RamTorch but add overhead. Only disable if you experience issues.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=12,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_disable_sync_hooks",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_disable_extensions",
+            arg_name="--ramtorch_disable_extensions",
+            ui_label="Disable RamTorch Extensions",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=True,
+            help_text="Only apply RamTorch to Linear layers, skip Embedding/RMSNorm/LayerNorm/Conv.",
+            tooltip="Use this to disable SimpleTuner's RamTorch extensions for Embedding, RMSNorm, LayerNorm, and Conv layers.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=13,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_disable_extensions",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="group_offload_type",
             arg_name="--group_offload_type",
             ui_label="Group Offload Granularity",
@@ -532,7 +594,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Blocks to swap must be non-negative"),
             ],
-            help_text=("Offload the last N LongCat transformer blocks to CPU and stream weights per block during forward."),
+            help_text=("Offload the last N transformer blocks to CPU and stream weights per block during forward."),
             tooltip=(
                 "Musubi-style block weight offload; reduces VRAM at a performance cost. "
                 "Leave at 0 to disable. Incompatible with RamTorch."
@@ -566,7 +628,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="memory_optimization",
             default_value="cpu",
-            help_text="Device where swapped LongCat transformer blocks are kept when musubi block swap is enabled.",
+            help_text="Device where swapped transformer blocks are kept when musubi block swap is enabled.",
             tooltip="Use CPU by default. Provide a device string like cpu or cuda:0.",
             importance=ImportanceLevel.ADVANCED,
             model_specific=[

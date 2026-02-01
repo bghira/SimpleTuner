@@ -37,6 +37,34 @@
         </div>
     </div>
 
+    <!-- Bucketing -->
+    <div class="section-group" x-show="matchesParamFilter('bucket', 'strategy', 'frame', 'interval', 'resolution')">
+        <h6 class="modal-section-title">Bucketing</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Bucket Strategy <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#video-dataset') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.video.bucket_strategy"
+                        @change="markAsUnsaved()">
+                    <option value="">Aspect ratio (default)</option>
+                    <option value="aspect_ratio">Aspect ratio</option>
+                    <option value="resolution_frames">Resolution + frames</option>
+                </select>
+                <div class="form-text small">Group videos by aspect or resolution+frames</div>
+            </div>
+            <div class="col-md-6" x-show="editingDataset.video.bucket_strategy === 'resolution_frames'" x-cloak>
+                <label class="form-label small">Frame Interval <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#video-dataset') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       x-model.number.lazy="editingDataset.video.frame_interval"
+                       @input="markAsUnsaved()"
+                       placeholder="25">
+                <div class="form-text small">Round frames to this interval</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Video Processing -->
     <div class="section-group" x-show="matchesParamFilter('video', 'processing', 'i2v', 'augmentation', 'image')">
         <h6 class="modal-section-title">Video Processing</h6>

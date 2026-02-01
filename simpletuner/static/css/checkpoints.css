@@ -149,7 +149,8 @@
     /* Remove fixed min-height, let content determine height */
 }
 
-.checkpoint-preview-image img {
+.checkpoint-preview-image img,
+.checkpoint-preview-image video {
     display: block;
     width: 100%;
     height: auto;
@@ -805,14 +806,16 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Clickable image indicators */
+/* Clickable image/video indicators */
 .checkpoint-preview-image img,
+.checkpoint-preview-image video,
 .checkpoint-gallery img {
     cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .checkpoint-preview-image img:hover,
+.checkpoint-preview-image video:hover,
 .checkpoint-gallery img:hover {
     transform: scale(1.02);
     box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);

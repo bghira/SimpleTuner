@@ -1,66 +1,187 @@
 <!-- Audio Settings Body (for modal) -->
-<div class="modal-section-body">
-    <!-- Duration Settings -->
-    <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate')">
-        <h6 class="modal-section-title">Duration</h6>
-        <div class="row g-2">
-            <div class="col-md-4">
-                <label class="form-label small">Min (seconds)</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       x-model.number.lazy="editingDataset.audio_min_duration_seconds"
-                       @input="markAsUnsaved()"
-                       step="0.1"
-                       min="0"
-                       placeholder="0">
+<div class="modal-section-body" x-init="editingDataset.audio = editingDataset.audio || {}">
+    <!-- Video Audio Auto-Split Settings (shown for video datasets) -->
+    <template x-if="editingDataset.dataset_type === 'video'">
+        <div>
+            <!-- Auto-Split Toggle -->
+            <div class="section-group" x-show="matchesParamFilter('auto', 'split', 'extract', 'audio')">
+                <h6 class="modal-section-title">Audio Extraction</h6>
+                <div class="row g-2">
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   id="audio-auto-split"
+                                   x-model="editingDataset.audio.auto_split"
+                                   @change="markAsUnsaved()">
+                            <label class="form-check-label" for="audio-auto-split">
+                                Auto-extract audio from videos
+                                <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#s2vsound-to-video-audio-configuration') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                            </label>
+                        </div>
+                        <div class="form-text small">
+                            When enabled, audio will be automatically extracted from video files and used for audio conditioning.
+                            A separate audio dataset will be created automatically.
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="col-md-4">
-                <label class="form-label small">Max (seconds)</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       x-model.number.lazy="editingDataset.audio_max_duration_seconds"
-                       @input="markAsUnsaved()"
-                       step="0.1"
-                       min="0"
-                       placeholder="30">
-            </div>
-            <div class="col-md-4">
-                <label class="form-label small">Interval</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       x-model.number.lazy="editingDataset.audio_duration_interval"
-                       @input="markAsUnsaved()"
-                       step="0.1"
-                       min="0.1"
-                       placeholder="3.0">
-                <div class="form-text small">Truncate to nearest multiple</div>
-            </div>
-        </div>
-    </div>
 
-    <!-- Audio Format -->
-    <div class="section-group" x-show="matchesParamFilter('format', 'channel', 'mono', 'stereo', 'truncation', 'mode')">
-        <h6 class="modal-section-title">Format</h6>
-        <div class="row g-2">
-            <div class="col-md-6">
-                <label class="form-label small">Channels</label>
-                <select class="form-select form-select-sm"
-                        x-model.number.lazy="editingDataset.audio_channels"
-                        @change="markAsUnsaved()">
-                    <option value="1">1 (Mono)</option>
-                    <option value="2">2 (Stereo)</option>
-                </select>
+            <!-- Audio Format Settings (shown when auto_split is enabled or has value) -->
+            <template x-if="editingDataset.audio.auto_split !== false">
+                <div>
+                    <div class="section-group" x-show="matchesParamFilter('sample', 'rate', 'channel', 'format')">
+                        <h6 class="modal-section-title">Audio Format</h6>
+                        <div class="row g-2">
+                            <div class="col-md-4">
+                                <label class="form-label small">Sample Rate (Hz) <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#s2vsound-to-video-audio-configuration') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       x-model.number.lazy="editingDataset.audio.sample_rate"
+                                       @input="markAsUnsaved()"
+                                       step="1000"
+                                       min="8000"
+                                       placeholder="16000">
+                                <div class="form-text small">16000 Hz recommended for Wav2Vec2</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small">Channels <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#s2vsound-to-video-audio-configuration') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                                <select class="form-select form-select-sm"
+                                        x-model.number.lazy="editingDataset.audio.channels"
+                                        @change="markAsUnsaved()">
+                                    <option value="">Default</option>
+                                    <option value="1">1 (Mono)</option>
+                                    <option value="2">2 (Stereo)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small">Duration Interval <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#s2vsound-to-video-audio-configuration') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       x-model.number.lazy="editingDataset.audio.duration_interval"
+                                       @input="markAsUnsaved()"
+                                       step="0.1"
+                                       min="0.1"
+                                       placeholder="3.0">
+                                <div class="form-text small">Bucket rounding (seconds)</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="section-group" x-show="matchesParamFilter('truncation', 'zero', 'silent', 'mode')">
+                        <h6 class="modal-section-title">Handling Options</h6>
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <label class="form-label small">Truncation Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#s2vsound-to-video-audio-configuration') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                                <select class="form-select form-select-sm"
+                                        x-model="editingDataset.audio.truncation_mode"
+                                        @change="markAsUnsaved()">
+                                    <option value="">Beginning (default)</option>
+                                    <option value="beginning">Beginning</option>
+                                    <option value="end">End</option>
+                                    <option value="random">Random</option>
+                                </select>
+                                <div class="form-text small">Which part of audio to keep when truncating</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check mt-4">
+                                    <input type="checkbox"
+                                           class="form-check-input"
+                                           id="audio-allow-zero"
+                                           x-model="editingDataset.audio.allow_zero_audio"
+                                           @change="markAsUnsaved()">
+                                    <label class="form-check-label" for="audio-allow-zero">
+                                        Allow zero audio
+                                        <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#s2vsound-to-video-audio-configuration') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                                    </label>
+                                    <div class="form-text small">Generate zero-filled audio for videos without audio tracks</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </template>
+
+    <!-- Audio Dataset Settings (shown for audio datasets) -->
+    <template x-if="editingDataset.dataset_type === 'audio'">
+        <div>
+            <!-- Duration Settings -->
+            <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate', 'bucket')">
+                <h6 class="modal-section-title">Duration & Bucketing</h6>
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label small">Min (seconds) <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                        <input type="number"
+                               class="form-control form-control-sm"
+                               x-model.number.lazy="editingDataset.audio.min_duration_seconds"
+                               @input="markAsUnsaved()"
+                               step="0.1"
+                               min="0"
+                               placeholder="0">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Max (seconds) <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                        <input type="number"
+                               class="form-control form-control-sm"
+                               x-model.number.lazy="editingDataset.audio.max_duration_seconds"
+                               @input="markAsUnsaved()"
+                               step="0.1"
+                               min="0"
+                               placeholder="No limit">
+                        <div class="form-text small">Clips longer than this are skipped</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Duration Interval <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                        <input type="number"
+                               class="form-control form-control-sm"
+                               x-model.number.lazy="editingDataset.audio.duration_interval"
+                               @input="markAsUnsaved()"
+                               step="0.1"
+                               min="0.1"
+                               placeholder="3.0">
+                        <div class="form-text small">Bucket rounding (seconds)</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Bucket Strategy <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                        <select class="form-select form-select-sm"
+                                x-model="editingDataset.audio.bucket_strategy"
+                                @change="markAsUnsaved()">
+                            <option value="">Duration (default)</option>
+                            <option value="duration">Duration</option>
+                        </select>
+                    </div>
+                </div>
             </div>
-            <div class="col-md-6">
-                <label class="form-label small">Truncation Mode</label>
-                <select class="form-select form-select-sm"
-                        x-model="editingDataset.audio_truncation_mode"
-                        @change="markAsUnsaved()">
-                    <option value="beginning">Beginning</option>
-                    <option value="end">End</option>
-                    <option value="random">Random</option>
-                </select>
+
+            <!-- Audio Format -->
+            <div class="section-group" x-show="matchesParamFilter('format', 'channel', 'mono', 'stereo', 'truncation', 'mode')">
+                <h6 class="modal-section-title">Format</h6>
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <label class="form-label small">Channels <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                        <select class="form-select form-select-sm"
+                                x-model.number.lazy="editingDataset.audio.channels"
+                                @change="markAsUnsaved()">
+                            <option value="1">1 (Mono)</option>
+                            <option value="2">2 (Stereo)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small">Truncation Mode <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#audio-dataset-configuration-dataset_typeaudio') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                        <select class="form-select form-select-sm"
+                                x-model="editingDataset.audio.truncation_mode"
+                                @change="markAsUnsaved()">
+                            <option value="">Beginning (default)</option>
+                            <option value="beginning">Beginning</option>
+                            <option value="end">End</option>
+                            <option value="random">Random</option>
+                        </select>
+                        <div class="form-text small">Which part of clip to keep when truncating</div>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
+    </template>
 </div>

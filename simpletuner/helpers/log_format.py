@@ -199,6 +199,14 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     torch_utils_logger.setLevel(logging.ERROR)
     torchao_intmm_logger = logging.getLogger("torchao.kernel.intmm")
     torchao_intmm_logger.setLevel(logging.WARNING)
+    torch_autograd_logger = logging.getLogger("torch.autograd")
+    torch_autograd_logger.setLevel(logging.WARNING)
+    torch_autograd_graph_logger = logging.getLogger("torch.autograd.graph")
+    torch_autograd_graph_logger.setLevel(logging.WARNING)
+    torch_inductor_logger = logging.getLogger("torch._inductor")
+    torch_inductor_logger.setLevel(logging.WARNING)
+    torch_inductor_template_logger = logging.getLogger("torch._inductor.template_heuristics.registry")
+    torch_inductor_template_logger.setLevel(logging.WARNING)
 
     starlette_sse_logger = logging.getLogger("sse_starlette.sse")
     starlette_sse_logger.setLevel(logging.WARNING)
@@ -242,6 +250,10 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
         "torch.distributed.nn.jit.instantiator",
         "diffusers.utils.torch_utils",
         "torchao.kernel.intmm",
+        "torch.autograd",
+        "torch.autograd.graph",
+        "torch._inductor",
+        "torch._inductor.template_heuristics.registry",
         "sse_starlette.sse",
         "python_multipart.multipart",
         "urllib3.connectionpool",

@@ -57,6 +57,8 @@ class QwenImage(ImageModelFoundation):
     NAME = "Qwen-Image"
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    # Qwen Image uses dynamic shifting (use_dynamic_shifting: true in scheduler config).
+    USES_DYNAMIC_SHIFT = True
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
     AUTOENCODER_SCALING_FACTOR = 1.0
     LATENT_CHANNEL_COUNT = 16

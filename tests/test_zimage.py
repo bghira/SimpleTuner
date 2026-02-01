@@ -1,29 +1,9 @@
-import types
 import unittest
 
 import torch
 
 from simpletuner.helpers.models.z_image.model import ZImage
 from simpletuner.helpers.models.z_image.transformer import ZImageTransformer2DModel
-
-
-class ZImageLoadArgsTests(unittest.TestCase):
-    def test_pretrained_load_args_defaults_low_cpu_mem_usage_false(self):
-        dummy = ZImage.__new__(ZImage)
-        dummy.config = types.SimpleNamespace(low_cpu_mem_usage=False)
-
-        args = dummy.pretrained_load_args({"foo": "bar"})
-
-        self.assertIn("low_cpu_mem_usage", args)
-        self.assertFalse(args["low_cpu_mem_usage"])
-
-    def test_pretrained_load_args_respects_true(self):
-        dummy = ZImage.__new__(ZImage)
-        dummy.config = types.SimpleNamespace(low_cpu_mem_usage=True)
-
-        args = dummy.pretrained_load_args({})
-
-        self.assertTrue(args["low_cpu_mem_usage"])
 
 
 class ZImageTransformerPaddingTests(unittest.TestCase):

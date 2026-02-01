@@ -263,6 +263,42 @@ class CallbackServiceTestCase(unittest.TestCase):
         # Verify training_progress state was cleared
         self.assertIsNone(APIState.get_state("training_progress"))
 
+    def test_error_severity_without_failure_status_does_not_mark_failed(self) -> None:
+        """Error severity notifications should not mark training failed without a failure status."""
+        APIState.set_state("training_status", "running")
+        APIState.set_state("training_progress", {"percent": 50})
+
+        payload = {
+            "type": "notification",
+            "job_id": "test-job-nonfatal",
+            "severity": "error",
+            "message": "Upload failed due to quota",
+            "data": {"status": "uploading_model"},
+        }
+
+        event = self.service.handle_incoming(payload)
+        self.assertIsNotNone(event)
+        self.assertEqual(APIState.get_state("training_status"), "running")
+        self.assertEqual(APIState.get_state("training_progress"), {"percent": 50})
+
+    def test_error_severity_with_failure_status_marks_failed(self) -> None:
+        """Error severity notifications with failure status should mark training failed."""
+        APIState.set_state("training_status", "running")
+        APIState.set_state("training_progress", {"percent": 50})
+
+        payload = {
+            "type": "notification",
+            "job_id": "test-job-fatal",
+            "severity": "error",
+            "message": "Training failed",
+            "data": {"status": "failed"},
+        }
+
+        event = self.service.handle_incoming(payload)
+        self.assertIsNotNone(event)
+        self.assertEqual(APIState.get_state("training_status"), "error")
+        self.assertIsNone(APIState.get_state("training_progress"))
+
 
 @unittest.skipIf(
     CallbackPresenter is None or CallbackService is None or EventStore is None,

@@ -14,6 +14,11 @@ import shlex
 import shutil
 import signal
 import subprocess
+
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None
 import sys
 import threading
 import time
@@ -5148,6 +5153,46 @@ class Trainer:
         self._run_post_checkpoint_script(local_path=save_path)
         return save_path
 
+    def _populate_checkpoint_assets(self, checkpoint_path: str) -> None:
+        """Copy validation images/videos from this step to the checkpoint's assets folder."""
+        if not checkpoint_path or not os.path.exists(checkpoint_path):
+            return
+
+        checkpoint_name = os.path.basename(checkpoint_path)
+        match = re.search(r"checkpoint-(\d+)", checkpoint_name)
+        if not match:
+            return
+        checkpoint_step = int(match.group(1))
+
+        validation_dir = os.path.join(self.config.output_dir, "validation_images")
+        if not os.path.exists(validation_dir):
+            return
+
+        step_pattern = f"step_{checkpoint_step}_"
+        supported_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".mov", ".webm"}
+
+        matching_files = []
+        for filename in os.listdir(validation_dir):
+            if step_pattern in filename:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in supported_extensions:
+                    matching_files.append(filename)
+
+        if not matching_files:
+            return
+
+        assets_dir = os.path.join(checkpoint_path, "assets")
+        try:
+            os.makedirs(assets_dir, exist_ok=True)
+            for idx, filename in enumerate(sorted(matching_files)):
+                src = os.path.join(validation_dir, filename)
+                ext = os.path.splitext(filename)[1]
+                dst = os.path.join(assets_dir, f"image_{idx}{ext}")
+                shutil.copy2(src, dst)
+            logger.debug(f"Copied {len(matching_files)} validation assets to {assets_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to copy validation assets to checkpoint: {e}")
+
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
             return self.checkpoint_manager.get_latest_checkpoint()
@@ -5259,6 +5304,7 @@ class Trainer:
 
             while True:
                 checkpoint_saved_this_step = False
+                step_checkpoint_path = None
                 self._exit_on_signal()
                 step += 1
                 # Fetch the batch with CP-aware sampling. When context parallelism is
@@ -5702,13 +5748,14 @@ class Trainer:
                     scheduled_checkpoint_due = (
                         checkpoint_step_interval and self.state["global_step"] % checkpoint_step_interval == 0
                     )
+                    step_checkpoint_path = None
                     if manual_checkpoint_requested or scheduled_checkpoint_due:
                         checkpoint_message = (
                             f"Manual checkpoint requested. {webhook_pending_msg}"
                             if manual_checkpoint_requested
                             else webhook_pending_msg
                         )
-                        self._run_standard_checkpoint(
+                        step_checkpoint_path = self._run_standard_checkpoint(
                             webhook_message=checkpoint_message,
                             parent_loss=parent_loss,
                             epoch=epoch,
@@ -5845,6 +5892,8 @@ class Trainer:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
+                    if step_checkpoint_path:
+                        self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
@@ -5869,6 +5918,7 @@ class Trainer:
                 )
                 if checkpoint_dir:
                     self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
+                    self._populate_checkpoint_assets(checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -6221,33 +6271,88 @@ def run_trainer_job(config):
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
 
+        # Shared storage for child PIDs collected before termination signals are sent.
+        # This ensures we can kill children even after the parent exits and they get reparented to init.
+        _collected_child_pids: list[int] = []
+
         def _terminate_process(proc: subprocess.Popen) -> None:
             """
             Local terminate helper so we don't depend on outer-scope bindings when used in subprocess contexts.
+            Collects child PIDs before sending signals to ensure descendants are terminated even if they're
+            in different process groups (common with accelerate/torch distributed workers).
             """
             try:
                 if proc.poll() is None:
-                    if os.name != "nt" and getattr(proc, "pid", None):
+                    pid = getattr(proc, "pid", None)
+                    # Collect child PIDs BEFORE sending any signals - this is critical because
+                    # if the parent dies first, children get reparented to init and we lose them
+                    if psutil and pid:
                         try:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                            return
+                            parent = psutil.Process(pid)
+                            for child in parent.children(recursive=True):
+                                try:
+                                    if child.pid not in _collected_child_pids:
+                                        _collected_child_pids.append(child.pid)
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
-                    proc.terminate()
+
+                    # Send SIGTERM to process group
+                    if os.name != "nt" and pid:
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGTERM)
+                        except Exception:
+                            pass
+                    else:
+                        proc.terminate()
+
+                    # Also send SIGTERM to collected children (handles different process groups)
+                    for child_pid in _collected_child_pids:
+                        try:
+                            os.kill(child_pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        except Exception:
+                            pass
             except Exception as exc:
                 launch_logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
 
         def _kill_process(proc: subprocess.Popen) -> None:
             """Force-kill helper paired with _terminate_process."""
             try:
+                pid = getattr(proc, "pid", None)
+                # Try to collect any additional children (may find fewer if parent died)
+                if psutil and pid:
+                    try:
+                        parent = psutil.Process(pid)
+                        for child in parent.children(recursive=True):
+                            try:
+                                if child.pid not in _collected_child_pids:
+                                    _collected_child_pids.append(child.pid)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                # Send SIGKILL to process group if parent still alive
                 if proc.poll() is None:
-                    if os.name != "nt" and getattr(proc, "pid", None):
+                    if os.name != "nt" and pid:
                         try:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                            return
+                            os.killpg(os.getpgid(pid), signal.SIGKILL)
                         except Exception:
                             pass
-                    proc.kill()
+                    else:
+                        proc.kill()
+
+                # Kill all collected children with SIGKILL (handles orphaned processes)
+                for child_pid in _collected_child_pids:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except Exception:
+                        pass
             except Exception as exc:
                 launch_logger.warning("Failed to kill accelerate process: %s", exc)
 

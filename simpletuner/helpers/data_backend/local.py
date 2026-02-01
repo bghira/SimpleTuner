@@ -211,7 +211,25 @@ class LocalDataBackend(BaseDataBackend):
         """Read an image/video/audio sample from the specified filepath."""
         filepath = filepath.replace("\x00", "")
         file_extension = os.path.splitext(filepath)[1].lower().strip(".")
-        if file_extension in audio_file_extensions:
+
+        # Determine dataset type to handle ambiguous extensions (e.g., .mpeg is both audio and video)
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        except ValueError:
+            dataset_type_enum = DatasetType.IMAGE
+
+        # For video datasets, prioritize video loading over audio even for container formats
+        is_video_dataset = dataset_type_enum is DatasetType.VIDEO
+        is_video_extension = file_extension in video_file_extensions
+
+        # Only load as audio if: it's an audio dataset OR (it's an audio extension AND not a video extension)
+        # This prevents .mpeg/.mp4/etc from being loaded as audio when they should be video
+        should_load_as_audio = dataset_type_enum is DatasetType.AUDIO or (
+            file_extension in audio_file_extensions and not is_video_extension
+        )
+
+        if should_load_as_audio and not is_video_dataset:
             try:
                 from simpletuner.helpers.audio import load_audio
 
@@ -229,7 +247,7 @@ class LocalDataBackend(BaseDataBackend):
                 return None
 
         file_loader = load_image
-        if file_extension in video_file_extensions:
+        if is_video_extension:
             file_loader = load_video
         try:
             image = file_loader(filepath)
