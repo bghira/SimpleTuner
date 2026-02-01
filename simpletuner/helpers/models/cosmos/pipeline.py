@@ -561,7 +561,8 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         # 6. Denoising loop
         # Set begin index to avoid timestep lookup in scheduler.step() which can fail due to
         # floating-point precision issues. See: https://github.com/huggingface/diffusers/pull/11696
-        self.scheduler.set_begin_index(0)
+        if hasattr(self.scheduler, "set_begin_index"):
+            self.scheduler.set_begin_index(0)
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
 
