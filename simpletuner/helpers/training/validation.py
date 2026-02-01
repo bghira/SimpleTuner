@@ -4022,7 +4022,7 @@ class Evaluation:
         accept_mu = "mu" in set(inspect.signature(noise_scheduler.set_timesteps).parameters.keys())
         scheduler_kwargs = {}
         dynamic_shift = getattr(noise_scheduler.config, "use_dynamic_shifting", False)
-        if accept_mu and (self.config.flow_schedule_auto_shift or dynamic_shift):
+        if accept_mu and (self.config.flow_schedule_auto_shift and dynamic_shift):
             model = StateTracker.get_model()
             mu = None
             if model is not None and hasattr(model, "calculate_dynamic_shift_mu"):
