@@ -181,7 +181,7 @@ simpletuner configure config/foo/config.json
 ### `--ramtorch_disable_extensions`
 
 - **内容**：仅对 Linear 层应用 RamTorch，跳过 Embedding/RMSNorm/LayerNorm/Conv。
-- **默认**：`False`（扩展已启用）
+- **默认**：`True`（扩展已禁用）
 - **原因**：SimpleTuner 将 RamTorch 扩展到 Linear 层之外，包括 Embedding、RMSNorm、LayerNorm 和 Conv 层。使用此选项禁用这些扩展，仅卸载 Linear 层。
 - **说明**：可能减少显存节省，但有助于调试扩展层类型的问题。
 

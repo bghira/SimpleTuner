@@ -181,7 +181,7 @@ simpletuner configure config/foo/config.json
 ### `--ramtorch_disable_extensions`
 
 - **内容**: Linear レイヤーのみに RamTorch を適用し、Embedding/RMSNorm/LayerNorm/Conv をスキップします。
-- **既定**: `False`（拡張機能有効）
+- **既定**: `True`（拡張機能無効）
 - **理由**: SimpleTuner は RamTorch を Linear レイヤー以外に拡張し、Embedding、RMSNorm、LayerNorm、Conv レイヤーを含めます。この拡張機能を無効にして Linear レイヤーのみをオフロードするにはこのオプションを使用します。
 - **注記**: VRAM 節約が減少する可能性がありますが、拡張レイヤータイプの問題をデバッグするのに役立ちます。
 

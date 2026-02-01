@@ -180,7 +180,7 @@ simpletuner configure config/foo/config.json
 ### `--ramtorch_disable_extensions`
 
 - **What**: केवल Linear layers पर RamTorch apply करता है, Embedding/RMSNorm/LayerNorm/Conv को skip करता है।
-- **Default**: `False` (extensions enabled)
+- **Default**: `True` (extensions disabled)
 - **Why**: SimpleTuner RamTorch को Linear layers से आगे बढ़ाकर Embedding, RMSNorm, LayerNorm, और Conv layers को include करता है। इन extensions को disable करके केवल Linear layers offload करने के लिए इसका उपयोग करें।
 - **Notes**: VRAM savings कम हो सकती है लेकिन extended layer types की समस्याओं को debug करने में मदद कर सकता है।
 

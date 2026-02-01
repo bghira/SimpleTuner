@@ -24,6 +24,7 @@
     "optimizer": "adamw_bf16",
     "output_dir": "output/examples/ltxvideo2-19b-t2v.peft-lora",
     "ramtorch": true,
+    "ramtorch_disable_extensions": false,
     "ramtorch_text_encoder": true,
     "report_to": "none",
     "resolution": 480,
