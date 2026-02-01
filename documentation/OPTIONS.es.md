@@ -180,7 +180,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 ### `--ramtorch_disable_extensions`
 
 - **Qué**: Solo aplica RamTorch a capas Linear, omite Embedding/RMSNorm/LayerNorm/Conv.
-- **Predeterminado**: `False` (extensiones habilitadas)
+- **Predeterminado**: `True` (extensiones deshabilitadas)
 - **Por qué**: SimpleTuner extiende RamTorch más allá de las capas Linear para incluir capas Embedding, RMSNorm, LayerNorm y Conv. Usa esto para desactivar esas extensiones y solo descargar capas Linear.
 - **Notas**: Puede reducir el ahorro de VRAM pero puede ayudar a depurar problemas con los tipos de capas extendidas.
 

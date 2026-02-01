@@ -3049,7 +3049,7 @@ class ModelFoundation(ABC):
 
     def _ramtorch_extensions_enabled(self) -> bool:
         """Check if ramtorch extensions (Embedding, RMSNorm, etc.) should be used."""
-        return not bool(getattr(self.config, "ramtorch_disable_extensions", False))
+        return not bool(getattr(self.config, "ramtorch_disable_extensions", True))
 
     def _apply_ramtorch_layers(
         self,

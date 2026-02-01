@@ -440,7 +440,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="model",
             section="memory_optimization",
-            default_value=False,
+            default_value=True,
             help_text="Only apply RamTorch to Linear layers, skip Embedding/RMSNorm/LayerNorm/Conv.",
             tooltip="Use this to disable SimpleTuner's RamTorch extensions for Embedding, RMSNorm, LayerNorm, and Conv layers.",
             importance=ImportanceLevel.EXPERIMENTAL,

@@ -180,7 +180,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 ### `--ramtorch_disable_extensions`
 
 - **What**: Only apply RamTorch to Linear layers, skip Embedding/RMSNorm/LayerNorm/Conv.
-- **Default**: `False` (extensions enabled)
+- **Default**: `True` (extensions disabled)
 - **Why**: SimpleTuner extends RamTorch beyond Linear layers to include Embedding, RMSNorm, LayerNorm, and Conv layers. Use this to disable those extensions and only offload Linear layers.
 - **Notes**: May reduce VRAM savings but can help debug issues with the extended layer types.
 

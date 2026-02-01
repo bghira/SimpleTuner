@@ -180,7 +180,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 ### `--ramtorch_disable_extensions`
 
 - **O que**: Aplica RamTorch apenas a camadas Linear, pula Embedding/RMSNorm/LayerNorm/Conv.
-- **Padrao**: `False` (extensoes habilitadas)
+- **Padrao**: `True` (extensoes desabilitadas)
 - **Por que**: O SimpleTuner estende o RamTorch alem das camadas Linear para incluir camadas Embedding, RMSNorm, LayerNorm e Conv. Use isso para desativar essas extensoes e descarregar apenas camadas Linear.
 - **Notas**: Pode reduzir a economia de VRAM, mas pode ajudar a depurar problemas com os tipos de camadas estendidas.
 
