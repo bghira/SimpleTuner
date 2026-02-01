@@ -1205,6 +1205,13 @@ class ModelFoundation(ABC):
         """
         return False
 
+    def requires_special_scheduler_setup(self) -> bool:
+        """
+        Returns True when validation should skip scheduler replacement and let
+        the model pipeline configure its own scheduler.
+        """
+        return False
+
     def conditioning_validation_dataset_type(self) -> str:
         """
         Returns the dataset type to use for conditioning during validation.

@@ -144,6 +144,9 @@ class LTXVideo2(VideoModelFoundation):
             return list(self.AUDIO_LORA_TARGETS)
         return []
 
+    def requires_special_scheduler_setup(self) -> bool:
+        return True
+
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
         if manual_targets:

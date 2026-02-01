@@ -1979,6 +1979,10 @@ class Validation:
             logger.info(f"TwinFlow validation using UCGM scheduler for {twinflow_steps}-step generation")
             return scheduler
 
+        if self.model.requires_special_scheduler_setup():
+            # allow the model's pipeline to initialise the scheduler itself
+            return
+
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
         }
