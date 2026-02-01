@@ -594,7 +594,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Blocks to swap must be non-negative"),
             ],
-            help_text=("Offload the last N LongCat transformer blocks to CPU and stream weights per block during forward."),
+            help_text=("Offload the last N transformer blocks to CPU and stream weights per block during forward."),
             tooltip=(
                 "Musubi-style block weight offload; reduces VRAM at a performance cost. "
                 "Leave at 0 to disable. Incompatible with RamTorch."
@@ -628,7 +628,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="memory_optimization",
             default_value="cpu",
-            help_text="Device where swapped LongCat transformer blocks are kept when musubi block swap is enabled.",
+            help_text="Device where swapped transformer blocks are kept when musubi block swap is enabled.",
             tooltip="Use CPU by default. Provide a device string like cpu or cuda:0.",
             importance=ImportanceLevel.ADVANCED,
             model_specific=[
