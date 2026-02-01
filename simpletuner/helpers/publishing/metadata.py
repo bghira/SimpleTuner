@@ -590,9 +590,11 @@ def save_model_card(
     widget_str = ""
     idx = 0
     shortname_idx = 0
-    negative_prompt_text = str(StateTracker.get_args().validation_negative_prompt)
+    args = StateTracker.get_args()
+    negative_prompt_text = str(args.validation_negative_prompt)
     if negative_prompt_text == "":
         negative_prompt_text = "''"
+    has_video = False
     if images is not None and len(images) > 0:
         widget_str = "widget:"
         for image_list in images.values() if isinstance(images, dict) else images:
@@ -600,10 +602,13 @@ def save_model_card(
                 image_list = [image_list]
             sub_idx = 0
             for image in image_list:
-                image_path, image_extension = save_metadata_sample(
+                output_path, image_extension = save_metadata_sample(
                     image_path=os.path.join(assets_folder, f"image_{idx}_{sub_idx}"),
                     image=image,
                 )
+                asset_filename = os.path.basename(output_path)
+                if image_extension == "mp4":
+                    has_video = True
                 validation_prompt = "no prompt available"
                 if validation_prompts is not None:
                     try:
@@ -619,12 +624,22 @@ def save_model_card(
                 widget_str += "\n  parameters:"
                 widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
                 widget_str += "\n  output:"
-                widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.{image_extension}"
+                if image_extension == "mp4" and args.push_to_hub and repo_id:
+                    repo_slug = repo_id.strip("/")
+                    widget_url = f"https://huggingface.co/{repo_slug}/resolve/main/assets/{asset_filename}"
+                else:
+                    widget_url = f"./assets/{asset_filename}"
+                widget_str += f"\n    url: {widget_url}"
                 idx += 1
                 sub_idx += 1
 
             shortname_idx += 1
-    args = StateTracker.get_args()
+    gallery_intro = ""
+    if images is not None:
+        if has_video:
+            gallery_intro = "You can find some example images and videos in the following gallery:"
+        else:
+            gallery_intro = "You can find some example images in the following gallery:"
     sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
     yaml_content = f"""---
 license: {model.MODEL_LICENSE}
@@ -668,7 +683,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 
 Note: The validation settings are not necessarily the same as the [training settings](#training-settings).
 
-{'You can find some example images in the following gallery:' if images is not None else ''}\n
+{gallery_intro}\n
 
 <Gallery />
 
