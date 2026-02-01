@@ -14,6 +14,11 @@ import shlex
 import shutil
 import signal
 import subprocess
+
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None
 import sys
 import threading
 import time
@@ -6266,33 +6271,88 @@ def run_trainer_job(config):
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
 
+        # Shared storage for child PIDs collected before termination signals are sent.
+        # This ensures we can kill children even after the parent exits and they get reparented to init.
+        _collected_child_pids: list[int] = []
+
         def _terminate_process(proc: subprocess.Popen) -> None:
             """
             Local terminate helper so we don't depend on outer-scope bindings when used in subprocess contexts.
+            Collects child PIDs before sending signals to ensure descendants are terminated even if they're
+            in different process groups (common with accelerate/torch distributed workers).
             """
             try:
                 if proc.poll() is None:
-                    if os.name != "nt" and getattr(proc, "pid", None):
+                    pid = getattr(proc, "pid", None)
+                    # Collect child PIDs BEFORE sending any signals - this is critical because
+                    # if the parent dies first, children get reparented to init and we lose them
+                    if psutil and pid:
                         try:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                            return
+                            parent = psutil.Process(pid)
+                            for child in parent.children(recursive=True):
+                                try:
+                                    if child.pid not in _collected_child_pids:
+                                        _collected_child_pids.append(child.pid)
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
-                    proc.terminate()
+
+                    # Send SIGTERM to process group
+                    if os.name != "nt" and pid:
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGTERM)
+                        except Exception:
+                            pass
+                    else:
+                        proc.terminate()
+
+                    # Also send SIGTERM to collected children (handles different process groups)
+                    for child_pid in _collected_child_pids:
+                        try:
+                            os.kill(child_pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        except Exception:
+                            pass
             except Exception as exc:
                 launch_logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
 
         def _kill_process(proc: subprocess.Popen) -> None:
             """Force-kill helper paired with _terminate_process."""
             try:
+                pid = getattr(proc, "pid", None)
+                # Try to collect any additional children (may find fewer if parent died)
+                if psutil and pid:
+                    try:
+                        parent = psutil.Process(pid)
+                        for child in parent.children(recursive=True):
+                            try:
+                                if child.pid not in _collected_child_pids:
+                                    _collected_child_pids.append(child.pid)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                # Send SIGKILL to process group if parent still alive
                 if proc.poll() is None:
-                    if os.name != "nt" and getattr(proc, "pid", None):
+                    if os.name != "nt" and pid:
                         try:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                            return
+                            os.killpg(os.getpgid(pid), signal.SIGKILL)
                         except Exception:
                             pass
-                    proc.kill()
+                    else:
+                        proc.kill()
+
+                # Kill all collected children with SIGKILL (handles orphaned processes)
+                for child_pid in _collected_child_pids:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except Exception:
+                        pass
             except Exception as exc:
                 launch_logger.warning("Failed to kill accelerate process: %s", exc)
 
