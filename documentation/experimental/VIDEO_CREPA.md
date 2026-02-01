@@ -1,6 +1,8 @@
 # CREPA (video regularization)
 
-Cross-frame Representation Alignment (CREPA) is a light regularizer for video models. It nudges each frame’s hidden states toward a frozen vision encoder’s features from the current frame **and its neighbours**, improving temporal consistency without changing your main loss.
+Cross-frame Representation Alignment (CREPA) is a light regularizer for video models. It nudges each frame's hidden states toward a frozen vision encoder's features from the current frame **and its neighbours**, improving temporal consistency without changing your main loss.
+
+> **Looking for image models?** See [IMAGE_REPA.md](IMAGE_REPA.md) for REPA support on image DiT models (Flux, SD3, etc.) and U-REPA for UNet models (SDXL, SD1.5, Kolors).
 
 ## When to use it
 

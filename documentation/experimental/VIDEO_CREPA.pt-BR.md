@@ -2,6 +2,8 @@
 
 Cross-frame Representation Alignment (CREPA) e um regularizador leve para modelos de video. Ele empurra os hidden states de cada frame em direcao aos recursos de um encoder de visao congelado do frame atual **e de seus vizinhos**, melhorando a consistencia temporal sem mudar sua loss principal.
 
+> **Procurando modelos de imagem?** Veja [IMAGE_REPA.pt-BR.md](IMAGE_REPA.pt-BR.md) para suporte REPA em modelos DiT de imagem (Flux, SD3, etc.) e U-REPA para modelos UNet (SDXL, SD1.5, Kolors).
+
 ## Quando usar
 
 - Voce treina videos com movimento complexo, mudancas de cena ou oclusoes.
