@@ -572,3 +572,379 @@ class CrepaRegularizer:
             "dinov2-vitb14": "dinov2_vitb14",
         }
         return aliases.get(value.lower(), value)
+
+
+class UrepaRegularizer:
+    """
+    Implements U-REPA (Universal Representation Alignment) for UNet-based diffusion models.
+
+    U-REPA adapts the REPA concept for UNet architectures by:
+    1. Extracting features from the mid-block (not early layers like DiT-based REPA)
+    2. Using manifold loss to align relative similarity structure
+    3. Handling convolutional (B, C, H, W) hidden states
+
+    Reference: "U-REPA: Training-free Representation Alignment for UNet" (NeurIPS 2025)
+    """
+
+    def __init__(
+        self,
+        config,
+        accelerator,
+        hidden_size: int,
+        *,
+        model_foundation: Optional["ModelFoundation"] = None,
+        max_train_steps: int = 0,
+    ):
+        self.config = config
+        self.device = accelerator.device
+        self.hidden_size = hidden_size
+        self.model_foundation = model_foundation
+
+        self.enabled = bool(getattr(config, "urepa_enabled", False))
+        self.base_weight = float(getattr(config, "urepa_lambda", 0.5) or 0.5)
+        self.manifold_weight = float(getattr(config, "urepa_manifold_weight", 3.0) or 3.0)
+
+        # Prefer explicit urepa_model, fall back to crepa_model for shared encoder config.
+        raw_encoder = (
+            getattr(config, "urepa_model", None)
+            or getattr(config, "crepa_model", None)
+            or getattr(config, "crepa_encoder", None)
+        )
+        self.encoder_name = self._resolve_encoder_name(raw_encoder)
+        self.encoder_image_size = int(getattr(config, "urepa_encoder_image_size", 518) or 518)
+
+        self.use_tae = bool(getattr(config, "urepa_use_tae", False))
+
+        # Scheduler for coefficient scheduling (reuse CrepaScheduler)
+        self.scheduler = self._create_scheduler(config, max_train_steps) if self.enabled else None
+
+        self.encoder: Optional[torch.nn.Module] = None
+        self.encoder_dim: Optional[int] = None
+        self.projector: Optional[torch.nn.Module] = None
+
+        # Validate TAE availability if requested
+        if self.use_tae and self.enabled:
+            if model_foundation is not None and not model_foundation.supports_validation_preview():
+                logger.warning(
+                    f"urepa_use_tae=True but {model_foundation.NAME} does not support TAE. "
+                    "Falling back to full VAE decoding."
+                )
+                self.use_tae = False
+
+    def _create_scheduler(self, config, max_train_steps: int) -> CrepaScheduler:
+        """Create a scheduler using U-REPA specific config values."""
+
+        class UrepaConfig:
+            pass
+
+        sched_config = UrepaConfig()
+        sched_config.crepa_scheduler = getattr(config, "urepa_scheduler", "constant")
+        sched_config.crepa_lambda = getattr(config, "urepa_lambda", 0.5)
+        sched_config.crepa_warmup_steps = getattr(config, "urepa_warmup_steps", 0)
+        sched_config.crepa_decay_steps = getattr(config, "urepa_decay_steps", 0)
+        sched_config.crepa_lambda_end = getattr(config, "urepa_lambda_end", 0.0)
+        sched_config.crepa_cutoff_step = getattr(config, "urepa_cutoff_step", 0)
+        sched_config.crepa_similarity_threshold = getattr(config, "urepa_similarity_threshold", None)
+        sched_config.crepa_similarity_ema_decay = getattr(config, "urepa_similarity_ema_decay", 0.99)
+        sched_config.crepa_threshold_mode = getattr(config, "urepa_threshold_mode", "permanent")
+        sched_config.crepa_power = getattr(config, "urepa_power", 1.0)
+        return CrepaScheduler(sched_config, max_train_steps)
+
+    def attach_to_model(self, model: nn.Module):
+        """Attach the projection head to the diffusion backbone so it is optimized."""
+        if not self.enabled:
+            return
+
+        self._load_encoder()
+        target_dim = self.encoder_dim
+        if target_dim is None:
+            raise RuntimeError("U-REPA failed to determine encoder output dimension.")
+
+        if self.projector is None:
+            self.projector = nn.Sequential(
+                nn.LayerNorm(self.hidden_size),
+                nn.Linear(self.hidden_size, target_dim),
+            )
+            setattr(model, "urepa_projector", self.projector)
+
+        self.projector.to(device=self.device, dtype=torch.float32)
+
+    def wants_hidden_states(self) -> bool:
+        return self.enabled
+
+    def compute_loss(
+        self,
+        hidden_states: Optional[torch.Tensor],
+        latents: Optional[torch.Tensor],
+        vae: Optional[nn.Module] = None,
+        *,
+        step: int = 0,
+    ) -> Tuple[Optional[torch.Tensor], Optional[dict]]:
+        """
+        Compute U-REPA loss combining cosine alignment and manifold loss.
+
+        Args:
+            hidden_states: Mid-block features in (B, C, H, W) format
+            latents: Clean latents for decoding to pixel space
+            vae: VAE for decoding (optional if model_foundation is set)
+            step: Current training step for scheduling
+
+        Returns:
+            Tuple of (loss tensor, logging dict)
+        """
+        if not self.enabled:
+            return None, None
+        if hidden_states is None:
+            raise ValueError("U-REPA is enabled but no intermediate hidden states were provided.")
+        if latents is None:
+            raise ValueError("U-REPA requires access to clean latents for decoding.")
+        if self.model_foundation is None and vae is None:
+            raise ValueError("U-REPA requires a VAE to decode latents back to pixel space.")
+        if self.projector is None:
+            raise RuntimeError("U-REPA projector was not initialized on the diffusion model.")
+        if self.base_weight == 0:
+            return None, None
+
+        # Decode latents to pixel space and encode with vision encoder
+        pixels = self._decode_latents(latents, vae)
+        encoder_features = self._encode_pixels(pixels)  # (B, N_enc, D_enc)
+
+        # Project hidden states from (B, C, H, W) to (B, N_proj, D_enc)
+        projected = self._project_hidden_states(hidden_states)
+
+        # Align spatial dimensions
+        projected, encoder_features = self._align_spatial(projected, encoder_features)
+
+        # Normalize for cosine similarity
+        projected_norm = F.normalize(projected, dim=-1)
+        encoder_norm = F.normalize(encoder_features, dim=-1)
+
+        # Cosine alignment loss (per-token, averaged)
+        cosine_sim = (projected_norm * encoder_norm).sum(dim=-1).mean(dim=-1)  # (B,)
+        alignment_loss = -cosine_sim.mean()
+
+        # Manifold loss: align relative similarity structure
+        manifold_loss = self._compute_manifold_loss(projected_norm, encoder_norm)
+
+        # Get scheduled weight
+        current_similarity = cosine_sim.mean().detach().item()
+        if self.scheduler is not None:
+            scheduled_weight = self.scheduler.get_weight(step, similarity=current_similarity)
+        else:
+            scheduled_weight = self.base_weight
+
+        # Early exit if weight is zero
+        if scheduled_weight == 0:
+            log_data = {
+                "urepa_loss": 0.0,
+                "urepa_alignment_loss": 0.0,
+                "urepa_manifold_loss": 0.0,
+                "urepa_similarity": current_similarity,
+                "urepa_weight": 0.0,
+                "urepa_cutoff": True,
+            }
+            return None, log_data
+
+        # Combine losses: alignment + weighted manifold
+        total_loss = scheduled_weight * (alignment_loss + self.manifold_weight * manifold_loss)
+
+        log_data = {
+            "urepa_loss": total_loss.detach().item(),
+            "urepa_alignment_loss": alignment_loss.detach().item(),
+            "urepa_manifold_loss": manifold_loss.detach().item(),
+            "urepa_similarity": current_similarity,
+            "urepa_weight": scheduled_weight,
+            "urepa_cutoff": False,
+        }
+        return total_loss, log_data
+
+    def _project_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        Project UNet mid-block features from (B, C, H, W) to (B, H*W, D_enc).
+
+        The mid-block produces convolutional features that need to be:
+        1. Reshaped to sequence format (B, H*W, C)
+        2. Projected to encoder dimension
+        """
+        if hidden_states.ndim != 4:
+            raise ValueError(f"U-REPA expected 4D hidden states (B, C, H, W), got {hidden_states.shape}")
+
+        b, c, h, w = hidden_states.shape
+        # Reshape: (B, C, H, W) -> (B, H*W, C)
+        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(b, h * w, c)
+
+        # Project to encoder dimension
+        projector_dtype = next(self.projector.parameters()).dtype
+        hidden_states = hidden_states.to(dtype=projector_dtype)
+        projected = self.projector(hidden_states)
+        return projected
+
+    def _align_spatial(self, projected: torch.Tensor, encoder_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Align spatial token counts between projected features and encoder features.
+
+        Uses bilinear interpolation to match the smaller spatial dimension.
+        """
+        n_proj = projected.shape[1]
+        n_enc = encoder_features.shape[1]
+
+        if n_proj == n_enc:
+            return projected, encoder_features
+
+        target_tokens = min(n_proj, n_enc)
+        projected = self._interpolate_tokens(projected, target_tokens)
+        encoder_features = self._interpolate_tokens(encoder_features, target_tokens)
+        return projected, encoder_features
+
+    def _interpolate_tokens(self, tokens: torch.Tensor, target_tokens: int) -> torch.Tensor:
+        """Interpolate token sequence to target length using bilinear interpolation."""
+        if tokens.shape[1] == target_tokens:
+            return tokens
+        b, n, d = tokens.shape
+
+        # Try 2D interpolation if tokens form a square grid
+        src_size = int(math.sqrt(n))
+        tgt_size = int(math.sqrt(target_tokens))
+        if src_size * src_size == n and tgt_size * tgt_size == target_tokens:
+            tokens = tokens.permute(0, 2, 1).view(b, d, src_size, src_size)
+            tokens = F.interpolate(tokens, size=(tgt_size, tgt_size), mode="bilinear", align_corners=False)
+            tokens = tokens.view(b, d, target_tokens).permute(0, 2, 1)
+        else:
+            # Fallback to 1D interpolation
+            tokens = tokens.permute(0, 2, 1)  # (B, D, N)
+            tokens = F.interpolate(tokens, size=target_tokens, mode="linear", align_corners=False)
+            tokens = tokens.permute(0, 2, 1)  # (B, N, D)
+
+        return tokens
+
+    def _compute_manifold_loss(self, projected: torch.Tensor, encoder_features: torch.Tensor) -> torch.Tensor:
+        """
+        Compute manifold loss: ||sim(y[i],y[j]) - sim(h[i],h[j])||²_F
+
+        This aligns the relative similarity structure between encoder features (y)
+        and projected hidden states (h), rather than strict tokenwise alignment.
+
+        For efficiency, we compute pairwise similarities within each sample.
+        """
+        b, n, d = projected.shape
+
+        # Compute pairwise similarity matrices
+        # projected @ projected.T gives (B, N, N) similarity matrix
+        proj_sim = torch.bmm(projected, projected.transpose(1, 2))  # (B, N, N)
+        enc_sim = torch.bmm(encoder_features, encoder_features.transpose(1, 2))  # (B, N, N)
+
+        # Frobenius norm of difference, normalized by number of elements
+        diff = proj_sim - enc_sim
+        manifold_loss = (diff**2).mean()
+
+        return manifold_loss
+
+    def _decode_latents(self, latents: torch.Tensor, vae: Optional[nn.Module]) -> torch.Tensor:
+        """Decode latents to pixel space."""
+        if self.model_foundation is not None:
+            return self.model_foundation.decode_latents_to_pixels(latents, use_tae=self.use_tae)
+
+        # Legacy VAE decode
+        vae_dtype = next(vae.parameters()).dtype
+        latents = latents.to(device=self.device, dtype=vae_dtype)
+        scaling_factor = getattr(getattr(vae, "config", None), "scaling_factor", 1.0)
+        shift_factor = getattr(getattr(vae, "config", None), "shift_factor", None)
+
+        if shift_factor is not None:
+            latents = latents / scaling_factor + shift_factor
+        else:
+            latents = latents / scaling_factor
+
+        with torch.no_grad():
+            decoded = vae.decode(latents).sample
+        decoded = decoded.clamp(-1, 1)
+        decoded = (decoded + 1.0) * 0.5  # Convert to [0, 1]
+        return decoded
+
+    def _encode_pixels(self, pixels: torch.Tensor) -> torch.Tensor:
+        """
+        Encode pixels using vision encoder.
+
+        Args:
+            pixels: (B, C, H, W) in [0, 1] range for images, or (B, T, C, H, W) for video
+
+        Returns:
+            Encoded features (B, N, D) for images, or (B, T, N, D) for video
+        """
+        # Handle video format by taking first frame (U-REPA is for image models)
+        if pixels.ndim == 5:
+            # Video: (B, T, C, H, W) -> (B, C, H, W) using first frame
+            pixels = pixels[:, 0]
+
+        b, c, h, w = pixels.shape
+
+        # Resize to encoder input size
+        pixels = F.interpolate(
+            pixels, size=(self.encoder_image_size, self.encoder_image_size), mode="bilinear", align_corners=False
+        )
+
+        # Normalize with ImageNet stats
+        enc_dtype = next(self.encoder.parameters()).dtype
+        pixels = pixels.to(dtype=enc_dtype)
+        mean = torch.tensor([0.485, 0.456, 0.406], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
+        pixels = (pixels - mean) / std
+
+        # Encode
+        with torch.no_grad():
+            output = self.encoder(pixels)
+
+        if isinstance(output, dict):
+            if "x_norm_patchtokens" in output:
+                tokens = output["x_norm_patchtokens"]
+            elif "x_norm_clstoken" in output:
+                tokens = output["x_norm_clstoken"].unsqueeze(1)
+            else:
+                tokens = next(iter(output.values()))
+        elif torch.is_tensor(output):
+            tokens = output
+        elif isinstance(output, (list, tuple)):
+            tokens = output[0]
+        else:
+            raise TypeError(f"Unsupported encoder output type: {type(output)}")
+
+        if tokens.ndim == 2:
+            tokens = tokens.unsqueeze(1)
+
+        return tokens
+
+    def _load_encoder(self):
+        """Load the vision encoder (DINOv2 by default)."""
+        if self.encoder is not None:
+            return
+
+        self.encoder = torch.hub.load("facebookresearch/dinov2", self.encoder_name)
+        self.encoder.eval().requires_grad_(False).to(self.device, dtype=torch.float32)
+
+        # Probe encoder dimension
+        dummy = torch.zeros(1, 3, self.encoder_image_size, self.encoder_image_size, device=self.device)
+        with torch.no_grad():
+            output = self.encoder(dummy)
+            if isinstance(output, dict):
+                if "x_norm_patchtokens" in output:
+                    self.encoder_dim = output["x_norm_patchtokens"].shape[-1]
+                elif "x_norm_clstoken" in output:
+                    self.encoder_dim = output["x_norm_clstoken"].shape[-1]
+                else:
+                    self.encoder_dim = next(iter(output.values())).shape[-1]
+            else:
+                self.encoder_dim = output.shape[-1]
+
+    def _resolve_encoder_name(self, value: Optional[str]) -> str:
+        if not value:
+            return "dinov2_vitg14"
+        value = str(value).strip()
+        aliases = {
+            "dino_v2_g": "dinov2_vitg14",
+            "dinov2_g": "dinov2_vitg14",
+            "dinov2-vitg14": "dinov2_vitg14",
+            "dino_v2_s": "dinov2_vits14",
+            "dinov2_s": "dinov2_vits14",
+            "dinov2-vitb14": "dinov2_vitb14",
+        }
+        return aliases.get(value.lower(), value)

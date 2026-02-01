@@ -731,3 +731,178 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             documentation="OPTIONS.md#--layersync_lambda",
         )
     )
+
+    # U-REPA (Universal REPA for UNet models)
+    registry._add_field(
+        ConfigField(
+            name="urepa_enabled",
+            arg_name="--urepa_enabled",
+            ui_label="Enable U-REPA",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            model_specific=["sdxl", "sd1x", "sd2x", "kolors"],
+            help_text="Enable Universal REPA for UNet-based diffusion models (SDXL, SD1.5, Kolors).",
+            tooltip="Adds DINOv2-driven representation alignment with manifold loss, optimized for UNet architectures.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=40,
+            documentation="OPTIONS.md#--urepa_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_lambda",
+            arg_name="--urepa_lambda",
+            ui_label="U-REPA Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.5,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Scaling factor for U-REPA alignment loss. Paper recommends 0.5.",
+            tooltip="Higher values increase regularization strength; 0.5 is the paper default.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=41,
+            documentation="OPTIONS.md#--urepa_lambda",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_manifold_weight",
+            arg_name="--urepa_manifold_weight",
+            ui_label="U-REPA Manifold Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=3.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Weight for manifold loss relative to cosine alignment. Paper recommends w=3.0.",
+            tooltip="Manifold loss aligns relative similarity structure; higher values prioritize it over direct alignment.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=42,
+            documentation="OPTIONS.md#--urepa_manifold_weight",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_model",
+            arg_name="--urepa_model",
+            ui_label="U-REPA Vision Model",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="loss_functions",
+            default_value="dinov2_vitg14",
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Torch hub identifier for the frozen vision encoder (default: DINOv2 ViT-G/14).",
+            tooltip='Passes directly to torch.hub.load("facebookresearch/dinov2", <id>); e.g., dinov2_vitg14 or dinov2_vits14.',
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=43,
+            documentation="OPTIONS.md#--urepa_model",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_encoder_image_size",
+            arg_name="--urepa_encoder_image_size",
+            ui_label="U-REPA Encoder Resolution",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=518,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=64, message="Must be >= 64")],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Input resolution for the vision encoder preprocessing.",
+            tooltip="Set to the pretrained encoder's default (518 for DINOv2-G/14; 224 for ViT-S/14).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=44,
+            documentation="OPTIONS.md#--urepa_encoder_image_size",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_use_tae",
+            arg_name="--urepa_use_tae",
+            ui_label="U-REPA: Use Tiny AutoEncoder",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Use lightweight Tiny AutoEncoder instead of full VAE for decoding.",
+            tooltip="Faster and uses less VRAM, but lower quality decoded images.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=45,
+            documentation="OPTIONS.md#--urepa_use_tae",
+        )
+    )
+
+    # U-REPA Scheduling Options
+    registry._add_field(
+        ConfigField(
+            name="urepa_scheduler",
+            arg_name="--urepa_scheduler",
+            ui_label="U-REPA Scheduler",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="constant",
+            choices=[
+                {"value": "constant", "label": "Constant"},
+                {"value": "linear", "label": "Linear Decay"},
+                {"value": "cosine", "label": "Cosine Decay"},
+                {"value": "polynomial", "label": "Polynomial Decay"},
+            ],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Schedule for U-REPA coefficient decay over training.",
+            tooltip="Use decay schedules to reduce U-REPA regularization as training progresses.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=46,
+            documentation="OPTIONS.md#--urepa_scheduler",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_warmup_steps",
+            arg_name="--urepa_warmup_steps",
+            ui_label="U-REPA Warmup Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Number of steps to linearly ramp U-REPA weight from 0 to urepa_lambda.",
+            tooltip="Gradual warmup can help stabilize early training.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=47,
+            documentation="OPTIONS.md#--urepa_warmup_steps",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_cutoff_step",
+            arg_name="--urepa_cutoff_step",
+            ui_label="U-REPA Cutoff Step",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Hard cutoff step after which U-REPA is disabled. 0 = no cutoff.",
+            tooltip="Useful for disabling U-REPA after the model has learned good representations.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=48,
+            documentation="OPTIONS.md#--urepa_cutoff_step",
+        )
+    )
