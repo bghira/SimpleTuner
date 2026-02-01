@@ -559,6 +559,9 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         padding_mask = latents.new_zeros(1, 1, height, width, dtype=transformer_dtype)
 
         # 6. Denoising loop
+        # Set begin index to avoid timestep lookup in scheduler.step() which can fail due to
+        # floating-point precision issues. See: https://github.com/huggingface/diffusers/pull/11696
+        self.scheduler.set_begin_index(0)
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
 

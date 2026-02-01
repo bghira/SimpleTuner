@@ -1569,6 +1569,9 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         text_ids = text_ids.to(self.transformer.device)[0]
 
         # 6. Denoising loop
+        # Set begin index to avoid timestep lookup in scheduler.step() which can fail due to
+        # floating-point precision issues. See: https://github.com/huggingface/diffusers/pull/11696
+        self.scheduler.set_begin_index(0)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -2358,6 +2361,9 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         lat_in = latents
         id_in = latent_image_ids
         # 6. Denoising loop
+        # Set begin index to avoid timestep lookup in scheduler.step() which can fail due to
+        # floating-point precision issues. See: https://github.com/huggingface/diffusers/pull/11696
+        self.scheduler.set_begin_index(0)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
