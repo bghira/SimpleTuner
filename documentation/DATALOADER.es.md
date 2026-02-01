@@ -186,6 +186,50 @@ Tanto `textfile` como `parquet` soportan multi-captions:
 - Útil cuando tus captions contienen saltos de línea intencionales que deben preservarse como un único caption.
 - Por defecto: `false` (los captions se dividen por saltos de línea)
 
+### `caption_shuffle`
+
+Genera variantes mezcladas determinísticas de captions basados en tags para aumento de datos. Esto ayuda al modelo a aprender que el orden de las tags no importa y reduce el sobreajuste a secuencias específicas de tags.
+
+**Configuración:**
+
+```json
+{
+  "caption_shuffle": {
+    "enable": true,
+    "count": 3,
+    "seed": 42,
+    "split_on": "comma",
+    "position_start": 1,
+    "include_original": true
+  }
+}
+```
+
+**Parámetros:**
+
+- `enable` (bool): Si se habilita el mezclado de captions. Por defecto: `false`
+- `count` (int): Número de variantes mezcladas a generar por caption. Por defecto: `1`
+- `seed` (int): Semilla para mezclado determinístico. Si no se especifica, usa el valor global `--seed`.
+- `split_on` (string): Delimitador para dividir captions en tags. Opciones: `comma`, `space`, `period`. Por defecto: `comma`
+- `position_start` (int): Mantener las primeras N tags en su posición original (útil para mantener tags de sujeto/estilo al principio). Por defecto: `0`
+- `include_original` (bool): Si se incluye el caption original sin mezclar junto con las variantes mezcladas. Por defecto: `true`
+
+**Ejemplo:**
+
+Con `split_on: "comma"`, `position_start: 1`, `count: 2`:
+
+- Original: `"dog, running, park, sunny day"`
+- Resultado: `["dog, running, park, sunny day", "dog, park, sunny day, running", "dog, sunny day, running, park"]`
+
+La primera tag "dog" permanece fija mientras las tags restantes se mezclan.
+
+**Notas:**
+
+- El mezclado se aplica durante el pre-cacheo de embeddings de texto, así que todas las variantes se calculan de una vez.
+- Durante el entrenamiento, se selecciona una variante aleatoriamente por muestra.
+- Si un caption tiene menos tags que `position_start + 2`, el mezclado se omite (nada significativo que mezclar).
+- Cuando `include_original: false` pero el mezclado no es posible, se incluye el original de todos modos con una advertencia.
+
 ### `metadata_backend`
 
 - **Valores:** `discovery` | `parquet` | `huggingface`

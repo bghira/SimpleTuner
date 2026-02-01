@@ -71,8 +71,10 @@ prompts = {
 }
 
 
+import hashlib
 import logging
 import os
+import random
 
 from tqdm import tqdm
 
@@ -85,6 +87,92 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() =
 
 class CaptionNotFoundError(Exception):
     pass
+
+
+class CaptionShuffler:
+    """Deterministic caption tag shuffling for data augmentation."""
+
+    DELIMITERS = {"comma": ", ", "space": " ", "period": ". "}
+    SPLIT_PATTERNS = {"comma": ",", "space": " ", "period": "."}
+
+    @classmethod
+    def expand_with_shuffles(
+        cls,
+        caption: str,
+        config: dict,
+        base_seed: int = None,
+    ) -> list:
+        """
+        Expand a caption into [original, shuffled_1, ..., shuffled_n].
+
+        Args:
+            caption: The original caption string
+            config: caption_shuffle config dict with keys:
+                - enable: bool
+                - count: int - number of shuffled variants
+                - seed: int - override base_seed
+                - split_on: str - "comma" | "space" | "period"
+                - position_start: int - keep first N tags fixed
+                - include_original: bool - default True
+            base_seed: Fallback seed if not specified in config
+
+        Returns:
+            List of caption strings [original, shuffled_1, ...]
+        """
+        if not config or not config.get("enable", False):
+            return [caption]
+
+        if not caption or not caption.strip():
+            return [caption]
+
+        count = config.get("count", 1)
+        seed = config.get("seed", base_seed)
+        split_on = config.get("split_on", "comma")
+        position_start = config.get("position_start", 0)
+        include_original = config.get("include_original", True)
+
+        if split_on not in cls.SPLIT_PATTERNS:
+            logger.warning(f"caption_shuffle: Invalid split_on value '{split_on}', defaulting to 'comma'")
+            split_on = "comma"
+
+        split_char = cls.SPLIT_PATTERNS[split_on]
+        delimiter = cls.DELIMITERS[split_on]
+
+        parts = [p.strip() for p in caption.split(split_char) if p.strip()]
+
+        fixed = parts[:position_start]
+        shufflable = parts[position_start:]
+
+        if len(shufflable) <= 1:
+            if not include_original:
+                logger.warning(
+                    f"caption_shuffle: include_original=False but caption has insufficient tags to shuffle. "
+                    f"Including original anyway: '{caption[:50]}...'"
+                )
+            return [caption]
+
+        results = []
+        if include_original:
+            results.append(caption)
+
+        caption_hash = int(hashlib.md5(caption.encode("utf-8")).hexdigest(), 16) & 0xFFFFFFFF
+
+        for i in range(count):
+            variant_seed = (seed or 0) + caption_hash + i
+            rng = random.Random(variant_seed)
+            shuffled = shufflable.copy()
+            rng.shuffle(shuffled)
+
+            result_parts = fixed + shuffled
+            result = delimiter.join(result_parts)
+
+            if result not in results:
+                results.append(result)
+
+        if not results:
+            return [caption]
+
+        return results
 
 
 class PromptHandler:
@@ -341,11 +429,22 @@ class PromptHandler:
         """
         if caption_strategy is None:
             return None
+
+        # Get shuffle config from StateTracker
+        backend_id = sampler_backend_id or data_backend.id
+        backend_config = StateTracker.get_data_backend_config(backend_id) or {}
+        caption_shuffle_config = backend_config.get("caption_shuffle", {})
+        shuffle_enabled = caption_shuffle_config.get("enable", False)
+
+        # If shuffle enabled, get raw caption without prepend, then shuffle, then prepend
+        effective_prepend = False if shuffle_enabled else prepend_instance_prompt
+        original_instance_prompt = instance_prompt
+
         if caption_strategy == "filename":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_filename(
                 image_path=image_path,
                 use_captions=use_captions,
-                prepend_instance_prompt=prepend_instance_prompt,
+                prepend_instance_prompt=effective_prepend,
                 instance_prompt=instance_prompt,
             )
         elif caption_strategy == "textfile":
@@ -353,7 +452,7 @@ class PromptHandler:
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
                 image_path,
                 use_captions=use_captions,
-                prepend_instance_prompt=prepend_instance_prompt,
+                prepend_instance_prompt=effective_prepend,
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
                 disable_multiline_split=disable_multiline_split,
@@ -363,7 +462,7 @@ class PromptHandler:
             instance_prompt = PromptHandler.prepare_instance_prompt_from_parquet(
                 image_path,
                 use_captions=use_captions,
-                prepend_instance_prompt=prepend_instance_prompt,
+                prepend_instance_prompt=effective_prepend,
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
@@ -372,7 +471,7 @@ class PromptHandler:
             instance_prompt = PromptHandler.prepare_instance_prompt_from_huggingface(
                 image_path,
                 use_captions=use_captions,
-                prepend_instance_prompt=prepend_instance_prompt,
+                prepend_instance_prompt=effective_prepend,
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
@@ -397,6 +496,23 @@ class PromptHandler:
             raise ValueError(
                 f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
             )
+
+        # Apply shuffle expansion if enabled
+        if shuffle_enabled and instance_prompt:
+            caption_values = instance_prompt if isinstance(instance_prompt, list) else [instance_prompt]
+            expanded_captions = []
+            for value in caption_values:
+                shuffled = CaptionShuffler.expand_with_shuffles(value, caption_shuffle_config)
+                # Apply prepend to each shuffled variant if needed
+                if prepend_instance_prompt and original_instance_prompt:
+                    shuffled = [original_instance_prompt + " " + s for s in shuffled]
+                expanded_captions.extend(shuffled)
+            instance_prompt = (
+                expanded_captions
+                if len(expanded_captions) > 1
+                else expanded_captions[0] if expanded_captions else instance_prompt
+            )
+
         return instance_prompt
 
     @staticmethod
@@ -414,6 +530,11 @@ class PromptHandler:
             "Gathering captions for data backend. "
             f"Parameters: {instance_data_dir=} {use_captions=} {prepend_instance_prompt=} {data_backend=} {caption_strategy=} {instance_prompt=}"
         )
+
+        # Get shuffle config from StateTracker
+        backend_config = StateTracker.get_data_backend_config(data_backend.id) or {}
+        caption_shuffle_config = backend_config.get("caption_shuffle", {})
+        shuffle_enabled = caption_shuffle_config.get("enable", False)
         captions = []
         caption_image_paths = []
         images_missing_captions = []
@@ -480,18 +601,21 @@ class PromptHandler:
                 ncols=125,
             ):
                 try:
+                    # If shuffle enabled, get raw caption without prepend, then shuffle, then prepend
+                    effective_prepend = False if shuffle_enabled else prepend_instance_prompt
+
                     if caption_strategy == "filename":
                         caption = PromptHandler.prepare_instance_prompt_from_filename(
                             image_path=str(image_path),
                             use_captions=use_captions,
-                            prepend_instance_prompt=prepend_instance_prompt,
+                            prepend_instance_prompt=effective_prepend,
                             instance_prompt=instance_prompt,
                         )
                     elif caption_strategy == "textfile":
                         caption = PromptHandler.prepare_instance_prompt_from_textfile(
                             image_path,
                             use_captions=use_captions,
-                            prepend_instance_prompt=prepend_instance_prompt,
+                            prepend_instance_prompt=effective_prepend,
                             instance_prompt=instance_prompt,
                             data_backend=data_backend,
                             disable_multiline_split=disable_multiline_split,
@@ -500,7 +624,7 @@ class PromptHandler:
                         caption = PromptHandler.prepare_instance_prompt_from_parquet(
                             image_path,
                             use_captions=use_captions,
-                            prepend_instance_prompt=prepend_instance_prompt,
+                            prepend_instance_prompt=effective_prepend,
                             instance_prompt=instance_prompt,
                             data_backend=data_backend,
                             sampler_backend_id=data_backend.id,
@@ -509,7 +633,7 @@ class PromptHandler:
                         caption = PromptHandler.prepare_instance_prompt_from_huggingface(
                             image_path,
                             use_captions=use_captions,
-                            prepend_instance_prompt=prepend_instance_prompt,
+                            prepend_instance_prompt=effective_prepend,
                             instance_prompt=instance_prompt,
                             data_backend=data_backend,
                             sampler_backend_id=data_backend.id,
@@ -525,6 +649,18 @@ class PromptHandler:
                     images_missing_captions.append(image_path)
                 else:
                     caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
+
+                    # Apply shuffle expansion if enabled
+                    if shuffle_enabled:
+                        expanded_captions = []
+                        for value in caption_values:
+                            shuffled = CaptionShuffler.expand_with_shuffles(value, caption_shuffle_config)
+                            # Apply prepend to each shuffled variant if needed
+                            if prepend_instance_prompt and instance_prompt:
+                                shuffled = [instance_prompt + " " + s for s in shuffled]
+                            expanded_captions.extend(shuffled)
+                        caption_values = expanded_captions
+
                     for value in caption_values:
                         captions.append(value)
                         if return_image_paths:

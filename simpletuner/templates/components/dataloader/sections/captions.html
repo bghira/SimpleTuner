@@ -88,6 +88,87 @@
                     </div>
                 </div>
                 <div class="dataset-subgroup mt-3"
+                     x-show="dataset.caption_strategy && dataset.caption_strategy !== 'instanceprompt'">
+                    <div class="dataset-subgroup-title">Caption Shuffling</div>
+                    <p class="form-text mb-3">
+                        Generate shuffled variants of tag-based captions for data augmentation during text embed caching.
+                    </p>
+                    <div x-effect="if (!dataset.caption_shuffle) dataset.caption_shuffle = {}"></div>
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       :id="`dataset-caption-shuffle-enable-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.caption_shuffle.enable"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label" :for="`dataset-caption-shuffle-enable-${datasetSafeId(dataset)}`">
+                                    Enable shuffling
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Split On</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="dataset.caption_shuffle.split_on"
+                                    @change="markAsUnsaved()"
+                                    :disabled="!dataset.caption_shuffle.enable">
+                                <option value="comma">Comma (default)</option>
+                                <option value="space">Space</option>
+                                <option value="period">Period</option>
+                            </select>
+                            <div class="form-text">Delimiter for splitting caption into tags.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Shuffle Count</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="dataset.caption_shuffle.count"
+                                   @input="markAsUnsaved()"
+                                   :disabled="!dataset.caption_shuffle.enable"
+                                   min="1"
+                                   placeholder="1">
+                            <div class="form-text">Number of shuffled variants per caption.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Position Start</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="dataset.caption_shuffle.position_start"
+                                   @input="markAsUnsaved()"
+                                   :disabled="!dataset.caption_shuffle.enable"
+                                   min="0"
+                                   placeholder="0">
+                            <div class="form-text">Keep first N tags fixed.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Seed</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="dataset.caption_shuffle.seed"
+                                   @input="markAsUnsaved()"
+                                   :disabled="!dataset.caption_shuffle.enable"
+                                   placeholder="Auto (--seed)">
+                            <div class="form-text">Optional seed for determinism.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       :id="`dataset-caption-shuffle-include-original-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.caption_shuffle.include_original"
+                                       @change="markAsUnsaved()"
+                                       :disabled="!dataset.caption_shuffle.enable"
+                                       checked>
+                                <label class="form-check-label" :for="`dataset-caption-shuffle-include-original-${datasetSafeId(dataset)}`">
+                                    Include original
+                                </label>
+                                <div class="form-text">Include unshuffled caption in variants.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dataset-subgroup mt-3"
                      x-show="dataset.caption_strategy === 'parquet' || dataset.metadata_backend === 'parquet'">
                     <div class="dataset-subgroup-title">Parquet Details</div>
                     <div class="row g-3">
