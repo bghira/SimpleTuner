@@ -170,6 +170,20 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Por que**: Permite descarregamento parcial de codificadores de texto quando `--ramtorch_text_encoder` esta habilitado.
 - **Notas**: Aplica-se apenas quando `--ramtorch_text_encoder` esta habilitado.
 
+### `--ramtorch_disable_sync_hooks`
+
+- **O que**: Desativa os hooks de sincronizacao CUDA adicionados apos as camadas RamTorch.
+- **Padrao**: `False` (hooks de sincronizacao habilitados)
+- **Por que**: Os hooks de sincronizacao corrigem condicoes de corrida no sistema de buffering ping-pong do RamTorch que podem causar saidas nao deterministicas. Desativar pode melhorar o desempenho, mas arrisca resultados incorretos.
+- **Notas**: Desative apenas se tiver problemas com os hooks de sincronizacao ou quiser testar sem eles.
+
+### `--ramtorch_disable_extensions`
+
+- **O que**: Aplica RamTorch apenas a camadas Linear, pula Embedding/RMSNorm/LayerNorm/Conv.
+- **Padrao**: `False` (extensoes habilitadas)
+- **Por que**: O SimpleTuner estende o RamTorch alem das camadas Linear para incluir camadas Embedding, RMSNorm, LayerNorm e Conv. Use isso para desativar essas extensoes e descarregar apenas camadas Linear.
+- **Notas**: Pode reduzir a economia de VRAM, mas pode ajudar a depurar problemas com os tipos de camadas estendidas.
+
 ### `--pretrained_model_name_or_path`
 
 - **O que**: Caminho para o modelo pre-treinado ou seu identificador em <https://huggingface.co/models>.
