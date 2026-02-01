@@ -198,6 +198,15 @@
                 return family === 'ace_step';
             },
 
+            get supportsAudioInputs() {
+                // Check if the model supports audio inputs (for video models that can use audio conditioning)
+                const trainer = Alpine.store('trainer');
+                if (!trainer) return false;
+                const context = trainer.modelContext || {};
+                const capabilities = context.capabilities || {};
+                return Boolean(capabilities.supports_audio_inputs || context.supportsAudioInputs);
+            },
+
             get hasPrimaryDatasetAvailable() {
                 const excludeId = this.editingQueuedDataset ? this.currentDataset.id : null;
                 const queueHas = this.datasetQueue.some(dataset => this.isPrimaryDataset(dataset, excludeId));

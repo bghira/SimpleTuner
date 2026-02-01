@@ -71,7 +71,7 @@
                 </button>
                 <button type="button"
                         :class="{'active': modalTab === 'audio'}"
-                        x-show="editingDataset.dataset_type === 'audio'"
+                        x-show="editingDataset.dataset_type === 'audio' || (editingDataset.dataset_type === 'video' && supportsAudioInputs)"
                         @click="modalTab = 'audio'">
                     <i class="fas fa-music"></i>
                     <span>Audio</span>
