@@ -3268,6 +3268,13 @@ class FactoryRegistry:
         """Process text embeddings for captions."""
         if not self._uses_text_embeddings_cache():
             return
+        # Skip text embed processing for audio datasets that source from video.
+        # These datasets inherit captions from their parent dataset during training
+        # (see MultiAspectSampler.__getitem__ where source_dataset_id triggers caption lookup from parent).
+        audio_config = backend.get("audio", {})
+        if audio_config.get("source_from_video", False):
+            info_log(f"(id={init_backend['id']}) Skipping text embedding processing for source_from_video audio dataset.")
+            return
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
         # caption_strategy is stored in init_backend["config"], not directly in backend
         caption_strategy = init_backend["config"].get("caption_strategy")
