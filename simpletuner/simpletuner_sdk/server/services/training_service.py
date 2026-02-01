@@ -832,6 +832,14 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         "--webhook_config",
     }
 
+    # Fields that must always be saved regardless of preserve_defaults.
+    # These fields should be explicit in the config for clarity and to avoid
+    # any ambiguity about what value is being used during training.
+    always_save_fields = {
+        "gradient_checkpointing",
+        "--gradient_checkpointing",
+    }
+
     # Build set of valid field names from registry for validation
     valid_field_names = set()
     for registry_field in lazy_field_registry.get_all_fields():
@@ -855,8 +863,9 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
         arg_lookup = key if key.startswith("--") else f"--{clean_key}"
         is_required_field = _is_required_field(arg_lookup)
+        must_always_save = key in always_save_fields or clean_key in always_save_fields
 
-        if save_options.get("preserve_defaults", False) and not is_required_field:
+        if save_options.get("preserve_defaults", False) and not is_required_field and not must_always_save:
             default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
             # Only save if value differs from default - always prune values matching defaults
             # for consistent behavior (fixes inconsistent pruning of train_batch_size: 4)
