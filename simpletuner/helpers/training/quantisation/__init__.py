@@ -198,9 +198,9 @@ def _build_quanto_fp8uz_config(
 
 
 TORCHAO_PIPELINE_PRESET_MAP = {
-    "int4-torchao": "int4wo",
-    "int8-torchao": "int8wo",
-    "fp8-torchao": "float8wo_e4m3",
+    "int4-torchao": "int4_weight_only",
+    "int8-torchao": "int8_weight_only",
+    "fp8-torchao": "float8_weight_only",
 }
 QUANTO_PIPELINE_PRESET_MAP = {
     "int8-quanto": "int8",
