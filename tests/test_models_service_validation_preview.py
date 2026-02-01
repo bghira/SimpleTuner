@@ -38,6 +38,35 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         self.assertFalse(capabilities.get("supports_lyrics"))
         self.assertFalse(capabilities.get("is_audio_model"))
 
+    def test_ltxvideo2_supports_audio_inputs(self):
+        """LTX-Video 2 should support audio inputs for audio conditioning."""
+        details = self.service.get_model_details("ltxvideo2")
+        capabilities = details["capabilities"]
+        self.assertTrue(capabilities.get("supports_audio_inputs"))
+        # LTX-2 supports audio but doesn't require S2V datasets
+        self.assertFalse(capabilities.get("requires_s2v_datasets"))
+
+    def test_wan_s2v_requires_s2v_datasets(self):
+        """Wan S2V should require S2V datasets and support audio inputs."""
+        details = self.service.get_model_details("wan_s2v")
+        capabilities = details["capabilities"]
+        self.assertTrue(capabilities.get("supports_audio_inputs"))
+        self.assertTrue(capabilities.get("requires_s2v_datasets"))
+
+    def test_sdxl_does_not_support_audio_inputs(self):
+        """SDXL should not support audio inputs."""
+        details = self.service.get_model_details("sdxl")
+        capabilities = details["capabilities"]
+        self.assertFalse(capabilities.get("supports_audio_inputs"))
+        self.assertFalse(capabilities.get("requires_s2v_datasets"))
+
+    def test_flux_does_not_support_audio_inputs(self):
+        """Flux should not support audio inputs."""
+        details = self.service.get_model_details("flux")
+        capabilities = details["capabilities"]
+        self.assertFalse(capabilities.get("supports_audio_inputs"))
+        self.assertFalse(capabilities.get("requires_s2v_datasets"))
+
 
 if __name__ == "__main__":
     unittest.main()
