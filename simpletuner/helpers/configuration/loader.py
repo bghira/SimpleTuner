@@ -138,14 +138,13 @@ def load_config(args: dict = None, exit_on_error: bool = False):
                 is_numeric = False
             if value is not None and value != "":
                 if isinstance(value, str) and value.lower() in ["true", "false"]:
-                    if value.lower() == "true":
-                        list_arguments.append(f"{arg_name}")
-                    else:
-                        continue
+                    # Pass explicit boolean value to override argparse defaults
+                    list_arguments.append(f"{arg_name}={value.lower()}")
                 elif value is False:
-                    continue
+                    # Pass explicit false to override argparse defaults
+                    list_arguments.append(f"{arg_name}=false")
                 elif value is True:
-                    list_arguments.append(f"{arg_name}")
+                    list_arguments.append(f"{arg_name}=true")
                 elif is_numeric:
                     list_arguments.append(f"{arg_name}={value}")
                 else:
