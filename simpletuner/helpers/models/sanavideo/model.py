@@ -76,6 +76,9 @@ class SanaVideo(VideoModelFoundation):
         },
     }
 
+    def requires_special_scheduler_setup(self) -> bool:
+        return True
+
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
         """Adjust frame count to satisfy frames % 8 == 1 constraint."""
