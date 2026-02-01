@@ -476,6 +476,18 @@ class CallbackService:
         # Update unified JobStore for Job Queue visibility
         _update_job_store_status(job_id, "failed")
 
+    @staticmethod
+    def _extract_event_status(event: CallbackEvent) -> str | None:
+        status = None
+        if isinstance(event.data, Mapping):
+            status = event.data.get("status") or event.data.get("state")
+        if not status and isinstance(event.raw, Mapping):
+            status = event.raw.get("status") or event.raw.get("state")
+        if isinstance(status, str):
+            normalized = status.strip().lower()
+            return normalized or None
+        return None
+
     def _update_training_state(self, event: CallbackEvent) -> None:
         job_id = self._derive_job_id(event)
         previous_job_id = APIState.get_state("current_job_id")
@@ -530,9 +542,14 @@ class CallbackService:
             self._handle_summary_event(event, job_id)
             return
 
-        if event.type == EventType.ERROR or event.severity in {EventSeverity.ERROR, EventSeverity.CRITICAL}:
+        if event.type == EventType.ERROR:
             self._handle_error_event(event, job_id)
             return
+        if event.severity in {EventSeverity.ERROR, EventSeverity.CRITICAL}:
+            status = self._extract_event_status(event)
+            if status in {"failed", "error", "fatal", "crashed"}:
+                self._handle_error_event(event, job_id)
+                return
 
         if event.type in {EventType.CHECKPOINT, EventType.VALIDATION}:
             APIState.set_state("training_status", "running")

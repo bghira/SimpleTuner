@@ -805,6 +805,46 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                     )
                 )
 
+            with self.subTest("notification_error_does_not_stop_training"):
+                driver.execute_script(
+                    """
+                    if (window.eventHandler && typeof window.eventHandler.processProcessKeeperEvents === 'function') {
+                        window.eventHandler.processProcessKeeperEvents([{
+                            id: 'notif-err-1',
+                            type: 'notification',
+                            severity: 'error',
+                            message: 'Upload failed due to quota',
+                            job_id: 'harness-job',
+                            data: { status: 'uploading_model' }
+                        }]);
+                    }
+                    """
+                )
+
+                WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script("return document.body && document.body.dataset.trainingActive === 'true';")
+                )
+
+            with self.subTest("notification_error_with_failure_status_stops_training"):
+                driver.execute_script(
+                    """
+                    if (window.eventHandler && typeof window.eventHandler.processProcessKeeperEvents === 'function') {
+                        window.eventHandler.processProcessKeeperEvents([{
+                            id: 'notif-err-2',
+                            type: 'notification',
+                            severity: 'error',
+                            message: 'Training failed',
+                            job_id: 'harness-job',
+                            data: { status: 'failed' }
+                        }]);
+                    }
+                    """
+                )
+
+                WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script("return document.body && document.body.dataset.trainingActive === 'false';")
+                )
+
             driver.execute_script(
                 dispatch_script,
                 {

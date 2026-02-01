@@ -149,9 +149,13 @@ class EventHandler {
                     }
 
                     const severity = String(payload.severity || '').toLowerCase();
+                    const statusValue = String(payload.status || payload.state || payload.data?.status || '').toLowerCase();
+                    const isFailureStatus = ['failed', 'error', 'fatal', 'crashed'].includes(statusValue);
                     let messageType = 'info';
-                    if (severity === 'error' || severity === 'critical' || severity === 'fatal') {
+                    if (severity === 'critical' || severity === 'fatal' || (severity === 'error' && isFailureStatus)) {
                         messageType = 'fatal_error';
+                    } else if (severity === 'error') {
+                        messageType = 'error';
                     } else if (severity === 'warning') {
                         messageType = 'warning';
                     } else if (severity === 'success') {
@@ -1762,9 +1766,13 @@ class EventHandler {
                 }
             } else if (event.type === 'notification') {
                 const severity = String(event.severity || '').toLowerCase();
-                if (severity === 'error' || severity === 'fatal') {
+                const statusValue = String(event.data?.status || event.data?.state || event.status || '').toLowerCase();
+                const isFailureStatus = ['failed', 'error', 'fatal', 'crashed'].includes(statusValue);
+                if (severity === 'critical' || severity === 'fatal' || (severity === 'error' && isFailureStatus)) {
                     baseEvent.message_type = 'fatal_error';
                     this.notifyTrainingState('error', { ...event.data, job_id: jobId, message: event.message || event.title }, { resetProgress: true });
+                } else if (severity === 'error') {
+                    baseEvent.message_type = 'error';
                 } else if (severity === 'warning') {
                     baseEvent.message_type = 'warning';
                 } else if (severity === 'success') {
