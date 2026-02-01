@@ -1740,6 +1740,40 @@ class Validation:
         self.current_epoch = StateTracker.get_epoch()
         self.current_epoch_step = StateTracker.get_epoch_step()
 
+    def _epoch_relative_step(self, steps_per_epoch: int) -> int | None:
+        """
+        Return the 1-indexed step within the current epoch based on global_step.
+
+        When datasets are scheduled to start at different epochs, the number of
+        steps per epoch changes. In that case, compute the epoch start step by
+        summing prior epochs using the schedule, then offset global_step.
+        """
+        if steps_per_epoch <= 0:
+            return None
+        try:
+            current_epoch = int(self.current_epoch or StateTracker.get_epoch() or 1)
+        except Exception:
+            return None
+        try:
+            global_step = int(self.global_step or StateTracker.get_global_step() or 0)
+        except Exception:
+            global_step = 0
+
+        epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
+        if epoch_batches_schedule and isinstance(epoch_batches_schedule, dict):
+            epoch_start_step = 0
+            grad_accum = max(int(getattr(self.config, "gradient_accumulation_steps", 1) or 1), 1)
+            for e in range(1, current_epoch):
+                active_batches = sum(
+                    batches for start_epoch, batches in epoch_batches_schedule.items() if int(start_epoch) <= e
+                )
+                epoch_start_step += math.ceil(active_batches / grad_accum)
+        else:
+            epoch_start_step = max(0, (current_epoch - 1) * steps_per_epoch)
+
+        epoch_relative_step = max(0, global_step - epoch_start_step)
+        return int(epoch_relative_step)
+
     def would_validate(
         self,
         step: int = 0,
@@ -1912,15 +1946,13 @@ class Validation:
 
         epoch_step_ready = False
         num_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", None)
-        if num_steps_per_epoch is not None and self.current_epoch_step is not None and self.current_epoch_step > 0:
+        if num_steps_per_epoch is not None:
             try:
                 steps_per_epoch_int = int(num_steps_per_epoch)
                 if steps_per_epoch_int > 0:
-                    # Calculate epoch-relative step to handle epoch boundaries correctly.
-                    # This converts global step to position within the current epoch (1-indexed).
-                    # Example with 244 steps/epoch: step 244 -> 244, step 245 -> 1, step 488 -> 244
-                    epoch_relative_step = ((self.current_epoch_step - 1) % steps_per_epoch_int) + 1
-                    epoch_step_ready = epoch_relative_step == steps_per_epoch_int
+                    epoch_relative_step = self._epoch_relative_step(steps_per_epoch_int)
+                    if epoch_relative_step is not None:
+                        epoch_step_ready = epoch_relative_step == steps_per_epoch_int
             except (TypeError, ValueError):
                 epoch_step_ready = False
 

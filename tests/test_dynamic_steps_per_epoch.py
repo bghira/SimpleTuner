@@ -229,7 +229,11 @@ class TestValidationWithDynamicStepsPerEpoch(unittest.TestCase):
         - Epoch 2: steps 101-400 (300 steps, validation at 400)
         """
         # Epoch 1 completed
-        validation = self._create_validation(num_update_steps_per_epoch=300)
+        validation = self._create_validation(
+            num_update_steps_per_epoch=300,
+            epoch_batches_schedule={1: 100, 2: 200},
+            gradient_accumulation_steps=1,
+        )
         validation._epoch_validations_completed.add(1)
         prompts = [{"prompt": "test"}]
 
@@ -246,6 +250,34 @@ class TestValidationWithDynamicStepsPerEpoch(unittest.TestCase):
         )
 
         self.assertTrue(should_validate, "Validation should trigger at end of epoch 2 (step 400 = 100 + 300)")
+
+    def test_validation_uses_epoch_start_step_with_schedule(self):
+        """
+        With dynamic epoch schedules, validation should compute epoch-relative
+        step from global_step using the epoch start step.
+
+        Scenario adapted from issue #2523 / #2508:
+        - Epochs 1-4: 98 steps each
+        - Epoch 5+: 126 steps each
+
+        End of epoch 5 should be global step 392 + 126 = 518.
+        """
+        validation = self._create_validation(
+            num_update_steps_per_epoch=126,
+            epoch_batches_schedule={1: 98, 5: 28},
+            gradient_accumulation_steps=1,
+        )
+        prompts = [{"prompt": "test"}]
+
+        validation.global_step = 518
+        validation.current_epoch_step = 518  # Global step, as produced by iterator
+        validation.current_epoch = 5
+
+        should_validate = validation.should_perform_intermediary_validation(
+            step=518, validation_prompts=prompts, validation_type="intermediary"
+        )
+
+        self.assertTrue(should_validate, "Validation should trigger at end of epoch 5 with dynamic schedule")
 
 
 class TestIssue2483Scenario(unittest.TestCase):
@@ -297,6 +329,7 @@ class TestIssue2483Scenario(unittest.TestCase):
             validation_step_interval=None,
             num_update_steps_per_epoch=epoch_1_steps,  # Correct for epoch 1
             gradient_accumulation_steps=1,
+            epoch_batches_schedule={1: epoch_1_steps, 2: epoch_2_steps - epoch_1_steps},
         )
         validation._pending_epoch_validation = None
         validation._epoch_validations_completed = set()
