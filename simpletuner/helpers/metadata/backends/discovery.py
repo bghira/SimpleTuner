@@ -622,6 +622,22 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
             num_channels, num_samples = waveform.shape[0], waveform.shape[1]
             duration_seconds = float(num_samples) / float(sample_rate) if sample_rate else None
+
+            # For source_from_video, compute target duration based on video num_frames/framerate
+            # to match what _align_audio_waveform_to_video will do during VAE caching
+            bucket_duration = duration_seconds
+            if source_from_video:
+                source_dataset_id = self.dataset_config.get("source_dataset_id") or self.audio_config.get(
+                    "source_dataset_id"
+                )
+                if source_dataset_id:
+                    source_config = StateTracker.get_data_backend_config(data_backend_id=source_dataset_id) or {}
+                    video_config = source_config.get("video") or {}
+                    target_num_frames = video_config.get("num_frames")
+                    fps = getattr(StateTracker.get_args(), "framerate", None)
+                    if target_num_frames and fps:
+                        bucket_duration = float(target_num_frames) / float(fps)
+
             audio_metadata = self._build_audio_metadata_entry(
                 sample_path=image_path_str,
                 sample_rate=sample_rate,
@@ -636,16 +652,16 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         audio_metadata[key] = value
 
             max_duration = self.audio_max_duration_seconds
-            if max_duration is not None and duration_seconds and duration_seconds > max_duration:
+            if max_duration is not None and bucket_duration and bucket_duration > max_duration:
                 logger.debug(
-                    f"Audio sample {image_path_str} duration {duration_seconds:.2f}s exceeds "
+                    f"Audio sample {image_path_str} duration {bucket_duration:.2f}s exceeds "
                     f"limit {max_duration:.2f}s. Skipping."
                 )
                 skipped = statistics.setdefault("skipped", {})
                 skipped["too_long"] = skipped.get("too_long", 0) + 1
                 return aspect_ratio_bucket_indices
 
-            bucket_key, truncated_duration = self._compute_audio_bucket(duration_seconds)
+            bucket_key, truncated_duration = self._compute_audio_bucket(bucket_duration)
             audio_metadata["original_duration_seconds"] = duration_seconds
             if truncated_duration is not None:
                 audio_metadata["duration_seconds"] = truncated_duration
