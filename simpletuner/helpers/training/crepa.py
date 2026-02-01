@@ -826,8 +826,6 @@ class UrepaRegularizer:
 
         For efficiency, we compute pairwise similarities within each sample.
         """
-        b, n, d = projected.shape
-
         # Compute pairwise similarity matrices
         # projected @ projected.T gives (B, N, N) similarity matrix
         proj_sim = torch.bmm(projected, projected.transpose(1, 2))  # (B, N, N)
@@ -875,8 +873,6 @@ class UrepaRegularizer:
         if pixels.ndim == 5:
             # Video: (B, T, C, H, W) -> (B, C, H, W) using first frame
             pixels = pixels[:, 0]
-
-        b, c, h, w = pixels.shape
 
         # Resize to encoder input size
         pixels = F.interpolate(
