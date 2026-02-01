@@ -105,6 +105,7 @@ class CPUBouncingEmbedding(nn.Module):
         device="cuda",
         dtype=None,
         _weight=None,
+        embed_scale: float = None,
     ):
         super().__init__()
         self.num_embeddings = num_embeddings
@@ -128,6 +129,12 @@ class CPUBouncingEmbedding(nn.Module):
             nn.init.normal_(self.weight)
 
         self.weight.is_ramtorch = True
+
+        # Support for scaled word embeddings (e.g., Gemma3TextScaledWordEmbedding)
+        if embed_scale is not None:
+            self.register_buffer("embed_scale", torch.tensor(embed_scale), persistent=False)
+        else:
+            self.embed_scale = None
 
     def _apply(self, fn):
         """Override _apply to allow dtype changes but prevent device moves."""
@@ -157,7 +164,7 @@ class CPUBouncingEmbedding(nn.Module):
             autocast_dtype = torch.get_autocast_gpu_dtype()
             weight_gpu = to_stochastic(weight_gpu, autocast_dtype, device=self.device)
 
-        return F.embedding(
+        output = F.embedding(
             input_ids,
             weight_gpu,
             padding_idx=self.padding_idx,
@@ -166,6 +173,12 @@ class CPUBouncingEmbedding(nn.Module):
             scale_grad_by_freq=self.scale_grad_by_freq,
             sparse=self.sparse,
         )
+
+        # Apply embed_scale if present (for scaled word embeddings like Gemma3)
+        if self.embed_scale is not None:
+            output = output * self.embed_scale.to(output.dtype)
+
+        return output
 
 
 class CPUBouncingConv2d(nn.Module):
@@ -194,7 +207,13 @@ class CPUBouncingConv2d(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
         self.stride = stride if isinstance(stride, tuple) else (stride, stride)
-        self.padding = padding if isinstance(padding, tuple) else (padding, padding)
+        # padding can be int, tuple, or string ('valid', 'same')
+        if isinstance(padding, str):
+            self.padding = padding
+        elif isinstance(padding, tuple):
+            self.padding = padding
+        else:
+            self.padding = (padding, padding)
         self.dilation = dilation if isinstance(dilation, tuple) else (dilation, dilation)
         self.groups = groups
         self.padding_mode = padding_mode
@@ -301,7 +320,13 @@ class CPUBouncingConv3d(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size, kernel_size)
         self.stride = stride if isinstance(stride, tuple) else (stride, stride, stride)
-        self.padding = padding if isinstance(padding, tuple) else (padding, padding, padding)
+        # padding can be int, tuple, or string ('valid', 'same')
+        if isinstance(padding, str):
+            self.padding = padding
+        elif isinstance(padding, tuple):
+            self.padding = padding
+        else:
+            self.padding = (padding, padding, padding)
         self.dilation = dilation if isinstance(dilation, tuple) else (dilation, dilation, dilation)
         self.groups = groups
         self.padding_mode = padding_mode
@@ -527,12 +552,16 @@ class CPUBouncingRMSNorm(nn.Module):
         return self
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Do all computations in float32 for precision (matches Gemma3RMSNorm behavior)
+        # Only convert back to original dtype at the very end
+        original_dtype = x.dtype
+        x_float = x.float()
         dims = tuple(range(-len(self.normalized_shape), 0))
-        variance = x.float().pow(2).mean(dim=dims, keepdim=True)
-        output = x * torch.rsqrt(variance + self.eps).to(dtype=x.dtype)
+        variance = x_float.pow(2).mean(dim=dims, keepdim=True)
+        output = x_float * torch.rsqrt(variance + self.eps)
 
         if not self.elementwise_affine:
-            return output
+            return output.to(dtype=original_dtype)
 
         state = _get_device_state(self.device)
         transfer_stream = state["transfer_stream"]
@@ -553,12 +582,12 @@ class CPUBouncingRMSNorm(nn.Module):
         if self.use_weight_addition:
             output = output * (1.0 + weight_gpu.float())
         else:
-            output = output * weight_gpu
+            output = output * weight_gpu.float()
 
         if bias_gpu is not None:
-            output = output + bias_gpu
+            output = output + bias_gpu.float()
 
-        return output.to(dtype=x.dtype)
+        return output.to(dtype=original_dtype)
 
 
 def _is_rmsnorm_module(module: nn.Module) -> bool:
@@ -603,6 +632,11 @@ def replace_module_with_ramtorch(
     for name, child in list(module.named_children()):
         # Check for Embedding
         if include_embedding and isinstance(child, nn.Embedding) and not isinstance(child, CPUBouncingEmbedding):
+            # Extract embed_scale from scaled word embeddings (e.g., Gemma3TextScaledWordEmbedding)
+            embed_scale = None
+            if hasattr(child, "embed_scale") and child.embed_scale is not None:
+                embed_scale = child.embed_scale.item() if child.embed_scale.numel() == 1 else child.embed_scale.tolist()
+
             new_layer = CPUBouncingEmbedding(
                 num_embeddings=child.num_embeddings,
                 embedding_dim=child.embedding_dim,
@@ -614,6 +648,7 @@ def replace_module_with_ramtorch(
                 device=device,
                 dtype=child.weight.dtype,
                 _weight=child.weight.data,
+                embed_scale=embed_scale,
             )
             setattr(module, name, new_layer)
             replaced += 1
@@ -715,3 +750,42 @@ def replace_module_with_ramtorch(
         )
 
     return replaced
+
+
+def add_ramtorch_sync_hooks(module: nn.Module) -> list:
+    """
+    Add synchronization hooks after ramtorch layers to fix race conditions.
+
+    Ramtorch uses ping-pong buffering with only 2 buffers, which can cause
+    race conditions when more than 2 consecutive layers are processed.
+    This adds CUDA synchronization after each ramtorch layer to ensure
+    deterministic execution.
+
+    Args:
+        module: Root module to add hooks to
+
+    Returns:
+        List of hook handles (call .remove() on each to remove hooks)
+    """
+    hooks = []
+
+    def make_sync_hook():
+        def hook(mod, inp, out):
+            torch.cuda.synchronize()
+            return out
+
+        return hook
+
+    for name, child in module.named_modules():
+        # Add sync hooks after all ramtorch layers
+        if getattr(child, "is_ramtorch", False) or "CPUBouncing" in child.__class__.__name__:
+            h = child.register_forward_hook(make_sync_hook())
+            hooks.append(h)
+
+    return hooks
+
+
+def remove_ramtorch_sync_hooks(hooks: list) -> None:
+    """Remove synchronization hooks added by add_ramtorch_sync_hooks."""
+    for h in hooks:
+        h.remove()
