@@ -416,6 +416,42 @@ def register_training_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="ramtorch_disable_sync_hooks",
+            arg_name="--ramtorch_disable_sync_hooks",
+            ui_label="Disable RamTorch Sync Hooks",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Disable CUDA synchronization hooks added after RamTorch layers.",
+            tooltip="Sync hooks fix race conditions in RamTorch but add overhead. Only disable if you experience issues.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=12,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_disable_sync_hooks",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_disable_extensions",
+            arg_name="--ramtorch_disable_extensions",
+            ui_label="Disable RamTorch Extensions",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Only apply RamTorch to Linear layers, skip Embedding/RMSNorm/LayerNorm/Conv.",
+            tooltip="Use this to disable SimpleTuner's RamTorch extensions for Embedding, RMSNorm, LayerNorm, and Conv layers.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=13,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_disable_extensions",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="group_offload_type",
             arg_name="--group_offload_type",
             ui_label="Group Offload Granularity",

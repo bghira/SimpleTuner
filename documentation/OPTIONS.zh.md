@@ -171,6 +171,20 @@ simpletuner configure config/foo/config.json
 - **原因**：当启用 `--ramtorch_text_encoder` 时，允许部分卸载文本编码器。
 - **说明**：仅在启用 `--ramtorch_text_encoder` 时适用。
 
+### `--ramtorch_disable_sync_hooks`
+
+- **内容**：禁用 RamTorch 层后添加的 CUDA 同步钩子。
+- **默认**：`False`（同步钩子已启用）
+- **原因**：同步钩子修复了 RamTorch 乒乓缓冲系统中可能导致非确定性输出的竞争条件。禁用可能提高性能，但有结果不正确的风险。
+- **说明**：仅在同步钩子出现问题或想要测试时才禁用。
+
+### `--ramtorch_disable_extensions`
+
+- **内容**：仅对 Linear 层应用 RamTorch，跳过 Embedding/RMSNorm/LayerNorm/Conv。
+- **默认**：`False`（扩展已启用）
+- **原因**：SimpleTuner 将 RamTorch 扩展到 Linear 层之外，包括 Embedding、RMSNorm、LayerNorm 和 Conv 层。使用此选项禁用这些扩展，仅卸载 Linear 层。
+- **说明**：可能减少显存节省，但有助于调试扩展层类型的问题。
+
 ### `--pretrained_model_name_or_path`
 
 - **内容**：预训练模型路径或 <https://huggingface.co/models> 上的标识符。

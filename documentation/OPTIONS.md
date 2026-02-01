@@ -170,6 +170,20 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Allows partial offloading of text encoders when `--ramtorch_text_encoder` is enabled.
 - **Notes**: Only applies when `--ramtorch_text_encoder` is enabled.
 
+### `--ramtorch_disable_sync_hooks`
+
+- **What**: Disable CUDA synchronization hooks that are added after RamTorch layers.
+- **Default**: `False` (sync hooks enabled)
+- **Why**: Sync hooks fix race conditions in RamTorch's ping-pong buffering system that can cause non-deterministic outputs. Disabling may improve performance but risks incorrect results.
+- **Notes**: Only disable if you experience issues with sync hooks or want to test without them.
+
+### `--ramtorch_disable_extensions`
+
+- **What**: Only apply RamTorch to Linear layers, skip Embedding/RMSNorm/LayerNorm/Conv.
+- **Default**: `False` (extensions enabled)
+- **Why**: SimpleTuner extends RamTorch beyond Linear layers to include Embedding, RMSNorm, LayerNorm, and Conv layers. Use this to disable those extensions and only offload Linear layers.
+- **Notes**: May reduce VRAM savings but can help debug issues with the extended layer types.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from <https://huggingface.co/models>.

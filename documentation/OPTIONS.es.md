@@ -170,6 +170,20 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Por qué**: Permite la descarga parcial de codificadores de texto cuando `--ramtorch_text_encoder` está habilitado.
 - **Notas**: Solo aplica cuando `--ramtorch_text_encoder` está habilitado.
 
+### `--ramtorch_disable_sync_hooks`
+
+- **Qué**: Desactiva los hooks de sincronización CUDA que se añaden después de las capas RamTorch.
+- **Predeterminado**: `False` (hooks de sincronización habilitados)
+- **Por qué**: Los hooks de sincronización corrigen condiciones de carrera en el sistema de buffering ping-pong de RamTorch que pueden causar salidas no deterministas. Desactivarlos puede mejorar el rendimiento pero arriesga resultados incorrectos.
+- **Notas**: Solo desactivar si experimentas problemas con los hooks de sincronización o quieres probar sin ellos.
+
+### `--ramtorch_disable_extensions`
+
+- **Qué**: Solo aplica RamTorch a capas Linear, omite Embedding/RMSNorm/LayerNorm/Conv.
+- **Predeterminado**: `False` (extensiones habilitadas)
+- **Por qué**: SimpleTuner extiende RamTorch más allá de las capas Linear para incluir capas Embedding, RMSNorm, LayerNorm y Conv. Usa esto para desactivar esas extensiones y solo descargar capas Linear.
+- **Notas**: Puede reducir el ahorro de VRAM pero puede ayudar a depurar problemas con los tipos de capas extendidas.
+
 ### `--pretrained_model_name_or_path`
 
 - **Qué**: Ruta al modelo preentrenado o su identificador en <https://huggingface.co/models>.

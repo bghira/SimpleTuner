@@ -3043,6 +3043,14 @@ class ModelFoundation(ABC):
             return None
         return float(percent) if percent < 100 else None
 
+    def _ramtorch_sync_hooks_enabled(self) -> bool:
+        """Check if sync hooks should be added to ramtorch layers."""
+        return not bool(getattr(self.config, "ramtorch_disable_sync_hooks", False))
+
+    def _ramtorch_extensions_enabled(self) -> bool:
+        """Check if ramtorch extensions (Embedding, RMSNorm, etc.) should be used."""
+        return not bool(getattr(self.config, "ramtorch_disable_extensions", False))
+
     def _apply_ramtorch_layers(
         self,
         module,
@@ -3066,8 +3074,13 @@ class ModelFoundation(ABC):
         if module is None or not self._ramtorch_enabled():
             return 0
 
+        # Check if extensions are disabled via --ramtorch_disable_extensions
+        use_full_ramtorch = full_ramtorch and self._ramtorch_extensions_enabled()
+        # Check if sync hooks are enabled (default True, disabled via --ramtorch_disable_sync_hooks)
+        use_sync_hooks = self._ramtorch_sync_hooks_enabled()
+
         try:
-            if full_ramtorch:
+            if use_full_ramtorch:
                 # Replace all supported layer types with bouncing versions
                 counts = ramtorch_utils.replace_all_layers_with_ramtorch(
                     module,
@@ -3077,14 +3090,17 @@ class ModelFoundation(ABC):
                     include_conv=True,
                     include_layernorm=True,
                     percent=percent,
+                    add_sync_hooks=use_sync_hooks,
                 )
                 total = counts.get("linear", 0) + counts.get("other", 0)
+                sync_hooks = counts.get("sync_hooks", [])
                 if total:
                     logger.info(
-                        "Applied full RamTorch to %s: %d Linear, %d other layers.",
+                        "Applied full RamTorch to %s: %d Linear, %d other layers%s.",
                         component_label,
                         counts.get("linear", 0),
                         counts.get("other", 0),
+                        f", {len(sync_hooks)} sync hooks" if use_sync_hooks else "",
                     )
                 # Log diagnostic info about ramtorch conversion
                 ramtorch_params = 0
@@ -3133,7 +3149,18 @@ class ModelFoundation(ABC):
                     percent=percent,
                 )
                 if replaced:
-                    logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
+                    if use_sync_hooks:
+                        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_sync_hooks
+
+                        hooks = add_ramtorch_sync_hooks(module)
+                        logger.info(
+                            "Applied RamTorch to %s Linear layers on %s, %d sync hooks.",
+                            replaced,
+                            component_label,
+                            len(hooks),
+                        )
+                    else:
+                        logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
 
                 # Move non-ramtorch layers to GPU so they can process GPU activations
                 moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())

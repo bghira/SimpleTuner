@@ -171,6 +171,20 @@ simpletuner configure config/foo/config.json
 - **理由**: `--ramtorch_text_encoder` 有効時にテキストエンコーダーの部分的なオフロードを可能にします。
 - **注記**: `--ramtorch_text_encoder` が有効な場合のみ適用。
 
+### `--ramtorch_disable_sync_hooks`
+
+- **内容**: RamTorch レイヤーの後に追加される CUDA 同期フックを無効にします。
+- **既定**: `False`（同期フック有効）
+- **理由**: 同期フックは RamTorch のピンポンバッファリングシステムにおける競合状態を修正し、非決定的な出力を防ぎます。無効にするとパフォーマンスが向上する可能性がありますが、不正確な結果のリスクがあります。
+- **注記**: 同期フックに問題がある場合やテストする場合にのみ無効にしてください。
+
+### `--ramtorch_disable_extensions`
+
+- **内容**: Linear レイヤーのみに RamTorch を適用し、Embedding/RMSNorm/LayerNorm/Conv をスキップします。
+- **既定**: `False`（拡張機能有効）
+- **理由**: SimpleTuner は RamTorch を Linear レイヤー以外に拡張し、Embedding、RMSNorm、LayerNorm、Conv レイヤーを含めます。この拡張機能を無効にして Linear レイヤーのみをオフロードするにはこのオプションを使用します。
+- **注記**: VRAM 節約が減少する可能性がありますが、拡張レイヤータイプの問題をデバッグするのに役立ちます。
+
 ### `--pretrained_model_name_or_path`
 
 - **内容**: 事前学習済みモデルのパス、または <https://huggingface.co/models> の識別子。
