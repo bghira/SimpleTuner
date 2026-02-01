@@ -630,6 +630,217 @@ class TrainingServiceTests(unittest.TestCase):
             "adam_beta2", bundle.save_config, "adam_beta2 wasn't in saved config and matches default, should be excluded"
         )
 
+    def test_always_save_fields_bypass_preserve_defaults(self) -> None:
+        """
+        Test that fields in always_save_fields are saved even when they match defaults.
+
+        gradient_checkpointing is critical for training and should always be explicitly
+        saved to ensure the trainer uses the expected value.
+        """
+
+        class MockField:
+            def __init__(self, name, arg_name, webui_only=False):
+                self.name = name
+                self.arg_name = arg_name
+                self.webui_only = webui_only
+
+        mock_fields = [
+            MockField("num_processes", "--num_processes"),
+            MockField("output_dir", "--output_dir"),
+            MockField("learning_rate", "--learning_rate"),
+            MockField("model_family", "--model_family"),
+            MockField("gradient_checkpointing", "--gradient_checkpointing"),
+        ]
+
+        field_defaults = {
+            "--gradient_checkpointing": True,  # Default is True
+            "--learning_rate": 1e-4,
+            "--num_processes": 1,
+            "--output_dir": "/base/output",
+        }
+
+        # Minimal saved config
+        stored_config = {
+            "learning_rate": 1e-4,
+        }
+
+        defaults = WebUIDefaults(
+            accelerate_overrides={"mode": "disabled"},
+            auto_preserve_defaults=True,  # Enable preserve_defaults
+        )
+
+        # Form data with gradient_checkpointing=True (matches default)
+        form_data = {
+            "--gradient_checkpointing": True,  # Matches default, but should still be saved
+            "--learning_rate": 1e-4,  # Matches default, should be excluded
+        }
+
+        store = DummyConfigStore(stored_config)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(training_service, "get_webui_state", return_value=(None, defaults)))
+            stack.enter_context(patch.object(training_service, "get_config_store", return_value=store))
+            stack.enter_context(patch.object(training_service, "get_all_field_defaults", return_value=field_defaults))
+            stack.enter_context(
+                patch.object(
+                    training_service,
+                    "detect_gpu_inventory",
+                    return_value={
+                        "detected": True,
+                        "backend": "cuda",
+                        "devices": [{"index": 0}],
+                        "count": 1,
+                        "optimal_processes": 1,
+                        "capabilities": {
+                            "supports_cuda": True,
+                            "supports_mps": False,
+                            "supports_rocm": False,
+                            "supports_deepspeed": True,
+                            "supports_fsdp": True,
+                        },
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    training_service.ConfigsService,
+                    "normalize_form_to_config",
+                    side_effect=lambda form, *_, **__: dict(form),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    training_service.ConfigsService,
+                    "_migrate_legacy_keys",
+                    side_effect=lambda mapping: mapping,
+                )
+            )
+            stack.enter_context(patch.object(training_service.ConfigsService, "_is_truthy", side_effect=_mock_is_truthy))
+            stack.enter_context(
+                patch.object(
+                    training_service.ConfigsService,
+                    "coerce_config_values_by_field",
+                    side_effect=lambda config: config,
+                )
+            )
+            stack.enter_context(
+                patch.object(training_service.lazy_field_registry, "get_all_fields", return_value=mock_fields)
+            )
+            stack.enter_context(patch.object(training_service.lazy_field_registry, "get_field", return_value=None))
+
+            bundle = training_service.build_config_bundle(form_data)
+
+        # gradient_checkpointing should be saved even though it matches the default
+        # because it's in always_save_fields
+        self.assertIn(
+            "gradient_checkpointing",
+            bundle.save_config,
+            "gradient_checkpointing should be saved even when matching default (always_save_fields)",
+        )
+        self.assertTrue(bundle.save_config["gradient_checkpointing"])
+
+        # learning_rate matches default and is NOT in always_save_fields, so should be excluded
+        self.assertNotIn(
+            "learning_rate",
+            bundle.save_config,
+            "learning_rate matches default and should be excluded",
+        )
+
+    def test_always_save_fields_saves_false_value(self) -> None:
+        """
+        Test that always_save_fields saves the field even when False.
+
+        If the user explicitly sets gradient_checkpointing=False, it should be saved.
+        """
+
+        class MockField:
+            def __init__(self, name, arg_name, webui_only=False):
+                self.name = name
+                self.arg_name = arg_name
+                self.webui_only = webui_only
+
+        mock_fields = [
+            MockField("num_processes", "--num_processes"),
+            MockField("output_dir", "--output_dir"),
+            MockField("gradient_checkpointing", "--gradient_checkpointing"),
+        ]
+
+        field_defaults = {
+            "--gradient_checkpointing": True,  # Default is True
+            "--num_processes": 1,
+            "--output_dir": "/base/output",
+        }
+
+        stored_config = {}
+
+        defaults = WebUIDefaults(
+            accelerate_overrides={"mode": "disabled"},
+            auto_preserve_defaults=True,
+        )
+
+        # Form data with gradient_checkpointing=False (differs from default)
+        form_data = {
+            "--gradient_checkpointing": False,
+        }
+
+        store = DummyConfigStore(stored_config)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(training_service, "get_webui_state", return_value=(None, defaults)))
+            stack.enter_context(patch.object(training_service, "get_config_store", return_value=store))
+            stack.enter_context(patch.object(training_service, "get_all_field_defaults", return_value=field_defaults))
+            stack.enter_context(
+                patch.object(
+                    training_service,
+                    "detect_gpu_inventory",
+                    return_value={
+                        "detected": True,
+                        "backend": "cuda",
+                        "devices": [{"index": 0}],
+                        "count": 1,
+                        "optimal_processes": 1,
+                        "capabilities": {
+                            "supports_cuda": True,
+                            "supports_mps": False,
+                            "supports_rocm": False,
+                            "supports_deepspeed": True,
+                            "supports_fsdp": True,
+                        },
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    training_service.ConfigsService,
+                    "normalize_form_to_config",
+                    side_effect=lambda form, *_, **__: dict(form),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    training_service.ConfigsService,
+                    "_migrate_legacy_keys",
+                    side_effect=lambda mapping: mapping,
+                )
+            )
+            stack.enter_context(patch.object(training_service.ConfigsService, "_is_truthy", side_effect=_mock_is_truthy))
+            stack.enter_context(
+                patch.object(
+                    training_service.ConfigsService,
+                    "coerce_config_values_by_field",
+                    side_effect=lambda config: config,
+                )
+            )
+            stack.enter_context(
+                patch.object(training_service.lazy_field_registry, "get_all_fields", return_value=mock_fields)
+            )
+            stack.enter_context(patch.object(training_service.lazy_field_registry, "get_field", return_value=None))
+
+            bundle = training_service.build_config_bundle(form_data)
+
+        # gradient_checkpointing=False should be saved (differs from default anyway,
+        # but also in always_save_fields for extra safety)
+        self.assertIn("gradient_checkpointing", bundle.save_config)
+        self.assertFalse(bundle.save_config["gradient_checkpointing"])
+
 
 if __name__ == "__main__":
     unittest.main()
