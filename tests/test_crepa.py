@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import torch
 
-from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, CrepaScheduler
+from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, CrepaScheduler, UrepaRegularizer
+from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
 
 
 class _DummyVAE(torch.nn.Module):
@@ -415,6 +416,227 @@ class CrepaModeTests(unittest.TestCase):
             projected = reg._project_hidden_states(hidden)
 
             self.assertEqual(projected.shape, (2, 5, 16, 4))
+
+
+class UrepaInitTests(unittest.TestCase):
+    """Tests for UrepaRegularizer initialization and configuration."""
+
+    def _make_config(self, **overrides):
+        defaults = {
+            "urepa_enabled": True,
+            "urepa_lambda": 0.5,
+            "urepa_manifold_weight": 3.0,
+            "urepa_model": None,
+            "urepa_encoder_image_size": 64,
+            "urepa_use_tae": False,
+            "urepa_scheduler": "constant",
+            "urepa_warmup_steps": 0,
+            "urepa_cutoff_step": 0,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_initialization_defaults(self):
+        """U-REPA initializes with correct defaults."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        self.assertTrue(reg.enabled)
+        self.assertEqual(reg.base_weight, 0.5)
+        self.assertEqual(reg.manifold_weight, 3.0)
+        self.assertEqual(reg.hidden_size, 1280)
+
+    def test_disabled_when_urepa_enabled_false(self):
+        """U-REPA should be disabled when config says so."""
+        config = self._make_config(urepa_enabled=False)
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        self.assertFalse(reg.enabled)
+
+    def test_scheduler_creation(self):
+        """U-REPA should create scheduler when enabled."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280, max_train_steps=1000)
+
+        self.assertIsNotNone(reg.scheduler)
+
+
+class UrepaProjectionTests(unittest.TestCase):
+    """Tests for UrepaRegularizer hidden state projection."""
+
+    def _make_config(self):
+        return SimpleNamespace(
+            urepa_enabled=True,
+            urepa_lambda=0.5,
+            urepa_manifold_weight=3.0,
+            urepa_model=None,
+            urepa_encoder_image_size=64,
+            urepa_use_tae=False,
+            urepa_scheduler="constant",
+            urepa_warmup_steps=0,
+            urepa_cutoff_step=0,
+        )
+
+    def _make_projector(self, in_dim, out_dim):
+        """Create a projector matching UrepaRegularizer's internal structure."""
+        return torch.nn.Sequential(torch.nn.LayerNorm(in_dim), torch.nn.Linear(in_dim, out_dim))
+
+    def test_conv_to_sequence_projection(self):
+        """UNet hidden states (B, C, H, W) should be converted to (B, H*W, D)."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+        reg.projector = self._make_projector(1280, 768)
+
+        # Simulate SDXL mid-block output: (B=2, C=1280, H=16, W=16)
+        hidden = torch.randn(2, 1280, 16, 16)
+        projected = reg._project_hidden_states(hidden)
+
+        # Should become (B=2, H*W=256, D=768)
+        self.assertEqual(projected.shape, (2, 256, 768))
+
+    def test_4d_input_required(self):
+        """UrepaRegularizer requires 4D (B, C, H, W) input."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+        reg.projector = self._make_projector(1280, 768)
+
+        # 3D input should raise error
+        hidden = torch.randn(2, 256, 1280)
+        with self.assertRaises(ValueError):
+            reg._project_hidden_states(hidden)
+
+
+class UrepaManifoldLossTests(unittest.TestCase):
+    """Tests for U-REPA manifold loss computation."""
+
+    def _make_config(self):
+        return SimpleNamespace(
+            urepa_enabled=True,
+            urepa_lambda=0.5,
+            urepa_manifold_weight=3.0,
+            urepa_model=None,
+            urepa_encoder_image_size=64,
+            urepa_use_tae=False,
+            urepa_scheduler="constant",
+            urepa_warmup_steps=0,
+            urepa_cutoff_step=0,
+        )
+
+    def test_manifold_loss_computation(self):
+        """Manifold loss should compute Frobenius norm of similarity difference."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        # Create normalized features
+        projected = torch.randn(2, 64, 128)
+        projected = torch.nn.functional.normalize(projected, dim=-1)
+        encoder_features = torch.randn(2, 64, 128)
+        encoder_features = torch.nn.functional.normalize(encoder_features, dim=-1)
+
+        loss = reg._compute_manifold_loss(projected, encoder_features)
+
+        # Loss should be non-negative
+        self.assertGreaterEqual(loss.item(), 0.0)
+
+    def test_manifold_loss_zero_when_identical(self):
+        """Manifold loss should be zero when features have identical similarity structure."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        # Same features should have zero manifold loss
+        features = torch.randn(2, 64, 128)
+        features = torch.nn.functional.normalize(features, dim=-1)
+
+        loss = reg._compute_manifold_loss(features, features.clone())
+
+        self.assertAlmostEqual(loss.item(), 0.0, places=5)
+
+
+class UNetMidBlockCaptureTests(unittest.TestCase):
+    """Tests for UNetMidBlockCapture utility."""
+
+    def _make_dummy_unet(self):
+        """Create a minimal UNet-like structure with mid_block."""
+
+        class DummyMidBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.conv = torch.nn.Conv2d(4, 4, 1)
+
+            def forward(self, x):
+                return self.conv(x)
+
+        class DummyUNet(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.mid_block = DummyMidBlock()
+
+            def forward(self, x):
+                return self.mid_block(x)
+
+        return DummyUNet()
+
+    def test_capture_mid_block_output(self):
+        """UNetMidBlockCapture should capture mid_block output."""
+        unet = self._make_dummy_unet()
+        capture = UNetMidBlockCapture(unet)
+
+        # Run forward pass with capture enabled
+        capture.enable()
+        x = torch.randn(2, 4, 8, 8)
+        _ = unet(x)
+        captured = capture.get_captured()
+        capture.disable()
+
+        # Should have captured the mid_block output
+        self.assertIsNotNone(captured)
+        self.assertEqual(captured.shape, (2, 4, 8, 8))
+
+    def test_context_manager_usage(self):
+        """UNetMidBlockCapture should work as context manager."""
+        unet = self._make_dummy_unet()
+
+        x = torch.randn(2, 4, 8, 8)
+        with UNetMidBlockCapture(unet) as capture:
+            _ = unet(x)
+            captured = capture.get_captured()
+
+        self.assertIsNotNone(captured)
+
+    def test_capture_clears_after_get(self):
+        """Captured output should be cleared after get_captured()."""
+        unet = self._make_dummy_unet()
+        capture = UNetMidBlockCapture(unet)
+
+        capture.enable()
+        x = torch.randn(2, 4, 8, 8)
+        _ = unet(x)
+        _ = capture.get_captured()
+        # Second get should return None
+        captured_again = capture.get_captured()
+        capture.disable()
+
+        self.assertIsNone(captured_again)
+
+    def test_error_when_no_mid_block(self):
+        """Should raise error if UNet has no mid_block."""
+
+        class NoMidBlockUNet(torch.nn.Module):
+            def forward(self, x):
+                return x
+
+        unet = NoMidBlockUNet()
+        capture = UNetMidBlockCapture(unet)
+
+        with self.assertRaises(ValueError):
+            capture.enable()
 
 
 if __name__ == "__main__":

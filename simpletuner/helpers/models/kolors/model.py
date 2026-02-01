@@ -188,8 +188,36 @@ class Kolors(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
-        return {
-            "model_prediction": self.model(
+        # Check if U-REPA is enabled and we need to capture mid-block hidden states
+        urepa = getattr(self, "urepa_regularizer", None)
+        capture_mid_block = urepa is not None and urepa.enabled
+
+        urepa_hidden = None
+        if capture_mid_block:
+            from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
+
+            unwrapped_model = self.unwrap_model(self.model)
+            with UNetMidBlockCapture(unwrapped_model) as capture:
+                model_pred = self.model(
+                    prepared_batch["noisy_latents"].to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    prepared_batch["timesteps"],
+                    prepared_batch["encoder_hidden_states"].to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    prepared_batch["add_text_embeds"].to(
+                        device=self.accelerator.device,
+                        dtype=self.config.weight_dtype,
+                    ),
+                    added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+                    return_dict=False,
+                )[0]
+                urepa_hidden = capture.get_captured()
+        else:
+            model_pred = self.model(
                 prepared_batch["noisy_latents"].to(
                     device=self.accelerator.device,
                     dtype=self.config.base_weight_dtype,
@@ -206,6 +234,11 @@ class Kolors(ImageModelFoundation):
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                 return_dict=False,
             )[0]
+
+        return {
+            "model_prediction": model_pred,
+            "hidden_states_buffer": None,
+            "urepa_hidden_states": urepa_hidden,
         }
 
     def post_model_load_setup(self):
