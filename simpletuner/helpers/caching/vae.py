@@ -1167,7 +1167,7 @@ class VAECache(WebhookMixin):
         video_config = source_config.get("video") or {}
 
         target_num_frames = video_config.get("num_frames") or video_meta.get("num_frames")
-        fps = video_meta.get("fps") or getattr(StateTracker.get_args(), "framerate", None) or 25
+        fps = getattr(StateTracker.get_args(), "framerate", None)
         if not target_num_frames or not fps:
             return waveform, metadata
 
