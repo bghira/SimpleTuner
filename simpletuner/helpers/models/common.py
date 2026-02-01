@@ -41,7 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
-from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer
+from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, UrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -4966,10 +4966,12 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.tokenizers = None
         self._group_offload_configured = False
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
+        self.urepa_regularizer: Optional["UrepaRegularizer"] = None
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
         self._init_crepa_regularizer()
+        self._init_urepa_regularizer()
 
     def _init_crepa_regularizer(self):
         if not getattr(self.config, "crepa_enabled", False):
@@ -5014,6 +5016,60 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         hidden_size = getattr(config, "hidden_size", None)
         if hidden_size is not None:
             return int(hidden_size)
+        return None
+
+    def _init_urepa_regularizer(self):
+        """Initialize U-REPA regularizer for UNet-based models (SDXL, SD1.5, Kolors)."""
+        if not getattr(self.config, "urepa_enabled", False):
+            self.urepa_regularizer = None
+            return
+
+        # U-REPA is only for UNet models
+        if getattr(self, "MODEL_TYPE", None) != ModelTypes.UNET:
+            logger.warning("U-REPA is only supported for UNet models (SDXL, SD1.5, Kolors). Disabling.")
+            self.urepa_regularizer = None
+            return
+
+        hidden_size = self._infer_urepa_hidden_size()
+        if hidden_size is None:
+            raise ValueError("U-REPA enabled but unable to infer UNet mid-block hidden size.")
+
+        max_train_steps = int(getattr(self.config, "max_train_steps", 0) or 0)
+        self.urepa_regularizer = UrepaRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size,
+            model_foundation=self,
+            max_train_steps=max_train_steps,
+        )
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("U-REPA requires an attached diffusion model to register its projector.")
+        self.urepa_regularizer.attach_to_model(model_component)
+        logger.info(f"U-REPA initialized for {self.NAME} with hidden_size={hidden_size}")
+
+    def _infer_urepa_hidden_size(self) -> Optional[int]:
+        """Infer the hidden size from UNet mid-block for U-REPA."""
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        unwrapped = self.unwrap_model(model=model)
+        # UNet mid-block output channels
+        config = getattr(unwrapped, "config", None)
+        if config is not None:
+            # block_out_channels is a tuple like (320, 640, 1280, 1280) for SDXL
+            block_out_channels = getattr(config, "block_out_channels", None)
+            if block_out_channels is not None and len(block_out_channels) > 0:
+                return int(block_out_channels[-1])
+        # Fallback: try to get from mid_block directly
+        mid_block = getattr(unwrapped, "mid_block", None)
+        if mid_block is not None:
+            # Try to get from mid_block's resnet
+            resnets = getattr(mid_block, "resnets", None)
+            if resnets is not None and len(resnets) > 0:
+                out_channels = getattr(resnets[0], "out_channels", None)
+                if out_channels is not None:
+                    return int(out_channels)
         return None
 
     def expand_sigmas(self, batch: dict) -> dict:
@@ -5072,6 +5128,24 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
             if crepa_logs:
                 aux_logs = (aux_logs or {}) | crepa_logs
 
+        # U-REPA for UNet models
+        urepa = getattr(self, "urepa_regularizer", None)
+        if urepa and urepa.enabled:
+            urepa_hidden = model_output.get("urepa_hidden_states")
+            if urepa_hidden is None:
+                raise ValueError("U-REPA is enabled but no mid-block hidden states were captured.")
+
+            urepa_loss, urepa_logs = urepa.compute_loss(
+                hidden_states=urepa_hidden,
+                latents=prepared_batch.get("latents"),
+                vae=self.get_vae(),
+                step=StateTracker.get_global_step(),
+            )
+            if urepa_loss is not None:
+                loss = loss + urepa_loss
+            if urepa_logs:
+                aux_logs = (aux_logs or {}) | urepa_logs
+
         if apply_layersync:
             loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
         if clear_hidden_state_buffer and hidden_states_buffer is not None:
@@ -5120,6 +5194,10 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
                 f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
             )
             batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
+        return batch
+
+    def get_transforms(self, dataset_type: str = "image"):
+        return VideoTransformMixin.get_transforms(self, dataset_type=dataset_type)
 
 
 class AudioModelFoundation(AudioTransformMixin, ModelFoundation):

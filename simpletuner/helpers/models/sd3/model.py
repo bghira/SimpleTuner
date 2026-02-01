@@ -450,8 +450,9 @@ class SD3(ImageModelFoundation):
         )[0]
 
         crepa_hidden = None
-        if hidden_states_buffer is not None and getattr(self, "crepa_regularizer", None):
-            block_idx = self.crepa_regularizer.block_index
+        crepa = getattr(self, "crepa_regularizer", None)
+        if hidden_states_buffer is not None and crepa and getattr(crepa, "enabled", False):
+            block_idx = crepa.block_index
             crepa_hidden = hidden_states_buffer.get(f"layer_{block_idx}")
 
         return {
