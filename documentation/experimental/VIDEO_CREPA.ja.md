@@ -2,6 +2,8 @@
 
 Cross-frame Representation Alignment（CREPA）は動画モデル向けの軽量な正則化です。各フレームの隠れ状態を、凍結済みビジョンエンコーダの特徴（当該フレーム**および近傍フレーム**）へ寄せることで、主損失を変えずに時間的一貫性を改善します。
 
+> **画像モデルをお探しですか？** 画像DiTモデル（Flux、SD3など）のREPAサポートとUNetモデル（SDXL、SD1.5、Kolors）のU-REPAサポートについては [IMAGE_REPA.ja.md](IMAGE_REPA.ja.md) をご覧ください。
+
 ## 使いどき
 
 - 複雑な動き、シーン変化、オクルージョンを含む動画を学習している。
