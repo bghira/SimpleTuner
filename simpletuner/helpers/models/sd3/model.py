@@ -430,25 +430,33 @@ class SD3(ImageModelFoundation):
 
     def model_predict(self, prepared_batch):
         hidden_states_buffer = self._new_hidden_state_buffer()
+        model_pred = self.model(
+            hidden_states=prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=prepared_batch["timesteps"],
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            pooled_projections=prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+            ),
+            return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
+        )[0]
+
+        crepa_hidden = None
+        if hidden_states_buffer is not None and getattr(self, "crepa_regularizer", None):
+            block_idx = self.crepa_regularizer.block_index
+            crepa_hidden = hidden_states_buffer.get(f"layer_{block_idx}")
+
         return {
-            "model_prediction": self.model(
-                hidden_states=prepared_batch["noisy_latents"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.base_weight_dtype,
-                ),
-                timestep=prepared_batch["timesteps"],
-                timestep_sign=prepared_batch.get("twinflow_time_sign"),
-                encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.base_weight_dtype,
-                ),
-                pooled_projections=prepared_batch["add_text_embeds"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.weight_dtype,
-                ),
-                return_dict=False,
-                hidden_states_buffer=hidden_states_buffer,
-            )[0],
+            "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

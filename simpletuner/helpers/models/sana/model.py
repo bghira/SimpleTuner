@@ -155,22 +155,30 @@ class Sana(ImageModelFoundation):
 
     def model_predict(self, prepared_batch):
         hidden_states_buffer = self._new_hidden_state_buffer()
+        model_pred = self.model(
+            hidden_states=prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=prepared_batch["timesteps"],
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
+            encoder_attention_mask=prepared_batch["encoder_attention_mask"],
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
+        )[0]
+
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
         return {
-            "model_prediction": self.model(
-                hidden_states=prepared_batch["noisy_latents"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.base_weight_dtype,
-                ),
-                timestep=prepared_batch["timesteps"],
-                timestep_sign=prepared_batch.get("twinflow_time_sign"),
-                encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-                encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.base_weight_dtype,
-                ),
-                return_dict=False,
-                hidden_states_buffer=hidden_states_buffer,
-            )[0],
+            "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

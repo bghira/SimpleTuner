@@ -1,5 +1,6 @@
 import logging
 import math
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
@@ -10,6 +11,22 @@ if TYPE_CHECKING:
     from simpletuner.helpers.models.common import ModelFoundation
 
 logger = logging.getLogger(__name__)
+
+
+class CrepaMode(Enum):
+    """Determines how hidden state shapes are interpreted for CREPA/REPA alignment.
+
+    Different model architectures produce hidden states with different semantic layouts:
+    - IMAGE: For image models where hidden states are (B, S, D) with S spatial tokens.
+             Reshaped to (B, 1, S, D) treating the image as a single "frame".
+    - VIDEO: For video models where hidden states are (B, T, D) with T temporal tokens.
+             Reshaped to (B, T, 1, D) treating each frame as having one global token.
+
+    Individual model foundations can override crepa_mode to handle unique architectures.
+    """
+
+    IMAGE = auto()
+    VIDEO = auto()
 
 
 class CrepaScheduler:
@@ -171,6 +188,13 @@ class CrepaRegularizer:
         self.encoder: Optional[torch.nn.Module] = None
         self.encoder_dim: Optional[int] = None
         self.projector: Optional[torch.nn.Module] = None
+
+        # Determine shape interpretation mode from model foundation (duck-typed)
+        self.mode: CrepaMode = (
+            model_foundation.crepa_mode
+            if model_foundation and hasattr(model_foundation, "crepa_mode")
+            else CrepaMode.VIDEO  # backward compat default
+        )
 
         # Validate TAE availability if requested
         if self.use_tae and self.enabled and not self.use_backbone_features:
@@ -361,11 +385,16 @@ class CrepaRegularizer:
         return projected, frame_features
 
     def _project_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # Expected shapes:
-        # - (B, T, D) legacy global tokens
-        # - (B, T, P, D) patch tokens (preferred)
+        # Expected shapes depend on mode:
+        # VIDEO mode: (B, T, D) -> (B, T, 1, D) or already (B, T, P, D)
+        # IMAGE mode: (B, S, D) -> (B, 1, S, D) or already (B, 1, S, D)
         if hidden_states.ndim == 3:
-            hidden_states = hidden_states.unsqueeze(2)
+            if self.mode == CrepaMode.VIDEO:
+                # Video: (B, T, D) -> (B, T, 1, D) - T frames, 1 global token each
+                hidden_states = hidden_states.unsqueeze(2)
+            else:
+                # Image: (B, S, D) -> (B, 1, S, D) - 1 frame, S spatial tokens
+                hidden_states = hidden_states.unsqueeze(1)
         elif hidden_states.ndim != 4:
             raise ValueError(f"CREPA expected hidden states with 3 or 4 dims, got {hidden_states.shape}")
 

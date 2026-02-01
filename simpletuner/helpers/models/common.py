@@ -41,7 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
-from simpletuner.helpers.training.crepa import CrepaRegularizer
+from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -4901,6 +4901,17 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
     Handles typical VAE, text encoder loading and a UNet forward pass.
     """
 
+    @property
+    def crepa_mode(self) -> CrepaMode:
+        """Return shape interpretation mode for CREPA/REPA alignment.
+
+        Image models use CrepaMode.IMAGE: hidden states (B, S, D) are reshaped
+        to (B, 1, S, D) treating the image as a single frame with S spatial tokens.
+
+        Override in subclass if your model has a different hidden state layout.
+        """
+        return CrepaMode.IMAGE
+
     SUPPORTS_TEXT_ENCODER_TRAINING = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_CONTROLNET_LORA_TARGET = [
@@ -4954,50 +4965,7 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.text_encoders = None
         self.tokenizers = None
         self._group_offload_configured = False
-
-    def expand_sigmas(self, batch: dict) -> dict:
-        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
-
-        return batch
-
-    def custom_model_card_schedule_info(self):
-        """
-        Override this in your subclass to add model-specific info.
-
-        See SD3 or Flux classes for an example.
-        """
-        return []
-
-    def custom_model_card_code_example(self, repo_id: str = None) -> str:
-        """
-        Override this to provide custom code examples for model cards.
-        Returns None by default to use the standard template.
-        """
-        return None
-
-
-class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
-    """
-    Base class for video models. Provides default 5D handling and optional
-    text encoder instantiation. The actual text encoder classes and their
-    attributes can be stored in a hardcoded dict if needed. This base class
-    does not do it by default.
-    """
-
-    def __init__(self, config, accelerator):
-        """
-        :param config: The training configuration object/dict.
-        """
-        super().__init__(config, accelerator)
-        self.config = config
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
-
-    def expand_sigmas(self, batch):
-        if len(batch["latents"].shape) == 5:
-            logger.debug(
-                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
-            )
-            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
@@ -5048,7 +5016,20 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
             return int(hidden_size)
         return None
 
-    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+    def expand_sigmas(self, batch: dict) -> dict:
+        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+
+        return batch
+
+    def auxiliary_loss(
+        self,
+        model_output,
+        prepared_batch: dict,
+        loss: torch.Tensor,
+        *,
+        apply_layersync: bool = True,
+        clear_hidden_state_buffer: bool = True,
+    ):
         hidden_states_buffer = model_output.get("hidden_states_buffer")
 
         # Run base auxiliary losses (TwinFlow) but keep the buffer intact and defer LayerSync.
@@ -5091,12 +5072,54 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
             if crepa_logs:
                 aux_logs = (aux_logs or {}) | crepa_logs
 
-        # Apply LayerSync (if requested) after CREPA so both can share the buffer.
-        loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
-        if hidden_states_buffer is not None:
+        if apply_layersync:
+            loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
+        if clear_hidden_state_buffer and hidden_states_buffer is not None:
             hidden_states_buffer.clear()
 
         return loss, aux_logs
+
+    def custom_model_card_schedule_info(self):
+        """
+        Override this in your subclass to add model-specific info.
+
+        See SD3 or Flux classes for an example.
+        """
+        return []
+
+    def custom_model_card_code_example(self, repo_id: str = None) -> str:
+        """
+        Override this to provide custom code examples for model cards.
+        Returns None by default to use the standard template.
+        """
+        return None
+
+
+class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
+    """
+    Base class for video models. Provides default 5D handling and optional
+    text encoder instantiation. The actual text encoder classes and their
+    attributes can be stored in a hardcoded dict if needed. This base class
+    does not do it by default.
+    """
+
+    @property
+    def crepa_mode(self) -> CrepaMode:
+        """Return shape interpretation mode for CREPA alignment.
+
+        Video models use CrepaMode.VIDEO: hidden states (B, T, D) are reshaped
+        to (B, T, 1, D) treating each of T frames as having one global token.
+
+        Override in subclass if your model has a different hidden state layout.
+        """
+        return CrepaMode.VIDEO
+
+    def expand_sigmas(self, batch):
+        if len(batch["latents"].shape) == 5:
+            logger.debug(
+                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
+            )
+            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
 
 
 class AudioModelFoundation(AudioTransformMixin, ModelFoundation):

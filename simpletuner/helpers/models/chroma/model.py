@@ -551,6 +551,10 @@ class Chroma(ImageModelFoundation):
 
         model_pred = self.model(**transformer_kwargs)[0]
 
+        crepa_hidden = None
+        if hidden_states_buffer is not None and getattr(self, "crepa_regularizer", None) is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{self.crepa_regularizer.block_index}")
+
         return {
             "model_prediction": unpack_latents(
                 model_pred,
@@ -558,6 +562,7 @@ class Chroma(ImageModelFoundation):
                 width=prepared_batch["latents"].shape[3] * 8,
                 vae_scale_factor=16,
             ),
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

@@ -676,6 +676,13 @@ class Flux(ImageModelFoundation):
             scene_seq_len = packed_noisy_latents.shape[1]  # tokens that belong to the main image
             model_pred = model_pred[:, :scene_seq_len, :]  # (B, S_scene, C*4)
 
+        # Extract CREPA hidden states from buffer if enabled
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            layer_key = f"layer_{crepa.block_index}"
+            crepa_hidden = hidden_states_buffer.get(layer_key)
+
         return {
             "model_prediction": unpack_latents(
                 model_pred,
@@ -683,6 +690,7 @@ class Flux(ImageModelFoundation):
                 width=prepared_batch["latents"].shape[3] * 8,
                 vae_scale_factor=16,
             ),
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

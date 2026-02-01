@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import torch
 
-from simpletuner.helpers.training.crepa import CrepaRegularizer, CrepaScheduler
+from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, CrepaScheduler
 
 
 class _DummyVAE(torch.nn.Module):
@@ -320,6 +320,101 @@ class CrepaSchedulerTests(unittest.TestCase):
         self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
         self.assertAlmostEqual(scheduler.get_weight(50), 0.5)
         self.assertAlmostEqual(scheduler.get_weight(100), 0.0)
+
+
+class CrepaModeTests(unittest.TestCase):
+    """Tests for CrepaMode-based shape interpretation."""
+
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": None,
+            "crepa_encoder_image_size": 8,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "crepa_use_backbone_features": False,
+            "crepa_use_tae": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_default_mode_is_video_for_backward_compat(self):
+        """Without model_foundation, mode should default to VIDEO."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8, model_foundation=None)
+
+        self.assertEqual(reg.mode, CrepaMode.VIDEO)
+
+    def test_mode_from_model_foundation_image(self):
+        """Model foundation with crepa_mode=IMAGE should set IMAGE mode."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.IMAGE)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8, model_foundation=model_foundation)
+
+        self.assertEqual(reg.mode, CrepaMode.IMAGE)
+
+    def test_mode_from_model_foundation_video(self):
+        """Model foundation with crepa_mode=VIDEO should set VIDEO mode."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.VIDEO)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8, model_foundation=model_foundation)
+
+        self.assertEqual(reg.mode, CrepaMode.VIDEO)
+
+    def _make_projector(self, hidden_size=4):
+        """Create a minimal projector with parameters for dtype detection."""
+        return torch.nn.Sequential(torch.nn.LayerNorm(hidden_size), torch.nn.Linear(hidden_size, hidden_size))
+
+    def test_video_mode_hidden_state_reshape_3d(self):
+        """VIDEO mode: (B, T, D) -> (B, T, 1, D)."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.VIDEO)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4, model_foundation=model_foundation)
+        reg.projector = self._make_projector(4)
+
+        hidden = torch.randn(2, 5, 4)  # (B=2, T=5, D=4)
+        projected = reg._project_hidden_states(hidden)
+
+        # Should become (B=2, T=5, P=1, D=4)
+        self.assertEqual(projected.shape, (2, 5, 1, 4))
+
+    def test_image_mode_hidden_state_reshape_3d(self):
+        """IMAGE mode: (B, S, D) -> (B, 1, S, D)."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.IMAGE)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4, model_foundation=model_foundation)
+        reg.projector = self._make_projector(4)
+
+        hidden = torch.randn(2, 64, 4)  # (B=2, S=64 spatial tokens, D=4)
+        projected = reg._project_hidden_states(hidden)
+
+        # Should become (B=2, T=1, P=64, D=4)
+        self.assertEqual(projected.shape, (2, 1, 64, 4))
+
+    def test_4d_input_unchanged_regardless_of_mode(self):
+        """4D inputs should pass through unchanged in both modes."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+
+        for mode in [CrepaMode.IMAGE, CrepaMode.VIDEO]:
+            model_foundation = SimpleNamespace(crepa_mode=mode)
+            reg = CrepaRegularizer(config, accelerator, hidden_size=4, model_foundation=model_foundation)
+            reg.projector = self._make_projector(4)
+
+            hidden = torch.randn(2, 5, 16, 4)  # Already (B, T, P, D)
+            projected = reg._project_hidden_states(hidden)
+
+            self.assertEqual(projected.shape, (2, 5, 16, 4))
 
 
 if __name__ == "__main__":
