@@ -418,6 +418,53 @@ class CrepaModeTests(unittest.TestCase):
             self.assertEqual(projected.shape, (2, 5, 16, 4))
 
 
+class CrepaBackboneDetachTests(unittest.TestCase):
+    """Tests for CREPA backbone feature handling."""
+
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": None,
+            "crepa_encoder_image_size": 8,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "crepa_use_backbone_features": True,
+            "crepa_use_tae": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def _make_projector(self, hidden_size=4):
+        return torch.nn.Sequential(torch.nn.LayerNorm(hidden_size), torch.nn.Linear(hidden_size, hidden_size))
+
+    def test_backbone_features_do_not_receive_grad(self):
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        reg.projector = self._make_projector(4)
+
+        hidden_states = torch.randn(1, 2, 3, 4, requires_grad=True)
+        frame_features = torch.randn(1, 2, 3, 4, requires_grad=True)
+
+        loss, _ = reg.compute_loss(
+            hidden_states=hidden_states,
+            latents=None,
+            frame_features=frame_features,
+            step=0,
+        )
+        self.assertIsNotNone(loss)
+
+        loss.backward()
+
+        self.assertIsNone(frame_features.grad)
+        self.assertIsNotNone(hidden_states.grad)
+
+
 class UrepaInitTests(unittest.TestCase):
     """Tests for UrepaRegularizer initialization and configuration."""
 

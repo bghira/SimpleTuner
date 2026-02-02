@@ -270,6 +270,8 @@ class CrepaRegularizer:
             frame_features = self._encode_frames(video_pixels)  # (B, T_pixel, N_enc, D_enc)
         else:
             frame_features = self._normalize_frame_features(frame_features)
+            # Treat backbone features as a frozen teacher to avoid over-regularization.
+            frame_features = frame_features.detach()
 
         projected = self._project_hidden_states(hidden_states)  # (B, T_dit, N_dit, D_enc)
 
