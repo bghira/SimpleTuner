@@ -375,6 +375,24 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="crepa_normalize_neighbour_sum",
+            arg_name="--crepa_normalize_neighbour_sum",
+            ui_label="CREPA: Normalize Neighbour Sum",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Normalize the neighbour-sum alignment by the per-frame weight sum (experimental).",
+            tooltip="Keeps crepa_alignment_score within [-1,1] and applies the same normalization to the loss.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=19.5,
+            documentation="OPTIONS.md#--crepa_normalize_neighbour_sum",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="crepa_spatial_align",
             arg_name="--crepa_spatial_align",
             ui_label="CREPA: Spatial Token Align",

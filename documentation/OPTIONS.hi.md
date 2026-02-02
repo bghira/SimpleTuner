@@ -1038,6 +1038,12 @@ CREPA एक regularization तकनीक है जो video diffusion models
   - **Cumulative mode**: दूरी 1 से `d` तक सभी frames से align करता है, smoother gradients देता है
 - **Default**: `false`
 
+### `--crepa_normalize_neighbour_sum`
+
+- **What**: neighbor‑sum alignment को per‑frame weight sum से normalize करें।
+- **Why**: `crepa_alignment_score` को [-1, 1] में रखता है और loss scale को अधिक literal बनाता है। यह पेपर की Eq. (6) से experimental deviation है।
+- **Default**: `false`
+
 ### `--crepa_normalize_by_frames`
 
 - **What**: alignment loss को frames की संख्या से normalize करें।
@@ -1121,7 +1127,7 @@ CREPA एक regularization तकनीक है जो video diffusion models
 ### `--crepa_similarity_threshold`
 
 - **What**: similarity EMA threshold जिस पर CREPA cutoff trigger होता है।
-- **Why**: जब similarity का exponential moving average इस मान तक पहुँचता है, तो deep encoder features पर overfitting रोकने के लिए CREPA disable हो जाता है। text2video training के लिए विशेष रूप से उपयोगी।
+- **Why**: जब alignment score (`crepa_alignment_score`) का exponential moving average इस मान तक पहुँचता है, तो deep encoder features पर overfitting रोकने के लिए CREPA disable हो जाता है। text2video training के लिए विशेष रूप से उपयोगी। `crepa_normalize_neighbour_sum` enable न होने पर alignment score 1.0 से ऊपर जा सकता है।
 - **Default**: None (disabled)
 
 ### `--crepa_similarity_ema_decay`
@@ -1146,6 +1152,7 @@ crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
 crepa_cumulative_neighbors = false
+crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"

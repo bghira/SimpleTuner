@@ -464,6 +464,25 @@ class CrepaBackboneDetachTests(unittest.TestCase):
         self.assertIsNone(frame_features.grad)
         self.assertIsNotNone(hidden_states.grad)
 
+    def test_logs_include_self_similarity(self):
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        reg.projector = self._make_projector(4)
+
+        hidden_states = torch.randn(1, 2, 3, 4)
+        frame_features = torch.randn(1, 2, 3, 4)
+
+        _, logs = reg.compute_loss(
+            hidden_states=hidden_states,
+            latents=None,
+            frame_features=frame_features,
+            step=0,
+        )
+
+        self.assertIn("crepa_alignment_score", logs)
+        self.assertIn("crepa_similarity_self", logs)
+
 
 class UrepaInitTests(unittest.TestCase):
     """Tests for UrepaRegularizer initialization and configuration."""

@@ -1042,6 +1042,12 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
   - **累積モード**: 距離 1 から `d` まで全フレームと整合し、勾配が滑らかになります。
 - **既定**: `false`
 
+### `--crepa_normalize_neighbour_sum`
+
+- **内容**: 近傍和の整合をフレームごとの重み合計で正規化します。
+- **理由**: `crepa_alignment_score` を [-1, 1] に収め、損失スケールをより直感的にします。論文の式 (6) からの実験的な逸脱です。
+- **既定**: `false`
+
 ### `--crepa_normalize_by_frames`
 
 - **内容**: 整合損失をフレーム数で正規化します。
@@ -1125,7 +1131,7 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
 ### `--crepa_similarity_threshold`
 
 - **内容**: CREPA カットオフをトリガーする類似度 EMA 閾値。
-- **理由**: 類似度の指数移動平均がこの値に達すると、深層エンコーダ特徴への過学習を防ぐために CREPA が無効化されます。text2video 学習に特に有用です。
+- **理由**: 対象は整合スコア（`crepa_alignment_score`）の指数移動平均です。これがこの値に達すると、深層エンコーダ特徴への過学習を防ぐために CREPA が無効化されます。text2video 学習に特に有用です。`crepa_normalize_neighbour_sum` を有効にしない場合、整合スコアは 1.0 を超えることがあります。
 - **既定**: なし（無効）
 
 ### `--crepa_similarity_ema_decay`
@@ -1150,6 +1156,7 @@ crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
 crepa_cumulative_neighbors = false
+crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"

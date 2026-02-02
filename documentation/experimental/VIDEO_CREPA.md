@@ -22,7 +22,7 @@ Cross-frame Representation Alignment (CREPA) is a light regularizer for video mo
 4. Leave **Weight** at `0.5` to start.
 5. Keep **Adjacent Distance** at `1` and **Temporal Decay** at `1.0` for a setup that closely matches the original CREPA paper.
 6. Use the defaults for the vision encoder (`dinov2_vitg14`, resolution `518`). Change only if you know you need a smaller encoder (e.g., `dinov2_vits14` + image size `224` to save VRAM).
-7. Train as normal. CREPA adds an auxiliary loss and logs `crepa_loss` / `crepa_similarity`.
+7. Train as normal. CREPA adds an auxiliary loss and logs `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self`.
 
 ## Quick setup (config JSON / CLI)
 
@@ -155,7 +155,7 @@ Early cutoff prevents stripe artifacts on uniform backgrounds.
 
 - Implementation: `simpletuner/helpers/training/crepa.py`; registered from `ModelFoundation._init_crepa_regularizer` and attached to the trainable model (projector lives on the model for optimizer coverage).
 - Hidden-state capture: video transformers stash `crepa_hidden_states` (and optionally `crepa_frame_features`) when `crepa_enabled` is true; backbone mode can also pull `layer_{idx}` from the shared hidden-state buffer.
-- Loss path: decodes latents with the VAE to pixels unless `crepa_use_backbone_features` is on; normalizes projected hidden states and encoder features, applies distance-weighted cosine similarity, logs `crepa_loss` / `crepa_similarity`, and adds the scaled loss.
+- Loss path: decodes latents with the VAE to pixels unless `crepa_use_backbone_features` is on; normalizes projected hidden states and encoder features, applies distance-weighted cosine similarity, logs `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self`, and adds the scaled loss.
 - Interaction: runs before LayerSync so both can reuse the hidden-state buffer; clears the buffer afterward. Requires a valid block index and a hidden size inferred from the transformer config.
 
 </details>

@@ -1036,6 +1036,12 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
   - **Modo cumulativo**: Alinha com todos os frames de distancia 1 ate `d`, oferecendo gradientes mais suaves
 - **Padrao**: `false`
 
+### `--crepa_normalize_neighbour_sum`
+
+- **O que**: Normaliza a soma dos vizinhos pela soma de pesos por frame.
+- **Por que**: Mantem `crepa_alignment_score` em [-1, 1] e deixa a escala da loss mais literal. Desvio experimental da equacao (6) do paper.
+- **Padrao**: `false`
+
 ### `--crepa_normalize_by_frames`
 
 - **O que**: Normaliza a loss de alinhamento pelo numero de frames.
@@ -1119,7 +1125,7 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 ### `--crepa_similarity_threshold`
 
 - **O que**: Limiar de EMA de similaridade no qual o corte CREPA e acionado.
-- **Por que**: Quando a media movel exponencial da similaridade atinge este valor, o CREPA e desabilitado para prevenir overfitting nas features profundas do encoder. Isto e particularmente util para treinamento text2video.
+- **Por que**: Quando a media movel exponencial do score de alinhamento (`crepa_alignment_score`) atinge este valor, o CREPA e desabilitado para prevenir overfitting nas features profundas do encoder. Isto e particularmente util para treinamento text2video. O score pode passar de 1.0 se `crepa_normalize_neighbour_sum` nao estiver habilitado.
 - **Padrao**: None (desabilitado)
 
 ### `--crepa_similarity_ema_decay`
@@ -1144,6 +1150,7 @@ crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
 crepa_cumulative_neighbors = false
+crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"

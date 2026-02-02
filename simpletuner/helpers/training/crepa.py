@@ -181,6 +181,7 @@ class CrepaRegularizer:
         # Adjacent mode (default): only use exact distance d neighbors per paper's K = {f-d, f+d}
         # Cumulative mode (opt-in): use all distances from 1 to d for smoother alignment
         self.cumulative_neighbors = bool(getattr(config, "crepa_cumulative_neighbors", False))
+        self.normalize_neighbour_sum = bool(getattr(config, "crepa_normalize_neighbour_sum", False))
 
         self.use_backbone_features = bool(getattr(config, "crepa_use_backbone_features", False))
         self.use_tae = bool(getattr(config, "crepa_use_tae", False))
@@ -288,6 +289,7 @@ class CrepaRegularizer:
         self_sim = (projected * frame_features).sum(dim=-1).mean(dim=-1)
 
         total_sim = self_sim.clone()
+        weight_sum = torch.ones_like(total_sim) if self.normalize_neighbour_sum else None
         bsz, num_frames = total_sim.shape
         d = min(self.distance, num_frames - 1)
         tau = max(self.tau, 1e-8)
@@ -303,6 +305,9 @@ class CrepaRegularizer:
                     # f -> f-offset (align hidden state of frame f with features of frame f-offset)
                     back = (projected[:, offset:, ...] * frame_features[:, :-offset, ...]).sum(dim=-1).mean(dim=-1)
                     total_sim[:, offset:] += weight * back
+                    if weight_sum is not None:
+                        weight_sum[:, :-offset] += weight
+                        weight_sum[:, offset:] += weight
             else:
                 # Adjacent mode (default): only exact distance d per paper's K = {f-d, f+d}
                 weight = math.exp(-float(d) / tau)
@@ -312,17 +317,24 @@ class CrepaRegularizer:
                 # f -> f-d
                 back = (projected[:, d:, ...] * frame_features[:, :-d, ...]).sum(dim=-1).mean(dim=-1)
                 total_sim[:, d:] += weight * back
+                if weight_sum is not None:
+                    weight_sum[:, :-d] += weight
+                    weight_sum[:, d:] += weight
+
+        if weight_sum is not None:
+            total_sim = total_sim / weight_sum.clamp_min(torch.finfo(total_sim.dtype).eps)
 
         per_video_sum = total_sim.sum(dim=1)
         if self.normalize_by_frames:
             per_video_sum = per_video_sum / float(num_frames)
 
-        # Get current similarity for EMA tracking
-        current_similarity = total_sim.mean().detach().item()
+        # Get current similarity for EMA tracking and self-similarity for logging
+        alignment_score = total_sim.mean().detach().item()
+        self_similarity = self_sim.mean().detach().item()
 
         # Get scheduled weight (handles warmup, decay, and cutoff)
         if self.scheduler is not None:
-            scheduled_weight = self.scheduler.get_weight(step, similarity=current_similarity)
+            scheduled_weight = self.scheduler.get_weight(step, similarity=alignment_score)
         else:
             scheduled_weight = self.base_weight
 
@@ -330,24 +342,26 @@ class CrepaRegularizer:
         if scheduled_weight == 0:
             log_data = {
                 "crepa_loss": 0.0,
-                "crepa_similarity": current_similarity,
+                "crepa_alignment_score": alignment_score,
+                "crepa_similarity_self": self_similarity,
                 "crepa_weight": 0.0,
                 "crepa_cutoff": True,
             }
             if self.scheduler is not None and self.scheduler.get_similarity_ema() is not None:
-                log_data["crepa_similarity_ema"] = self.scheduler.get_similarity_ema()
+                log_data["crepa_alignment_score_ema"] = self.scheduler.get_similarity_ema()
             return None, log_data
 
         align_loss = -per_video_sum.mean() * scheduled_weight
 
         log_data = {
             "crepa_loss": align_loss.detach().item(),
-            "crepa_similarity": current_similarity,
+            "crepa_alignment_score": alignment_score,
+            "crepa_similarity_self": self_similarity,
             "crepa_weight": scheduled_weight,
             "crepa_cutoff": False,
         }
         if self.scheduler is not None and self.scheduler.get_similarity_ema() is not None:
-            log_data["crepa_similarity_ema"] = self.scheduler.get_similarity_ema()
+            log_data["crepa_alignment_score_ema"] = self.scheduler.get_similarity_ema()
         return align_loss, log_data
 
     # --------------------------- private helpers ---------------------------

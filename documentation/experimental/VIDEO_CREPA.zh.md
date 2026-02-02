@@ -22,7 +22,7 @@ Cross-frame Representation Alignment（CREPA）是视频模型的轻量正则项
 4. **Weight** 先保持 `0.5`。
 5. **Adjacent Distance** 设为 `1`，**Temporal Decay** 设为 `1.0`，以接近原始 CREPA 论文设置。
 6. 视觉编码器使用默认值（`dinov2_vitg14`，分辨率 `518`）。仅在需要更小编码器时才调整（如 `dinov2_vits14` + 图像尺寸 `224` 以省显存）。
-7. 正常训练。CREPA 会加入辅助损失并记录 `crepa_loss` / `crepa_similarity`。
+7. 正常训练。CREPA 会加入辅助损失并记录 `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self`。
 
 ## 快速设置（config JSON / CLI）
 
@@ -155,7 +155,7 @@ CREPA 支持在训练过程中对系数（`crepa_lambda`）进行调度，包括
 
 - 实现：`simpletuner/helpers/training/crepa.py`；由 `ModelFoundation._init_crepa_regularizer` 注册并挂到可训练模型（投影头挂在模型上以进入优化器）。
 - 隐藏状态捕获：当 `crepa_enabled` 为 true，视频 Transformer 会保存 `crepa_hidden_states`（必要时保存 `crepa_frame_features`）；主干模式也可从共享缓冲中取 `layer_{idx}`。
-- 损失路径：除非启用 `crepa_use_backbone_features`，否则用 VAE 将 latent 解码为像素；对投影隐藏状态与编码器特征做归一化，计算距离加权余弦相似度，记录 `crepa_loss` / `crepa_similarity` 并叠加缩放损失。
+- 损失路径：除非启用 `crepa_use_backbone_features`，否则用 VAE 将 latent 解码为像素；对投影隐藏状态与编码器特征做归一化，计算距离加权余弦相似度，记录 `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self` 并叠加缩放损失。
 - 交互：在 LayerSync 之前执行，以便共享缓冲；结束后清理缓冲。需要有效 block index 且能从 Transformer 配置推断 hidden size。
 
 </details>
