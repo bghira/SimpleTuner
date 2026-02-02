@@ -598,6 +598,7 @@ if (!window.hardwareHeroCTA) {
 
                     if (config && Object.keys(config).length > 0) {
                         this.syncFromForm();
+                        this.loadCheckpointChoices();
                         return;
                     }
 
@@ -630,6 +631,7 @@ if (!window.hardwareHeroCTA) {
                 };
                 document.addEventListener('environment-loaded', handler);
                 document.addEventListener('environment-switched', handler);
+                document.addEventListener('environment-changed', handler);
 
                 const htmxHandler = (evt) => {
                     if (evt.detail?.target?.id === 'basic-tab-content') {
@@ -641,8 +643,14 @@ if (!window.hardwareHeroCTA) {
                 this._cleanupFns.push(() => {
                     document.removeEventListener('environment-loaded', handler);
                     document.removeEventListener('environment-switched', handler);
+                    document.removeEventListener('environment-changed', handler);
                     document.body.removeEventListener('htmx:afterSettle', htmxHandler);
                 });
+            },
+
+            getActiveEnvironment() {
+                const store = window.Alpine?.store?.('trainer');
+                return store?.activeEnvironment || null;
             },
 
             async loadDataBackendChoices() {
@@ -660,8 +668,11 @@ if (!window.hardwareHeroCTA) {
 
             async loadCheckpointChoices() {
                 try {
-                    const outputDir = this.output_dir || 'simpletuner-results';
-                    const response = await fetch(`/api/training/checkpoints?output_dir=${encodeURIComponent(outputDir)}`);
+                    const environment = this.getActiveEnvironment();
+                    if (!environment) {
+                        return;
+                    }
+                    const response = await fetch(`/api/checkpoints/for-resume?environment=${encodeURIComponent(environment)}`);
                     if (response.ok) {
                         const data = await response.json();
                         const baseChoices = [
@@ -670,8 +681,8 @@ if (!window.hardwareHeroCTA) {
                         ];
                         if (data.checkpoints && data.checkpoints.length > 0) {
                             const ckptChoices = data.checkpoints.map(c => ({
-                                value: c.path || c.name,
-                                label: c.name || c.path
+                                value: c.name,
+                                label: c.label || c.name
                             }));
                             this.checkpointChoices = [...baseChoices, ...ckptChoices];
                         } else {
@@ -729,6 +740,13 @@ if (!window.hardwareHeroCTA) {
                             const val = parseFloat(el.value);
                             this[fieldName] = isNaN(val) ? null : val;
                         } else {
+                            if (fieldName === 'resume_from_checkpoint' && el.tagName === 'SELECT') {
+                                const selected = el.selectedOptions && el.selectedOptions[0];
+                                const label = selected ? (selected.textContent || '').trim() : '';
+                                if (el.value === '' && label.startsWith('-- Select')) {
+                                    continue;
+                                }
+                            }
                             this[fieldName] = el.value || '';
                         }
                     }
