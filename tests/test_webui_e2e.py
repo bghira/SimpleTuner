@@ -26,6 +26,58 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
 
     MAX_BROWSERS = 1
 
+    def test_ez_mode_resume_checkpoint_options(self) -> None:
+        output_dir = self.home_path / "ez-output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "checkpoint-100").mkdir()
+        (output_dir / "checkpoint-200").mkdir()
+
+        env_dir = self.config_dir / "resume-env"
+        env_dir.mkdir(parents=True, exist_ok=True)
+        config_payload = {
+            "--model_family": "flux",
+            "--model_type": "lora",
+            "--model_flavour": "libreflux",
+            "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
+            "--output_dir": str(output_dir),
+            "--data_backend_config": str(env_dir / "multidatabackend.json"),
+            "--job_id": "resume-test",
+            "--report_to": "none",
+        }
+        (env_dir / "config.json").write_text(json.dumps(config_payload), encoding="utf-8")
+        (env_dir / "multidatabackend.json").write_text("[]", encoding="utf-8")
+        self.seed_defaults(active_config="resume-env", output_dir=str(output_dir))
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            select_locator = (By.CSS_SELECTOR, ".ez-mode-form select[x-model='resume_from_checkpoint']")
+
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(select_locator),
+                message="EZ mode resume_from_checkpoint select not found",
+            )
+
+            def has_checkpoint_options(_driver):
+                select = _driver.find_element(*select_locator)
+                options = select.find_elements(By.TAG_NAME, "option")
+                values = {opt.get_attribute("value") for opt in options}
+                return "checkpoint-200" in values and "checkpoint-100" in values
+
+            WebDriverWait(driver, 10).until(
+                has_checkpoint_options,
+                message="EZ mode resume_from_checkpoint options did not include checkpoints",
+            )
+
+            select = driver.find_element(*select_locator)
+            self.assertEqual(select.get_attribute("value"), "latest")
+
+        self.for_each_browser("test_ez_mode_resume_checkpoint_options", scenario)
+
     def test_save_basic_configuration(self) -> None:
         self.with_sample_environment()
 
