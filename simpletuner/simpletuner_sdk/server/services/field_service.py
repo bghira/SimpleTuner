@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from simpletuner.helpers.models.common import PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.optimizer_param import available_optimizer_keys
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 from ..services.field_registry_wrapper import lazy_field_registry
 from ..utils.paths import resolve_config_path
@@ -1416,6 +1417,64 @@ class FieldService:
                         )
                         if "field-external-selection" not in extra_classes:
                             extra_classes.append("field-external-selection")
+                elif field.name == "resume_from_checkpoint":
+                    normalized_options = []
+                    seen_values: Set[str] = set()
+
+                    for choice in choices:
+                        if isinstance(choice, dict):
+                            value = choice.get("value")
+                            label = choice.get("label", value)
+                        elif isinstance(choice, (tuple, list)) and len(choice) >= 2:
+                            value = choice[0]
+                            label = choice[1]
+                        else:
+                            value = choice
+                            label = choice
+
+                        if value is None:
+                            continue
+
+                        value_str = str(value)
+                        if value_str in seen_values:
+                            continue
+
+                        normalized_options.append({"value": value, "label": str(label)})
+                        seen_values.add(value_str)
+
+                    output_dir = self._get_config_value(config_values, "output_dir")
+                    if not output_dir and isinstance(raw_config, dict):
+                        output_dir = raw_config.get("output_dir") or raw_config.get("--output_dir")
+
+                    if output_dir:
+                        try:
+                            checkpoints = CheckpointManager(output_dir).list_checkpoints(include_metadata=False)
+                        except Exception as exc:  # pragma: no cover - defensive guard
+                            logger.warning("Failed to load checkpoints from %s: %s", output_dir, exc)
+                            checkpoints = []
+
+                        for checkpoint in checkpoints:
+                            name = checkpoint.get("name")
+                            if not name:
+                                continue
+                            name_str = str(name)
+                            if name_str in seen_values:
+                                continue
+                            step = checkpoint.get("step")
+                            if isinstance(step, int) and step > 0:
+                                label = f"{name_str} (Step {step})"
+                            else:
+                                label = name_str
+                            normalized_options.append({"value": name_str, "label": label})
+                            seen_values.add(name_str)
+
+                    if field_value not in (None, ""):
+                        current_value = str(field_value)
+                        if current_value not in seen_values:
+                            normalized_options.append({"value": current_value, "label": f"Current: {current_value}"})
+                            seen_values.add(current_value)
+
+                    field_dict["options"] = normalized_options
                 elif field.name == "optimizer":
                     fsdp_enabled = self._coerce_bool(self._get_config_value(config_values, "fsdp_enable"))
                     fsdp_version_raw = self._get_config_value(config_values, "fsdp_version")
