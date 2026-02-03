@@ -705,5 +705,138 @@ class UNetMidBlockCaptureTests(unittest.TestCase):
             capture.enable()
 
 
+class LatentDenormalizationTests(unittest.TestCase):
+    """Tests for latent denormalization with buffer-based statistics (e.g., LTX-2)."""
+
+    def _make_mock_model_foundation(self, use_buffer_stats=False, latents_mean=None, latents_std=None):
+        """Create a minimal model foundation mock for testing denormalization."""
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        class MockVAE(torch.nn.Module):
+            def __init__(self, use_buffers, mean_val, std_val):
+                super().__init__()
+                self.config = SimpleNamespace(scaling_factor=1.0)
+                if use_buffers:
+                    # LTX-2 style: stats as registered buffers
+                    self.register_buffer("latents_mean", torch.tensor(mean_val))
+                    self.register_buffer("latents_std", torch.tensor(std_val))
+                else:
+                    # SDXL style: stats in config
+                    self.config.latents_mean = mean_val
+                    self.config.latents_std = std_val
+
+        class MockFoundation(ModelFoundation):
+            NAME = "MockFoundation"
+            AUTOENCODER_CLASS = MockVAE
+            LATENT_CHANNEL_COUNT = 4
+
+            def __init__(self, vae):
+                self._vae = vae
+
+            def get_vae(self):
+                return self._vae
+
+            def _vae_scaling_factor(self):
+                return 1.0
+
+            # Stub abstract methods - not needed for this test
+            def _encode_prompts(self, prompts, is_negative_prompt=False):
+                raise NotImplementedError
+
+            def convert_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def convert_negative_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def model_predict(self, prepared_batch):
+                raise NotImplementedError
+
+        mean = latents_mean if latents_mean is not None else [0.1, 0.2, 0.3, 0.4]
+        std = latents_std if latents_std is not None else [1.1, 1.2, 1.3, 1.4]
+        vae = MockVAE(use_buffer_stats, mean, std)
+        return MockFoundation(vae), mean, std
+
+    def test_config_based_stats_work(self):
+        """Config-based latent stats (like SDXL) should be applied correctly."""
+        foundation, mean, std = self._make_mock_model_foundation(use_buffer_stats=False)
+
+        latents = torch.ones(1, 4, 2, 2)  # (B, C, H, W)
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected_mean = torch.tensor(mean).view(1, 4, 1, 1)
+        expected_std = torch.tensor(std).view(1, 4, 1, 1)
+        expected = latents * expected_std + expected_mean
+
+        torch.testing.assert_close(result, expected)
+
+    def test_buffer_based_stats_work(self):
+        """Buffer-based latent stats (like LTX-2) should be applied correctly."""
+        foundation, mean, std = self._make_mock_model_foundation(use_buffer_stats=True)
+
+        latents = torch.ones(1, 4, 2, 2)  # (B, C, H, W)
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected_mean = torch.tensor(mean).view(1, 4, 1, 1)
+        expected_std = torch.tensor(std).view(1, 4, 1, 1)
+        expected = latents * expected_std + expected_mean
+
+        torch.testing.assert_close(result, expected)
+
+    def test_buffer_stats_5d_latents(self):
+        """Buffer-based stats should work with 5D video latents."""
+        foundation, mean, std = self._make_mock_model_foundation(use_buffer_stats=True)
+
+        latents = torch.ones(1, 4, 3, 2, 2)  # (B, C, T, H, W)
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected_mean = torch.tensor(mean).view(1, 4, 1, 1, 1)
+        expected_std = torch.tensor(std).view(1, 4, 1, 1, 1)
+        expected = latents * expected_std + expected_mean
+
+        torch.testing.assert_close(result, expected)
+
+    def test_fallback_to_scaling_only_when_no_stats(self):
+        """When no stats are available, should fall back to scaling factor only."""
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        class BareVAE(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(scaling_factor=2.0)
+
+        class BareFoundation(ModelFoundation):
+            NAME = "BareFoundation"
+
+            def __init__(self, vae):
+                self._vae = vae
+
+            def get_vae(self):
+                return self._vae
+
+            def _vae_scaling_factor(self):
+                return 2.0
+
+            # Stub abstract methods - not needed for this test
+            def _encode_prompts(self, prompts, is_negative_prompt=False):
+                raise NotImplementedError
+
+            def convert_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def convert_negative_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def model_predict(self, prepared_batch):
+                raise NotImplementedError
+
+        foundation = BareFoundation(BareVAE())
+        latents = torch.ones(1, 4, 2, 2) * 4.0
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected = latents / 2.0
+        torch.testing.assert_close(result, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

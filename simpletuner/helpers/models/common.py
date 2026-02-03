@@ -1753,13 +1753,24 @@ class ModelFoundation(ABC):
     def denormalize_latents_for_preview(self, latents: torch.Tensor) -> torch.Tensor:
         """
         Convert latents from the diffusion space back into decoder space prior to Tiny AE decode.
+
+        Handles both config-based statistics (e.g., SDXL) and buffer-based statistics (e.g., LTX-2).
         """
         vae = self.get_vae()
         if vae is None:
             return latents
         scaling_factor = self._vae_scaling_factor()
+
+        # Check config first (e.g., SDXL VAE stores stats in config)
         latents_mean = getattr(vae.config, "latents_mean", None)
         latents_std = getattr(vae.config, "latents_std", None)
+
+        # Fallback to buffer attributes (e.g., LTX-2 VAE stores stats as registered buffers)
+        if latents_mean is None:
+            latents_mean = getattr(vae, "latents_mean", None)
+        if latents_std is None:
+            latents_std = getattr(vae, "latents_std", None)
+
         if latents.ndim == 4:
             view_shape = (1, latents.shape[1], 1, 1)
         elif latents.ndim == 5:
@@ -1768,8 +1779,15 @@ class ModelFoundation(ABC):
             raise ValueError(f"Unsupported number of dimensions for latents: {latents.ndim}. Expected 4 or 5.")
 
         if latents_mean is not None and latents_std is not None:
-            mean = torch.tensor(latents_mean, device=latents.device, dtype=latents.dtype).view(view_shape)
-            std = torch.tensor(latents_std, device=latents.device, dtype=latents.dtype).view(view_shape)
+            # Handle both tensor buffers and list/tuple config values
+            if torch.is_tensor(latents_mean):
+                mean = latents_mean.to(device=latents.device, dtype=latents.dtype).view(view_shape)
+            else:
+                mean = torch.tensor(latents_mean, device=latents.device, dtype=latents.dtype).view(view_shape)
+            if torch.is_tensor(latents_std):
+                std = latents_std.to(device=latents.device, dtype=latents.dtype).view(view_shape)
+            else:
+                std = torch.tensor(latents_std, device=latents.device, dtype=latents.dtype).view(view_shape)
             latents = latents * std / scaling_factor + mean
         else:
             latents = latents / scaling_factor
@@ -1836,6 +1854,17 @@ class ModelFoundation(ABC):
             with torch.no_grad():
                 decoded = vae.decode(preprocessed).sample
             # VAE outputs [-1, 1], normalize to [0, 1]
+            # Log if significant clipping occurs (for CREPA diagnostic)
+            if decoded.min() < -1.5 or decoded.max() > 1.5:
+                clipped_low = (decoded < -1).float().mean().item()
+                clipped_high = (decoded > 1).float().mean().item()
+                if clipped_low > 0.01 or clipped_high > 0.01:
+                    logger.warning(
+                        f"VAE decode output significantly outside [-1, 1]: "
+                        f"min={decoded.min().item():.2f}, max={decoded.max().item():.2f}, "
+                        f"clipped_low={clipped_low:.1%}, clipped_high={clipped_high:.1%}. "
+                        f"This may affect CREPA feature extraction."
+                    )
             decoded = (decoded.clamp(-1, 1) + 1) / 2
 
         # Ensure consistent output format: (B, T, C, H, W)
@@ -4975,6 +5004,12 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
 
     def _init_crepa_regularizer(self):
         if not getattr(self.config, "crepa_enabled", False):
+            self.crepa_regularizer = None
+            return
+
+        # CREPA is only supported for transformer-based models (DiT-style backbones).
+        if getattr(self, "MODEL_TYPE", None) != ModelTypes.TRANSFORMER:
+            logger.warning("CREPA is only supported for transformer-based models. Use U-REPA for UNet models. Disabling.")
             self.crepa_regularizer = None
             return
 
