@@ -1002,7 +1002,7 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 - **O que**: Habilita regularizacao CREPA durante o treinamento.
 - **Por que**: Melhora a consistencia semantica entre frames ao alinhar hidden states do DiT com features DINOv2 de frames vizinhos.
 - **Padrao**: `false`
-- **Nota**: So se aplica a modelos de video (Wan, LTXVideo, SanaVideo, Kandinsky5).
+- **Nota**: So se aplica a modelos de difusao baseados em Transformer (estilo DiT). Para modelos UNet (SDXL, SD1.5, Kolors), use U-REPA.
 
 ### `--crepa_block_index`
 
@@ -1167,6 +1167,125 @@ crepa_encoder_image_size = 518
 # crepa_cutoff_step = 5000             # Passo de corte rigido (0 = desabilitado)
 # crepa_similarity_threshold = 0.9    # Corte baseado em similaridade
 # crepa_threshold_mode = "permanent"   # permanent ou recoverable
+```
+
+---
+
+## 🎯 U-REPA (Alinhamento de Representacoes para UNet)
+
+U-REPA e uma tecnica de regularizacao para modelos de difusao baseados em UNet (SDXL, SD1.5, Kolors). Ela alinha as features do mid-block da UNet com features visuais pre-treinadas e adiciona uma loss de manifold para preservar a estrutura de similaridade relativa.
+
+### `--urepa_enabled`
+
+- **O que**: Habilita U-REPA durante o treino.
+- **Por que**: Adiciona alinhamento de representacoes para o mid-block da UNet usando um encoder visual congelado.
+- **Padrao**: `false`
+- **Nota**: So se aplica a modelos UNet (SDXL, SD1.5, Kolors).
+
+### `--urepa_lambda`
+
+- **O que**: Peso da loss de alinhamento U-REPA em relacao a loss principal.
+- **Por que**: Controla a forca da regularizacao.
+- **Padrao**: `0.5`
+
+### `--urepa_manifold_weight`
+
+- **O que**: Peso da loss de manifold em relacao a loss de alinhamento.
+- **Por que**: Prioriza a estrutura de similaridade relativa (padrao do paper: 3.0).
+- **Padrao**: `3.0`
+
+### `--urepa_model`
+
+- **O que**: Identificador do torch hub para o encoder visual congelado.
+- **Por que**: Default e DINOv2 ViT-G/14; modelos menores (ex.: `dinov2_vits14`) sao mais rapidos.
+- **Padrao**: `dinov2_vitg14`
+
+### `--urepa_encoder_image_size`
+
+- **O que**: Resolucao de entrada para o preprocessamento do encoder.
+- **Por que**: Use a resolucao nativa do encoder (518 para DINOv2 ViT-G/14; 224 para ViT-S/14).
+- **Padrao**: `518`
+
+### `--urepa_use_tae`
+
+- **O que**: Usa Tiny AutoEncoder em vez do VAE completo para decodificar.
+- **Por que**: Mais rapido e economiza VRAM, mas com menor qualidade de decodificacao.
+- **Padrao**: `false`
+
+### `--urepa_scheduler`
+
+- **O que**: Agenda de decaimento do coeficiente U-REPA.
+- **Por que**: Permite reduzir a forca da regularizacao ao longo do treino.
+- **Opcoes**: `constant`, `linear`, `cosine`, `polynomial`
+- **Padrao**: `constant`
+
+### `--urepa_warmup_steps`
+
+- **O que**: Numero de passos para aumentar linearmente o peso de 0 ate `urepa_lambda`.
+- **Por que**: Warmup ajuda a estabilizar o inicio do treino.
+- **Padrao**: `0`
+
+### `--urepa_decay_steps`
+
+- **O que**: Total de passos de decaimento (apos o warmup). 0 significa decair ao longo de todo o treino.
+- **Por que**: Controla a duracao do decaimento.
+- **Padrao**: `0` (usa `max_train_steps`)
+
+### `--urepa_lambda_end`
+
+- **O que**: Peso final do U-REPA apos o decaimento.
+- **Por que**: 0 desativa efetivamente o U-REPA no fim do treino.
+- **Padrao**: `0.0`
+
+### `--urepa_power`
+
+- **O que**: Expoente do decaimento polinomial. 1.0 = linear, 2.0 = quadratic, etc.
+- **Por que**: Valores maiores decaem mais rapido no inicio e mais lento no fim.
+- **Padrao**: `1.0`
+
+### `--urepa_cutoff_step`
+
+- **O que**: Passo de corte apos o qual o U-REPA e desativado.
+- **Por que**: Util para desligar apos a convergencia do alinhamento.
+- **Padrao**: `0` (sem corte)
+
+### `--urepa_similarity_threshold`
+
+- **O que**: Limiar de similaridade (EMA) para desativar U-REPA.
+- **Por que**: Quando a media movel de `urepa_similarity` atinge esse valor, o U-REPA e desativado para evitar overfitting.
+- **Padrao**: None (desativado)
+
+### `--urepa_similarity_ema_decay`
+
+- **O que**: Fator de decaimento da media movel exponencial da similaridade.
+- **Por que**: Valores maiores suavizam (0.99 ~ 100 passos), menores reagem mais rapido.
+- **Padrao**: `0.99`
+
+### `--urepa_threshold_mode`
+
+- **O que**: Comportamento ao atingir o limiar.
+- **Opcoes**: `permanent` (desliga para sempre), `recoverable` (reativa se a similaridade cair)
+- **Padrao**: `permanent`
+
+### Exemplo de configuracao
+
+```toml
+# Habilita U-REPA para fine-tuning de UNet (SDXL, SD1.5, Kolors)
+urepa_enabled = true
+urepa_lambda = 0.5
+urepa_manifold_weight = 3.0
+urepa_model = "dinov2_vitg14"
+urepa_encoder_image_size = 518
+urepa_use_tae = false
+
+# U-REPA Scheduling (opcional)
+# urepa_scheduler = "cosine"           # Tipo de decaimento: constant, linear, cosine, polynomial
+# urepa_warmup_steps = 100             # Warmup antes do U-REPA
+# urepa_decay_steps = 1000             # Passos de decaimento (0 = treino inteiro)
+# urepa_lambda_end = 0.0               # Peso final apos o decaimento
+# urepa_cutoff_step = 5000             # Corte rigido (0 = desativado)
+# urepa_similarity_threshold = 0.9     # Corte baseado em similaridade
+# urepa_threshold_mode = "permanent"   # permanent ou recoverable
 ```
 
 ---
