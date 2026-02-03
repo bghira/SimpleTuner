@@ -162,8 +162,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="loss_functions",
             default_value=False,
-            help_text="Enable Cross-frame Representation Alignment for video models.",
-            tooltip="Adds a DINOv2-driven temporal alignment regularizer over intermediate hidden states.",
+            help_text="Enable CREPA for transformer-based diffusion models (DiT-style). Use U-REPA for UNet models.",
+            tooltip="Adds a DINOv2-driven alignment regularizer over intermediate transformer hidden states.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=8,
             documentation="OPTIONS.md#--crepa_enabled",
@@ -908,6 +908,72 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="urepa_decay_steps",
+            arg_name="--urepa_decay_steps",
+            ui_label="U-REPA Decay Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="urepa_enabled", operator="equals", value=True),
+                FieldDependency(field="urepa_scheduler", operator="not_equals", value="constant"),
+            ],
+            help_text="Total steps for decay (after warmup). 0 means decay over entire training run.",
+            tooltip="Controls the duration of the decay phase. Decay starts after warmup completes.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=48,
+            documentation="OPTIONS.md#--urepa_decay_steps",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_lambda_end",
+            arg_name="--urepa_lambda_end",
+            ui_label="U-REPA End Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="urepa_enabled", operator="equals", value=True),
+                FieldDependency(field="urepa_scheduler", operator="not_equals", value="constant"),
+            ],
+            help_text="Final U-REPA weight after decay completes. 0 effectively disables U-REPA at end of training.",
+            tooltip="The coefficient decays from urepa_lambda to this value over decay_steps.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=49,
+            documentation="OPTIONS.md#--urepa_lambda_end",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_power",
+            arg_name="--urepa_power",
+            ui_label="U-REPA Polynomial Power",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.1, message="Must be > 0")],
+            dependencies=[
+                FieldDependency(field="urepa_enabled", operator="equals", value=True),
+                FieldDependency(field="urepa_scheduler", operator="equals", value="polynomial"),
+            ],
+            help_text="Power factor for polynomial decay. 1.0 = linear, 2.0 = quadratic, etc.",
+            tooltip="Higher values cause faster initial decay that slows down towards the end.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=50,
+            documentation="OPTIONS.md#--urepa_power",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="urepa_cutoff_step",
             arg_name="--urepa_cutoff_step",
             ui_label="U-REPA Cutoff Step",
@@ -920,7 +986,72 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Hard cutoff step after which U-REPA is disabled. 0 = no cutoff.",
             tooltip="Useful for disabling U-REPA after the model has learned good representations.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=48,
+            order=51,
             documentation="OPTIONS.md#--urepa_cutoff_step",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_similarity_threshold",
+            arg_name="--urepa_similarity_threshold",
+            ui_label="U-REPA Similarity Threshold",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
+            ],
+            dependencies=[FieldDependency(field="urepa_enabled", operator="equals", value=True)],
+            help_text="Similarity EMA threshold at which U-REPA cutoff triggers. Leave empty to disable.",
+            tooltip="When the exponential moving average of similarity reaches this value, U-REPA is disabled to prevent overfitting.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=52,
+            documentation="OPTIONS.md#--urepa_similarity_threshold",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_similarity_ema_decay",
+            arg_name="--urepa_similarity_ema_decay",
+            ui_label="U-REPA Similarity EMA Decay",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.99,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
+            ],
+            dependencies=[FieldDependency(field="urepa_similarity_threshold", operator="is_set", value=True)],
+            help_text="Exponential moving average decay factor for similarity tracking. Higher = smoother.",
+            tooltip="0.99 provides a ~100 step smoothing window. Lower values react faster to changes.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=53,
+            documentation="OPTIONS.md#--urepa_similarity_ema_decay",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="urepa_threshold_mode",
+            arg_name="--urepa_threshold_mode",
+            ui_label="U-REPA Threshold Mode",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="permanent",
+            choices=[
+                {"value": "permanent", "label": "Permanent"},
+                {"value": "recoverable", "label": "Recoverable"},
+            ],
+            dependencies=[FieldDependency(field="urepa_similarity_threshold", operator="is_set", value=True)],
+            help_text="Behavior when similarity threshold is reached: permanent disables forever, recoverable allows re-enabling.",
+            tooltip="Permanent: once threshold is hit, U-REPA stays off. Recoverable: U-REPA re-enables if similarity drops.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=54,
+            documentation="OPTIONS.md#--urepa_threshold_mode",
         )
     )
