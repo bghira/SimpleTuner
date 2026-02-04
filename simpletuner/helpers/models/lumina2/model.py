@@ -197,6 +197,8 @@ class Lumina2(ImageModelFoundation):
         - No guidance embedding in transformer
         - Lumina2 expects unpacked latents (4D tensor)
         """
+        hidden_states_buffer = self._new_hidden_state_buffer()
+
         # Lumina2 expects unpacked latents, not packed ones
         noisy_latents = prepared_batch["noisy_latents"].to(
             dtype=self.config.base_weight_dtype,
@@ -236,6 +238,7 @@ class Lumina2(ImageModelFoundation):
             ),
             "encoder_attention_mask": encoder_attention_mask.to(torch.int32),
             "return_dict": False,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
         # Get model prediction
@@ -245,7 +248,16 @@ class Lumina2(ImageModelFoundation):
         # This is the key difference mentioned in the prompt
         model_pred = -model_pred
 
-        return {"model_prediction": model_pred}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def check_user_config(self):
         """Check and validate user configuration for Lumina2"""

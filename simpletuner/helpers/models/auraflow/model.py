@@ -296,7 +296,16 @@ class Auraflow(ImageModelFoundation):
             hidden_states_buffer=hidden_states_buffer,
         ).sample
 
-        return {"model_prediction": model_output, "hidden_states_buffer": hidden_states_buffer}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": model_output,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def check_user_config(self):
         if self.config.base_model_precision == "fp8-quanto":

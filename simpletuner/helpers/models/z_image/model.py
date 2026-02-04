@@ -380,7 +380,16 @@ class ZImage(ImageModelFoundation):
             noise_pred = noise_pred.squeeze(2)
         noise_pred = -noise_pred
 
-        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": noise_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
 
 ModelRegistry.register("z_image", ZImage)

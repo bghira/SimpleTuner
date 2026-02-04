@@ -462,6 +462,7 @@ class ZImageOmni(ImageModelFoundation):
 
         normalized_t = self._normalize_timesteps(prepared_batch["timesteps"])
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         model_out_list = self.model(
             [sample for sample in latents],
             normalized_t,
@@ -469,6 +470,7 @@ class ZImageOmni(ImageModelFoundation):
             cond_latent_list,
             siglip_feats,
             return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
         )[0]
 
         noise_pred = torch.stack([out.float() for out in model_out_list], dim=0)
@@ -476,7 +478,16 @@ class ZImageOmni(ImageModelFoundation):
             noise_pred = noise_pred.squeeze(2)
         noise_pred = -noise_pred
 
-        return {"model_prediction": noise_pred}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": noise_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
 
 ModelRegistry.register("z_image_omni", ZImageOmni)

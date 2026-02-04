@@ -248,6 +248,7 @@ class OmniGen(ImageModelFoundation):
 
     def model_predict(self, prepared_batch):
         self._load_preprocessor()
+        hidden_states_buffer = self._new_hidden_state_buffer()
         batch_latents = prepared_batch["noisy_latents"]  # shape [B, 4, H, W]
 
         # Build list of input text and image features
@@ -276,9 +277,19 @@ class OmniGen(ImageModelFoundation):
             input_img_latents=processed_data["input_img_latents"] or [],
             input_image_sizes=processed_data["input_image_sizes"] or {},
             return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
         )[0]
 
-        return {"model_prediction": model_out}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": model_out,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
 
 from simpletuner.helpers.models.registry import ModelRegistry

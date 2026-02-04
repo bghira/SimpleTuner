@@ -1004,7 +1004,7 @@ CREPA एक regularization तकनीक है जो video diffusion models
 - **What**: training के दौरान CREPA regularization सक्षम करें।
 - **Why**: पड़ोसी frames के DINOv2 features के साथ DiT hidden states align करके वीडियो frames में semantic consistency बढ़ाता है।
 - **Default**: `false`
-- **Note**: केवल video models पर लागू (Wan, LTXVideo, SanaVideo, Kandinsky5)।
+- **Note**: केवल Transformer-आधारित diffusion models (DiT शैली) पर लागू। UNet models (SDXL, SD1.5, Kolors) के लिए U-REPA का उपयोग करें।
 
 ### `--crepa_block_index`
 
@@ -1036,6 +1036,12 @@ CREPA एक regularization तकनीक है जो video diffusion models
 - **Why**:
   - **Adjacent mode (डिफ़ॉल्ट)**: केवल exact दूरी `d` वाले frames से align करता है (पेपर के $K = \{f-d, f+d\}$ जैसा)
   - **Cumulative mode**: दूरी 1 से `d` तक सभी frames से align करता है, smoother gradients देता है
+- **Default**: `false`
+
+### `--crepa_normalize_neighbour_sum`
+
+- **What**: neighbor‑sum alignment को per‑frame weight sum से normalize करें।
+- **Why**: `crepa_alignment_score` को [-1, 1] में रखता है और loss scale को अधिक literal बनाता है। यह पेपर की Eq. (6) से experimental deviation है।
 - **Default**: `false`
 
 ### `--crepa_normalize_by_frames`
@@ -1121,7 +1127,7 @@ CREPA एक regularization तकनीक है जो video diffusion models
 ### `--crepa_similarity_threshold`
 
 - **What**: similarity EMA threshold जिस पर CREPA cutoff trigger होता है।
-- **Why**: जब similarity का exponential moving average इस मान तक पहुँचता है, तो deep encoder features पर overfitting रोकने के लिए CREPA disable हो जाता है। text2video training के लिए विशेष रूप से उपयोगी।
+- **Why**: जब alignment score (`crepa_alignment_score`) का exponential moving average इस मान तक पहुँचता है, तो deep encoder features पर overfitting रोकने के लिए CREPA disable हो जाता है। text2video training के लिए विशेष रूप से उपयोगी। `crepa_normalize_neighbour_sum` enable न होने पर alignment score 1.0 से ऊपर जा सकता है।
 - **Default**: None (disabled)
 
 ### `--crepa_similarity_ema_decay`
@@ -1146,6 +1152,7 @@ crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
 crepa_cumulative_neighbors = false
+crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"
@@ -1162,6 +1169,125 @@ crepa_encoder_image_size = 518
 # crepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
 # crepa_similarity_threshold = 0.9    # Similarity-based cutoff
 # crepa_threshold_mode = "permanent"   # permanent or recoverable
+```
+
+---
+
+## 🎯 U-REPA (UNet Representation Alignment)
+
+U-REPA UNet आधारित diffusion models (SDXL, SD1.5, Kolors) के लिए regularization तकनीक है। यह UNet mid-block features को pretrained vision features के साथ align करता है और relative similarity structure रखने के लिए manifold loss जोड़ता है।
+
+### `--urepa_enabled`
+
+- **What**: training के दौरान U-REPA enable करें।
+- **Why**: frozen vision encoder के साथ UNet mid-block features का representation alignment जोड़ता है।
+- **Default**: `false`
+- **Note**: केवल UNet models (SDXL, SD1.5, Kolors) पर लागू।
+
+### `--urepa_lambda`
+
+- **What**: मुख्य training loss के मुकाबले U-REPA alignment loss का weight।
+- **Why**: regularization की strength नियंत्रित करता है।
+- **Default**: `0.5`
+
+### `--urepa_manifold_weight`
+
+- **What**: manifold loss का weight (alignment loss के मुकाबले)।
+- **Why**: relative similarity structure पर ज़ोर देता है (paper default 3.0)।
+- **Default**: `3.0`
+
+### `--urepa_model`
+
+- **What**: frozen vision encoder के लिए torch hub identifier।
+- **Why**: default DINOv2 ViT-G/14; छोटे मॉडल (जैसे `dinov2_vits14`) तेज़ होते हैं।
+- **Default**: `dinov2_vitg14`
+
+### `--urepa_encoder_image_size`
+
+- **What**: vision encoder preprocessing के लिए input resolution।
+- **Why**: encoder की native resolution रखें (DINOv2 ViT-G/14 के लिए 518; ViT-S/14 के लिए 224)।
+- **Default**: `518`
+
+### `--urepa_use_tae`
+
+- **What**: full VAE की जगह Tiny AutoEncoder उपयोग करें।
+- **Why**: तेज़ और कम VRAM, लेकिन decoded image quality कम।
+- **Default**: `false`
+
+### `--urepa_scheduler`
+
+- **What**: training के दौरान U-REPA coefficient decay schedule।
+- **Why**: training बढ़ने के साथ regularization strength कम करने में मदद।
+- **Options**: `constant`, `linear`, `cosine`, `polynomial`
+- **Default**: `constant`
+
+### `--urepa_warmup_steps`
+
+- **What**: U-REPA weight को 0 से `urepa_lambda` तक linearly बढ़ाने के steps।
+- **Why**: शुरुआती training को stabilize करता है।
+- **Default**: `0`
+
+### `--urepa_decay_steps`
+
+- **What**: decay के लिए कुल steps (warmup के बाद)। 0 मतलब पूरे training में decay।
+- **Why**: decay phase की duration नियंत्रित करता है।
+- **Default**: `0` (`max_train_steps`)
+
+### `--urepa_lambda_end`
+
+- **What**: decay के बाद final U-REPA weight।
+- **Why**: 0 रखने पर training के अंत में U-REPA effectively disable हो जाता है।
+- **Default**: `0.0`
+
+### `--urepa_power`
+
+- **What**: polynomial decay power। 1.0 = linear, 2.0 = quadratic आदि।
+- **Why**: बड़ा मान शुरुआत में तेज़ decay और अंत में धीमा करता है।
+- **Default**: `1.0`
+
+### `--urepa_cutoff_step`
+
+- **What**: इस step के बाद U-REPA बंद।
+- **Why**: alignment converge होने के बाद बंद करने के लिए।
+- **Default**: `0` (no cutoff)
+
+### `--urepa_similarity_threshold`
+
+- **What**: similarity EMA threshold जिस पर U-REPA cutoff ट्रिगर हो।
+- **Why**: `urepa_similarity` का EMA इस मान तक पहुंचते ही U-REPA disable होता है, overfitting रोकने के लिए।
+- **Default**: None (disabled)
+
+### `--urepa_similarity_ema_decay`
+
+- **What**: similarity tracking के लिए EMA decay factor।
+- **Why**: बड़ा मान smooth (0.99 ≈ 100-step window), छोटा मान तेज़ प्रतिक्रिया।
+- **Default**: `0.99`
+
+### `--urepa_threshold_mode`
+
+- **What**: threshold पहुंचने पर व्यवहार।
+- **Options**: `permanent` (एक बार बंद तो हमेशा बंद), `recoverable` (similarity गिरने पर फिर enable)
+- **Default**: `permanent`
+
+### Example Configuration
+
+```toml
+# UNet fine-tuning के लिए U-REPA enable करें (SDXL, SD1.5, Kolors)
+urepa_enabled = true
+urepa_lambda = 0.5
+urepa_manifold_weight = 3.0
+urepa_model = "dinov2_vitg14"
+urepa_encoder_image_size = 518
+urepa_use_tae = false
+
+# U-REPA Scheduling (optional)
+# urepa_scheduler = "cosine"           # Decay type: constant, linear, cosine, polynomial
+# urepa_warmup_steps = 100             # U-REPA शुरू होने से पहले warmup
+# urepa_decay_steps = 1000             # Decay steps (0 = पूरे training में)
+# urepa_lambda_end = 0.0               # Decay के बाद final weight
+# urepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
+# urepa_similarity_threshold = 0.9     # Similarity-based cutoff
+# urepa_threshold_mode = "permanent"   # permanent या recoverable
 ```
 
 ---

@@ -2,6 +2,8 @@
 
 Cross-frame Representation Alignment (CREPA) es un regularizador ligero para modelos de video. Empuja los estados ocultos de cada frame hacia las características de un encoder de visión congelado del frame actual **y de sus vecinos**, mejorando la consistencia temporal sin cambiar la pérdida principal.
 
+> **¿Buscas modelos de imagen?** Consulta [IMAGE_REPA.es.md](IMAGE_REPA.es.md) para soporte REPA en modelos DiT de imagen (Flux, SD3, etc.) y U-REPA para modelos UNet (SDXL, SD1.5, Kolors).
+
 ## Cuándo usarlo
 
 - Estás entrenando con videos con movimiento complejo, cambios de escena u oclusiones.
@@ -20,7 +22,7 @@ Cross-frame Representation Alignment (CREPA) es un regularizador ligero para mod
 4. Deja **Weight** en `0.5` para empezar.
 5. Mantén **Adjacent Distance** en `1` y **Temporal Decay** en `1.0` para una configuración que coincide de cerca con el paper original de CREPA.
 6. Usa los valores por defecto del encoder de visión (`dinov2_vitg14`, resolución `518`). Cambia solo si sabes que necesitas un encoder más pequeño (p. ej., `dinov2_vits14` + tamaño de imagen `224` para ahorrar VRAM).
-7. Entrena con normalidad. CREPA añade una pérdida auxiliar y registra `crepa_loss` / `crepa_similarity`.
+7. Entrena con normalidad. CREPA añade una pérdida auxiliar y registra `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self`.
 
 ## Configuración rápida (config JSON / CLI)
 
@@ -153,7 +155,7 @@ El corte temprano previene artefactos de franjas en fondos uniformes.
 
 - Implementación: `simpletuner/helpers/training/crepa.py`; registrada desde `ModelFoundation._init_crepa_regularizer` y adjunta al modelo entrenable (el proyector vive en el modelo para cobertura del optimizador).
 - Captura de estados ocultos: los transformers de video guardan `crepa_hidden_states` (y opcionalmente `crepa_frame_features`) cuando `crepa_enabled` es true; el modo backbone también puede tomar `layer_{idx}` del buffer compartido de estados ocultos.
-- Ruta de pérdida: decodifica latentes con el VAE a píxeles salvo que `crepa_use_backbone_features` esté activado; normaliza estados ocultos proyectados y características del encoder, aplica similitud coseno ponderada por distancia, registra `crepa_loss` / `crepa_similarity`, y añade la pérdida escalada.
+- Ruta de pérdida: decodifica latentes con el VAE a píxeles salvo que `crepa_use_backbone_features` esté activado; normaliza estados ocultos proyectados y características del encoder, aplica similitud coseno ponderada por distancia, registra `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self`, y añade la pérdida escalada.
 - Interacción: corre antes de LayerSync para que ambos reutilicen el buffer de estados ocultos; limpia el buffer después. Requiere un índice de bloque válido y un tamaño oculto inferido del config del transformer.
 
 </details>

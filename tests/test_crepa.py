@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import torch
 
-from simpletuner.helpers.training.crepa import CrepaRegularizer, CrepaScheduler
+from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, CrepaScheduler, UrepaRegularizer
+from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
 
 
 class _DummyVAE(torch.nn.Module):
@@ -320,6 +321,521 @@ class CrepaSchedulerTests(unittest.TestCase):
         self.assertAlmostEqual(scheduler.get_weight(0), 1.0)
         self.assertAlmostEqual(scheduler.get_weight(50), 0.5)
         self.assertAlmostEqual(scheduler.get_weight(100), 0.0)
+
+
+class CrepaModeTests(unittest.TestCase):
+    """Tests for CrepaMode-based shape interpretation."""
+
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": None,
+            "crepa_encoder_image_size": 8,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "crepa_use_backbone_features": False,
+            "crepa_use_tae": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_default_mode_is_video_for_backward_compat(self):
+        """Without model_foundation, mode should default to VIDEO."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8, model_foundation=None)
+
+        self.assertEqual(reg.mode, CrepaMode.VIDEO)
+
+    def test_mode_from_model_foundation_image(self):
+        """Model foundation with crepa_mode=IMAGE should set IMAGE mode."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.IMAGE)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8, model_foundation=model_foundation)
+
+        self.assertEqual(reg.mode, CrepaMode.IMAGE)
+
+    def test_mode_from_model_foundation_video(self):
+        """Model foundation with crepa_mode=VIDEO should set VIDEO mode."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.VIDEO)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8, model_foundation=model_foundation)
+
+        self.assertEqual(reg.mode, CrepaMode.VIDEO)
+
+    def _make_projector(self, hidden_size=4):
+        """Create a minimal projector with parameters for dtype detection."""
+        return torch.nn.Sequential(torch.nn.LayerNorm(hidden_size), torch.nn.Linear(hidden_size, hidden_size))
+
+    def test_video_mode_hidden_state_reshape_3d(self):
+        """VIDEO mode: (B, T, D) -> (B, T, 1, D)."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.VIDEO)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4, model_foundation=model_foundation)
+        reg.projector = self._make_projector(4)
+
+        hidden = torch.randn(2, 5, 4)  # (B=2, T=5, D=4)
+        projected = reg._project_hidden_states(hidden)
+
+        # Should become (B=2, T=5, P=1, D=4)
+        self.assertEqual(projected.shape, (2, 5, 1, 4))
+
+    def test_image_mode_hidden_state_reshape_3d(self):
+        """IMAGE mode: (B, S, D) -> (B, 1, S, D)."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model_foundation = SimpleNamespace(crepa_mode=CrepaMode.IMAGE)
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4, model_foundation=model_foundation)
+        reg.projector = self._make_projector(4)
+
+        hidden = torch.randn(2, 64, 4)  # (B=2, S=64 spatial tokens, D=4)
+        projected = reg._project_hidden_states(hidden)
+
+        # Should become (B=2, T=1, P=64, D=4)
+        self.assertEqual(projected.shape, (2, 1, 64, 4))
+
+    def test_4d_input_unchanged_regardless_of_mode(self):
+        """4D inputs should pass through unchanged in both modes."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+
+        for mode in [CrepaMode.IMAGE, CrepaMode.VIDEO]:
+            model_foundation = SimpleNamespace(crepa_mode=mode)
+            reg = CrepaRegularizer(config, accelerator, hidden_size=4, model_foundation=model_foundation)
+            reg.projector = self._make_projector(4)
+
+            hidden = torch.randn(2, 5, 16, 4)  # Already (B, T, P, D)
+            projected = reg._project_hidden_states(hidden)
+
+            self.assertEqual(projected.shape, (2, 5, 16, 4))
+
+
+class CrepaBackboneDetachTests(unittest.TestCase):
+    """Tests for CREPA backbone feature handling."""
+
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": None,
+            "crepa_encoder_image_size": 8,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "crepa_use_backbone_features": True,
+            "crepa_use_tae": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def _make_projector(self, hidden_size=4):
+        return torch.nn.Sequential(torch.nn.LayerNorm(hidden_size), torch.nn.Linear(hidden_size, hidden_size))
+
+    def test_backbone_features_do_not_receive_grad(self):
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        reg.projector = self._make_projector(4)
+
+        hidden_states = torch.randn(1, 2, 3, 4, requires_grad=True)
+        frame_features = torch.randn(1, 2, 3, 4, requires_grad=True)
+
+        loss, _ = reg.compute_loss(
+            hidden_states=hidden_states,
+            latents=None,
+            frame_features=frame_features,
+            step=0,
+        )
+        self.assertIsNotNone(loss)
+
+        loss.backward()
+
+        self.assertIsNone(frame_features.grad)
+        self.assertIsNotNone(hidden_states.grad)
+
+    def test_logs_include_self_similarity(self):
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        reg.projector = self._make_projector(4)
+
+        hidden_states = torch.randn(1, 2, 3, 4)
+        frame_features = torch.randn(1, 2, 3, 4)
+
+        _, logs = reg.compute_loss(
+            hidden_states=hidden_states,
+            latents=None,
+            frame_features=frame_features,
+            step=0,
+        )
+
+        self.assertIn("crepa_alignment_score", logs)
+        self.assertIn("crepa_similarity_self", logs)
+
+
+class UrepaInitTests(unittest.TestCase):
+    """Tests for UrepaRegularizer initialization and configuration."""
+
+    def _make_config(self, **overrides):
+        defaults = {
+            "urepa_enabled": True,
+            "urepa_lambda": 0.5,
+            "urepa_manifold_weight": 3.0,
+            "urepa_model": None,
+            "urepa_encoder_image_size": 64,
+            "urepa_use_tae": False,
+            "urepa_scheduler": "constant",
+            "urepa_warmup_steps": 0,
+            "urepa_cutoff_step": 0,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_initialization_defaults(self):
+        """U-REPA initializes with correct defaults."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        self.assertTrue(reg.enabled)
+        self.assertEqual(reg.base_weight, 0.5)
+        self.assertEqual(reg.manifold_weight, 3.0)
+        self.assertEqual(reg.hidden_size, 1280)
+
+    def test_disabled_when_urepa_enabled_false(self):
+        """U-REPA should be disabled when config says so."""
+        config = self._make_config(urepa_enabled=False)
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        self.assertFalse(reg.enabled)
+
+    def test_scheduler_creation(self):
+        """U-REPA should create scheduler when enabled."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280, max_train_steps=1000)
+
+        self.assertIsNotNone(reg.scheduler)
+
+
+class UrepaProjectionTests(unittest.TestCase):
+    """Tests for UrepaRegularizer hidden state projection."""
+
+    def _make_config(self):
+        return SimpleNamespace(
+            urepa_enabled=True,
+            urepa_lambda=0.5,
+            urepa_manifold_weight=3.0,
+            urepa_model=None,
+            urepa_encoder_image_size=64,
+            urepa_use_tae=False,
+            urepa_scheduler="constant",
+            urepa_warmup_steps=0,
+            urepa_cutoff_step=0,
+        )
+
+    def _make_projector(self, in_dim, out_dim):
+        """Create a projector matching UrepaRegularizer's internal structure."""
+        return torch.nn.Sequential(torch.nn.LayerNorm(in_dim), torch.nn.Linear(in_dim, out_dim))
+
+    def test_conv_to_sequence_projection(self):
+        """UNet hidden states (B, C, H, W) should be converted to (B, H*W, D)."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+        reg.projector = self._make_projector(1280, 768)
+
+        # Simulate SDXL mid-block output: (B=2, C=1280, H=16, W=16)
+        hidden = torch.randn(2, 1280, 16, 16)
+        projected = reg._project_hidden_states(hidden)
+
+        # Should become (B=2, H*W=256, D=768)
+        self.assertEqual(projected.shape, (2, 256, 768))
+
+    def test_4d_input_required(self):
+        """UrepaRegularizer requires 4D (B, C, H, W) input."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+        reg.projector = self._make_projector(1280, 768)
+
+        # 3D input should raise error
+        hidden = torch.randn(2, 256, 1280)
+        with self.assertRaises(ValueError):
+            reg._project_hidden_states(hidden)
+
+
+class UrepaManifoldLossTests(unittest.TestCase):
+    """Tests for U-REPA manifold loss computation."""
+
+    def _make_config(self):
+        return SimpleNamespace(
+            urepa_enabled=True,
+            urepa_lambda=0.5,
+            urepa_manifold_weight=3.0,
+            urepa_model=None,
+            urepa_encoder_image_size=64,
+            urepa_use_tae=False,
+            urepa_scheduler="constant",
+            urepa_warmup_steps=0,
+            urepa_cutoff_step=0,
+        )
+
+    def test_manifold_loss_computation(self):
+        """Manifold loss should compute Frobenius norm of similarity difference."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        # Create normalized features
+        projected = torch.randn(2, 64, 128)
+        projected = torch.nn.functional.normalize(projected, dim=-1)
+        encoder_features = torch.randn(2, 64, 128)
+        encoder_features = torch.nn.functional.normalize(encoder_features, dim=-1)
+
+        loss = reg._compute_manifold_loss(projected, encoder_features)
+
+        # Loss should be non-negative
+        self.assertGreaterEqual(loss.item(), 0.0)
+
+    def test_manifold_loss_zero_when_identical(self):
+        """Manifold loss should be zero when features have identical similarity structure."""
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=1280)
+
+        # Same features should have zero manifold loss
+        features = torch.randn(2, 64, 128)
+        features = torch.nn.functional.normalize(features, dim=-1)
+
+        loss = reg._compute_manifold_loss(features, features.clone())
+
+        self.assertAlmostEqual(loss.item(), 0.0, places=5)
+
+
+class UNetMidBlockCaptureTests(unittest.TestCase):
+    """Tests for UNetMidBlockCapture utility."""
+
+    def _make_dummy_unet(self):
+        """Create a minimal UNet-like structure with mid_block."""
+
+        class DummyMidBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.conv = torch.nn.Conv2d(4, 4, 1)
+
+            def forward(self, x):
+                return self.conv(x)
+
+        class DummyUNet(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.mid_block = DummyMidBlock()
+
+            def forward(self, x):
+                return self.mid_block(x)
+
+        return DummyUNet()
+
+    def test_capture_mid_block_output(self):
+        """UNetMidBlockCapture should capture mid_block output."""
+        unet = self._make_dummy_unet()
+        capture = UNetMidBlockCapture(unet)
+
+        # Run forward pass with capture enabled
+        capture.enable()
+        x = torch.randn(2, 4, 8, 8)
+        _ = unet(x)
+        captured = capture.get_captured()
+        capture.disable()
+
+        # Should have captured the mid_block output
+        self.assertIsNotNone(captured)
+        self.assertEqual(captured.shape, (2, 4, 8, 8))
+
+    def test_context_manager_usage(self):
+        """UNetMidBlockCapture should work as context manager."""
+        unet = self._make_dummy_unet()
+
+        x = torch.randn(2, 4, 8, 8)
+        with UNetMidBlockCapture(unet) as capture:
+            _ = unet(x)
+            captured = capture.get_captured()
+
+        self.assertIsNotNone(captured)
+
+    def test_capture_clears_after_get(self):
+        """Captured output should be cleared after get_captured()."""
+        unet = self._make_dummy_unet()
+        capture = UNetMidBlockCapture(unet)
+
+        capture.enable()
+        x = torch.randn(2, 4, 8, 8)
+        _ = unet(x)
+        _ = capture.get_captured()
+        # Second get should return None
+        captured_again = capture.get_captured()
+        capture.disable()
+
+        self.assertIsNone(captured_again)
+
+    def test_error_when_no_mid_block(self):
+        """Should raise error if UNet has no mid_block."""
+
+        class NoMidBlockUNet(torch.nn.Module):
+            def forward(self, x):
+                return x
+
+        unet = NoMidBlockUNet()
+        capture = UNetMidBlockCapture(unet)
+
+        with self.assertRaises(ValueError):
+            capture.enable()
+
+
+class LatentDenormalizationTests(unittest.TestCase):
+    """Tests for latent denormalization with buffer-based statistics (e.g., LTX-2)."""
+
+    def _make_mock_model_foundation(self, use_buffer_stats=False, latents_mean=None, latents_std=None):
+        """Create a minimal model foundation mock for testing denormalization."""
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        class MockVAE(torch.nn.Module):
+            def __init__(self, use_buffers, mean_val, std_val):
+                super().__init__()
+                self.config = SimpleNamespace(scaling_factor=1.0)
+                if use_buffers:
+                    # LTX-2 style: stats as registered buffers
+                    self.register_buffer("latents_mean", torch.tensor(mean_val))
+                    self.register_buffer("latents_std", torch.tensor(std_val))
+                else:
+                    # SDXL style: stats in config
+                    self.config.latents_mean = mean_val
+                    self.config.latents_std = std_val
+
+        class MockFoundation(ModelFoundation):
+            NAME = "MockFoundation"
+            AUTOENCODER_CLASS = MockVAE
+            LATENT_CHANNEL_COUNT = 4
+
+            def __init__(self, vae):
+                self._vae = vae
+
+            def get_vae(self):
+                return self._vae
+
+            def _vae_scaling_factor(self):
+                return 1.0
+
+            # Stub abstract methods - not needed for this test
+            def _encode_prompts(self, prompts, is_negative_prompt=False):
+                raise NotImplementedError
+
+            def convert_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def convert_negative_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def model_predict(self, prepared_batch):
+                raise NotImplementedError
+
+        mean = latents_mean if latents_mean is not None else [0.1, 0.2, 0.3, 0.4]
+        std = latents_std if latents_std is not None else [1.1, 1.2, 1.3, 1.4]
+        vae = MockVAE(use_buffer_stats, mean, std)
+        return MockFoundation(vae), mean, std
+
+    def test_config_based_stats_work(self):
+        """Config-based latent stats (like SDXL) should be applied correctly."""
+        foundation, mean, std = self._make_mock_model_foundation(use_buffer_stats=False)
+
+        latents = torch.ones(1, 4, 2, 2)  # (B, C, H, W)
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected_mean = torch.tensor(mean).view(1, 4, 1, 1)
+        expected_std = torch.tensor(std).view(1, 4, 1, 1)
+        expected = latents * expected_std + expected_mean
+
+        torch.testing.assert_close(result, expected)
+
+    def test_buffer_based_stats_work(self):
+        """Buffer-based latent stats (like LTX-2) should be applied correctly."""
+        foundation, mean, std = self._make_mock_model_foundation(use_buffer_stats=True)
+
+        latents = torch.ones(1, 4, 2, 2)  # (B, C, H, W)
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected_mean = torch.tensor(mean).view(1, 4, 1, 1)
+        expected_std = torch.tensor(std).view(1, 4, 1, 1)
+        expected = latents * expected_std + expected_mean
+
+        torch.testing.assert_close(result, expected)
+
+    def test_buffer_stats_5d_latents(self):
+        """Buffer-based stats should work with 5D video latents."""
+        foundation, mean, std = self._make_mock_model_foundation(use_buffer_stats=True)
+
+        latents = torch.ones(1, 4, 3, 2, 2)  # (B, C, T, H, W)
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected_mean = torch.tensor(mean).view(1, 4, 1, 1, 1)
+        expected_std = torch.tensor(std).view(1, 4, 1, 1, 1)
+        expected = latents * expected_std + expected_mean
+
+        torch.testing.assert_close(result, expected)
+
+    def test_fallback_to_scaling_only_when_no_stats(self):
+        """When no stats are available, should fall back to scaling factor only."""
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        class BareVAE(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(scaling_factor=2.0)
+
+        class BareFoundation(ModelFoundation):
+            NAME = "BareFoundation"
+
+            def __init__(self, vae):
+                self._vae = vae
+
+            def get_vae(self):
+                return self._vae
+
+            def _vae_scaling_factor(self):
+                return 2.0
+
+            # Stub abstract methods - not needed for this test
+            def _encode_prompts(self, prompts, is_negative_prompt=False):
+                raise NotImplementedError
+
+            def convert_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def convert_negative_text_embed_for_pipeline(self, text_embedding):
+                raise NotImplementedError
+
+            def model_predict(self, prepared_batch):
+                raise NotImplementedError
+
+        foundation = BareFoundation(BareVAE())
+        latents = torch.ones(1, 4, 2, 2) * 4.0
+        result = foundation.denormalize_latents_for_preview(latents)
+
+        expected = latents / 2.0
+        torch.testing.assert_close(result, expected)
 
 
 if __name__ == "__main__":
