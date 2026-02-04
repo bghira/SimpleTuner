@@ -532,7 +532,9 @@ function checkpointField() {
         async loadCheckpoints() {
             // Get the select element
             const select = document.getElementById('{{ field_id }}');
-            const outputDirInput = document.querySelector('input[name="--output_dir"]');
+            const outputDirInput = document.querySelector('#output_dir')
+                || document.querySelector('input[name="output_dir"]')
+                || document.querySelector('input[name="--output_dir"]');
 
             if (!outputDirInput || !outputDirInput.value) {
                 return;
@@ -594,7 +596,9 @@ function checkpointField() {
 
         init() {
             // Watch for output_dir changes
-            const outputDirInput = document.querySelector('input[name="--output_dir"]');
+            const outputDirInput = document.querySelector('#output_dir')
+                || document.querySelector('input[name="output_dir"]')
+                || document.querySelector('input[name="--output_dir"]');
             if (outputDirInput) {
                 // Load immediately if output_dir already has a value
                 if (outputDirInput.value) {
