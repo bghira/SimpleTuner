@@ -3625,11 +3625,14 @@ class Trainer:
                 ramtorch_enabled,
                 group_offload_requested,
             )
-        device_placement = [
-            (False if label == "primary_model" and skip_model_device_placement else True) for label in prepared_labels
-        ]
-
-        results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
+        # DeepSpeed handles device placement internally
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            results = self.accelerator.prepare(*prepare_targets)
+        else:
+            device_placement = [
+                (False if label == "primary_model" and skip_model_device_placement else True) for label in prepared_labels
+            ]
+            results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
         for label, prepared in zip(prepared_labels, results):
             if label == "primary_model":
                 self.model.set_prepared_model(prepared)
