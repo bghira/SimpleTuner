@@ -462,7 +462,7 @@
 
                 // Find the blueprint for this backend type
                 this.selectedBlueprint = this.blueprints.find(b =>
-                    b.backendType === backendType && b.datasetTypes.includes('image')
+                    b.backendType === backendType && b.datasetTypes.includes(this.currentDataset.dataset_type)
                 );
 
                 // Apply blueprint defaults

@@ -186,6 +186,50 @@
 - 适用于包含有意换行的字幕，希望保持为单一字幕的情况。
 - 默认值: `false`（按换行符拆分字幕）
 
+### `caption_shuffle`
+
+生成基于标签的字幕的确定性打乱变体，用于数据增强。这有助于模型学习标签顺序不重要，并减少对特定标签序列的过拟合。
+
+**配置：**
+
+```json
+{
+  "caption_shuffle": {
+    "enable": true,
+    "count": 3,
+    "seed": 42,
+    "split_on": "comma",
+    "position_start": 1,
+    "include_original": true
+  }
+}
+```
+
+**参数：**
+
+- `enable` (bool): 是否启用字幕打乱。默认: `false`
+- `count` (int): 每个字幕生成的打乱变体数量。默认: `1`
+- `seed` (int): 确定性打乱的种子。如果未指定，使用全局 `--seed` 值。
+- `split_on` (string): 将字幕拆分为标签的分隔符。选项: `comma`、`space`、`period`。默认: `comma`
+- `position_start` (int): 保持前 N 个标签在原始位置（适用于保持主题/风格标签在前）。默认: `0`
+- `include_original` (bool): 是否在打乱变体中包含未打乱的原始字幕。默认: `true`
+
+**示例：**
+
+使用 `split_on: "comma"`、`position_start: 1`、`count: 2`：
+
+- 原始: `"dog, running, park, sunny day"`
+- 结果: `["dog, running, park, sunny day", "dog, park, sunny day, running", "dog, sunny day, running, park"]`
+
+第一个标签"dog"保持固定，其余标签被打乱。
+
+**注意：**
+
+- 打乱在文本嵌入预缓存期间应用，因此所有变体一次性计算完成。
+- 训练期间，每个样本随机选择一个变体。
+- 如果字幕的标签数少于 `position_start + 2`，则跳过打乱（没有可以有意义地打乱的内容）。
+- 当 `include_original: false` 但无法打乱时，原始字幕仍会被包含并显示警告。
+
 ### `metadata_backend`
 
 - **取值:** `discovery` | `parquet` | `huggingface`

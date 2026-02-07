@@ -502,20 +502,26 @@ class Trainer:
         return tracker_instance
 
     def _update_grad_metrics(
-        self, target_logs: Dict[str, float], *, require_value_method: bool = False, clone_norm_value: bool = False
+        self,
+        target_logs: Dict[str, float],
+        *,
+        require_value_method: bool = False,
+        clone_norm_value: bool = False,
+        is_regularisation_data: bool = False,
     ):
         if self.grad_norm is None:
             return
 
+        prefix = "regularisation_" if is_regularisation_data else ""
         if self.config.grad_clip_method == "norm":
             grad_value = self.grad_norm
             if clone_norm_value:
                 grad_value = float(self.grad_norm.clone().detach())
-            target_logs["grad_norm"] = grad_value
+            target_logs[f"{prefix}grad_norm"] = grad_value
         elif (
             not require_value_method or self.config.grad_clip_method == "value"
         ) and not self.config.use_deepspeed_optimizer:
-            target_logs["grad_absmax"] = self.grad_norm
+            target_logs[f"{prefix}grad_absmax"] = self.grad_norm
 
     def _config_uses_bitsandbytes(self) -> bool:
         if not getattr(self, "config", None):
@@ -3625,11 +3631,14 @@ class Trainer:
                 ramtorch_enabled,
                 group_offload_requested,
             )
-        device_placement = [
-            (False if label == "primary_model" and skip_model_device_placement else True) for label in prepared_labels
-        ]
-
-        results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
+        # DeepSpeed handles device placement internally
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            results = self.accelerator.prepare(*prepare_targets)
+        else:
+            device_placement = [
+                (False if label == "primary_model" and skip_model_device_placement else True) for label in prepared_labels
+            ]
+            results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
         for label, prepared in zip(prepared_labels, results):
             if label == "primary_model":
                 self.model.set_prepared_model(prepared)
@@ -4620,7 +4629,7 @@ class Trainer:
             metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
         # Add gradient metrics (same logic as _update_grad_metrics but for webhook payload)
-        self._update_grad_metrics(metrics, clone_norm_value=True)
+        self._update_grad_metrics(metrics, clone_norm_value=True, is_regularisation_data=parent_loss is not None)
         if extra_metrics:
             for key, value in extra_metrics.items():
                 if value is None:
@@ -5648,7 +5657,7 @@ class Trainer:
                         wandb_logs["diffusion_loss"] = self.train_diffusion_loss
                     if loss_logs is not None:
                         wandb_logs.update(loss_logs)
-                    self._update_grad_metrics(wandb_logs)
+                    self._update_grad_metrics(wandb_logs, is_regularisation_data=is_regularisation_data)
                     if self.validation is not None and hasattr(self.validation, "evaluation_result"):
                         eval_result = self.validation.get_eval_result()
                         if eval_result is not None and type(eval_result) == dict:
@@ -5857,6 +5866,7 @@ class Trainer:
                     logs,
                     require_value_method=True,
                     clone_norm_value=True,
+                    is_regularisation_data=is_regularisation_data,
                 )
 
                 progress_bar.set_postfix(**progress_logs)

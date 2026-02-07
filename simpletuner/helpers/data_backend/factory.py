@@ -572,6 +572,37 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 f"(id={backend['id']}) When using a huggingface data backend, caption_strategy must be set to 'huggingface'."
             )
 
+    # Validate and store caption_shuffle config
+    caption_shuffle = backend.get("caption_shuffle", {})
+    if caption_shuffle:
+        if not isinstance(caption_shuffle, dict):
+            raise ValueError(
+                f"(id={backend['id']}) caption_shuffle must be a dictionary, got {type(caption_shuffle).__name__}"
+            )
+        # Validate split_on
+        valid_split_on = {"comma", "space", "period"}
+        split_on = caption_shuffle.get("split_on", "comma")
+        if split_on not in valid_split_on:
+            raise ValueError(
+                f"(id={backend['id']}) caption_shuffle.split_on must be one of {valid_split_on}, got '{split_on}'"
+            )
+        # Validate count
+        count = caption_shuffle.get("count", 1)
+        if not isinstance(count, int) or count < 1:
+            raise ValueError(f"(id={backend['id']}) caption_shuffle.count must be a positive integer, got {count}")
+        # Validate position_start
+        position_start = caption_shuffle.get("position_start", 0)
+        if not isinstance(position_start, int) or position_start < 0:
+            raise ValueError(
+                f"(id={backend['id']}) caption_shuffle.position_start must be a non-negative integer, got {position_start}"
+            )
+        # Set seed default from args if not specified
+        if "seed" not in caption_shuffle:
+            global_seed = _get_arg_value(args, "seed")
+            if global_seed is not None:
+                caption_shuffle["seed"] = global_seed
+        output["config"]["caption_shuffle"] = caption_shuffle
+
     if not is_audio_dataset:
         maximum_image_size = backend.get("maximum_image_size", _get_arg_value(args, "maximum_image_size"))
         target_downsample_size = backend.get("target_downsample_size", _get_arg_value(args, "target_downsample_size"))
