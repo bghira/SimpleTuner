@@ -51,7 +51,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "local-image",
             "backendType": "local",
-            "datasetTypes": ["image", "conditioning", "eval"],
+            "datasetTypes": ["image", "video", "conditioning", "eval"],
             "label": "local media backend",
             "description": "use filesystem folders or network mounts for primary training data",
             "defaults": {
@@ -673,7 +673,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "huggingface-image",
             "backendType": "huggingface",
-            "datasetTypes": ["image"],
+            "datasetTypes": ["image", "video"],
             "label": "hugging face dataset",
             "description": "stream images from the hugging face hub",
             "defaults": {
@@ -785,7 +785,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "csv-image",
             "backendType": "csv",
-            "datasetTypes": ["image"],
+            "datasetTypes": ["image", "video"],
             "label": "csv manifest",
             "description": "drive image datasets via url/caption csv manifests",
             "defaults": {
@@ -861,7 +861,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "aws-image",
             "backendType": "aws",
-            "datasetTypes": ["image"],
+            "datasetTypes": ["image", "video"],
             "label": "aws s3 bucket",
             "description": "pull media from an s3 bucket using botocore",
             "defaults": {
