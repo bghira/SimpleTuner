@@ -59,6 +59,46 @@ Campos obligatorios:
 
 Para más información sobre LyCORIS, consulta la [documentación en la librería](https://github.com/KohakuBlueleaf/LyCORIS/tree/main/docs).
 
+### Módulos objetivo de Flux 2 (Klein)
+
+Los modelos Flux 2 usan clases de módulo personalizadas en lugar de los nombres genéricos `Attention` y `FeedForward`. Una configuración LoKR de Flux 2 debe apuntar a:
+
+- `Flux2Attention` — bloques de atención de doble flujo
+- `Flux2FeedForward` — bloques feedforward de doble flujo
+- `Flux2ParallelSelfAttention` — bloques paralelos de atención+feedforward de flujo único (proyecciones QKV y MLP fusionadas)
+
+Incluir `Flux2ParallelSelfAttention` entrena los bloques de flujo único, lo que puede mejorar la convergencia a costa de un mayor riesgo de sobreajuste. Si tienes dificultades para que LyCORIS LoKR converja en Flux 2, se recomienda agregar este objetivo.
+
+Ejemplo de configuración LoKR para Flux 2:
+
+```json
+{
+    "bypass_mode": true,
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 4,
+    "apply_preset": {
+        "target_module": [
+            "Flux2Attention", "Flux2FeedForward", "Flux2ParallelSelfAttention"
+        ],
+        "module_algo_map": {
+            "Flux2FeedForward": {
+                "factor": 4
+            },
+            "Flux2Attention": {
+                "factor": 2
+            },
+            "Flux2ParallelSelfAttention": {
+                "factor": 2
+            }
+        }
+    }
+}
+```
+
 ## Problemas potenciales
 
 Al usar Lycoris en SDXL, se ha observado que entrenar los módulos FeedForward puede romper el modelo y llevar la pérdida a valores `NaN` (Not-a-Number).

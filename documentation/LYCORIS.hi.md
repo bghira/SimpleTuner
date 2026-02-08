@@ -59,6 +59,46 @@ LyCORIS कॉन्फ़िगरेशन फ़ाइल का फ़ॉर
 
 LyCORIS के बारे में अधिक जानकारी के लिए, [लाइब्रेरी के दस्तावेज़](https://github.com/KohakuBlueleaf/LyCORIS/tree/main/docs) देखें।
 
+### Flux 2 (Klein) मॉड्यूल टारगेट
+
+Flux 2 मॉडल generic `Attention` और `FeedForward` नामों के बजाय कस्टम मॉड्यूल क्लासेस का उपयोग करते हैं। Flux 2 LoKR config में निम्नलिखित को टारगेट करें:
+
+- `Flux2Attention` — डबल-स्ट्रीम अटेंशन ब्लॉक
+- `Flux2FeedForward` — डबल-स्ट्रीम फीडफॉरवर्ड ब्लॉक
+- `Flux2ParallelSelfAttention` — सिंगल-स्ट्रीम पैरेलल अटेंशन+फीडफॉरवर्ड ब्लॉक (फ्यूज्ड QKV और MLP प्रोजेक्शन)
+
+`Flux2ParallelSelfAttention` को शामिल करने से सिंगल-स्ट्रीम ब्लॉक भी ट्रेन होते हैं, जो convergence में सुधार कर सकता है लेकिन overfitting का जोखिम बढ़ सकता है। यदि Flux 2 पर LyCORIS LoKR को converge करने में कठिनाई हो रही है, तो इस टारगेट को जोड़ने की सिफारिश की जाती है।
+
+Flux 2 LoKR config का उदाहरण:
+
+```json
+{
+    "bypass_mode": true,
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 4,
+    "apply_preset": {
+        "target_module": [
+            "Flux2Attention", "Flux2FeedForward", "Flux2ParallelSelfAttention"
+        ],
+        "module_algo_map": {
+            "Flux2FeedForward": {
+                "factor": 4
+            },
+            "Flux2Attention": {
+                "factor": 2
+            },
+            "Flux2ParallelSelfAttention": {
+                "factor": 2
+            }
+        }
+    }
+}
+```
+
 ## संभावित समस्याएँ
 
 SDXL पर Lycoris उपयोग करते समय यह नोट किया गया है कि FeedForward मॉड्यूल्स को ट्रेन करने से मॉडल टूट सकता है और loss `NaN` (Not‑a‑Number) हो सकता है।

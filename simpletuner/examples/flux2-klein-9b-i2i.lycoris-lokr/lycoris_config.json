@@ -8,13 +8,16 @@
     "factor": 4,
     "apply_preset": {
         "target_module": [
-            "Flux2Attention", "Flux2FeedForward"
+            "Flux2Attention", "Flux2FeedForward", "Flux2ParallelSelfAttention"
         ],
         "module_algo_map": {
             "Flux2FeedForward": {
                 "factor": 4
             },
             "Flux2Attention": {
+                "factor": 2
+            },
+            "Flux2ParallelSelfAttention": {
                 "factor": 2
             }
         }
