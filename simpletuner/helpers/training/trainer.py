@@ -6613,7 +6613,7 @@ def run_trainer_job(config):
 
         import simpletuner
 
-        train_py = Path(simpletuner.__file__).parent / "train.py"
+        train_py = simpletuner._get_package_dir() / "train.py"
         cmd.append(str(train_py))
 
         cli_args: list[str] = []
