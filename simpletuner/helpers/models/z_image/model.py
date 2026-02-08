@@ -90,7 +90,7 @@ class ZImage(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "layers.15,layers.16,layers.17,layers.18,layers.19,layers.20,layers.21,layers.22,layers.23,layers.24,layers.25,layers.26,layers.27,layers.28,layers.29",
+                    "ramtorch_target_modules": "layers.15.*,layers.16.*,layers.17.*,layers.18.*,layers.19.*,layers.20.*,layers.21.*,layers.22.*,layers.23.*,layers.24.*,layers.25.*,layers.26.*,layers.27.*,layers.28.*,layers.29.*",
                 },
             ),
             AccelerationPreset(
@@ -106,7 +106,7 @@ class ZImage(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "layers.8,layers.9,layers.10,layers.11,layers.12,layers.13,layers.14,layers.15,layers.16,layers.17,layers.18,layers.19,layers.20,layers.21,layers.22,layers.23,layers.24,layers.25,layers.26,layers.27,layers.28,layers.29",
+                    "ramtorch_target_modules": "layers.8.*,layers.9.*,layers.10.*,layers.11.*,layers.12.*,layers.13.*,layers.14.*,layers.15.*,layers.16.*,layers.17.*,layers.18.*,layers.19.*,layers.20.*,layers.21.*,layers.22.*,layers.23.*,layers.24.*,layers.25.*,layers.26.*,layers.27.*,layers.28.*,layers.29.*",
                 },
             ),
             AccelerationPreset(

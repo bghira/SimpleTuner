@@ -83,6 +83,7 @@ def _normalize_device(device: object) -> object:
 
 
 def _matches_pattern(name: str, module: nn.Module, patterns: Iterable[str]) -> bool:
+    glob_chars = {"*", "?", "["}
     class_name = module.__class__.__name__
     for pattern in patterns:
         candidates = [name]
@@ -90,6 +91,11 @@ def _matches_pattern(name: str, module: nn.Module, patterns: Iterable[str]) -> b
             candidates.append(name.split(".", 1)[1])
         if any(fnmatch(candidate, pattern) for candidate in candidates) or fnmatch(class_name, pattern):
             return True
+        # Bare block names like "transformer_blocks.0" should also match
+        # children such as "transformer_blocks.0.attn.to_q".
+        if not any(ch in pattern for ch in glob_chars):
+            if any(fnmatch(candidate, pattern + ".*") for candidate in candidates):
+                return True
     return False
 
 

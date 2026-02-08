@@ -341,7 +341,7 @@ class Wan(VideoModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "blocks.0,blocks.1,blocks.2,blocks.3,blocks.4,blocks.5,blocks.6,blocks.7,blocks.8,blocks.9,blocks.10,blocks.11,blocks.12,blocks.13,blocks.14,blocks.15,blocks.16,blocks.17,blocks.18,blocks.19",
+                    "ramtorch_target_modules": "blocks.0.*,blocks.1.*,blocks.2.*,blocks.3.*,blocks.4.*,blocks.5.*,blocks.6.*,blocks.7.*,blocks.8.*,blocks.9.*,blocks.10.*,blocks.11.*,blocks.12.*,blocks.13.*,blocks.14.*,blocks.15.*,blocks.16.*,blocks.17.*,blocks.18.*,blocks.19.*",
                 },
             ),
             AccelerationPreset(
