@@ -139,7 +139,10 @@ simpletuner configure config/foo/config.json
 
 - **内容**: RamTorch に変換する Linear モジュールを制限するカンマ区切りの glob パターン。
 - **既定**: パターン未指定の場合、すべての Linear レイヤーを変換。
-- **注記**: 完全修飾モジュール名またはクラス名にマッチ（ワイルドカード可）。
+- **注記**:
+  - `fnmatch` glob 構文を使用して完全修飾モジュール名またはクラス名にマッチ。
+  - ブロック内のレイヤーにマッチさせるには、末尾に `.*` ワイルドカードを含める必要があります。例えば、`transformer_blocks.0.*` はブロック 0 内のすべてのレイヤーにマッチし、`transformer_blocks.*` はすべての transformer ブロックにマッチします。`transformer_blocks.0` のような `.*` なしの名前も動作します（自動的に展開されます）が、明確さのために明示的なワイルドカード形式を推奨します。
+  - 例: `"transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*"`
 
 ### `--ramtorch_text_encoder`
 

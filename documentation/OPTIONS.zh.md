@@ -139,7 +139,10 @@ simpletuner configure config/foo/config.json
 
 - **内容**：逗号分隔的 glob 模式，用于限制哪些 Linear 模块转换为 RamTorch。
 - **默认**：未提供模式时转换所有 Linear 层。
-- **说明**：匹配完整模块名或类名（支持通配符）。
+- **说明**：
+  - 使用 `fnmatch` glob 语法匹配完整模块名或类名。
+  - 模式必须包含末尾的 `.*` 通配符才能匹配块内的层。例如，`transformer_blocks.0.*` 匹配块 0 内的所有层，而 `transformer_blocks.*` 匹配所有 transformer 块。不带 `.*` 的裸名称如 `transformer_blocks.0` 也可以工作（会自动展开），但建议使用明确的通配符形式以提高清晰度。
+  - 示例：`"transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*"`
 
 ### `--ramtorch_text_encoder`
 
