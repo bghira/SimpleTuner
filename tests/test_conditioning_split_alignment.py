@@ -404,44 +404,47 @@ class TestConditioningSplitAlignment(unittest.TestCase):
 
     def test_reference_strict_duplication_multi_process_reload(self):
         manager = multiprocessing.Manager()
-        shared_storage = manager.dict()
-        conditioning_storage = manager.dict()
-        flags = manager.dict()
-        cache_ready = manager.Event()
-        result_queue = manager.Queue()
+        try:
+            shared_storage = manager.dict()
+            conditioning_storage = manager.dict()
+            flags = manager.dict()
+            cache_ready = manager.Event()
+            result_queue = manager.Queue()
 
-        base_images = {"1.0": [f"/datasets/shared/img_{i}.png" for i in range(16)]}
-        num_processes = 2
+            base_images = {"1.0": [f"/datasets/shared/img_{i}.png" for i in range(16)]}
+            num_processes = 2
 
-        processes = [
-            multiprocessing.Process(
-                target=_run_reference_strict_duplication_worker,
-                args=(
-                    index,
-                    num_processes,
-                    base_images,
-                    shared_storage,
-                    conditioning_storage,
-                    flags,
-                    cache_ready,
-                    result_queue,
-                ),
-            )
-            for index in range(num_processes)
-        ]
-        for process in processes:
-            process.start()
-        for process in processes:
-            process.join()
+            processes = [
+                multiprocessing.Process(
+                    target=_run_reference_strict_duplication_worker,
+                    args=(
+                        index,
+                        num_processes,
+                        base_images,
+                        shared_storage,
+                        conditioning_storage,
+                        flags,
+                        cache_ready,
+                        result_queue,
+                    ),
+                )
+                for index in range(num_processes)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join()
 
-        results = []
-        while not result_queue.empty():
-            results.append(result_queue.get())
+            results = []
+            while not result_queue.empty():
+                results.append(result_queue.get())
 
-        self.assertEqual(len(results), num_processes)
-        for rank, train_total, cond_total in results:
-            self.assertGreater(train_total, 0, f"Process {rank} should retain training buckets.")
-            self.assertGreater(cond_total, 0, f"Process {rank} should retain conditioning buckets.")
+            self.assertEqual(len(results), num_processes)
+            for rank, train_total, cond_total in results:
+                self.assertGreater(train_total, 0, f"Process {rank} should retain training buckets.")
+                self.assertGreater(cond_total, 0, f"Process {rank} should retain conditioning buckets.")
+        finally:
+            manager.shutdown()
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience for local debugging
