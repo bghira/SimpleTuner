@@ -18,8 +18,11 @@ def _get_package_dir() -> _Path:
     import importlib.util
 
     spec = importlib.util.find_spec("simpletuner")
-    if spec is not None and spec.origin is not None:
-        return _Path(spec.origin).parent
+    if spec is not None:
+        if spec.origin is not None:
+            return _Path(spec.origin).parent
+        if spec.submodule_search_locations:
+            return _Path(spec.submodule_search_locations[0])
     raise RuntimeError("Cannot determine simpletuner package directory")
 
 # Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)

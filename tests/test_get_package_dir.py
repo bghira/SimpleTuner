@@ -36,6 +36,16 @@ class GetPackageDirTestCase(unittest.TestCase):
         finally:
             simpletuner.__file__ = original
 
+    def test_raises_when_find_spec_returns_none(self):
+        original = simpletuner.__file__
+        try:
+            simpletuner.__file__ = None
+            with patch("importlib.util.find_spec", return_value=None):
+                with self.assertRaises(RuntimeError):
+                    simpletuner._get_package_dir()
+        finally:
+            simpletuner.__file__ = original
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
