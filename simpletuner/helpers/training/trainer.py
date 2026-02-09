@@ -5431,6 +5431,25 @@ class Trainer:
                             else:
                                 self.model.get_trained_component().enable_lora()
 
+                    # slider
+                    raw_strength = prepared_batch.get("slider_strength", 1.0)
+                    try:
+                        strength = float(raw_strength)
+                    except (TypeError, ValueError):
+                        strength = 1.0
+
+                    if self.config.model_type == "lora" and strength != 1.0:
+                        with torch.no_grad():
+                            if self.config.lora_type.lower() == "lycoris":
+                                self.accelerator._lycoris_wrapped_network.set_multiplier(strength)
+                            else:
+                                from peft.tuners.tuners_utils import BaseTunerLayer
+                                for modulename, module in self.model.get_trained_component().named_modules():
+                                    if isinstance(module, BaseTunerLayer):
+                                        if hasattr(module, "scaling"):
+                                            for key in module.scaling.keys():
+                                                module.scaling[key] = strength
+
                     training_logger.debug("Predicting.")
                     model_pred = self.model_predict(
                         prepared_batch=prepared_batch,
@@ -5601,6 +5620,17 @@ class Trainer:
                         ):
                             self.distiller.discriminator_step(prepared_batch=prepared_batch)
                             self.distiller.post_training_step(self.model, step)
+                    if self.config.model_type == "lora" and strength != 1:
+                        with torch.no_grad():
+                            if self.config.lora_type.lower() == "lycoris":
+                                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+                            else:
+                                from peft.tuners.tuners_utils import BaseTunerLayer
+                                for modulename, module in self.model.get_trained_component().named_modules():
+                                    if isinstance(module, BaseTunerLayer):
+                                        if hasattr(module, "scaling"):
+                                            for key in module.scaling.keys():
+                                                module.scaling[key] = 1.0
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}

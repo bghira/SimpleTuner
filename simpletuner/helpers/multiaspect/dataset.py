@@ -31,12 +31,14 @@ class MultiAspectDataset(Dataset):
         print_names: bool = False,
         is_regularisation_data: bool = False,
         is_i2v_data: bool = False,
+        **kwargs
     ):
         self.id = id
         self.datasets = datasets
         self.print_names = print_names
         self.is_regularisation_data = is_regularisation_data
         self.is_i2v_data = is_i2v_data
+        self.kwargs = kwargs
 
     def __len__(self):
         # Sum the length of all data backends:
@@ -55,6 +57,7 @@ class MultiAspectDataset(Dataset):
             "is_regularisation_data": self.is_regularisation_data,
             "is_i2v_data": self.is_i2v_data,
         }
+        output_data.update(self.kwargs)
         first_aspect_ratio = None
         for sample in image_tuple:
             # pick out the TrainingSamples, which represent conditioning samples
