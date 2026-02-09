@@ -3199,7 +3199,13 @@ class FactoryRegistry:
             use_captions = False
 
         kwargs = {}
-        kwargs["slider_strength"] = backend.get("slider_strength", 1.0) 
+        slider_strength_raw = backend.get("slider_strength", 1.0)
+        try:
+            slider_strength = float(slider_strength_raw) if slider_strength_raw is not None else 1.0
+        except (TypeError, ValueError):
+            logging.warning("Invalid slider_strength %r in backend; defaulting to 1.0", slider_strength_raw)
+            slider_strength = 1.0
+        kwargs["slider_strength"] = slider_strength
 
         init_backend["train_dataset"] = MultiAspectDataset(
             id=init_backend["id"],
