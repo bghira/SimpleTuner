@@ -138,7 +138,10 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 - **O que**: Padroes glob separados por virgula limitando quais modulos Linear sao convertidos para RamTorch.
 - **Padrao**: Todas as camadas Linear sao convertidas quando nenhum padrao e fornecido.
-- **Notas**: Casa nomes de modulo totalmente qualificados ou nomes de classe (wildcards permitidos).
+- **Notas**:
+  - Casa nomes de modulo totalmente qualificados ou nomes de classe usando sintaxe glob `fnmatch`.
+  - Os padroes devem incluir um wildcard `.*` no final para corresponder as camadas dentro de um bloco. Por exemplo, `transformer_blocks.0.*` corresponde a todas as camadas dentro do bloco 0, enquanto `transformer_blocks.*` corresponde a todos os blocos transformer. Um nome simples como `transformer_blocks.0` sem `.*` tambem funciona (e expandido automaticamente), mas a forma explicita com wildcard e recomendada para clareza.
+  - Exemplo: `"transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*"`
 
 ### `--ramtorch_text_encoder`
 

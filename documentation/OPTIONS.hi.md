@@ -138,7 +138,10 @@ simpletuner configure config/foo/config.json
 
 - **What**: Comma‑separated glob patterns जो यह सीमित करते हैं कि कौन‑से Linear modules को RamTorch में बदला जाए।
 - **Default**: यदि कोई pattern नहीं दिया गया, तो सभी Linear layers convert होती हैं।
-- **Notes**: fully qualified module names या class names को match करता है (wildcards allowed)।
+- **Notes**:
+  - `fnmatch` glob syntax का उपयोग करके fully qualified module names या class names को match करता है।
+  - किसी block के अंदर की layers को match करने के लिए patterns में trailing `.*` wildcard शामिल होना चाहिए। उदाहरण के लिए, `transformer_blocks.0.*` block 0 के अंदर सभी layers को match करता है, जबकि `transformer_blocks.*` सभी transformer blocks को match करता है। `transformer_blocks.0` जैसा bare name बिना `.*` के भी काम करेगा (यह automatically expand होता है), लेकिन clarity के लिए explicit wildcard form recommended है।
+  - उदाहरण: `"transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*"`
 
 ### `--ramtorch_text_encoder`
 

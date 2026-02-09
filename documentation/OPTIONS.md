@@ -138,7 +138,10 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Comma-separated glob patterns limiting which Linear modules are converted to RamTorch.
 - **Default**: All Linear layers are converted when no pattern is provided.
-- **Notes**: Matches fully qualified module names or class names (wildcards allowed).
+- **Notes**:
+  - Matches fully qualified module names or class names using `fnmatch` glob syntax.
+  - Patterns must include a trailing `.*` wildcard to match layers inside a block. For example, `transformer_blocks.0.*` matches all layers inside block 0, while `transformer_blocks.*` matches all transformer blocks. A bare name like `transformer_blocks.0` without `.*` will also work (it is expanded automatically), but the explicit wildcard form is recommended for clarity.
+  - Example: `"transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*"`
 
 ### `--ramtorch_text_encoder`
 
