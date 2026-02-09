@@ -5432,8 +5432,13 @@ class Trainer:
                                 self.model.get_trained_component().enable_lora()
 
                     # slider
-                    strength = prepared_batch.get("slider_strength")
-                    if self.config.model_type == "lora" and strength != 1:
+                    raw_strength = prepared_batch.get("slider_strength", 1.0)
+                    try:
+                        strength = float(raw_strength)
+                    except (TypeError, ValueError):
+                        strength = 1.0
+
+                    if self.config.model_type == "lora" and strength != 1.0:
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
                                 self.accelerator._lycoris_wrapped_network.set_multiplier(strength)
