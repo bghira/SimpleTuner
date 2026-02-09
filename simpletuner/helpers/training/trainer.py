@@ -2892,6 +2892,20 @@ class Trainer:
                 return self.lycoris_wrapped_network.parameters()
         return [param for param in self.model.get_trained_component(unwrap_model=False).parameters() if param.requires_grad]
 
+    def _get_slider_tuner_layers(self):
+        """Return cached list of (id, module) for BaseTunerLayer modules that have scaling dicts."""
+        if hasattr(self, "_slider_tuner_layers_cache"):
+            return self._slider_tuner_layers_cache
+
+        from peft.tuners.tuners_utils import BaseTunerLayer
+
+        result = []
+        for name, module in self.model.get_trained_component().named_modules():
+            if isinstance(module, BaseTunerLayer) and hasattr(module, "scaling"):
+                result.append((id(module), module))
+        self._slider_tuner_layers_cache = result
+        return result
+
     def _ensure_parameter_dtype(self, parameters, target_dtype: torch.dtype, optimizer_name: str | None = None):
         converted = 0
         for param_or_group in parameters:
@@ -5438,17 +5452,20 @@ class Trainer:
                     except (TypeError, ValueError):
                         strength = 1.0
 
+                    slider_original_scaling = None
                     if self.config.model_type == "lora" and strength != 1.0:
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
                                 self.accelerator._lycoris_wrapped_network.set_multiplier(strength)
                             else:
-                                from peft.tuners.tuners_utils import BaseTunerLayer
-                                for modulename, module in self.model.get_trained_component().named_modules():
-                                    if isinstance(module, BaseTunerLayer):
-                                        if hasattr(module, "scaling"):
-                                            for key in module.scaling.keys():
-                                                module.scaling[key] = strength
+                                tuner_layers = self._get_slider_tuner_layers()
+                                slider_original_scaling = {}
+                                for layer_id, module in tuner_layers:
+                                    saved = {}
+                                    for key, val in module.scaling.items():
+                                        saved[key] = val
+                                        module.scaling[key] = val * strength
+                                    slider_original_scaling[layer_id] = (module, saved)
 
                     training_logger.debug("Predicting.")
                     model_pred = self.model_predict(
@@ -5624,13 +5641,10 @@ class Trainer:
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
                                 self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
-                            else:
-                                from peft.tuners.tuners_utils import BaseTunerLayer
-                                for modulename, module in self.model.get_trained_component().named_modules():
-                                    if isinstance(module, BaseTunerLayer):
-                                        if hasattr(module, "scaling"):
-                                            for key in module.scaling.keys():
-                                                module.scaling[key] = 1.0
+                            elif slider_original_scaling is not None:
+                                for module, saved in slider_original_scaling.values():
+                                    for key, val in saved.items():
+                                        module.scaling[key] = val
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}
