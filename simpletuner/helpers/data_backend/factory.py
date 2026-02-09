@@ -3198,11 +3198,15 @@ class FactoryRegistry:
         elif caption_strategy == "instanceprompt":
             use_captions = False
 
+        kwargs = {}
+        kwargs["slider_strength"] = backend.get("slider_strength", 1.0) 
+
         init_backend["train_dataset"] = MultiAspectDataset(
             id=init_backend["id"],
             datasets=[init_backend["metadata_backend"]],
             is_regularisation_data=is_regularisation_data,
             is_i2v_data=is_i2v_data,
+            **kwargs
         )
 
         if "deepfloyd" in self.args.model_type:
