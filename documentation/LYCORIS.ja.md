@@ -59,6 +59,46 @@ LyCORIS 設定ファイルの形式は次のとおりです:
 
 LyCORIS の詳細は、[ライブラリのドキュメント](https://github.com/KohakuBlueleaf/LyCORIS/tree/main/docs) を参照してください。
 
+### Flux 2 (Klein) モジュールターゲット
+
+Flux 2 モデルは、汎用の `Attention` や `FeedForward` ではなく、カスタムモジュールクラスを使用します。Flux 2 の LoKR 設定では以下をターゲットに設定してください：
+
+- `Flux2Attention` — ダブルストリームアテンションブロック
+- `Flux2FeedForward` — ダブルストリームフィードフォワードブロック
+- `Flux2ParallelSelfAttention` — シングルストリーム並列アテンション+フィードフォワードブロック（QKV と MLP 投影が融合）
+
+`Flux2ParallelSelfAttention` を含めるとシングルストリームブロックも学習対象となり、収束が改善する可能性がありますが、過学習のリスクが増加します。Flux 2 で LyCORIS LoKR の収束が困難な場合、このターゲットの追加を推奨します。
+
+Flux 2 LoKR 設定例：
+
+```json
+{
+    "bypass_mode": true,
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 4,
+    "apply_preset": {
+        "target_module": [
+            "Flux2Attention", "Flux2FeedForward", "Flux2ParallelSelfAttention"
+        ],
+        "module_algo_map": {
+            "Flux2FeedForward": {
+                "factor": 4
+            },
+            "Flux2Attention": {
+                "factor": 2
+            },
+            "Flux2ParallelSelfAttention": {
+                "factor": 2
+            }
+        }
+    }
+}
+```
+
 ## 予想される問題
 
 SDXL に Lycoris を使用すると、FeedForward モジュールの学習でモデルが壊れ、損失が `NaN`（Not-a-Number）に飛ぶことがあります。
