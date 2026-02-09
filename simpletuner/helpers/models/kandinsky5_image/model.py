@@ -115,7 +115,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7",
+                    "ramtorch_target_modules": "visual_transformer_blocks.0.*,visual_transformer_blocks.1.*,visual_transformer_blocks.2.*,visual_transformer_blocks.3.*,visual_transformer_blocks.4.*,visual_transformer_blocks.5.*,visual_transformer_blocks.6.*,visual_transformer_blocks.7.*",
                 },
             ),
             AccelerationPreset(
@@ -131,7 +131,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7,visual_transformer_blocks.8,visual_transformer_blocks.9,visual_transformer_blocks.10,visual_transformer_blocks.11,visual_transformer_blocks.12,visual_transformer_blocks.13,visual_transformer_blocks.14,visual_transformer_blocks.15,visual_transformer_blocks.16",
+                    "ramtorch_target_modules": "visual_transformer_blocks.0.*,visual_transformer_blocks.1.*,visual_transformer_blocks.2.*,visual_transformer_blocks.3.*,visual_transformer_blocks.4.*,visual_transformer_blocks.5.*,visual_transformer_blocks.6.*,visual_transformer_blocks.7.*,visual_transformer_blocks.8.*,visual_transformer_blocks.9.*,visual_transformer_blocks.10.*,visual_transformer_blocks.11.*,visual_transformer_blocks.12.*,visual_transformer_blocks.13.*,visual_transformer_blocks.14.*,visual_transformer_blocks.15.*,visual_transformer_blocks.16.*",
                 },
             ),
             AccelerationPreset(

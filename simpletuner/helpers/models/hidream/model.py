@@ -160,7 +160,7 @@ class HiDream(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.0,single_stream_blocks.1,single_stream_blocks.2,single_stream_blocks.3,single_stream_blocks.4,single_stream_blocks.5,single_stream_blocks.6,single_stream_blocks.7,single_stream_blocks.8,single_stream_blocks.9,single_stream_blocks.10,single_stream_blocks.11,single_stream_blocks.12,single_stream_blocks.13,single_stream_blocks.14,single_stream_blocks.15",
+                    "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.0.*,single_stream_blocks.1.*,single_stream_blocks.2.*,single_stream_blocks.3.*,single_stream_blocks.4.*,single_stream_blocks.5.*,single_stream_blocks.6.*,single_stream_blocks.7.*,single_stream_blocks.8.*,single_stream_blocks.9.*,single_stream_blocks.10.*,single_stream_blocks.11.*,single_stream_blocks.12.*,single_stream_blocks.13.*,single_stream_blocks.14.*,single_stream_blocks.15.*",
                 },
             ),
             AccelerationPreset(

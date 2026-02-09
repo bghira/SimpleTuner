@@ -124,7 +124,7 @@ class Chroma(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.0,single_transformer_blocks.1,single_transformer_blocks.2,single_transformer_blocks.3,single_transformer_blocks.4,single_transformer_blocks.5,single_transformer_blocks.6,single_transformer_blocks.7,single_transformer_blocks.8,single_transformer_blocks.9,single_transformer_blocks.10,single_transformer_blocks.11,single_transformer_blocks.12,single_transformer_blocks.13,single_transformer_blocks.14,single_transformer_blocks.15,single_transformer_blocks.16,single_transformer_blocks.17,single_transformer_blocks.18",
+                    "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*,single_transformer_blocks.2.*,single_transformer_blocks.3.*,single_transformer_blocks.4.*,single_transformer_blocks.5.*,single_transformer_blocks.6.*,single_transformer_blocks.7.*,single_transformer_blocks.8.*,single_transformer_blocks.9.*,single_transformer_blocks.10.*,single_transformer_blocks.11.*,single_transformer_blocks.12.*,single_transformer_blocks.13.*,single_transformer_blocks.14.*,single_transformer_blocks.15.*,single_transformer_blocks.16.*,single_transformer_blocks.17.*,single_transformer_blocks.18.*",
                 },
             ),
             AccelerationPreset(

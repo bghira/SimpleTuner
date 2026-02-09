@@ -109,7 +109,7 @@ class LongCatImage(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "single_transformer_blocks.*,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18",
+                    "ramtorch_target_modules": "single_transformer_blocks.*,transformer_blocks.10.*,transformer_blocks.11.*,transformer_blocks.12.*,transformer_blocks.13.*,transformer_blocks.14.*,transformer_blocks.15.*,transformer_blocks.16.*,transformer_blocks.17.*,transformer_blocks.18.*",
                 },
             ),
             AccelerationPreset(
