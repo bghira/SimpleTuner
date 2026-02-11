@@ -9,7 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -1147,6 +1147,16 @@ class ModelFoundation(ABC):
 
         Override to True for models that use image embeddings as conditioning
         signals rather than raw pixels or latents.
+        """
+        return False
+
+    def supports_multistage_validation(self) -> bool:
+        """
+        Returns True when validation should run multiple pipeline stages,
+        with stage 1 output feeding into stage 2.
+
+        Override for models like LTX2 (latent upsample + re-denoise),
+        DeepFloyd (stage1 → super-resolution), or SDXL (base → refiner).
         """
         return False
 
@@ -3382,6 +3392,30 @@ class ModelFoundation(ABC):
         """
 
         return pipeline_kwargs
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: dict,
+        pipeline_call: Callable,
+    ) -> Any:
+        """
+        Execute a multi-stage validation pipeline.
+
+        Called instead of a single pipeline() invocation when
+        supports_multistage_validation() returns True.
+
+        Args:
+            pipeline_kwargs: The filtered kwargs for the initial pipeline call.
+            pipeline_call: Callable wrapping pipeline(**kwargs) within the
+                active autocast context. Models call this for each stage.
+
+        Returns:
+            The final pipeline result object (must have .frames/.images/.audio).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.supports_multistage_validation() returned True "
+            f"but run_multistage_validation() was not overridden."
+        )
 
     def setup_training_noise_schedule(self):
         """

@@ -67,6 +67,40 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         self.assertFalse(capabilities.get("supports_audio_inputs"))
         self.assertFalse(capabilities.get("requires_s2v_datasets"))
 
+    # -- Multi-stage validation capability tests --
+
+    def test_multistage_capability_present(self):
+        """The supports_multistage_validation key must appear in capabilities."""
+        details = self.service.get_model_details("flux")
+        capabilities = details["capabilities"]
+        self.assertIn("supports_multistage_validation", capabilities)
+
+    def test_sdxl_no_multistage(self):
+        """SDXL does not support multi-stage validation."""
+        details = self.service.get_model_details("sdxl")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_flux_no_multistage(self):
+        """Flux does not support multi-stage validation."""
+        details = self.service.get_model_details("flux")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_ltxvideo2_no_multistage(self):
+        """LTX-Video 2 does not yet support multi-stage validation."""
+        details = self.service.get_model_details("ltxvideo2")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_deepfloyd_no_multistage(self):
+        """DeepFloyd does not yet support multi-stage validation."""
+        details = self.service.get_model_details("deepfloyd")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_evaluate_requirements_includes_multistage(self):
+        """evaluate_requirements() must include supports_multistage_validation."""
+        result = self.service.evaluate_requirements("flux")
+        self.assertIn("supports_multistage_validation", result)
+        self.assertFalse(result["supports_multistage_validation"])
+
 
 if __name__ == "__main__":
     unittest.main()

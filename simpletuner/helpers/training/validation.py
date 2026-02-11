@@ -3461,7 +3461,17 @@ class Validation:
                             self.inference_device.type,
                             dtype=self.config.weight_dtype,
                         ):
-                            pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                            if self.model.supports_multistage_validation():
+
+                                def _pipeline_call(kwargs):
+                                    return self.model.pipeline(**kwargs)
+
+                                pipeline_result = self.model.run_multistage_validation(
+                                    pipeline_kwargs,
+                                    _pipeline_call,
+                                )
+                            else:
+                                pipeline_result = self.model.pipeline(**pipeline_kwargs)
                         current_results = None
                         if hasattr(pipeline_result, "frames"):
                             current_results = pipeline_result.frames

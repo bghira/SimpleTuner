@@ -216,6 +216,14 @@ class ModelsService:
                 supports_audio_inputs = False
         capabilities["supports_audio_inputs"] = supports_audio_inputs
 
+        # Check if model supports multi-stage validation pipelines
+        supports_multistage = False
+        base_multistage_method = getattr(ModelFoundation, "supports_multistage_validation", None)
+        current_multistage_method = getattr(model_cls, "supports_multistage_validation", base_multistage_method)
+        if current_multistage_method is not base_multistage_method:
+            supports_multistage = True
+        capabilities["supports_multistage_validation"] = supports_multistage
+
         # Check if model requires S2V (sound-to-video) datasets (mandatory audio for models like WanS2V)
         requires_s2v_datasets = False
         if hasattr(model_cls, "requires_s2v_datasets"):
@@ -301,6 +309,7 @@ class ModelsService:
         requires_edit_captions = bool(_safe_call("requires_validation_edit_captions", False))
         requires_i2v_validation_samples = bool(_safe_call("requires_validation_i2v_samples", False))
         supports_conditioning_dataset = bool(_safe_call("supports_conditioning_dataset", False))
+        supports_multistage = bool(_safe_call("supports_multistage_validation", False))
         dataset_type = _safe_call("conditioning_validation_dataset_type", "conditioning")
         if not isinstance(dataset_type, str) or not dataset_type:
             dataset_type = "conditioning"
@@ -314,6 +323,7 @@ class ModelsService:
             "requires_validation_i2v_samples": requires_i2v_validation_samples,
             "conditioning_dataset_type": dataset_type,
             "supports_conditioning_dataset": supports_conditioning_dataset,
+            "supports_multistage_validation": supports_multistage,
         }
 
     # ------------------------------------------------------------------
