@@ -25,8 +25,7 @@ def get_examples_dir() -> Path:
     """Get the path to the examples directory."""
     import simpletuner
 
-    simpletuner_dir = Path(simpletuner.__file__).parent
-    return simpletuner_dir / "examples"
+    return simpletuner._get_package_dir() / "examples"
 
 
 def list_examples() -> List[str]:
@@ -256,8 +255,7 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
 
     import simpletuner
 
-    simpletuner_dir = Path(simpletuner.__file__).parent
-    train_py = simpletuner_dir / "train.py"
+    train_py = simpletuner._get_package_dir() / "train.py"
 
     if not train_py.exists():
         print(f"Error: train.py not found at {train_py}")

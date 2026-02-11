@@ -204,7 +204,7 @@ class Flux2(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.0,single_transformer_blocks.1,single_transformer_blocks.2,single_transformer_blocks.3,single_transformer_blocks.4,single_transformer_blocks.5,single_transformer_blocks.6,single_transformer_blocks.7,single_transformer_blocks.8,single_transformer_blocks.9,single_transformer_blocks.10,single_transformer_blocks.11,single_transformer_blocks.12,single_transformer_blocks.13,single_transformer_blocks.14,single_transformer_blocks.15,single_transformer_blocks.16,single_transformer_blocks.17,single_transformer_blocks.18,single_transformer_blocks.19,single_transformer_blocks.20,single_transformer_blocks.21,single_transformer_blocks.22,single_transformer_blocks.23",
+                    "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*,single_transformer_blocks.2.*,single_transformer_blocks.3.*,single_transformer_blocks.4.*,single_transformer_blocks.5.*,single_transformer_blocks.6.*,single_transformer_blocks.7.*,single_transformer_blocks.8.*,single_transformer_blocks.9.*,single_transformer_blocks.10.*,single_transformer_blocks.11.*,single_transformer_blocks.12.*,single_transformer_blocks.13.*,single_transformer_blocks.14.*,single_transformer_blocks.15.*,single_transformer_blocks.16.*,single_transformer_blocks.17.*,single_transformer_blocks.18.*,single_transformer_blocks.19.*,single_transformer_blocks.20.*,single_transformer_blocks.21.*,single_transformer_blocks.22.*,single_transformer_blocks.23.*",
                 },
             ),
             AccelerationPreset(
@@ -398,10 +398,10 @@ class Flux2(ImageModelFoundation):
             tokenizer_kwargs["revision"] = revision
         self._qwen_tokenizer = Qwen2TokenizerFast.from_pretrained(text_encoder_path, **tokenizer_kwargs)
 
-        # Load model
+        # Load model to CPU first, then move to the per-rank accelerator device.
+        # This avoids all ranks contending on a single GPU during from_pretrained.
         model_kwargs = {
-            "torch_dtype": dtype,
-            "low_cpu_mem_usage": True,
+            "dtype": dtype,
         }
         if text_encoder_subfolder:
             model_kwargs["subfolder"] = text_encoder_subfolder
@@ -412,6 +412,13 @@ class Flux2(ImageModelFoundation):
         if move_to_device and not self._ramtorch_text_encoders_requested():
             target_device = (
                 torch.device("cpu") if quantize_via_cpu and should_quantize_text_encoder else self.accelerator.device
+            )
+            logger.info(
+                "Moving Qwen3 text encoder to %s (accelerator.device=%s, local_rank=%s, process_index=%s)",
+                target_device,
+                self.accelerator.device,
+                os.environ.get("LOCAL_RANK", "unset"),
+                self.accelerator.local_process_index,
             )
             self._qwen_model.to(target_device, dtype=dtype)
         if self._ramtorch_text_encoders_requested():
@@ -449,10 +456,9 @@ class Flux2(ImageModelFoundation):
             processor_kwargs["revision"] = mistral_revision
         self._mistral_processor = AutoProcessor.from_pretrained(mistral_path, **processor_kwargs)
 
-        # Load model
+        # Load model to CPU first, then move to the per-rank accelerator device.
         model_kwargs = {
-            "torch_dtype": dtype,
-            "low_cpu_mem_usage": True,
+            "dtype": dtype,
         }
         if mistral_revision is not None:
             model_kwargs["revision"] = mistral_revision
@@ -463,6 +469,13 @@ class Flux2(ImageModelFoundation):
         if move_to_device and not self._ramtorch_text_encoders_requested():
             target_device = (
                 torch.device("cpu") if quantize_via_cpu and should_quantize_text_encoder else self.accelerator.device
+            )
+            logger.info(
+                "Moving Mistral-3 text encoder to %s (accelerator.device=%s, local_rank=%s, process_index=%s)",
+                target_device,
+                self.accelerator.device,
+                os.environ.get("LOCAL_RANK", "unset"),
+                self.accelerator.local_process_index,
             )
             self._mistral_model.to(target_device, dtype=dtype)
         if self._ramtorch_text_encoders_requested():

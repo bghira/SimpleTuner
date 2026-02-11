@@ -31,12 +31,14 @@ class MultiAspectDataset(Dataset):
         print_names: bool = False,
         is_regularisation_data: bool = False,
         is_i2v_data: bool = False,
+        slider_strength: float = 1.0,
     ):
         self.id = id
         self.datasets = datasets
         self.print_names = print_names
         self.is_regularisation_data = is_regularisation_data
         self.is_i2v_data = is_i2v_data
+        self.slider_strength = slider_strength
 
     def __len__(self):
         # Sum the length of all data backends:
@@ -54,6 +56,7 @@ class MultiAspectDataset(Dataset):
             "conditioning_samples": [],
             "is_regularisation_data": self.is_regularisation_data,
             "is_i2v_data": self.is_i2v_data,
+            "slider_strength": self.slider_strength,
         }
         first_aspect_ratio = None
         for sample in image_tuple:

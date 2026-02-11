@@ -59,6 +59,46 @@ LyCORIS 配置文件格式如下：
 
 更多信息请参考 [库文档](https://github.com/KohakuBlueleaf/LyCORIS/tree/main/docs)。
 
+### Flux 2 (Klein) 模块目标
+
+Flux 2 模型使用自定义模块类，而非通用的 `Attention` 和 `FeedForward` 名称。Flux 2 的 LoKR 配置应以下列模块为目标：
+
+- `Flux2Attention` — 双流注意力块
+- `Flux2FeedForward` — 双流前馈块
+- `Flux2ParallelSelfAttention` — 单流并行注意力+前馈块（融合的 QKV 和 MLP 投影）
+
+包含 `Flux2ParallelSelfAttention` 会训练单流块，可能改善收敛性，但会增加过拟合的风险。如果在 Flux 2 上使用 LyCORIS LoKR 难以收敛，建议添加此目标。
+
+Flux 2 LoKR 配置示例：
+
+```json
+{
+    "bypass_mode": true,
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 4,
+    "apply_preset": {
+        "target_module": [
+            "Flux2Attention", "Flux2FeedForward", "Flux2ParallelSelfAttention"
+        ],
+        "module_algo_map": {
+            "Flux2FeedForward": {
+                "factor": 4
+            },
+            "Flux2Attention": {
+                "factor": 2
+            },
+            "Flux2ParallelSelfAttention": {
+                "factor": 2
+            }
+        }
+    }
+}
+```
+
 ## 潜在问题
 
 在 SDXL 上使用 Lycoris 时，训练 FeedForward 模块可能会破坏模型并使损失变为 `NaN`。

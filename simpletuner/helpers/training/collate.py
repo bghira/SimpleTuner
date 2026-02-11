@@ -1219,4 +1219,7 @@ def collate_fn(batch):
         "is_audio_only": is_audio_only,
         "s2v_audio_paths": s2v_audio_paths if any(s2v_audio_paths) else None,
         "s2v_audio_backend_ids": s2v_audio_backend_ids if any(s2v_audio_backend_ids) else None,
+
+
+        "slider_strength": batch.get("slider_strength")
     }

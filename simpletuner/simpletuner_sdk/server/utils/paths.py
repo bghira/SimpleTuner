@@ -15,12 +15,7 @@ def get_simpletuner_root() -> Path:
     """
     import simpletuner
 
-    if simpletuner.__file__ is None:
-        # Handle case where __file__ is None
-        simpletuner_package = Path(__file__).parent.parent.parent.parent
-    else:
-        # Get the path to the simpletuner package directory
-        simpletuner_package = Path(simpletuner.__file__).parent
+    simpletuner_package = simpletuner._get_package_dir()
 
     # Check if we're running from a source checkout by looking for pyproject.toml
     # one level up (this means we're in a development environment)

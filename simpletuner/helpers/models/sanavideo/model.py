@@ -117,7 +117,7 @@ class SanaVideo(VideoModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9",
+                    "ramtorch_target_modules": "transformer_blocks.0.*,transformer_blocks.1.*,transformer_blocks.2.*,transformer_blocks.3.*,transformer_blocks.4.*,transformer_blocks.5.*,transformer_blocks.6.*,transformer_blocks.7.*,transformer_blocks.8.*,transformer_blocks.9.*",
                 },
             ),
             AccelerationPreset(

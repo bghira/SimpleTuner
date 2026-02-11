@@ -138,7 +138,10 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 - **Qué**: Patrones glob separados por comas que limitan qué módulos Linear se convierten a RamTorch.
 - **Predeterminado**: Todas las capas Linear se convierten cuando no se proporciona un patrón.
-- **Notas**: Coincide con nombres de módulos completamente calificados o nombres de clase (se permiten comodines).
+- **Notas**:
+  - Coincide con nombres de módulos completamente calificados o nombres de clase usando la sintaxis glob de `fnmatch`.
+  - Los patrones deben incluir un comodín `.*` al final para coincidir con las capas dentro de un bloque. Por ejemplo, `transformer_blocks.0.*` coincide con todas las capas dentro del bloque 0, mientras que `transformer_blocks.*` coincide con todos los bloques transformer. Un nombre simple como `transformer_blocks.0` sin `.*` también funciona (se expande automáticamente), pero se recomienda la forma explícita con comodín para mayor claridad.
+  - Ejemplo: `"transformer_blocks.*,single_transformer_blocks.0.*,single_transformer_blocks.1.*"`
 
 ### `--ramtorch_text_encoder`
 

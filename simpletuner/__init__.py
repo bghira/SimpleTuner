@@ -4,6 +4,26 @@ from __future__ import annotations
 
 import os
 import warnings
+from pathlib import Path as _Path
+
+
+def _get_package_dir() -> _Path:
+    """Return the path to the simpletuner package directory.
+
+    Handles the case where ``__file__`` is ``None`` (e.g. namespace packages
+    or certain editable installs) by falling back to ``importlib``.
+    """
+    if __file__ is not None:
+        return _Path(__file__).parent
+    import importlib.util
+
+    spec = importlib.util.find_spec("simpletuner")
+    if spec is not None:
+        if spec.origin is not None:
+            return _Path(spec.origin).parent
+        if spec.submodule_search_locations:
+            return _Path(spec.submodule_search_locations[0])
+    raise RuntimeError("Cannot determine simpletuner package directory")
 
 # Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)
 # These warnings are issued during import before we can install custom handlers.
@@ -103,4 +123,4 @@ def _suppress_swigvarlink(message, *args, **kwargs):
 warnings.warn = _suppress_swigvarlink
 
 
-__version__ = "4.0.5"
+__version__ = "4.0.6"

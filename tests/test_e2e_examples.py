@@ -24,7 +24,7 @@ def get_examples_dir() -> Path:
     # Find simpletuner package directory
     import simpletuner
 
-    simpletuner_dir = Path(simpletuner.__file__).parent
+    simpletuner_dir = simpletuner._get_package_dir()
     return simpletuner_dir / "examples"
 
 

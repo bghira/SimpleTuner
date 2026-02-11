@@ -129,7 +129,7 @@ class ACEStep(AudioModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27",
+                    "ramtorch_target_modules": "transformer_blocks.14.*,transformer_blocks.15.*,transformer_blocks.16.*,transformer_blocks.17.*,transformer_blocks.18.*,transformer_blocks.19.*,transformer_blocks.20.*,transformer_blocks.21.*,transformer_blocks.22.*,transformer_blocks.23.*,transformer_blocks.24.*,transformer_blocks.25.*,transformer_blocks.26.*,transformer_blocks.27.*",
                 },
             ),
             AccelerationPreset(
@@ -145,7 +145,7 @@ class ACEStep(AudioModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27",
+                    "ramtorch_target_modules": "transformer_blocks.7.*,transformer_blocks.8.*,transformer_blocks.9.*,transformer_blocks.10.*,transformer_blocks.11.*,transformer_blocks.12.*,transformer_blocks.13.*,transformer_blocks.14.*,transformer_blocks.15.*,transformer_blocks.16.*,transformer_blocks.17.*,transformer_blocks.18.*,transformer_blocks.19.*,transformer_blocks.20.*,transformer_blocks.21.*,transformer_blocks.22.*,transformer_blocks.23.*,transformer_blocks.24.*,transformer_blocks.25.*,transformer_blocks.26.*,transformer_blocks.27.*",
                 },
             ),
             AccelerationPreset(
