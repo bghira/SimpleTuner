@@ -194,10 +194,10 @@ pip install simpletuner
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell 用户（NVIDIA B 系列 GPU）
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://download.pytorch.org/whl/cu130
 
 # ROCm 用户（AMD GPU）
-pip install 'simpletuner[rocm]'
+pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.1
 
 # Apple Silicon 用户（M1/M2/M3/M4 Mac）
 pip install 'simpletuner[apple]'

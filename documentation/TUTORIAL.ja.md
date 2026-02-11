@@ -5,7 +5,7 @@
 ## クイックスタート
 
 1. **SimpleTunerのインストール**: `pip install 'simpletuner[cuda]'` (他のプラットフォームについてはREADMEを参照)
-   - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+   - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 2. **設定**: `simpletuner configure` (対話型セットアップ)
 3. **トレーニング**: `simpletuner train`
 

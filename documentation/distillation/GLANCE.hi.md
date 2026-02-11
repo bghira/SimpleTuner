@@ -11,7 +11,7 @@ Glance एक "single-image LoRA with a split schedule" जैसा है, न
 ## प्रीरिक्विज़िट्स
 
 - Python 3.10–3.13, SimpleTuner इंस्टॉल (`pip install 'simpletuner[cuda]'`)
-  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 - एक इमेज और एक कैप्शन फ़ाइल एक ही basename के साथ (उदाहरण: `data/glance.png` + `data/glance.txt`)
 - एक flow-model checkpoint (नीचे उदाहरण में `black-forest-labs/FLUX.1-dev`)
 

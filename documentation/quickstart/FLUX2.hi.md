@@ -116,7 +116,7 @@ FLUX.2 मॉडल के लिए Hugging Face पर access approval चा�
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
 Development setup के लिए:

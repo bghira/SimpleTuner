@@ -14,7 +14,7 @@
 
 - Python 3.10–3.13, Git, और `pip`
 - वर्चुअल एनवायरनमेंट में SimpleTuner इंस्टॉल (`pip install 'simpletuner[cuda]'` या आपके प्लेटफ़ॉर्म के अनुरूप वैरिएंट)
-  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 - आवश्यक Hugging Face रिपॉजिटरीज़ तक पहुंच (`huggingface-cli login` पहले करें, अगर मॉडल gated हों)
 - लोकल में staged डेटासेट्स जिनके साथ कैप्शन्स हों (PixArt के लिए caption टेक्स्ट फाइलें, Kontext के लिए paired edit/reference फोल्डर्स)
 - `curl` और `jq` वाला शेल

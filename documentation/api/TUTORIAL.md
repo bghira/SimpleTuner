@@ -14,7 +14,7 @@ This guide walks through running SimpleTuner training jobs **entirely through th
 
 - Python 3.10–3.13, Git, and `pip`
 - SimpleTuner installed in a virtual environment (`pip install 'simpletuner[cuda]'` or the variant that matches your platform)
-  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 - Access to required Hugging Face repos (`huggingface-cli login` before pulling gated models)
 - Datasets staged locally with captions (caption text files for PixArt, paired edit/reference folders for Kontext)
 - A shell with `curl` and `jq`
