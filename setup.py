@@ -269,7 +269,7 @@ def get_cuda13_dependencies():
         build_cuda13_wheel_url("torchaudio", torchaudio_version),
         "triton>=3.3.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.14.1",
+        "torchao>=0.14.0,<0.16.0",
         "bitsandbytes>=0.45.0",
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
@@ -294,7 +294,7 @@ def get_cuda_nightly_dependencies():
         build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.14.1",
+        "torchao>=0.14.0,<0.16.0",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
@@ -317,7 +317,7 @@ def get_cuda13_nightly_dependencies():
         build_cuda13_nightly_wheel_url("torchaudio", torchaudio_version),
         build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
         "deepspeed>=0.17.2",
-        "torchao>=0.14.1",
+        "torchao>=0.14.0,<0.16.0",
         "bitsandbytes>=0.45.0",
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
@@ -336,7 +336,7 @@ def get_cuda_dependencies():
         "triton>=3.3.0",
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.14.1",
+        "torchao>=0.14.0,<0.16.0",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
@@ -365,7 +365,7 @@ def get_rocm_dependencies():
             build_rocm_wheel_url("torchvision", torchvision_version, vision_tag, rocm_base_url),
             build_rocm_wheel_url("torchaudio", torchaudio_version, audio_tag, rocm_base_url),
             build_rocm_triton_wheel_url(triton_version, triton_tag, rocm_base_url),
-            "torchao>=0.14.1",
+            "torchao>=0.14.0,<0.16.0",
             ramtorch_dep,
         ]
     except Exception as exc:
@@ -374,7 +374,7 @@ def get_rocm_dependencies():
             "torch>=2.10.0",
             "torchvision>=0.25.0",
             "torchaudio>=2.10.0",
-            "torchao>=0.14.1",
+            "torchao>=0.14.0,<0.16.0",
             ramtorch_dep,
         ]
 
@@ -384,7 +384,7 @@ def get_apple_dependencies():
         "torch>=2.10.0",
         "torchvision>=0.25.0",
         "torchaudio>=2.10.0",
-        "torchao>=0.14.1",
+        "torchao>=0.14.0,<0.16.0",
     ]
 
 
@@ -393,7 +393,7 @@ def get_cpu_dependencies():
         "torch>=2.10.0",
         "torchvision>=0.25.0",
         "torchaudio>=2.10.0",
-        "torchao>=0.14.1",
+        "torchao>=0.14.0,<0.16.0",
     ]
 
 
