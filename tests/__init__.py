@@ -1,5 +1,32 @@
 """Test package initialization - suppress warnings before any imports."""
 
+# CUDA/PyTorch spin up internal non-daemon thread pools that never exit,
+# causing `python -m unittest` to hang after all tests complete.  We use
+# threading._register_atexit (which fires inside threading._shutdown,
+# *before* _thread_shutdown waits on non-daemon threads) to force an
+# immediate exit and bypass the hang.
+import os as _os
+import sys as _sys
+import threading as _threading
+
+_original_exit = _sys.exit
+
+
+def _capturing_exit(code=0):
+    _sys._test_exit_code = code if isinstance(code, int) else 1
+    _original_exit(code)
+
+
+_sys.exit = _capturing_exit
+_sys._test_exit_code = 0
+
+
+def _force_exit_after_tests():
+    _os._exit(getattr(_sys, "_test_exit_code", 0))
+
+
+_threading._register_atexit(_force_exit_after_tests)
+
 import warnings
 
 # Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)
