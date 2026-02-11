@@ -23,6 +23,7 @@ from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import FeedForward, _chunked_feed_forward
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -78,6 +79,9 @@ def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
 
 
 class WanAttnProcessor2_0:
+    _attention_backend = None
+    _parallel_config = None
+
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError("WanAttnProcessor2_0 requires PyTorch 2.0. To use it, please upgrade PyTorch to 2.0.")
@@ -111,6 +115,8 @@ class WanAttnProcessor2_0:
         elif hasattr(attn, "to_out") and isinstance(attn.to_out, nn.Module):
             _ensure_linear_dtype(attn.to_out)
 
+        is_self_attention = encoder_hidden_states is None
+
         encoder_hidden_states_img = None
         if attn.add_k_proj is not None:
             encoder_hidden_states_img = encoder_hidden_states[:, :513]
@@ -131,14 +137,15 @@ class WanAttnProcessor2_0:
         if attn.norm_k is not None:
             key = attn.norm_k(key).to(dtype=target_dtype)
 
-        query = query.unflatten(2, (attn.heads, -1)).transpose(1, 2)
-        key = key.unflatten(2, (attn.heads, -1)).transpose(1, 2)
-        value = value.unflatten(2, (attn.heads, -1)).transpose(1, 2)
+        # dispatch_attention_fn expects (B, S, H, D) layout
+        query = query.unflatten(2, (attn.heads, -1))
+        key = key.unflatten(2, (attn.heads, -1))
+        value = value.unflatten(2, (attn.heads, -1))
 
         if rotary_emb is not None:
-            # Use the new function that handles batched rotary embeddings
-            query = _apply_rotary_emb_anyshape(query, rotary_emb)
-            key = _apply_rotary_emb_anyshape(key, rotary_emb)
+            # _apply_rotary_emb_anyshape expects (B, H, S, D) layout
+            query = _apply_rotary_emb_anyshape(query.transpose(1, 2), rotary_emb).transpose(1, 2)
+            key = _apply_rotary_emb_anyshape(key.transpose(1, 2), rotary_emb).transpose(1, 2)
 
         # I2V task
         hidden_states_img = None
@@ -150,8 +157,8 @@ class WanAttnProcessor2_0:
             key_img = key_img.to(dtype=target_dtype)
             value_img = value_img.to(dtype=target_dtype)
 
-            key_img = key_img.unflatten(2, (attn.heads, -1)).transpose(1, 2)
-            value_img = value_img.unflatten(2, (attn.heads, -1)).transpose(1, 2)
+            key_img = key_img.unflatten(2, (attn.heads, -1))
+            value_img = value_img.unflatten(2, (attn.heads, -1))
 
             publish_attention_max_logits(
                 query,
@@ -160,15 +167,17 @@ class WanAttnProcessor2_0:
                 getattr(attn, "to_q", None) and attn.to_q.weight,
                 getattr(attn, "add_k_proj", None) and attn.add_k_proj.weight,
             )
-            hidden_states_img = F.scaled_dot_product_attention(
+            hidden_states_img = dispatch_attention_fn(
                 query,
                 key_img,
                 value_img,
                 attn_mask=None,
                 dropout_p=0.0,
                 is_causal=False,
+                backend=self._attention_backend,
+                parallel_config=None,
             )
-            hidden_states_img = hidden_states_img.transpose(1, 2).flatten(2, 3)
+            hidden_states_img = hidden_states_img.flatten(2, 3)
             hidden_states_img = hidden_states_img.type_as(query)
 
         publish_attention_max_logits(
@@ -178,10 +187,17 @@ class WanAttnProcessor2_0:
             getattr(attn, "to_q", None) and attn.to_q.weight,
             getattr(attn, "to_k", None) and attn.to_k.weight,
         )
-        hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        hidden_states = dispatch_attention_fn(
+            query,
+            key,
+            value,
+            attn_mask=attention_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            backend=self._attention_backend,
+            parallel_config=(self._parallel_config if is_self_attention else None),
         )
-        hidden_states = hidden_states.transpose(1, 2).flatten(2, 3)
+        hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.type_as(query)
 
         if hidden_states_img is not None:
@@ -577,9 +593,10 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         "blocks.0": {
             "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
         },
-        "blocks.*": {
-            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-        },
+        # encoder_hidden_states is NOT split for CP because Wan 2.1 I2V concatenates
+        # 512 text tokens + 257 image tokens = 769, which is indivisible by CP group size.
+        # Cross-attention k/v depend solely on encoder_hidden_states, so each rank can
+        # independently compute (q_chunk * k) * v without all-to-all communication.
         "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
     }
 
