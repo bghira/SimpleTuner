@@ -49,7 +49,7 @@ NVIDIA उपयोगकर्ताओं को सही dependencies के
 ```bash
 pip install -e 'simpletuner[cuda]'
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
-# pip install -e 'simpletuner[cuda13]'
+# pip install -e 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 # या, यदि आपने git से clone किया है:
 # pip install -e '.[cuda]'
 ```

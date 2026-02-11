@@ -64,7 +64,7 @@ apt -y install python3.13 python3.13-venv
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
 如需手动安装或开发环境设置，请参阅[安装文档](../INSTALL.md)。

@@ -4,7 +4,6 @@
 
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -65,144 +64,9 @@ def _python_tag() -> str:
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
-def _rocm_platform_tag():
-    """Return the ROCm wheel platform tag, overridable via environment."""
-    return os.environ.get("SIMPLETUNER_ROCM_PLATFORM_TAG", "linux_x86_64")
-
-
-def _normalize_rocm_version(value: str) -> str:
-    """Normalize ROCm version strings like 7.1.0 to 7.1 for wheel URLs."""
-    match = re.search(r"(\d+)\.(\d+)", value)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}"
-    return value
-
-
-def _strip_rocm_prefix(value: str) -> str:
-    """Normalize ROCm tag overrides by removing common prefixes."""
-    normalized = value.strip()
-    if normalized.startswith("rocm-rel-"):
-        return normalized[len("rocm-rel-") :]
-    if normalized.startswith("rocm"):
-        return normalized[len("rocm") :]
-    return normalized
-
-
-def _rocm_rel_version(rocm_version: str) -> str:
-    """Return the ROCm release tag (major.minor.patch) used by repo.radeon.com."""
-    override = os.environ.get("SIMPLETUNER_ROCM_REL") or os.environ.get("ROCM_REL")
-    if override:
-        return _strip_rocm_prefix(override)
-    if rocm_version.startswith("7.1"):
-        return "7.1.1"
-    return rocm_version
-
-
-def _rocm_build_tag(package: str, version: str, rocm_rel: str) -> str:
-    """Return the per-package build tag suffix (e.g. lw.git351ff442)."""
-    env_key = f"SIMPLETUNER_ROCM_{package.upper()}_BUILD_TAG"
-    override = os.environ.get(env_key)
-    if override:
-        return override.lstrip(".")
-
-    if rocm_rel == "7.1.1":
-        defaults = {
-            ("torch", "2.9.1"): "lw.git351ff442",
-            ("torchvision", "0.24.0"): "gitb919bd0c",
-            ("torchaudio", "2.9.0"): "gite3c6ee2b",
-            ("triton", "3.5.1"): "gita272dfa8",
-        }
-        return defaults.get((package, version), "")
-
-    return ""
-
-
-def _rocm_wheel_tag(rocm_rel: str, build_tag: str = "") -> str:
-    """Return the full rocm tag used in filenames."""
-    override = os.environ.get("SIMPLETUNER_ROCM_WHEEL_TAG")
-    if override:
-        return _strip_rocm_prefix(override)
-    if build_tag:
-        return f"{rocm_rel}.{build_tag}"
-    return rocm_rel
-
-
-def _rocm_base_url(rocm_rel: str) -> str:
-    """Return the base URL for ROCm wheels."""
-    return os.environ.get(
-        "SIMPLETUNER_ROCM_BASE_URL",
-        f"https://repo.radeon.com/rocm/manylinux/rocm-rel-{rocm_rel}",
-    )
-
-
-def _detect_rocm_version() -> str:
-    """Detect ROCm version from env or installed headers."""
-    override = os.environ.get("SIMPLETUNER_ROCM_VERSION")
-    if override:
-        return _normalize_rocm_version(override)
-
-    rocm_env = os.environ.get("ROCM_VERSION")
-    if rocm_env:
-        return _normalize_rocm_version(rocm_env)
-
-    header_paths = [
-        Path("/usr/include/rocm-core/rocm_version.h"),
-        Path("/opt/rocm/include/rocm-core/rocm_version.h"),
-        Path("/opt/rocm/include/rocm_version.h"),
-    ]
-    rocm_path = os.environ.get("ROCM_PATH")
-    if rocm_path:
-        header_paths.append(Path(rocm_path) / "include/rocm-core/rocm_version.h")
-        header_paths.append(Path(rocm_path) / "include/rocm_version.h")
-
-    for header_path in header_paths:
-        try:
-            content = header_path.read_text()
-        except OSError:
-            continue
-        major = re.search(r"ROCM_VERSION_MAJOR\\s+(\\d+)", content)
-        minor = re.search(r"ROCM_VERSION_MINOR\\s+(\\d+)", content)
-        if major and minor:
-            return f"{major.group(1)}.{minor.group(1)}"
-
-    return "7.1"
-
-
-def build_rocm_wheel_url(package: str, version: str, rocm_tag: str, base_url: str) -> str:
-    """Build a direct wheel URL for ROCm packages."""
-    py_tag = _python_tag()
-    platform_tag = _rocm_platform_tag()
-    filename = f"{package}-{version}+rocm{rocm_tag}-{py_tag}-{py_tag}-{platform_tag}.whl"
-    return f"{package} @ {base_url}/{filename}"
-
-
-def build_rocm_triton_wheel_url(triton_version: str, rocm_tag: str, base_url: str) -> str:
-    """Build a direct wheel URL for Triton ROCm packages."""
-    triton_base_url = os.environ.get("SIMPLETUNER_ROCM_TRITON_BASE_URL", base_url)
-    return build_rocm_wheel_url("triton", triton_version, rocm_tag, triton_base_url)
-
-
 def _resolve_ramtorch_dependency() -> str:
-    """
-    Prefer a local RamTorch checkout (default: ~/src/ramtorch) when present, otherwise fall back to the package name.
-    """
-
-    candidate_path = Path(os.environ.get("SIMPLETUNER_RAMTORCH_PATH", "~/src/ramtorch")).expanduser()
-    try:
-        if candidate_path.exists():
-            return f"ramtorch @ {candidate_path.resolve().as_uri()}"
-    except Exception:
-        # Any failure falls back to the plain package spec.
-        pass
+    """Return the ramtorch package specifier."""
     return "ramtorch"
-
-
-def _cuda13_base_url() -> str:
-    """Return the base URL for CUDA 13 PyTorch wheels."""
-    return os.environ.get(
-        "SIMPLETUNER_CUDA13_BASE_URL",
-        "https://download.pytorch.org/whl/cu130",
-    )
 
 
 def _cuda_nightly_base_url() -> str:
@@ -219,15 +83,6 @@ def _cuda13_nightly_base_url() -> str:
         "SIMPLETUNER_CUDA13_NIGHTLY_BASE_URL",
         "https://download.pytorch.org/whl/nightly/cu130",
     )
-
-
-def build_cuda13_wheel_url(package: str, version: str) -> str:
-    """Build a direct wheel URL for CUDA 13 PyTorch packages."""
-    py_tag = _python_tag()
-    base_url = _cuda13_base_url()
-    platform_tag = os.environ.get("SIMPLETUNER_CUDA13_PLATFORM_TAG", "manylinux_2_28_x86_64")
-    filename = f"{package}-{version}%2Bcu130-{py_tag}-{py_tag}-{platform_tag}.whl"
-    return f"{package} @ {base_url}/{filename}"
 
 
 def build_cuda_nightly_wheel_url(package: str, version: str) -> str:
@@ -257,16 +112,11 @@ def build_triton_wheel_url(version: str, base_url: str) -> str:
 
 
 def get_cuda13_dependencies():
-    """Get CUDA 13 specific dependencies with direct wheel URLs."""
-    ramtorch_dep = _resolve_ramtorch_dependency()
-    torch_version = os.environ.get("SIMPLETUNER_CUDA13_TORCH_VERSION", "2.10.0")
-    torchvision_version = os.environ.get("SIMPLETUNER_CUDA13_TORCHVISION_VERSION", "0.25.0")
-    torchaudio_version = os.environ.get("SIMPLETUNER_CUDA13_TORCHAUDIO_VERSION", "2.10.0")
-
+    """Get CUDA 13 specific dependencies (use --extra-index-url https://download.pytorch.org/whl/cu130)."""
     return [
-        build_cuda13_wheel_url("torch", torch_version),
-        build_cuda13_wheel_url("torchvision", torchvision_version),
-        build_cuda13_wheel_url("torchaudio", torchaudio_version),
+        "torch>=2.10.0",
+        "torchvision>=0.25.0",
+        "torchaudio>=2.10.0",
         "triton>=3.3.0",
         "deepspeed>=0.17.2",
         "torchao>=0.14.0,<0.16.0",
@@ -275,7 +125,7 @@ def get_cuda13_dependencies():
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
-        ramtorch_dep,
+        "ramtorch",
     ]
 
 
@@ -346,37 +196,15 @@ def get_cuda_dependencies():
 
 
 def get_rocm_dependencies():
-    ramtorch_dep = _resolve_ramtorch_dependency()
-    rocm_version = _detect_rocm_version()
-    rocm_rel = _rocm_rel_version(rocm_version)
-    rocm_base_url = _rocm_base_url(rocm_rel)
-    torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.9.1")
-    torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.24.0")
-    torchaudio_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "2.9.0")
-    triton_version = os.environ.get("SIMPLETUNER_ROCM_TRITON_VERSION", "3.5.1")
-    torch_tag = _rocm_wheel_tag(rocm_rel, _rocm_build_tag("torch", torch_version, rocm_rel))
-    vision_tag = _rocm_wheel_tag(rocm_rel, _rocm_build_tag("torchvision", torchvision_version, rocm_rel))
-    audio_tag = _rocm_wheel_tag(rocm_rel, _rocm_build_tag("torchaudio", torchaudio_version, rocm_rel))
-    triton_tag = _rocm_wheel_tag(rocm_rel, _rocm_build_tag("triton", triton_version, rocm_rel))
-
-    try:
-        return [
-            build_rocm_wheel_url("torch", torch_version, torch_tag, rocm_base_url),
-            build_rocm_wheel_url("torchvision", torchvision_version, vision_tag, rocm_base_url),
-            build_rocm_wheel_url("torchaudio", torchaudio_version, audio_tag, rocm_base_url),
-            build_rocm_triton_wheel_url(triton_version, triton_tag, rocm_base_url),
-            "torchao>=0.14.0,<0.16.0",
-            ramtorch_dep,
-        ]
-    except Exception as exc:
-        print(f"Warning: falling back to CPU PyTorch packages because ROCm wheel configuration failed: {exc}")
-        return [
-            "torch>=2.10.0",
-            "torchvision>=0.25.0",
-            "torchaudio>=2.10.0",
-            "torchao>=0.14.0,<0.16.0",
-            ramtorch_dep,
-        ]
+    """Get ROCm specific dependencies (use --extra-index-url https://download.pytorch.org/whl/rocm7.1)."""
+    return [
+        "torch>=2.10.0",
+        "torchvision>=0.25.0",
+        "torchaudio>=2.10.0",
+        "triton>=3.3.0",
+        "torchao>=0.14.0,<0.16.0",
+        "ramtorch",
+    ]
 
 
 def get_apple_dependencies():
@@ -503,6 +331,10 @@ base_deps = [
     "psutil>=5.9.0",
 ]
 
+# Nightly extras contain direct URLs that PyPI rejects, so only include them
+# for editable / local installs, not when building distributable wheels / sdists.
+_is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "build", "egg_info"))
+
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
@@ -522,9 +354,7 @@ extras_require = {
     # Platform-specific extras - user must choose one
     "cuda": list(PLATFORM_DEPENDENCIES["cuda"]),
     "cuda13": get_cuda13_dependencies(),
-    "cuda-nightly": get_cuda_nightly_dependencies(),
-    "cuda13-nightly": get_cuda13_nightly_dependencies(),
-    "rocm": list(PLATFORM_DEPENDENCIES["rocm"]),
+    "rocm": get_rocm_dependencies(),
     "apple": list(PLATFORM_DEPENDENCIES["apple"]),
     "cpu": list(PLATFORM_DEPENDENCIES["cpu"]),
     # State backend extras for multi-node deployments
@@ -542,6 +372,10 @@ extras_require = {
         "flake8>=6.0.0",
     ],
 }
+
+if not _is_building_dist:
+    extras_require["cuda-nightly"] = get_cuda_nightly_dependencies()
+    extras_require["cuda13-nightly"] = get_cuda13_nightly_dependencies()
 
 # Read long description
 try:
@@ -606,10 +440,8 @@ if __name__ == "__main__":
     print(f"Python version: {sys.version}")
     print(f"Platform: {platform.platform()}")
     print("\nInstall with a platform extra:")
-    print("  pip install .[cuda]          # CUDA 12 (PyTorch 2.10.0 release)")
-    print("  pip install .[cuda13]        # CUDA 13 (PyTorch 2.10.0 release)")
-    print("  pip install .[cuda-nightly]  # CUDA 12 (PyTorch 2.11.0 nightly)")
-    print("  pip install .[cuda13-nightly]# CUDA 13 (PyTorch 2.11.0 nightly)")
-    print("  pip install .[rocm]          # ROCm")
-    print("  pip install .[apple]         # macOS")
-    print("  pip install .[cpu]           # CPU only")
+    print("  pip install '.[cuda]'                                                              # CUDA 12")
+    print("  pip install '.[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130   # CUDA 13")
+    print("  pip install '.[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1   # ROCm")
+    print("  pip install '.[apple]'                                                              # macOS")
+    print("  pip install '.[cpu]'                                                                # CPU only")

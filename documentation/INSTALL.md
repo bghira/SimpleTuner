@@ -14,9 +14,9 @@ You can simply install SimpleTuner using pip, which is recommended for most user
 # for CUDA
 pip install 'simpletuner[cuda]'
 # for CUDA 13 / Blackwell (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 # for ROCm
-pip install 'simpletuner[rocm]'
+pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1
 # for Apple Silicon
 pip install 'simpletuner[apple]'
 # for CPU-only (not recommended)

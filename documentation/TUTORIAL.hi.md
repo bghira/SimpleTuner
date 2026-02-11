@@ -5,7 +5,7 @@
 ## क्विक स्टार्ट
 
 1. **SimpleTuner इंस्टॉल करें**: `pip install 'simpletuner[cuda]'` (अन्य प्लेटफ़ॉर्म्स के लिए README देखें)
-   - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+   - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 2. **कॉन्फ़िगर करें**: `simpletuner configure` (इंटरैक्टिव सेटअप)
 3. **ट्रेन करें**: `simpletuner train`
 

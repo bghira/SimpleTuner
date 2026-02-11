@@ -14,7 +14,7 @@
 
 - Python 3.10–3.13、Git 和 `pip`
 - 在虚拟环境中安装 SimpleTuner（`pip install 'simpletuner[cuda]'` 或与您平台匹配的变体）
-  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 - 访问所需的 Hugging Face 仓库（在拉取受限模型之前运行 `huggingface-cli login`）
 - 本地已准备好带有标注的数据集（PixArt 使用标注文本文件，Kontext 使用配对的编辑/参考文件夹）
 - 带有 `curl` 和 `jq` 的 shell 环境

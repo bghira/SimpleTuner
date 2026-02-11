@@ -37,7 +37,7 @@ Instale o SimpleTuner (exemplo CUDA):
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
 Para detalhes de setup específicos do backend (CUDA, ROCm, Apple), consulte o [guia de instalação](../INSTALL.md).

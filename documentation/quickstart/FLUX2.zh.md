@@ -116,7 +116,7 @@ FLUX.2 模型需要在 Hugging Face 上获得访问批准：
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
 如需开发环境设置：
