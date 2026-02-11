@@ -14,9 +14,9 @@ SimpleTuner は pip を使用して簡単にインストールできます。こ
 # CUDA 用
 pip install 'simpletuner[cuda]'
 # CUDA 13 / Blackwell 用 (NVIDIA Bシリーズ GPU)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 # ROCm 用
-pip install 'simpletuner[rocm]'
+pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1
 # Apple Silicon 用
 pip install 'simpletuner[apple]'
 # CPU のみ(非推奨)

@@ -11,7 +11,7 @@ Glance es más bien un “LoRA de una sola imagen con un schedule dividido” qu
 ## Requisitos previos
 
 - Python 3.10–3.13, SimpleTuner instalado (`pip install 'simpletuner[cuda]'`)
-  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]'`
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
 - Una imagen y un archivo de caption con el mismo basename (p. ej., `data/glance.png` + `data/glance.txt`)
 - Un checkpoint de modelo flow (el ejemplo de abajo usa `black-forest-labs/FLUX.1-dev`)
 

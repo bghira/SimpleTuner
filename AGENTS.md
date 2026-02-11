@@ -8,6 +8,7 @@
 - Test command: `.venv/bin/python -m unittest -v -f`
 - Test average runtime: ~300 seconds
 - Preferred diff tool: `difft --display=inline` (difftastic)
+- Never commit or push on your own.
 
 ## Code style
 

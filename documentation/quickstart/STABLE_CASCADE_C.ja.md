@@ -40,7 +40,7 @@ pip install --upgrade pip
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
 コントリビューターやリポジトリ直編集の場合は、ソースからインストールし `pip install -e .[cuda,dev]` を実行します。

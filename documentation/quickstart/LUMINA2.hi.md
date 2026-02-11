@@ -48,7 +48,7 @@ pip के जरिए SimpleTuner इंस्टॉल करें:
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
 मैनुअल इंस्टॉलेशन या डेवलपमेंट सेटअप के लिए, [installation documentation](../INSTALL.md) देखें।
@@ -243,7 +243,7 @@ SimpleTuner डायरेक्टरी से, प्रशिक्षण �
 pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]'
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 simpletuner train
 ```
 

@@ -49,7 +49,7 @@ NVIDIA 用户需要使用 CUDA extras 来获取所有正确的依赖：
 ```bash
 pip install -e 'simpletuner[cuda]'
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
-# pip install -e 'simpletuner[cuda13]'
+# pip install -e 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 # 或者，如果您通过 git 克隆：
 # pip install -e '.[cuda]'
 ```

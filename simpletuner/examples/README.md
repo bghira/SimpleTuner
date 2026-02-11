@@ -17,7 +17,7 @@ To run `kontext.peft-lora` example:
 **Option 1 (Recommended - pip install):**
 ```bash
 pip install 'simpletuner[cuda]'
-# or for CUDA 13 / Blackwell users: pip install 'simpletuner[cuda13]'
+# or for CUDA 13 / Blackwell users: pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 simpletuner train example=kontext.peft-lora
 ```
 
