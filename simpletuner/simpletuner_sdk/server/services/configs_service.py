@@ -975,6 +975,22 @@ class ConfigsService:
                 elif factor <= 0:
                     errors.append("Field 'factor' must be positive")
 
+        # Check T-LoRA specific fields
+        if algo_name == "tlora":
+            tlora_min_rank = lycoris_config.get("tlora_min_rank")
+            if tlora_min_rank is not None:
+                if not isinstance(tlora_min_rank, int):
+                    errors.append("Field 'tlora_min_rank' must be an integer")
+                elif tlora_min_rank < 1:
+                    errors.append("Field 'tlora_min_rank' must be at least 1")
+
+            tlora_alpha = lycoris_config.get("tlora_alpha")
+            if tlora_alpha is not None:
+                if not isinstance(tlora_alpha, (int, float)):
+                    errors.append("Field 'tlora_alpha' must be a number")
+                elif tlora_alpha <= 0:
+                    errors.append("Field 'tlora_alpha' must be positive")
+
         # Validate apply_preset structure if present
         apply_preset = lycoris_config.get("apply_preset")
         if apply_preset is not None:
