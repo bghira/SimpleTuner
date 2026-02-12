@@ -789,3 +789,43 @@ def remove_ramtorch_sync_hooks(hooks: list) -> None:
     """Remove synchronization hooks added by add_ramtorch_sync_hooks."""
     for h in hooks:
         h.remove()
+
+
+def get_ramtorch_target_device(model: nn.Module):
+    """Return the target GPU device from a model's ramtorch modules, or None."""
+    for m in model.modules():
+        if getattr(m, "is_ramtorch", False):
+            dev = m.device
+            return torch.device(dev) if isinstance(dev, str) else dev
+    return None
+
+
+_model_device_patched = False
+
+
+def patch_model_device_for_ramtorch():
+    """
+    Patch ModelMixin.device so it returns the ramtorch target GPU device
+    instead of CPU when ramtorch modules are present.
+
+    This single patch fixes:
+    - DiffusionPipeline._execution_device (delegates to pipeline.device -> model.device)
+    - Direct self.transformer.device / self.unet.device references in pipeline code
+    """
+    global _model_device_patched
+    if _model_device_patched:
+        return
+    _model_device_patched = True
+
+    from diffusers import ModelMixin
+
+    original_device = ModelMixin.device
+
+    @property
+    def device(self) -> torch.device:
+        dev = get_ramtorch_target_device(self)
+        if dev is not None:
+            return dev
+        return original_device.fget(self)
+
+    ModelMixin.device = device

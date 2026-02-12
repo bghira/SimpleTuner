@@ -1357,10 +1357,11 @@ def _patch_wan_pipeline_execution_device():
         """
         Fixed _execution_device property that returns the transformer device instead of meta.
         This fixes the issue when text encoder is moved to meta but transformer is on GPU.
+        Uses .device property (not raw parameter device) so ramtorch-aware patches apply.
         """
         # If we have a transformer and it's not on meta, use its device
         if hasattr(self, "transformer") and self.transformer is not None:
-            transformer_device = next(self.transformer.parameters()).device
+            transformer_device = self.transformer.device
             if transformer_device.type != "meta":
                 return transformer_device
 
