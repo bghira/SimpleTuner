@@ -58,6 +58,19 @@ class TestTLoRAMaskComputation(unittest.TestCase):
         masks = torch.stack([compute_timestep_mask(int(t), 1000, max_rank, 1, 1.0).squeeze(0) for t in timesteps.tolist()])
         self.assertEqual(masks.shape, (4, max_rank))
 
+    def test_inference_mask_single_timestep(self):
+        """apply_tlora_inference_mask sets a (1, max_rank) mask."""
+        from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
+        apply_tlora_inference_mask(
+            timestep=500,
+            max_timestep=1000,
+            max_rank=64,
+            min_rank=1,
+            alpha=1.0,
+        )
+        clear_tlora_mask()
+
 
 class TestTLoRANotAvailable(unittest.TestCase):
     """Tests for the unavailable T-LoRA codepath."""
@@ -80,6 +93,12 @@ class TestTLoRADefaultsPresent(unittest.TestCase):
         self.assertEqual(lycoris_defaults["tlora"]["algo"], "tlora")
         self.assertEqual(lycoris_defaults["tlora"]["linear_dim"], 64)
         self.assertEqual(lycoris_defaults["tlora"]["linear_alpha"], 32)
+
+    def test_inference_mask_function_exists(self):
+        """apply_tlora_inference_mask is importable."""
+        from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask
+
+        self.assertTrue(callable(apply_tlora_inference_mask))
 
 
 if __name__ == "__main__":

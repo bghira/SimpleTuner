@@ -2147,11 +2147,15 @@ class Validation:
                 self.model.pipeline.to(self.accelerator.device)
 
         self.model.pipeline.set_progress_bar_config(disable=True)
+        if getattr(self.accelerator, "_tlora_active", False):
+            self.model.pipeline._tlora_config = self.accelerator._tlora_config
         if hasattr(self.model, "configure_assistant_lora_for_inference"):
             self.model.configure_assistant_lora_for_inference()
 
     def clean_pipeline(self):
         """Remove the pipeline."""
+        if getattr(self.model, "pipeline", None) is not None and hasattr(self.model.pipeline, "_tlora_config"):
+            del self.model.pipeline._tlora_config
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
             self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
         if hasattr(self.model, "configure_assistant_lora_for_training"):

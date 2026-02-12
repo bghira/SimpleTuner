@@ -2792,6 +2792,8 @@ class Trainer:
                 "_lycoris_wrapped_network",
                 self.lycoris_wrapped_network,
             )
+            setattr(self.accelerator, "_tlora_active", self._tlora_active)
+            setattr(self.accelerator, "_tlora_config", self._tlora_config)
             logger.info(
                 f"LyCORIS network has been initialized with {trainable_parameter_count(self.lycoris_wrapped_network.parameters())} parameters"
             )

@@ -32,6 +32,22 @@ def apply_tlora_timestep_mask(
     set_timestep_mask(masks)
 
 
+def apply_tlora_inference_mask(
+    timestep: int,
+    max_timestep: int,
+    max_rank: int,
+    min_rank: int = 1,
+    alpha: float = 1.0,
+) -> None:
+    """Compute and set a T-LoRA mask for a single inference timestep.
+
+    Unlike apply_tlora_timestep_mask (which takes a batch), this handles
+    the single-scalar-timestep case in pipeline denoising loops.
+    """
+    mask = compute_timestep_mask(timestep, max_timestep, max_rank, min_rank, alpha)  # (1, max_rank)
+    set_timestep_mask(mask)
+
+
 def clear_tlora_mask() -> None:
     """Clear the T-LoRA timestep mask after forward pass."""
     clear_timestep_mask()
