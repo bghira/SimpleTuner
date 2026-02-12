@@ -99,6 +99,31 @@ Example Flux 2 LoKR config:
 }
 ```
 
+### T-LoRA (Timestep-dependent LoRA)
+
+T-LoRA applies timestep-dependent rank masking during training. At high noise levels (early denoising) fewer LoRA ranks are active, learning coarse structure. At low noise levels (late denoising) more ranks activate, capturing fine detail. This requires a LyCORIS version that includes `lycoris.modules.tlora`.
+
+Example T-LoRA config:
+
+```json
+{
+    "algo": "tlora",
+    "multiplier": 1.0,
+    "linear_dim": 64,
+    "linear_alpha": 32,
+    "apply_preset": {
+        "target_module": ["Attention", "FeedForward"]
+    }
+}
+```
+
+Optional T-LoRA fields (added to the same JSON):
+
+- `tlora_min_rank` (integer, default `1`) — minimum number of active ranks at the highest noise level.
+- `tlora_alpha` (float, default `1.0`) — masking schedule exponent. `1.0` is linear; values above `1.0` shift more capacity toward detail steps.
+
+> **Note:** T-LoRA with video models may produce subpar results because temporal compression blends frames across timestep boundaries.
+
 ## Potential problems
 
 When using Lycoris on SDXL, it's noted that training the FeedForward modules may break the model and send loss into `NaN` (Not-a-Number) territory.

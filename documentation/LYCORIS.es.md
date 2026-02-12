@@ -99,6 +99,31 @@ Ejemplo de configuración LoKR para Flux 2:
 }
 ```
 
+### T-LoRA (LoRA dependiente del timestep)
+
+T-LoRA aplica enmascaramiento de rango dependiente del timestep durante el entrenamiento. En niveles de ruido altos (inicio del denoising) menos rangos de LoRA estan activos, aprendiendo la estructura gruesa. En niveles de ruido bajos (final del denoising) mas rangos se activan, capturando el detalle fino. Requiere una version de LyCORIS que incluya `lycoris.modules.tlora`.
+
+Ejemplo de configuracion T-LoRA:
+
+```json
+{
+    "algo": "tlora",
+    "multiplier": 1.0,
+    "linear_dim": 64,
+    "linear_alpha": 32,
+    "apply_preset": {
+        "target_module": ["Attention", "FeedForward"]
+    }
+}
+```
+
+Campos opcionales de T-LoRA (se agregan al mismo JSON):
+
+- `tlora_min_rank` (entero, por defecto `1`) — numero minimo de rangos activos en el nivel de ruido mas alto.
+- `tlora_alpha` (float, por defecto `1.0`) — exponente del programa de enmascaramiento. `1.0` es lineal; valores mayores a `1.0` asignan mas capacidad a los pasos de detalle.
+
+> **Nota:** T-LoRA con modelos de video puede producir resultados inferiores porque la compresion temporal mezcla frames entre limites de timestep.
+
 ## Problemas potenciales
 
 Al usar Lycoris en SDXL, se ha observado que entrenar los módulos FeedForward puede romper el modelo y llevar la pérdida a valores `NaN` (Not-a-Number).
