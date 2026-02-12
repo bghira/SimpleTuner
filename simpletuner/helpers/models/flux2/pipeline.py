@@ -884,6 +884,18 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         self.system_message = "You are an AI that reasons about image descriptions. You give structured responses focusing on object relationships, object attribution and actions without speculation."
         # fmt: on
 
+    @property
+    def _execution_device(self):
+        # RamTorch keeps parameters on CPU but targets a specific GPU for computation.
+        # The base _execution_device infers device from parameters and returns CPU,
+        # which causes all pipeline intermediates to be created on CPU.
+        if hasattr(self, "transformer") and self.transformer is not None:
+            for m in self.transformer.modules():
+                if getattr(m, "is_ramtorch", False):
+                    dev = m.device
+                    return torch.device(dev) if isinstance(dev, str) else dev
+        return super()._execution_device
+
     @staticmethod
     def _get_mistral_3_small_prompt_embeds(
         text_encoder: Mistral3ForConditionalGeneration,
