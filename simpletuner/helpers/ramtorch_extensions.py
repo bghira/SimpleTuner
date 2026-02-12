@@ -791,8 +791,16 @@ def remove_ramtorch_sync_hooks(hooks: list) -> None:
         h.remove()
 
 
-def get_ramtorch_target_device(model: nn.Module):
-    """Return the target GPU device from a model's ramtorch modules, or None."""
+def get_ramtorch_target_device(model: nn.Module) -> torch.device | None:
+    """Return the target GPU device from a model's ramtorch modules, or None.
+
+    Returns the device of the first ramtorch module found.  All ramtorch
+    modules within a model share the same target device because
+    ``replace_linear_layers_with_ramtorch`` applies a single ``device``
+    argument to every replaced layer.
+
+    Returns ``None`` when the model contains no ramtorch modules.
+    """
     for m in model.modules():
         if getattr(m, "is_ramtorch", False):
             dev = m.device
