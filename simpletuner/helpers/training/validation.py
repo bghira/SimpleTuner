@@ -2131,6 +2131,13 @@ class Validation:
             if getattr(te, "device", None) and te.device.type == "meta":
                 setattr(self.model.pipeline, attr, None)
 
+        # Patch ModelMixin.device so ramtorch models report the target GPU instead of CPU.
+        # Must run before pipeline.to() and pipeline.__call__ which rely on device detection.
+        if getattr(self.config, "ramtorch", False):
+            from simpletuner.helpers.ramtorch_extensions import patch_model_device_for_ramtorch
+
+            patch_model_device_for_ramtorch()
+
         # For FSDP models, skip .to() call - DTensor parameters are already device-aware
         # and calling .to() causes: "RuntimeError: Attempted to set the storage of a tensor
         # on device 'cpu' to a storage on different device 'cuda:0'"
