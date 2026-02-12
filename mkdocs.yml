@@ -327,6 +327,7 @@ nav:
       - Diff2Flow: experimental/DIFF2FLOW.md
       - LayerSync: experimental/LAYERSYNC.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
+      - T-LoRA: experimental/T_LORA.md
       - Video CREPA: experimental/VIDEO_CREPA.md
     - Development:
       - Factory Architecture: development/FACTORY_ARCHITECTURE.md
