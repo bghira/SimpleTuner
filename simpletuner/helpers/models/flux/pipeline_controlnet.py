@@ -62,6 +62,8 @@ from transformers import (
     T5TokenizerFast,
 )
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
 
@@ -1051,30 +1053,22 @@ class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleF
                 guidance = torch.tensor([guidance_scale], device=device) if self.transformer.config.guidance_embeds else None
                 guidance = guidance.expand(latents.shape[0]) if guidance is not None else None
 
-                noise_pred = self.transformer(
-                    hidden_states=latents,
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    pooled_projections=pooled_prompt_embeds,
-                    encoder_hidden_states=prompt_embeds,
-                    controlnet_block_samples=controlnet_block_samples,
-                    controlnet_single_block_samples=controlnet_single_block_samples,
-                    txt_ids=text_ids,
-                    img_ids=latent_image_ids,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    return_dict=False,
-                    controlnet_blocks_repeat=controlnet_blocks_repeat,
-                )[0]
-
-                if do_true_cfg:
-                    if negative_image_embeds is not None:
-                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = negative_image_embeds
-                    neg_noise_pred = self.transformer(
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
                         hidden_states=latents,
                         timestep=timestep / 1000,
                         guidance=guidance,
-                        pooled_projections=negative_pooled_prompt_embeds,
-                        encoder_hidden_states=negative_prompt_embeds,
+                        pooled_projections=pooled_prompt_embeds,
+                        encoder_hidden_states=prompt_embeds,
                         controlnet_block_samples=controlnet_block_samples,
                         controlnet_single_block_samples=controlnet_single_block_samples,
                         txt_ids=text_ids,
@@ -1083,6 +1077,40 @@ class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleF
                         return_dict=False,
                         controlnet_blocks_repeat=controlnet_blocks_repeat,
                     )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
+
+                if do_true_cfg:
+                    if negative_image_embeds is not None:
+                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = negative_image_embeds
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        neg_noise_pred = self.transformer(
+                            hidden_states=latents,
+                            timestep=timestep / 1000,
+                            guidance=guidance,
+                            pooled_projections=negative_pooled_prompt_embeds,
+                            encoder_hidden_states=negative_prompt_embeds,
+                            controlnet_block_samples=controlnet_block_samples,
+                            controlnet_single_block_samples=controlnet_single_block_samples,
+                            txt_ids=text_ids,
+                            img_ids=latent_image_ids,
+                            joint_attention_kwargs=self.joint_attention_kwargs,
+                            return_dict=False,
+                            controlnet_blocks_repeat=controlnet_blocks_repeat,
+                        )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
                     noise_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
 
                 # compute the previous noisy sample x_t -> x_t-1
@@ -1806,17 +1834,30 @@ class FluxControlPipeline(
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    pooled_projections=pooled_prompt_embeds,
-                    encoder_hidden_states=prompt_embeds,
-                    txt_ids=text_ids,
-                    img_ids=latent_image_ids,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        hidden_states=latent_model_input,
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        pooled_projections=pooled_prompt_embeds,
+                        encoder_hidden_states=prompt_embeds,
+                        txt_ids=text_ids,
+                        img_ids=latent_image_ids,
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype

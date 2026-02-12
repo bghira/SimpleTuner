@@ -28,6 +28,8 @@ from diffusers.utils import deprecate, is_torch_xla_available, logging, replace_
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
 
@@ -819,31 +821,57 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
-                with self.transformer.cache_context("cond"):
-                    noise_pred = self.transformer(
-                        hidden_states=latent_model_input,
-                        timestep=timestep / 1000,
-                        guidance=guidance,
-                        encoder_hidden_states_mask=prompt_embeds_mask,
-                        encoder_hidden_states=prompt_embeds,
-                        img_shapes=img_shapes,
-                        attention_kwargs=self.attention_kwargs,
-                        return_dict=False,
-                    )[0]
-                    noise_pred = noise_pred[:, : latents.size(1)]
-
-                if do_true_cfg:
-                    with self.transformer.cache_context("uncond"):
-                        neg_noise_pred = self.transformer(
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    with self.transformer.cache_context("cond"):
+                        noise_pred = self.transformer(
                             hidden_states=latent_model_input,
                             timestep=timestep / 1000,
                             guidance=guidance,
-                            encoder_hidden_states_mask=negative_prompt_embeds_mask,
-                            encoder_hidden_states=negative_prompt_embeds,
+                            encoder_hidden_states_mask=prompt_embeds_mask,
+                            encoder_hidden_states=prompt_embeds,
                             img_shapes=img_shapes,
                             attention_kwargs=self.attention_kwargs,
                             return_dict=False,
                         )[0]
+                        noise_pred = noise_pred[:, : latents.size(1)]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
+
+                if do_true_cfg:
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        with self.transformer.cache_context("uncond"):
+                            neg_noise_pred = self.transformer(
+                                hidden_states=latent_model_input,
+                                timestep=timestep / 1000,
+                                guidance=guidance,
+                                encoder_hidden_states_mask=negative_prompt_embeds_mask,
+                                encoder_hidden_states=negative_prompt_embeds,
+                                img_shapes=img_shapes,
+                                attention_kwargs=self.attention_kwargs,
+                                return_dict=False,
+                            )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
                     neg_noise_pred = neg_noise_pred[:, : latents.size(1)]
                     comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
 

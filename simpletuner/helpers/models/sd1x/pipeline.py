@@ -50,6 +50,8 @@ if is_torch_xla_available():
 else:
     XLA_AVAILABLE = False
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 EXAMPLE_DOC_STRING = """
@@ -1050,15 +1052,28 @@ class StableDiffusionPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input.to(self.unet.device),
-                    t.to(self.unet.device),
-                    encoder_hidden_states=prompt_embeds.to(self.unet.device),
-                    timestep_cond=timestep_cond,
-                    cross_attention_kwargs=self.cross_attention_kwargs,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.unet(
+                        latent_model_input.to(self.unet.device),
+                        t.to(self.unet.device),
+                        encoder_hidden_states=prompt_embeds.to(self.unet.device),
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
@@ -2235,15 +2250,28 @@ class StableDiffusionImg2ImgPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep_cond=timestep_cond,
-                    cross_attention_kwargs=self.cross_attention_kwargs,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
@@ -3617,17 +3645,30 @@ class StableDiffusionControlNetPipeline(
                     mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
 
                 # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep_cond=timestep_cond,
-                    cross_attention_kwargs=self.cross_attention_kwargs,
-                    down_block_additional_residuals=down_block_res_samples,
-                    mid_block_additional_residual=mid_block_res_sample,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        down_block_additional_residuals=down_block_res_samples,
+                        mid_block_additional_residual=mid_block_res_sample,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if self.do_classifier_free_guidance:

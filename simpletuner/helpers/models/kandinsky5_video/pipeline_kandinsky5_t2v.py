@@ -29,6 +29,7 @@ from torch.nn import functional as F
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
 from simpletuner.helpers.models.kandinsky_lora_loader import KandinskyLoraLoaderMixin
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 from .pipeline_output import KandinskyPipelineOutput
 from .transformer_kandinsky5 import Kandinsky5Transformer3DModel
@@ -811,30 +812,56 @@ class Kandinsky5T2VPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
                 timestep = t.unsqueeze(0).repeat(batch_size * num_videos_per_prompt)
 
                 # Predict noise residual
-                pred_velocity = self.transformer(
-                    hidden_states=latents.to(dtype),
-                    encoder_hidden_states=prompt_embeds_qwen.to(dtype),
-                    pooled_projections=prompt_embeds_clip.to(dtype),
-                    timestep=timestep.to(device=device, dtype=torch.float32),
-                    visual_rope_pos=visual_rope_pos,
-                    text_rope_pos=text_rope_pos,
-                    scale_factor=(1, 2, 2),
-                    sparse_params=sparse_params,
-                    return_dict=True,
-                ).sample
-
-                if self.do_classifier_free_guidance and negative_prompt_embeds_qwen is not None:
-                    uncond_pred_velocity = self.transformer(
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    pred_velocity = self.transformer(
                         hidden_states=latents.to(dtype),
-                        encoder_hidden_states=negative_prompt_embeds_qwen.to(dtype),
-                        pooled_projections=negative_prompt_embeds_clip.to(dtype),
+                        encoder_hidden_states=prompt_embeds_qwen.to(dtype),
+                        pooled_projections=prompt_embeds_clip.to(dtype),
                         timestep=timestep.to(device=device, dtype=torch.float32),
                         visual_rope_pos=visual_rope_pos,
-                        text_rope_pos=negative_text_rope_pos,
+                        text_rope_pos=text_rope_pos,
                         scale_factor=(1, 2, 2),
                         sparse_params=sparse_params,
                         return_dict=True,
                     ).sample
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
+
+                if self.do_classifier_free_guidance and negative_prompt_embeds_qwen is not None:
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        uncond_pred_velocity = self.transformer(
+                            hidden_states=latents.to(dtype),
+                            encoder_hidden_states=negative_prompt_embeds_qwen.to(dtype),
+                            pooled_projections=negative_prompt_embeds_clip.to(dtype),
+                            timestep=timestep.to(device=device, dtype=torch.float32),
+                            visual_rope_pos=visual_rope_pos,
+                            text_rope_pos=negative_text_rope_pos,
+                            scale_factor=(1, 2, 2),
+                            sparse_params=sparse_params,
+                            return_dict=True,
+                        ).sample
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
 
                     pred_velocity = uncond_pred_velocity + guidance_scale * (pred_velocity - uncond_pred_velocity)
                 # Compute previous sample using the scheduler

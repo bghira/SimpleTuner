@@ -14,6 +14,7 @@ from transformers import AutoModel, AutoProcessor, AutoTokenizer, CLIPImageProce
 
 from simpletuner.helpers.models.longcat_image import calculate_shift, prepare_pos_ids, retrieve_timesteps, split_quotation
 from simpletuner.helpers.models.longcat_image.pipeline_output import LongCatImagePipelineOutput
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -471,15 +472,28 @@ class LongCatImageEditPipeline(
                 timestep = t.expand(latent_model_input.shape[0]).to(latents.dtype)
                 latent_model_input = torch.cat([latent_model_input, image_latents_input], dim=1)
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    encoder_hidden_states=prompt_embeds,
-                    txt_ids=text_ids,
-                    img_ids=img_ids_cfg,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        hidden_states=latent_model_input,
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        encoder_hidden_states=prompt_embeds,
+                        txt_ids=text_ids,
+                        img_ids=img_ids_cfg,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 noise_pred = noise_pred[:, : latents.shape[1]]
                 if self.do_classifier_free_guidance:

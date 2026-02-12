@@ -42,6 +42,8 @@ from diffusers.utils.torch_utils import get_device, is_torch_version, randn_tens
 from diffusers.video_processor import VideoProcessor
 from transformers import Gemma2PreTrainedModel, GemmaTokenizer, GemmaTokenizerFast
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 from .transformer import SanaVideoTransformer3DModel
 
 
@@ -939,14 +941,27 @@ class SanaVideoPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
                 timestep = t.expand(latent_model_input.shape[0])
 
                 # predict noise model_output
-                noise_pred = self.transformer(
-                    latent_model_input.to(dtype=transformer_dtype),
-                    encoder_hidden_states=prompt_embeds.to(dtype=transformer_dtype),
-                    encoder_attention_mask=prompt_attention_mask,
-                    timestep=timestep,
-                    return_dict=False,
-                    attention_kwargs=self.attention_kwargs,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        latent_model_input.to(dtype=transformer_dtype),
+                        encoder_hidden_states=prompt_embeds.to(dtype=transformer_dtype),
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=timestep,
+                        return_dict=False,
+                        attention_kwargs=self.attention_kwargs,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
                 noise_pred = noise_pred.float()
 
                 # perform guidance

@@ -53,6 +53,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from huggingface_hub.utils import validate_hf_hub_args
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 if is_torch_xla_available():
@@ -1741,14 +1742,27 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input.to(device=self.transformer.device),
-                    timestep=timestep,
-                    encoder_hidden_states=prompt_embeds.to(device=self.transformer.device),
-                    pooled_projections=pooled_prompt_embeds.to(device=self.transformer.device),
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        hidden_states=latent_model_input.to(device=self.transformer.device),
+                        timestep=timestep,
+                        encoder_hidden_states=prompt_embeds.to(device=self.transformer.device),
+                        pooled_projections=pooled_prompt_embeds.to(device=self.transformer.device),
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
@@ -1779,21 +1793,34 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                     if skip_guidance_layers is not None and should_skip_layers:
                         timestep = t.expand(latents.shape[0])
                         latent_model_input = latents
-                        noise_pred_skip_layers = self.transformer(
-                            hidden_states=latent_model_input.to(
-                                device=self.transformer.device,
-                            ),
-                            timestep=timestep,
-                            encoder_hidden_states=original_prompt_embeds.to(
-                                device=self.transformer.device,
-                            ),
-                            pooled_projections=original_pooled_prompt_embeds.to(
-                                device=self.transformer.device,
-                            ),
-                            joint_attention_kwargs=self.joint_attention_kwargs,
-                            return_dict=False,
-                            skip_layers=skip_guidance_layers,
-                        )[0]
+                        _tlora_cfg = getattr(self, "_tlora_config", None)
+                        if _tlora_cfg:
+                            apply_tlora_inference_mask(
+                                timestep=int(t),
+                                max_timestep=self.scheduler.config.num_train_timesteps,
+                                max_rank=_tlora_cfg["max_rank"],
+                                min_rank=_tlora_cfg["min_rank"],
+                                alpha=_tlora_cfg["alpha"],
+                            )
+                        try:
+                            noise_pred_skip_layers = self.transformer(
+                                hidden_states=latent_model_input.to(
+                                    device=self.transformer.device,
+                                ),
+                                timestep=timestep,
+                                encoder_hidden_states=original_prompt_embeds.to(
+                                    device=self.transformer.device,
+                                ),
+                                pooled_projections=original_pooled_prompt_embeds.to(
+                                    device=self.transformer.device,
+                                ),
+                                joint_attention_kwargs=self.joint_attention_kwargs,
+                                return_dict=False,
+                                skip_layers=skip_guidance_layers,
+                            )[0]
+                        finally:
+                            if _tlora_cfg:
+                                clear_tlora_mask()
                         noise_pred = (
                             noise_pred + (noise_pred_text - noise_pred_skip_layers) * self._skip_layer_guidance_scale
                         )
@@ -2641,14 +2668,27 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline, SD3LoraLoaderMixin, Fro
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
-                    timestep=timestep,
-                    encoder_hidden_states=prompt_embeds,
-                    pooled_projections=pooled_prompt_embeds,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        hidden_states=latent_model_input,
+                        timestep=timestep,
+                        encoder_hidden_states=prompt_embeds,
+                        pooled_projections=pooled_prompt_embeds,
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if self.do_classifier_free_guidance:

@@ -51,6 +51,7 @@ from simpletuner.helpers.models.pixart.controlnet import (
     PixArtSigmaControlNetAdapterModel,
     PixArtSigmaControlNetTransformerModel,
 )
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -1263,14 +1264,27 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                 current_timestep = current_timestep.expand(latent_model_input.shape[0])
 
                 # predict noise model_output
-                noise_pred = self.transformer(
-                    latent_model_input.to(device=self.transformer.device, dtype=self.transformer.dtype),
-                    encoder_hidden_states=prompt_embeds,
-                    encoder_attention_mask=prompt_attention_mask,
-                    timestep=current_timestep,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        latent_model_input.to(device=self.transformer.device, dtype=self.transformer.dtype),
+                        encoder_hidden_states=prompt_embeds,
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=current_timestep,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if do_classifier_free_guidance:
@@ -2038,14 +2052,27 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
                 current_timestep = current_timestep.expand(latent_model_input.shape[0])
 
                 # predict noise model_output
-                noise_pred = self.transformer(
-                    latent_model_input,
-                    encoder_hidden_states=prompt_embeds,
-                    encoder_attention_mask=prompt_attention_mask,
-                    timestep=current_timestep,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=current_timestep,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 # perform guidance
                 if do_classifier_free_guidance:

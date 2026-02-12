@@ -76,7 +76,7 @@ if is_torch_xla_available():
 else:
     XLA_AVAILABLE = False
 
-from simpletuner.helpers.training.lycoris import TLORA_AVAILABLE, apply_tlora_inference_mask, clear_tlora_mask
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 UNET_NAME = "unet"
 TEXT_ENCODER_NAME = "text_encoder"

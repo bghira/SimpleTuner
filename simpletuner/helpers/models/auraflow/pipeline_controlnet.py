@@ -42,6 +42,7 @@ from transformers import T5EncoderModel, T5TokenizerFast
 
 from simpletuner.helpers.models.auraflow.controlnet import AuraFlowControlNetModel, AuraFlowControlNetOutput
 from simpletuner.helpers.models.auraflow.pipeline import AuraFlowLoraLoaderMixin
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -816,14 +817,27 @@ class AuraFlowControlNetPipeline(
                     return_dict=False,
                 )[0]
 
-                noise_pred = self.transformer(
-                    latent_model_input,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep=timestep,
-                    block_controlnet_hidden_states=control_block_samples,
-                    return_dict=False,
-                    attention_kwargs=self.attention_kwargs,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep=timestep,
+                        block_controlnet_hidden_states=control_block_samples,
+                        return_dict=False,
+                        attention_kwargs=self.attention_kwargs,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
