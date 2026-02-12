@@ -124,6 +124,8 @@ Campos opcionais do T-LoRA (adicionados ao mesmo JSON):
 
 > **Nota:** T-LoRA com modelos de video pode produzir resultados inferiores porque a compressao temporal mistura frames entre limites de timestep.
 
+Durante a validacao, o SimpleTuner aplica automaticamente o mascaramento dependente de timestep em cada etapa de denoising, de modo que a inferencia corresponda as condicoes de treinamento. Nenhuma configuracao adicional e necessaria — os parametros de mascaramento do treinamento sao reutilizados.
+
 ## Problemas potenciais
 
 Ao usar Lycoris no SDXL, foi observado que treinar os modulos FeedForward pode quebrar o modelo e levar a loss para valores `NaN` (Not-a-Number).

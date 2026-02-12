@@ -124,6 +124,8 @@ Optional T-LoRA fields (added to the same JSON):
 
 > **Note:** T-LoRA with video models may produce subpar results because temporal compression blends frames across timestep boundaries.
 
+During validation, SimpleTuner automatically applies timestep-dependent masking at each denoising step so that inference matches the training conditions. No additional configuration is needed — the masking parameters from training are reused.
+
 ## Potential problems
 
 When using Lycoris on SDXL, it's noted that training the FeedForward modules may break the model and send loss into `NaN` (Not-a-Number) territory.
