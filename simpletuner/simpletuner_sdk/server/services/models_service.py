@@ -221,7 +221,15 @@ class ModelsService:
         base_multistage_method = getattr(ModelFoundation, "supports_multistage_validation", None)
         current_multistage_method = getattr(model_cls, "supports_multistage_validation", base_multistage_method)
         if current_multistage_method is not base_multistage_method:
-            supports_multistage = True
+            try:
+                supports_multistage = bool(current_multistage_method(None))
+            except Exception:
+                supports_multistage = False
+        if supports_multistage:
+            base_run_multistage = getattr(ModelFoundation, "run_multistage_validation", None)
+            current_run_multistage = getattr(model_cls, "run_multistage_validation", base_run_multistage)
+            if current_run_multistage is base_run_multistage:
+                supports_multistage = False
         capabilities["supports_multistage_validation"] = supports_multistage
 
         # Check if model requires S2V (sound-to-video) datasets (mandatory audio for models like WanS2V)

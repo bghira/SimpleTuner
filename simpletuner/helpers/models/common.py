@@ -3395,8 +3395,8 @@ class ModelFoundation(ABC):
 
     def run_multistage_validation(
         self,
-        pipeline_kwargs: dict,
-        pipeline_call: Callable,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: Callable[[Dict[str, Any]], Any],
     ) -> Any:
         """
         Execute a multi-stage validation pipeline.
