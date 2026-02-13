@@ -30,6 +30,7 @@ from transformers import T5EncoderModel, T5TokenizerFast
 
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.flux.pipeline import FluxLoraLoaderMixin
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -587,23 +588,49 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 latent_model_input = latents * c_in
                 latent_model_input = latent_model_input.to(transformer_dtype)
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
-                    timestep=timestep,
-                    encoder_hidden_states=prompt_embeds,
-                    padding_mask=padding_mask,
-                    return_dict=False,
-                )[0]
-                x0_pred = (c_skip * latents + c_out * noise_pred.float()).to(latents.dtype)
-
-                if self.do_classifier_free_guidance:
-                    noise_pred_uncond = self.transformer(
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
                         hidden_states=latent_model_input,
                         timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds,
+                        encoder_hidden_states=prompt_embeds,
                         padding_mask=padding_mask,
                         return_dict=False,
                     )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
+                x0_pred = (c_skip * latents + c_out * noise_pred.float()).to(latents.dtype)
+
+                if self.do_classifier_free_guidance:
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        noise_pred_uncond = self.transformer(
+                            hidden_states=latent_model_input,
+                            timestep=timestep,
+                            encoder_hidden_states=negative_prompt_embeds,
+                            padding_mask=padding_mask,
+                            return_dict=False,
+                        )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
                     noise_pred_uncond = (c_skip * latents + c_out * noise_pred_uncond.float()).to(latents.dtype)
                     x0_pred = noise_pred_uncond + self.guidance_scale * (x0_pred - noise_pred_uncond)
 

@@ -46,6 +46,7 @@ from transformers import (
 )
 
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 if is_torch_xla_available():
@@ -1717,16 +1718,29 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin, HiDreamImageL
                     latent_model_input = out
 
                 # Call transformer with the updated input format
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
-                    timesteps=timestep,
-                    t5_hidden_states=t5_embeds_input,
-                    llama_hidden_states=llama_embeds_input,
-                    pooled_embeds=pooled_embeds_input,
-                    img_sizes=img_sizes,
-                    img_ids=img_ids,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        hidden_states=latent_model_input,
+                        timesteps=timestep,
+                        t5_hidden_states=t5_embeds_input,
+                        llama_hidden_states=llama_embeds_input,
+                        pooled_embeds=pooled_embeds_input,
+                        img_sizes=img_sizes,
+                        img_ids=img_ids,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
                 noise_pred = -noise_pred
 
                 # perform guidance

@@ -103,4 +103,13 @@ lycoris_defaults = {
             },
         },
     },
+    "tlora": {
+        "algo": "tlora",
+        "multiplier": 1.0,
+        "linear_dim": 64,
+        "linear_alpha": 32,
+        "apply_preset": {
+            "target_module": ["Attention", "FeedForward"],
+        },
+    },
 }

@@ -5,6 +5,8 @@ import torch
 from diffusers.image_processor import PipelineImageInput
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 from .controlnet import ChromaControlNetModel
 from .pipeline import XLA_AVAILABLE, ChromaLoraLoaderMixin, ChromaPipeline, ChromaPipelineOutput, calculate_shift
 
@@ -321,37 +323,62 @@ class ChromaControlNetPipeline(ChromaPipeline):
                     controlnet_block_samples = None
                     controlnet_single_block_samples = None
 
-                noise_pred = self.transformer(
-                    hidden_states=latents,
-                    timestep=timestep / 1000,
-                    encoder_hidden_states=prompt_embeds,
-                    txt_ids=text_ids,
-                    img_ids=latent_image_ids,
-                    attention_mask=attention_mask,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    controlnet_block_samples=controlnet_block_samples,
-                    controlnet_single_block_samples=controlnet_single_block_samples,
-                    return_dict=False,
-                    controlnet_blocks_repeat=controlnet_blocks_repeat,
-                )[0]
-
-                if self.do_classifier_free_guidance:
-                    noise_pred_text = noise_pred
-                    if negative_image_embeds is not None:
-                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = negative_image_embeds
-                    neg_noise_pred = self.transformer(
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
                         hidden_states=latents,
                         timestep=timestep / 1000,
-                        encoder_hidden_states=negative_prompt_embeds,
-                        txt_ids=negative_text_ids,
+                        encoder_hidden_states=prompt_embeds,
+                        txt_ids=text_ids,
                         img_ids=latent_image_ids,
-                        attention_mask=negative_attention_mask,
+                        attention_mask=attention_mask,
                         joint_attention_kwargs=self.joint_attention_kwargs,
                         controlnet_block_samples=controlnet_block_samples,
                         controlnet_single_block_samples=controlnet_single_block_samples,
                         return_dict=False,
                         controlnet_blocks_repeat=controlnet_blocks_repeat,
                     )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
+
+                if self.do_classifier_free_guidance:
+                    noise_pred_text = noise_pred
+                    if negative_image_embeds is not None:
+                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = negative_image_embeds
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        neg_noise_pred = self.transformer(
+                            hidden_states=latents,
+                            timestep=timestep / 1000,
+                            encoder_hidden_states=negative_prompt_embeds,
+                            txt_ids=negative_text_ids,
+                            img_ids=latent_image_ids,
+                            attention_mask=negative_attention_mask,
+                            joint_attention_kwargs=self.joint_attention_kwargs,
+                            controlnet_block_samples=controlnet_block_samples,
+                            controlnet_single_block_samples=controlnet_single_block_samples,
+                            return_dict=False,
+                            controlnet_blocks_repeat=controlnet_blocks_repeat,
+                        )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
                     if image_embeds is not None:
                         self._joint_attention_kwargs["ip_adapter_image_embeds"] = image_embeds
                     noise_pred = neg_noise_pred + guidance_scale * (noise_pred_text - neg_noise_pred)
@@ -362,20 +389,32 @@ class ChromaControlNetPipeline(ChromaPipeline):
                         and i < num_inference_steps * skip_layer_guidance_stop
                     )
                     if should_skip_layers:
-                        skip_noise_pred = self.transformer(
-                            hidden_states=latents,
-                            timestep=timestep / 1000,
-                            encoder_hidden_states=original_prompt_embeds,
-                            txt_ids=original_text_ids,
-                            img_ids=latent_image_ids,
-                            attention_mask=attention_mask,
-                            joint_attention_kwargs=self.joint_attention_kwargs,
-                            controlnet_block_samples=controlnet_block_samples,
-                            controlnet_single_block_samples=controlnet_single_block_samples,
-                            return_dict=False,
-                            controlnet_blocks_repeat=controlnet_blocks_repeat,
-                            skip_layers=skip_guidance_layers,
-                        )[0]
+                        if _tlora_cfg:
+                            apply_tlora_inference_mask(
+                                timestep=int(t),
+                                max_timestep=self.scheduler.config.num_train_timesteps,
+                                max_rank=_tlora_cfg["max_rank"],
+                                min_rank=_tlora_cfg["min_rank"],
+                                alpha=_tlora_cfg["alpha"],
+                            )
+                        try:
+                            skip_noise_pred = self.transformer(
+                                hidden_states=latents,
+                                timestep=timestep / 1000,
+                                encoder_hidden_states=original_prompt_embeds,
+                                txt_ids=original_text_ids,
+                                img_ids=latent_image_ids,
+                                attention_mask=attention_mask,
+                                joint_attention_kwargs=self.joint_attention_kwargs,
+                                controlnet_block_samples=controlnet_block_samples,
+                                controlnet_single_block_samples=controlnet_single_block_samples,
+                                return_dict=False,
+                                controlnet_blocks_repeat=controlnet_blocks_repeat,
+                                skip_layers=skip_guidance_layers,
+                            )[0]
+                        finally:
+                            if _tlora_cfg:
+                                clear_tlora_mask()
                         noise_pred = noise_pred + (noise_pred_text - skip_noise_pred) * self._skip_layer_guidance_scale
 
                 latents_dtype = latents.dtype

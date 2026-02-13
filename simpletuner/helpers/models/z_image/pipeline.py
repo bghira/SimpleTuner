@@ -43,6 +43,7 @@ from simpletuner.helpers.training.lora_format import (
     detect_state_dict_format,
     normalize_lora_format,
 )
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 from .pipeline_output import ZImagePipelineOutput
 from .transformer import ZImageTransformer2DModel
@@ -944,12 +945,25 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                 latent_model_input = latent_model_input.unsqueeze(2)
                 latent_model_input_list = list(latent_model_input.unbind(dim=0))
 
-                model_out_list = self.transformer(
-                    latent_model_input_list,
-                    timestep_model_input,
-                    prompt_embeds_model_input,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    model_out_list = self.transformer(
+                        latent_model_input_list,
+                        timestep_model_input,
+                        prompt_embeds_model_input,
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 if apply_cfg:
                     # Perform CFG
@@ -999,13 +1013,26 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                 if should_skip_layers:
                     skip_latent_input = latents.to(dtype).unsqueeze(2)
                     skip_latent_list = list(skip_latent_input.unbind(dim=0))
-                    skip_out = self.transformer(
-                        skip_latent_list,
-                        timestep,
-                        prompt_embeds,
-                        skip_layers=skip_guidance_layers,
-                        joint_attention_kwargs=self.joint_attention_kwargs,
-                    )[0]
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        skip_out = self.transformer(
+                            skip_latent_list,
+                            timestep,
+                            prompt_embeds,
+                            skip_layers=skip_guidance_layers,
+                            joint_attention_kwargs=self.joint_attention_kwargs,
+                        )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
                     skip_pred = torch.stack([out.float() for out in skip_out], dim=0).squeeze(2)
                     skip_pred = -skip_pred
                     noise_pred = noise_pred + (pos_out.squeeze(2) - skip_pred) * self._skip_layer_guidance_scale

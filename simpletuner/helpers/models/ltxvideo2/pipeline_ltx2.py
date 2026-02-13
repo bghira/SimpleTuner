@@ -35,6 +35,7 @@ from simpletuner.helpers.training.lora_format import (
     detect_state_dict_format,
     normalize_lora_format,
 )
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 from .audio_autoencoder import AutoencoderKLLTX2Audio
 from .autoencoder import AutoencoderKLLTX2Video
@@ -1251,26 +1252,39 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                     timestep.unsqueeze(-1) * (1 - conditioning_mask) if conditioning_mask is not None else timestep
                 )
 
-                with self.transformer.cache_context("cond_uncond"):
-                    noise_pred_video, noise_pred_audio = self.transformer(
-                        hidden_states=latent_model_input,
-                        audio_hidden_states=audio_latent_model_input,
-                        encoder_hidden_states=connector_prompt_embeds,
-                        audio_encoder_hidden_states=connector_audio_prompt_embeds,
-                        timestep=video_timestep,
-                        encoder_attention_mask=connector_attention_mask,
-                        audio_encoder_attention_mask=connector_attention_mask,
-                        num_frames=latent_num_frames,
-                        height=latent_height,
-                        width=latent_width,
-                        fps=frame_rate,
-                        audio_num_frames=audio_num_frames,
-                        video_coords=video_coords,
-                        audio_coords=audio_coords,
-                        audio_only=audio_only,
-                        attention_kwargs=attention_kwargs,
-                        return_dict=False,
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
                     )
+                try:
+                    with self.transformer.cache_context("cond_uncond"):
+                        noise_pred_video, noise_pred_audio = self.transformer(
+                            hidden_states=latent_model_input,
+                            audio_hidden_states=audio_latent_model_input,
+                            encoder_hidden_states=connector_prompt_embeds,
+                            audio_encoder_hidden_states=connector_audio_prompt_embeds,
+                            timestep=video_timestep,
+                            encoder_attention_mask=connector_attention_mask,
+                            audio_encoder_attention_mask=connector_attention_mask,
+                            num_frames=latent_num_frames,
+                            height=latent_height,
+                            width=latent_width,
+                            fps=frame_rate,
+                            audio_num_frames=audio_num_frames,
+                            video_coords=video_coords,
+                            audio_coords=audio_coords,
+                            audio_only=audio_only,
+                            attention_kwargs=attention_kwargs,
+                            return_dict=False,
+                        )
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
                 noise_pred_video = noise_pred_video.float()
                 noise_pred_audio = noise_pred_audio.float()
 

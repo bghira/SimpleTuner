@@ -20,6 +20,8 @@ from diffusers.utils import is_torch_version, is_torch_xla_available, logging, r
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 from .paella_vq_model import PaellaVQModel
 from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler, ensure_wuerstchen_scheduler
 from .unet import StableCascadeUNet
@@ -526,13 +528,26 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
                 timestep_ratio = t.expand(latents.size(0)).to(dtype)
 
             # 7. Denoise latents
-            predicted_latents = self.decoder(
-                sample=torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents,
-                timestep_ratio=torch.cat([timestep_ratio] * 2) if self.do_classifier_free_guidance else timestep_ratio,
-                clip_text_pooled=prompt_embeds_pooled,
-                effnet=effnet,
-                return_dict=False,
-            )[0]
+            _tlora_cfg = getattr(self, "_tlora_config", None)
+            if _tlora_cfg:
+                apply_tlora_inference_mask(
+                    timestep=int(t),
+                    max_timestep=self.scheduler.config.num_train_timesteps,
+                    max_rank=_tlora_cfg["max_rank"],
+                    min_rank=_tlora_cfg["min_rank"],
+                    alpha=_tlora_cfg["alpha"],
+                )
+            try:
+                predicted_latents = self.decoder(
+                    sample=torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents,
+                    timestep_ratio=torch.cat([timestep_ratio] * 2) if self.do_classifier_free_guidance else timestep_ratio,
+                    clip_text_pooled=prompt_embeds_pooled,
+                    effnet=effnet,
+                    return_dict=False,
+                )[0]
+            finally:
+                if _tlora_cfg:
+                    clear_tlora_mask()
 
             # 8. Check for classifier free guidance and apply it
             if self.do_classifier_free_guidance:
