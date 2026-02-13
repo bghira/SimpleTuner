@@ -197,43 +197,37 @@ class TestMetadataFunctions(unittest.TestCase):
                 return_value={},
             ):
                 with patch(
-                    "simpletuner.helpers.publishing.metadata.StateTracker.get_epoch",
-                    return_value=1,
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype",
+                    return_value=torch.bfloat16,
                 ):
                     with patch(
-                        "simpletuner.helpers.publishing.metadata.StateTracker.get_global_step",
-                        return_value=1000,
+                        "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
+                        return_value=MagicMock(num_processes=1),
                     ):
                         with patch(
-                            "simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype",
-                            return_value=torch.bfloat16,
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_args",
+                            return_value=self.args,
                         ):
-                            with patch(
-                                "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
-                                return_value=MagicMock(num_processes=1),
-                            ):
-                                with patch(
-                                    "simpletuner.helpers.training.state_tracker.StateTracker.get_args",
-                                    return_value=self.args,
-                                ):
-                                    with patch("builtins.open", unittest.mock.mock_open()) as mock_file:
-                                        save_model_card(
-                                            repo_id="test-repo",
-                                            images=None,
-                                            base_model="test-base-model",
-                                            train_text_encoder=True,
-                                            prompt="Test prompt",
-                                            validation_prompts=["Test prompt"],
-                                            validation_shortnames=["shortname"],
-                                            repo_folder="test-folder",
-                                            model=MagicMock(),
-                                        )
-                                        # Ensure the README.md was written
-                                        mock_file.assert_called_with(
-                                            os.path.join("test-folder", "README.md"),
-                                            "w",
-                                            encoding="utf-8",
-                                        )
+                            with patch("builtins.open", unittest.mock.mock_open()) as mock_file:
+                                save_model_card(
+                                    repo_id="test-repo",
+                                    images=None,
+                                    base_model="test-base-model",
+                                    train_text_encoder=True,
+                                    prompt="Test prompt",
+                                    validation_prompts=["Test prompt"],
+                                    validation_shortnames=["shortname"],
+                                    repo_folder="test-folder",
+                                    model=MagicMock(),
+                                    global_step=1000,
+                                    epoch=1,
+                                )
+                                # Ensure the README.md was written
+                                mock_file.assert_called_with(
+                                    os.path.join("test-folder", "README.md"),
+                                    "w",
+                                    encoding="utf-8",
+                                )
 
     def test_adapter_download_fn(self):
         with patch("huggingface_hub.hf_hub_download", return_value="path/to/adapter"):

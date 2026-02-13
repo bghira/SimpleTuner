@@ -80,9 +80,11 @@ class HubManager:
         else:
             return f"\nVAE: {self.config.pretrained_vae_model_name_or_path}"
 
-    def _commit_message(self):
+    def _commit_message(self, global_step: int = None, epoch: int = None):
+        resolved_epoch = (epoch - 1) if epoch is not None else (StateTracker.get_epoch() - 1)
+        resolved_step = global_step if global_step is not None else StateTracker.get_global_step()
         return (
-            f"Trained for {StateTracker.get_epoch() - 1} epochs and {StateTracker.get_global_step()} steps."
+            f"Trained for {resolved_epoch} epochs and {resolved_step} steps."
             f"\nTrained with datasets {self.collected_data_backend_str}"
             f"\nLearning rate {self.config.learning_rate}, batch size {self.config.train_batch_size}, and {self.config.gradient_accumulation_steps} gradient accumulation steps."
             f"\nTrained with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
@@ -132,7 +134,9 @@ class HubManager:
         except Exception as e:
             logger.error(f"Error uploading validation images to Hugging Face Hub: {e}")
 
-    def upload_model(self, validation_images, webhook_handler=None, override_path=None):
+    def upload_model(
+        self, validation_images, webhook_handler=None, override_path=None, global_step: int = None, epoch: int = None
+    ):
         repo_folder = override_path or os.path.join(
             self.config.output_dir,
             "pipeline" if "lora" not in self.config.model_type else "",
@@ -148,6 +152,8 @@ class HubManager:
             validation_prompts=self.validation_prompts,
             validation_shortnames=self.validation_shortnames,
             repo_folder=repo_folder,
+            global_step=global_step,
+            epoch=epoch,
         )
         if not self.config.push_to_hub:
             return
@@ -172,9 +178,9 @@ class HubManager:
             attempt += 1
             try:
                 if "lora" not in self.config.model_type:
-                    self.upload_full_model(override_path=override_path)
+                    self.upload_full_model(override_path=override_path, global_step=global_step, epoch=epoch)
                 else:
-                    self.upload_lora_model(override_path=override_path)
+                    self.upload_lora_model(override_path=override_path, global_step=global_step, epoch=epoch)
                     if self.config.use_ema:
                         self.upload_ema_model(override_path=override_path)
                 break
@@ -200,7 +206,7 @@ class HubManager:
             )
         return repo_url
 
-    def upload_full_model(self, override_path=None):
+    def upload_full_model(self, override_path=None, global_step: int = None, epoch: int = None):
         if not self.config.push_to_hub:
             return
         folder_path = os.path.join(self.config.output_dir, "pipeline")
@@ -208,13 +214,13 @@ class HubManager:
             self._hub_api.upload_folder(
                 repo_id=self._repo_id,
                 folder_path=override_path or folder_path,
-                commit_message=self._commit_message(),
+                commit_message=self._commit_message(global_step=global_step, epoch=epoch),
                 token=self.hub_token,
             )
         except Exception as e:
             logger.error(f"Failed to upload pipeline to hub: {e}")
 
-    def upload_lora_model(self, override_path=None):
+    def upload_lora_model(self, override_path=None, global_step: int = None, epoch: int = None):
         if not self.config.push_to_hub:
             return
         checkpoint_root = override_path or self.config.output_dir
@@ -227,7 +233,7 @@ class HubManager:
                 repo_id=self._repo_id,
                 path_in_repo=f"/{LORA_SAFETENSORS_FILENAME}",
                 path_or_fileobj=lora_weights_path,
-                commit_message=self._commit_message(),
+                commit_message=self._commit_message(global_step=global_step, epoch=epoch),
                 token=self.hub_token,
             )
             if os.path.exists(sla_path):
@@ -289,7 +295,9 @@ class HubManager:
 
         return highest_checkpoint
 
-    def upload_latest_checkpoint(self, validation_images: dict, webhook_handler=None):
+    def upload_latest_checkpoint(
+        self, validation_images: dict, webhook_handler=None, global_step: int = None, epoch: int = None
+    ):
         checkpoint_path = self.find_latest_checkpoint()
         if checkpoint_path:
             logging.info(f"Checkpoint path: {checkpoint_path}")
@@ -343,6 +351,8 @@ class HubManager:
                     validation_images=images_to_upload,
                     override_path=checkpoint_path,
                     webhook_handler=webhook_handler,
+                    global_step=global_step,
+                    epoch=epoch,
                 )
                 remote_path = self._repo_url(checkpoint_path.name)
                 return remote_path, str(checkpoint_path), repo_url
