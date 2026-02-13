@@ -672,6 +672,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 metadata_updates[image_path_str] = audio_metadata
         except Exception as exc:
             logger.error(f"Error processing audio sample {image_path_str}: {exc}", exc_info=True)
+            skipped = statistics.setdefault("skipped", {})
+            skipped["processing_error"] = skipped.get("processing_error", 0) + 1
             if delete_problematic_images:
                 logger.error(f"Deleting audio sample {image_path_str}.")
                 self.data_backend.delete(image_path_str)
