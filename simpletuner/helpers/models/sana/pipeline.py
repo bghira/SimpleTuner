@@ -34,6 +34,8 @@ from diffusers.utils import is_bs4_available, is_ftfy_available, is_torch_xla_av
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import Gemma2PreTrainedModel, GemmaTokenizer, GemmaTokenizerFast
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 if is_torch_xla_available():
@@ -791,14 +793,27 @@ class SanaImg2ImgPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
                 timestep = t.expand(latent_model_input.shape[0]).to(latents.dtype)
 
                 # transformer forward
-                noise_pred = self.transformer(
-                    latent_model_input,
-                    encoder_hidden_states=prompt_embeds,
-                    encoder_attention_mask=prompt_attention_mask,
-                    timestep=timestep,
-                    return_dict=False,
-                    attention_kwargs=self.attention_kwargs,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=timestep,
+                        return_dict=False,
+                        attention_kwargs=self.attention_kwargs,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
                 noise_pred = noise_pred.float()
 
                 # guidance

@@ -1617,12 +1617,14 @@ def cleanup_dead_processes():
 
 
 # Set up periodic cleanup
+_cleanup_stop = threading.Event()
+
+
 def start_cleanup_thread():
     """Start a background thread to clean up dead processes."""
 
     def cleanup_loop():
-        while True:
-            time.sleep(60)  # Check every minute
+        while not _cleanup_stop.wait(timeout=60):
             try:
                 cleanup_dead_processes()
             except Exception as e:
@@ -1630,7 +1632,17 @@ def start_cleanup_thread():
 
     thread = threading.Thread(target=cleanup_loop, daemon=True)
     thread.start()
+    return thread
 
+
+def stop_cleanup_thread():
+    """Signal the cleanup thread to stop."""
+    _cleanup_stop.set()
+
+
+# Use threading._register_atexit so the event is set before _thread_shutdown()
+# waits for non-daemon threads. The regular atexit module runs too late.
+threading._register_atexit(stop_cleanup_thread)
 
 # Start cleanup on import
 start_cleanup_thread()

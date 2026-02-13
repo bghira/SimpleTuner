@@ -9,7 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -41,7 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
-from simpletuner.helpers.training.crepa import CrepaRegularizer
+from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, UrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -1150,6 +1150,16 @@ class ModelFoundation(ABC):
         """
         return False
 
+    def supports_multistage_validation(self) -> bool:
+        """
+        Returns True when validation should run multiple pipeline stages,
+        with stage 1 output feeding into stage 2.
+
+        Override for models like LTX2 (latent upsample + re-denoise),
+        DeepFloyd (stage1 → super-resolution), or SDXL (base → refiner).
+        """
+        return False
+
     def supports_audio_inputs(self) -> bool:
         return False
 
@@ -1753,13 +1763,24 @@ class ModelFoundation(ABC):
     def denormalize_latents_for_preview(self, latents: torch.Tensor) -> torch.Tensor:
         """
         Convert latents from the diffusion space back into decoder space prior to Tiny AE decode.
+
+        Handles both config-based statistics (e.g., SDXL) and buffer-based statistics (e.g., LTX-2).
         """
         vae = self.get_vae()
         if vae is None:
             return latents
         scaling_factor = self._vae_scaling_factor()
+
+        # Check config first (e.g., SDXL VAE stores stats in config)
         latents_mean = getattr(vae.config, "latents_mean", None)
         latents_std = getattr(vae.config, "latents_std", None)
+
+        # Fallback to buffer attributes (e.g., LTX-2 VAE stores stats as registered buffers)
+        if latents_mean is None:
+            latents_mean = getattr(vae, "latents_mean", None)
+        if latents_std is None:
+            latents_std = getattr(vae, "latents_std", None)
+
         if latents.ndim == 4:
             view_shape = (1, latents.shape[1], 1, 1)
         elif latents.ndim == 5:
@@ -1768,8 +1789,15 @@ class ModelFoundation(ABC):
             raise ValueError(f"Unsupported number of dimensions for latents: {latents.ndim}. Expected 4 or 5.")
 
         if latents_mean is not None and latents_std is not None:
-            mean = torch.tensor(latents_mean, device=latents.device, dtype=latents.dtype).view(view_shape)
-            std = torch.tensor(latents_std, device=latents.device, dtype=latents.dtype).view(view_shape)
+            # Handle both tensor buffers and list/tuple config values
+            if torch.is_tensor(latents_mean):
+                mean = latents_mean.to(device=latents.device, dtype=latents.dtype).view(view_shape)
+            else:
+                mean = torch.tensor(latents_mean, device=latents.device, dtype=latents.dtype).view(view_shape)
+            if torch.is_tensor(latents_std):
+                std = latents_std.to(device=latents.device, dtype=latents.dtype).view(view_shape)
+            else:
+                std = torch.tensor(latents_std, device=latents.device, dtype=latents.dtype).view(view_shape)
             latents = latents * std / scaling_factor + mean
         else:
             latents = latents / scaling_factor
@@ -1836,6 +1864,17 @@ class ModelFoundation(ABC):
             with torch.no_grad():
                 decoded = vae.decode(preprocessed).sample
             # VAE outputs [-1, 1], normalize to [0, 1]
+            # Log if significant clipping occurs (for CREPA diagnostic)
+            if decoded.min() < -1.5 or decoded.max() > 1.5:
+                clipped_low = (decoded < -1).float().mean().item()
+                clipped_high = (decoded > 1).float().mean().item()
+                if clipped_low > 0.01 or clipped_high > 0.01:
+                    logger.warning(
+                        f"VAE decode output significantly outside [-1, 1]: "
+                        f"min={decoded.min().item():.2f}, max={decoded.max().item():.2f}, "
+                        f"clipped_low={clipped_low:.1%}, clipped_high={clipped_high:.1%}. "
+                        f"This may affect CREPA feature extraction."
+                    )
             decoded = (decoded.clamp(-1, 1) + 1) / 2
 
         # Ensure consistent output format: (B, T, C, H, W)
@@ -3383,6 +3422,30 @@ class ModelFoundation(ABC):
 
         return pipeline_kwargs
 
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: Callable[[Dict[str, Any]], Any],
+    ) -> Any:
+        """
+        Execute a multi-stage validation pipeline.
+
+        Called instead of a single pipeline() invocation when
+        supports_multistage_validation() returns True.
+
+        Args:
+            pipeline_kwargs: The filtered kwargs for the initial pipeline call.
+            pipeline_call: Callable wrapping pipeline(**kwargs) within the
+                active autocast context. Models call this for each stage.
+
+        Returns:
+            The final pipeline result object (must have .frames/.images/.audio).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.supports_multistage_validation() returned True "
+            f"but run_multistage_validation() was not overridden."
+        )
+
     def setup_training_noise_schedule(self):
         """
         Loads the noise schedule from the config.
@@ -4901,6 +4964,17 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
     Handles typical VAE, text encoder loading and a UNet forward pass.
     """
 
+    @property
+    def crepa_mode(self) -> CrepaMode:
+        """Return shape interpretation mode for CREPA/REPA alignment.
+
+        Image models use CrepaMode.IMAGE: hidden states (B, S, D) are reshaped
+        to (B, 1, S, D) treating the image as a single frame with S spatial tokens.
+
+        Override in subclass if your model has a different hidden state layout.
+        """
+        return CrepaMode.IMAGE
+
     SUPPORTS_TEXT_ENCODER_TRAINING = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_CONTROLNET_LORA_TARGET = [
@@ -4954,57 +5028,22 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.text_encoders = None
         self.tokenizers = None
         self._group_offload_configured = False
-
-    def expand_sigmas(self, batch: dict) -> dict:
-        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
-
-        return batch
-
-    def custom_model_card_schedule_info(self):
-        """
-        Override this in your subclass to add model-specific info.
-
-        See SD3 or Flux classes for an example.
-        """
-        return []
-
-    def custom_model_card_code_example(self, repo_id: str = None) -> str:
-        """
-        Override this to provide custom code examples for model cards.
-        Returns None by default to use the standard template.
-        """
-        return None
-
-
-class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
-    """
-    Base class for video models. Provides default 5D handling and optional
-    text encoder instantiation. The actual text encoder classes and their
-    attributes can be stored in a hardcoded dict if needed. This base class
-    does not do it by default.
-    """
-
-    def __init__(self, config, accelerator):
-        """
-        :param config: The training configuration object/dict.
-        """
-        super().__init__(config, accelerator)
-        self.config = config
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
-
-    def expand_sigmas(self, batch):
-        if len(batch["latents"].shape) == 5:
-            logger.debug(
-                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
-            )
-            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
+        self.urepa_regularizer: Optional["UrepaRegularizer"] = None
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
         self._init_crepa_regularizer()
+        self._init_urepa_regularizer()
 
     def _init_crepa_regularizer(self):
         if not getattr(self.config, "crepa_enabled", False):
+            self.crepa_regularizer = None
+            return
+
+        # CREPA is only supported for transformer-based models (DiT-style backbones).
+        if getattr(self, "MODEL_TYPE", None) != ModelTypes.TRANSFORMER:
+            logger.warning("CREPA is only supported for transformer-based models. Use U-REPA for UNet models. Disabling.")
             self.crepa_regularizer = None
             return
 
@@ -5048,7 +5087,74 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
             return int(hidden_size)
         return None
 
-    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+    def _init_urepa_regularizer(self):
+        """Initialize U-REPA regularizer for UNet-based models (SDXL, SD1.5, Kolors)."""
+        if not getattr(self.config, "urepa_enabled", False):
+            self.urepa_regularizer = None
+            return
+
+        # U-REPA is only for UNet models
+        if getattr(self, "MODEL_TYPE", None) != ModelTypes.UNET:
+            logger.warning("U-REPA is only supported for UNet models (SDXL, SD1.5, Kolors). Disabling.")
+            self.urepa_regularizer = None
+            return
+
+        hidden_size = self._infer_urepa_hidden_size()
+        if hidden_size is None:
+            raise ValueError("U-REPA enabled but unable to infer UNet mid-block hidden size.")
+
+        max_train_steps = int(getattr(self.config, "max_train_steps", 0) or 0)
+        self.urepa_regularizer = UrepaRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size,
+            model_foundation=self,
+            max_train_steps=max_train_steps,
+        )
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("U-REPA requires an attached diffusion model to register its projector.")
+        self.urepa_regularizer.attach_to_model(model_component)
+        logger.info(f"U-REPA initialized for {self.NAME} with hidden_size={hidden_size}")
+
+    def _infer_urepa_hidden_size(self) -> Optional[int]:
+        """Infer the hidden size from UNet mid-block for U-REPA."""
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        unwrapped = self.unwrap_model(model=model)
+        # UNet mid-block output channels
+        config = getattr(unwrapped, "config", None)
+        if config is not None:
+            # block_out_channels is a tuple like (320, 640, 1280, 1280) for SDXL
+            block_out_channels = getattr(config, "block_out_channels", None)
+            if block_out_channels is not None and len(block_out_channels) > 0:
+                return int(block_out_channels[-1])
+        # Fallback: try to get from mid_block directly
+        mid_block = getattr(unwrapped, "mid_block", None)
+        if mid_block is not None:
+            # Try to get from mid_block's resnet
+            resnets = getattr(mid_block, "resnets", None)
+            if resnets is not None and len(resnets) > 0:
+                out_channels = getattr(resnets[0], "out_channels", None)
+                if out_channels is not None:
+                    return int(out_channels)
+        return None
+
+    def expand_sigmas(self, batch: dict) -> dict:
+        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+
+        return batch
+
+    def auxiliary_loss(
+        self,
+        model_output,
+        prepared_batch: dict,
+        loss: torch.Tensor,
+        *,
+        apply_layersync: bool = True,
+        clear_hidden_state_buffer: bool = True,
+    ):
         hidden_states_buffer = model_output.get("hidden_states_buffer")
 
         # Run base auxiliary losses (TwinFlow) but keep the buffer intact and defer LayerSync.
@@ -5091,12 +5197,76 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
             if crepa_logs:
                 aux_logs = (aux_logs or {}) | crepa_logs
 
-        # Apply LayerSync (if requested) after CREPA so both can share the buffer.
-        loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
-        if hidden_states_buffer is not None:
+        # U-REPA for UNet models
+        urepa = getattr(self, "urepa_regularizer", None)
+        if urepa and urepa.enabled:
+            urepa_hidden = model_output.get("urepa_hidden_states")
+            if urepa_hidden is None:
+                raise ValueError("U-REPA is enabled but no mid-block hidden states were captured.")
+
+            urepa_loss, urepa_logs = urepa.compute_loss(
+                hidden_states=urepa_hidden,
+                latents=prepared_batch.get("latents"),
+                vae=self.get_vae(),
+                step=StateTracker.get_global_step(),
+            )
+            if urepa_loss is not None:
+                loss = loss + urepa_loss
+            if urepa_logs:
+                aux_logs = (aux_logs or {}) | urepa_logs
+
+        if apply_layersync:
+            loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
+        if clear_hidden_state_buffer and hidden_states_buffer is not None:
             hidden_states_buffer.clear()
 
         return loss, aux_logs
+
+    def custom_model_card_schedule_info(self):
+        """
+        Override this in your subclass to add model-specific info.
+
+        See SD3 or Flux classes for an example.
+        """
+        return []
+
+    def custom_model_card_code_example(self, repo_id: str = None) -> str:
+        """
+        Override this to provide custom code examples for model cards.
+        Returns None by default to use the standard template.
+        """
+        return None
+
+
+class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
+    """
+    Base class for video models. Provides default 5D handling and optional
+    text encoder instantiation. The actual text encoder classes and their
+    attributes can be stored in a hardcoded dict if needed. This base class
+    does not do it by default.
+    """
+
+    @property
+    def crepa_mode(self) -> CrepaMode:
+        """Return shape interpretation mode for CREPA alignment.
+
+        Video models use CrepaMode.VIDEO: hidden states (B, T, D) are reshaped
+        to (B, T, 1, D) treating each of T frames as having one global token.
+
+        Override in subclass if your model has a different hidden state layout.
+        """
+        return CrepaMode.VIDEO
+
+    def expand_sigmas(self, batch):
+        if len(batch["latents"].shape) == 5:
+            logger.debug(
+                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
+            )
+            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
+        return batch
+
+    def get_transforms(self, dataset_type: str = "image"):
+        return VideoTransformMixin.get_transforms(self, dataset_type=dataset_type)
 
 
 class AudioModelFoundation(AudioTransformMixin, ModelFoundation):

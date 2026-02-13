@@ -1923,8 +1923,19 @@ class FactoryRegistry:
             if not isinstance(audio_config, dict):
                 continue
             if "auto_split" not in audio_config:
-                audio_config["auto_split"] = True
-                backend["audio"] = audio_config
+                # Only default auto_split=True when the model requires S2V datasets
+                # (e.g. Wan S2V). For models that merely support audio (e.g. LTX-2),
+                # the user must opt in via an explicit audio config section.
+                if self._requires_s2v_datasets():
+                    audio_config["auto_split"] = True
+                    backend["audio"] = audio_config
+                elif "audio" not in backend:
+                    # User has no audio config at all — skip auto-injection
+                    continue
+                else:
+                    # User provided an audio section but didn't set auto_split;
+                    # default to True since they've opted into audio configuration.
+                    audio_config["auto_split"] = True
             if not audio_config.get("auto_split"):
                 continue
 
@@ -2860,7 +2871,11 @@ class FactoryRegistry:
             maximum_num_frames=video_config.get("max_frames", None),
             num_frames=video_config.get("num_frames", None),
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            batch_size=self.args.train_batch_size,
+            batch_size=(
+                1
+                if ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE) is DatasetType.EVAL
+                else self.args.train_batch_size
+            ),
             metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
             cache_file=os.path.join(
                 metadata_cache_root,
@@ -3234,7 +3249,7 @@ class FactoryRegistry:
             data_backend=init_backend["data_backend"],
             model=self.model,
             accelerator=self.accelerator,
-            batch_size=self.args.train_batch_size,
+            batch_size=1 if dataset_type is DatasetType.EVAL else self.args.train_batch_size,
             debug_aspect_buckets=self.args.debug_aspect_buckets,
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),

@@ -566,6 +566,8 @@ def save_model_card(
     validation_prompts: list = None,
     validation_shortnames: list = None,
     repo_folder: str = None,
+    global_step: int = None,
+    epoch: int = None,
 ):
     if repo_folder is None:
         raise ValueError("The repo_folder must be specified and not be None.")
@@ -693,8 +695,8 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 
 ## Training settings
 
-- Training epochs: {StateTracker.get_epoch() - 1}
-- Training steps: {StateTracker.get_global_step()}
+- Training epochs: {(epoch - 1) if epoch is not None else (StateTracker.get_epoch() - 1)}
+- Training steps: {global_step if global_step is not None else StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
   - Learning rate schedule: {StateTracker.get_args().lr_scheduler}
   - Warmup steps: {StateTracker.get_args().lr_warmup_steps}

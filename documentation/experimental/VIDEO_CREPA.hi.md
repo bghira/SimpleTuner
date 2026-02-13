@@ -2,6 +2,8 @@
 
 Cross-frame Representation Alignment (CREPA) वीडियो मॉडल्स के लिए एक हल्का regularizer है। यह हर फ्रेम के hidden states को frozen vision encoder के फीचर्स के साथ—मौजूदा फ्रेम **और उसके पड़ोसियों**—की ओर nudges करता है, जिससे temporal consistency बेहतर होती है और आपका मुख्य loss बदले बिना सुधार मिलता है।
 
+> **इमेज मॉडल्स की तलाश है?** इमेज DiT मॉडल्स (Flux, SD3, आदि) पर REPA सपोर्ट और UNet मॉडल्स (SDXL, SD1.5, Kolors) के लिए U-REPA के बारे में [IMAGE_REPA.hi.md](IMAGE_REPA.hi.md) देखें।
+
 ## कब उपयोग करें
 
 - आप जटिल motion, scene changes, या occlusions वाले वीडियो पर ट्रेन कर रहे हैं।
@@ -20,7 +22,7 @@ Cross-frame Representation Alignment (CREPA) वीडियो मॉडल्�
 4. **Weight** को `0.5` पर रखें।
 5. **Adjacent Distance** को `1` और **Temporal Decay** को `1.0` पर रखें ताकि सेटअप मूल CREPA पेपर के करीब रहे।
 6. vision encoder के लिए डिफ़ॉल्ट्स रखें (`dinov2_vitg14`, resolution `518`)। केवल तब बदलें जब आपको छोटा encoder चाहिए (जैसे VRAM बचाने हेतु `dinov2_vits14` + image size `224`)।
-7. सामान्य रूप से ट्रेन करें। CREPA एक auxiliary loss जोड़ता है और `crepa_loss` / `crepa_similarity` लॉग करता है।
+7. सामान्य रूप से ट्रेन करें। CREPA एक auxiliary loss जोड़ता है और `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self` लॉग करता है।
 
 ## क्विक सेटअप (config JSON / CLI)
 
@@ -153,7 +155,7 @@ Early cutoff uniform backgrounds पर stripe artifacts को रोकता 
 
 - इम्प्लीमेंटेशन: `simpletuner/helpers/training/crepa.py`; `ModelFoundation._init_crepa_regularizer` से रजिस्टर होता है और trainable मॉडल पर अटैच होता है (projector optimizer कवरेज के लिए मॉडल पर रहता है)।
 - Hidden-state capture: वीडियो transformers `crepa_hidden_states` (और वैकल्पिक रूप से `crepa_frame_features`) stash करते हैं जब `crepa_enabled` true होता है; backbone mode shared hidden-state buffer से `layer_{idx}` भी खींच सकता है।
-- Loss path: `crepa_use_backbone_features` ऑन न हो तो VAE से latents को pixels में decode करता है; projected hidden states और encoder features को normalize करता है, distance-weighted cosine similarity लागू करता है, `crepa_loss` / `crepa_similarity` लॉग करता है, और scaled loss जोड़ता है।
+- Loss path: `crepa_use_backbone_features` ऑन न हो तो VAE से latents को pixels में decode करता है; projected hidden states और encoder features को normalize करता है, distance-weighted cosine similarity लागू करता है, `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self` लॉग करता है, और scaled loss जोड़ता है।
 - Interaction: LayerSync से पहले चलता है ताकि दोनों hidden-state buffer reuse कर सकें; फिर buffer साफ करता है। वैध block index और transformer config से inferred hidden size की आवश्यकता होती है।
 
 </details>

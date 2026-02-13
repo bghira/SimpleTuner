@@ -36,6 +36,7 @@ from transformers import AutoTokenizer, UMT5EncoderModel, Wav2Vec2Model, Wav2Vec
 
 from simpletuner.helpers.models.wan_s2v import WAV2VEC2_NUM_LAYERS
 from simpletuner.helpers.models.wan_s2v.transformer import WanS2VTransformer3DModel
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 logger = logging.get_logger(__name__)
 
@@ -414,19 +415,32 @@ class WanS2VPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             timestep = t.expand(latent_model_input.shape[0])
 
             # Predict noise
-            noise_pred = self.transformer(
-                hidden_states=latent_model_input,
-                timestep=timestep,
-                encoder_hidden_states=prompt_embeds,
-                motion_latents=motion_latents,
-                audio_embeds=audio_embeds,
-                image_latents=image_latents,
-                pose_latents=pose_latents,
-                motion_frames=[17, 5],
-                drop_motion_frames=True,
-                add_last_motion=0,
-                return_dict=False,
-            )[0]
+            _tlora_cfg = getattr(self, "_tlora_config", None)
+            if _tlora_cfg:
+                apply_tlora_inference_mask(
+                    timestep=int(t),
+                    max_timestep=self.scheduler.config.num_train_timesteps,
+                    max_rank=_tlora_cfg["max_rank"],
+                    min_rank=_tlora_cfg["min_rank"],
+                    alpha=_tlora_cfg["alpha"],
+                )
+            try:
+                noise_pred = self.transformer(
+                    hidden_states=latent_model_input,
+                    timestep=timestep,
+                    encoder_hidden_states=prompt_embeds,
+                    motion_latents=motion_latents,
+                    audio_embeds=audio_embeds,
+                    image_latents=image_latents,
+                    pose_latents=pose_latents,
+                    motion_frames=[17, 5],
+                    drop_motion_frames=True,
+                    add_last_motion=0,
+                    return_dict=False,
+                )[0]
+            finally:
+                if _tlora_cfg:
+                    clear_tlora_mask()
 
             # Classifier-free guidance
             if do_classifier_free_guidance:

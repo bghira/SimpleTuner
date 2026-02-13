@@ -160,12 +160,6 @@ Video datasets require careful setup. Create `config/multidatabackend.json`:
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
-    "audio": {
-        "auto_split": true,
-        "sample_rate": 16000,
-        "channels": 1,
-        "duration_interval": 3.0
-    },
     "repeats": 10
   },
   {
@@ -188,9 +182,22 @@ In the `video` subsection:
   - `resolution_frames`: Group by `WxH@F` format (e.g., `1920x1080@61`) for mixed-resolution/duration datasets.
 - `frame_interval`: When using `resolution_frames`, round frame counts to this interval.
 
-Audio auto-split is enabled by default for video datasets. Add an `audio` block to tune sample rate/channels, set
-`audio.auto_split: false` to opt out, or provide a separate audio dataset and link it via `s2v_datasets`. SimpleTuner
-will cache audio latents alongside video latents.
+LTX-2 supports video-only training without audio. To enable audio training, add an `audio` block to your video
+dataset configuration:
+
+```json
+"audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "duration_interval": 3.0,
+    "allow_zero_audio": false
+}
+```
+
+When the `audio` section is present, SimpleTuner auto-generates an audio dataset from your video files and caches
+audio latents alongside video latents. Set `audio.allow_zero_audio: true` if your videos lack audio streams.
+Without an `audio` section, LTX-2 trains on video only and masks audio loss automatically.
 
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 

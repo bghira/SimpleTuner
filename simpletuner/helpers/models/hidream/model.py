@@ -526,8 +526,8 @@ class HiDream(ImageModelFoundation):
             latent_model_input = out
 
         # Call the forward method with the updated parameter names
-        return {
-            "model_prediction": self.model(
+        model_pred = (
+            self.model(
                 hidden_states=latent_model_input.to(
                     device=self.accelerator.device,
                     dtype=self.config.base_weight_dtype,
@@ -544,7 +544,17 @@ class HiDream(ImageModelFoundation):
                 return_dict=False,
                 hidden_states_buffer=hidden_states_buffer,
             )[0]
-            * -1,  # the model is trained with inverted velocity :(
+            * -1  # the model is trained with inverted velocity :(
+        )
+
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

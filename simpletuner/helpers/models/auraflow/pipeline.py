@@ -39,6 +39,8 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import T5Tokenizer, UMT5EncoderModel
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
 
@@ -1185,13 +1187,26 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                 timestep = torch.tensor([t / 1000]).expand(latent_model_input.shape[0])
                 timestep = timestep.to(latents.device, dtype=torch.float32)
 
-                noise_pred = self.transformer(
-                    latent_model_input,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep=timestep,
-                    return_dict=False,
-                    # attention_kwargs=self.attention_kwargs,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep=timestep,
+                        return_dict=False,
+                        # attention_kwargs=self.attention_kwargs,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
@@ -1227,14 +1242,27 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
                         latent_model_input_single = latents
 
-                        noise_pred_skip_layers = self.transformer(
-                            latent_model_input_single,
-                            encoder_hidden_states=original_prompt_embeds,
-                            timestep=timestep_single,
-                            return_dict=False,
-                            attention_kwargs=self.attention_kwargs,
-                            skip_layers=skip_guidance_layers,
-                        )[0]
+                        _tlora_cfg = getattr(self, "_tlora_config", None)
+                        if _tlora_cfg:
+                            apply_tlora_inference_mask(
+                                timestep=int(t),
+                                max_timestep=self.scheduler.config.num_train_timesteps,
+                                max_rank=_tlora_cfg["max_rank"],
+                                min_rank=_tlora_cfg["min_rank"],
+                                alpha=_tlora_cfg["alpha"],
+                            )
+                        try:
+                            noise_pred_skip_layers = self.transformer(
+                                latent_model_input_single,
+                                encoder_hidden_states=original_prompt_embeds,
+                                timestep=timestep_single,
+                                return_dict=False,
+                                attention_kwargs=self.attention_kwargs,
+                                skip_layers=skip_guidance_layers,
+                            )[0]
+                        finally:
+                            if _tlora_cfg:
+                                clear_tlora_mask()
 
                         noise_pred = (
                             noise_pred + (noise_pred_text - noise_pred_skip_layers) * self._skip_layer_guidance_scale

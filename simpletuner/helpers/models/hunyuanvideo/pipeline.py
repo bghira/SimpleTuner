@@ -26,6 +26,8 @@ from diffusers.utils import is_torch_xla_available, logging, replace_example_doc
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import ByT5Tokenizer, Qwen2_5_VLTextModel, Qwen2Tokenizer, T5EncoderModel
 
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+
 from .autoencoder import AutoencoderKLConv3D
 from .transformer import HunyuanVideo15Transformer3DModel
 
@@ -893,16 +895,29 @@ class HunyuanVideo15Pipeline(DiffusionPipeline, LoraLoaderMixin):
 
                     # e.g. "pred_cond"/"pred_uncond"
                     context_name = getattr(guider_state_batch, self.guider._identifier_key)
-                    with self.transformer.cache_context(context_name):
-                        # Run denoiser and store noise prediction in this batch
-                        guider_state_batch.noise_pred = self.transformer(
-                            hidden_states=latent_model_input,
-                            image_embeds=image_embeds,
-                            timestep=timestep,
-                            attention_kwargs=self.attention_kwargs,
-                            return_dict=False,
-                            **cond_kwargs,
-                        )[0]
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        with self.transformer.cache_context(context_name):
+                            # Run denoiser and store noise prediction in this batch
+                            guider_state_batch.noise_pred = self.transformer(
+                                hidden_states=latent_model_input,
+                                image_embeds=image_embeds,
+                                timestep=timestep,
+                                attention_kwargs=self.attention_kwargs,
+                                return_dict=False,
+                                **cond_kwargs,
+                            )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
 
                     # Cleanup model (e.g., remove hooks)
                     self.guider.cleanup_models(self.transformer)

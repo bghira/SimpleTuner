@@ -99,6 +99,33 @@ Flux 2 LoKR 配置示例：
 }
 ```
 
+### T-LoRA（时间步依赖 LoRA）
+
+T-LoRA 在训练过程中应用时间步依赖的秩掩码。在高噪声水平（去噪早期）时，较少的 LoRA 秩处于活跃状态，学习粗略结构；在低噪声水平（去噪后期）时，更多秩被激活，捕捉细节。此功能需要包含 `lycoris.modules.tlora` 的 LyCORIS 版本。
+
+T-LoRA 配置示例：
+
+```json
+{
+    "algo": "tlora",
+    "multiplier": 1.0,
+    "linear_dim": 64,
+    "linear_alpha": 32,
+    "apply_preset": {
+        "target_module": ["Attention", "FeedForward"]
+    }
+}
+```
+
+可选的 T-LoRA 字段（添加到同一 JSON 中）：
+
+- `tlora_min_rank`（整数，默认 `1`）— 最高噪声水平时的最少活跃秩数。
+- `tlora_alpha`（浮点数，默认 `1.0`）— 掩码调度指数。`1.0` 为线性；大于 `1.0` 的值会将更多容量分配给细节步骤。
+
+> **注意：** 在视频模型中使用 T-LoRA 可能效果不佳，因为时间压缩会在时间步边界处混合帧。
+
+在验证期间，SimpleTuner 会在每个去噪步骤自动应用时间步依赖的掩码，使推理与训练条件一致。无需额外配置——训练时的掩码参数会被自动复用。
+
 ## 潜在问题
 
 在 SDXL 上使用 Lycoris 时，训练 FeedForward 模块可能会破坏模型并使损失变为 `NaN`。

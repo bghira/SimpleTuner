@@ -36,6 +36,7 @@ from simpletuner.helpers.training.lora_format import (
     detect_state_dict_format,
     normalize_lora_format,
 )
+from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -1494,37 +1495,63 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
                     latent_model_input = torch.cat([latents, image_latents], dim=1).to(self.transformer.dtype)
                     latent_image_ids = torch.cat([latent_ids, image_latent_ids], dim=1)
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,  # (B, image_seq_len, C)
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    encoder_hidden_states=prompt_embeds,
-                    txt_ids=text_ids,  # B, text_seq_len, 4
-                    img_ids=latent_image_ids,  # B, image_seq_len, 4
-                    joint_attention_kwargs=self._attention_kwargs,
-                    return_dict=False,
-                )[0]
+                _tlora_cfg = getattr(self, "_tlora_config", None)
+                if _tlora_cfg:
+                    apply_tlora_inference_mask(
+                        timestep=int(t),
+                        max_timestep=self.scheduler.config.num_train_timesteps,
+                        max_rank=_tlora_cfg["max_rank"],
+                        min_rank=_tlora_cfg["min_rank"],
+                        alpha=_tlora_cfg["alpha"],
+                    )
+                try:
+                    noise_pred = self.transformer(
+                        hidden_states=latent_model_input,  # (B, image_seq_len, C)
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        encoder_hidden_states=prompt_embeds,
+                        txt_ids=text_ids,  # B, text_seq_len, 4
+                        img_ids=latent_image_ids,  # B, image_seq_len, 4
+                        joint_attention_kwargs=self._attention_kwargs,
+                        return_dict=False,
+                    )[0]
+                finally:
+                    if _tlora_cfg:
+                        clear_tlora_mask()
 
                 noise_pred = noise_pred[:, : latents.size(1) :]
 
                 # Real CFG: do a second pass with negative embeddings
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
-                    noise_pred_uncond = self.transformer(
-                        hidden_states=latent_model_input,
-                        timestep=timestep / 1000,
-                        guidance=guidance,
-                        encoder_hidden_states=negative_prompt_embeds.to(
-                            device=self.transformer.device, dtype=prompt_embeds.dtype
-                        ),
-                        txt_ids=(
-                            negative_text_ids.to(device=self.transformer.device)
-                            if negative_text_ids is not None
-                            else text_ids
-                        ),
-                        img_ids=latent_image_ids,
-                        joint_attention_kwargs=self._attention_kwargs,
-                        return_dict=False,
-                    )[0]
+                    _tlora_cfg = getattr(self, "_tlora_config", None)
+                    if _tlora_cfg:
+                        apply_tlora_inference_mask(
+                            timestep=int(t),
+                            max_timestep=self.scheduler.config.num_train_timesteps,
+                            max_rank=_tlora_cfg["max_rank"],
+                            min_rank=_tlora_cfg["min_rank"],
+                            alpha=_tlora_cfg["alpha"],
+                        )
+                    try:
+                        noise_pred_uncond = self.transformer(
+                            hidden_states=latent_model_input,
+                            timestep=timestep / 1000,
+                            guidance=guidance,
+                            encoder_hidden_states=negative_prompt_embeds.to(
+                                device=self.transformer.device, dtype=prompt_embeds.dtype
+                            ),
+                            txt_ids=(
+                                negative_text_ids.to(device=self.transformer.device)
+                                if negative_text_ids is not None
+                                else text_ids
+                            ),
+                            img_ids=latent_image_ids,
+                            joint_attention_kwargs=self._attention_kwargs,
+                            return_dict=False,
+                        )[0]
+                    finally:
+                        if _tlora_cfg:
+                            clear_tlora_mask()
                     noise_pred_uncond = noise_pred_uncond[:, : latents.size(1) :]
                     noise_pred = noise_pred_uncond + guidance_scale_real * (noise_pred - noise_pred_uncond)
 

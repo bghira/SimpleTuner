@@ -67,6 +67,81 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         self.assertFalse(capabilities.get("supports_audio_inputs"))
         self.assertFalse(capabilities.get("requires_s2v_datasets"))
 
+    # -- Multi-stage validation capability tests --
+
+    def test_multistage_capability_present(self):
+        """The supports_multistage_validation key must appear in capabilities."""
+        details = self.service.get_model_details("flux")
+        capabilities = details["capabilities"]
+        self.assertIn("supports_multistage_validation", capabilities)
+
+    def test_sdxl_no_multistage(self):
+        """SDXL does not support multi-stage validation."""
+        details = self.service.get_model_details("sdxl")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_flux_no_multistage(self):
+        """Flux does not support multi-stage validation."""
+        details = self.service.get_model_details("flux")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_ltxvideo2_no_multistage(self):
+        """LTX-Video 2 does not yet support multi-stage validation."""
+        details = self.service.get_model_details("ltxvideo2")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_deepfloyd_no_multistage(self):
+        """DeepFloyd does not yet support multi-stage validation."""
+        details = self.service.get_model_details("deepfloyd")
+        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+
+    def test_evaluate_requirements_includes_multistage(self):
+        """evaluate_requirements() must include supports_multistage_validation."""
+        result = self.service.evaluate_requirements("flux")
+        self.assertIn("supports_multistage_validation", result)
+        self.assertFalse(result["supports_multistage_validation"])
+
+    def test_multistage_true_when_both_methods_overridden(self):
+        """A model overriding both multistage methods should report True."""
+        from simpletuner.helpers.models.common import ModelFoundation
+        from simpletuner.helpers.models.registry import ModelRegistry
+
+        class _FakeMultistage(ModelFoundation):
+            NAME = "fake_multistage"
+            HUGGINGFACE_PATHS = {"default": "fake/path"}
+
+            def supports_multistage_validation(self) -> bool:
+                return True
+
+            def run_multistage_validation(self, pipeline_kwargs, pipeline_call):
+                return pipeline_call(pipeline_kwargs)
+
+        ModelRegistry.register("_test_multistage", _FakeMultistage)
+        try:
+            details = self.service.get_model_details("_test_multistage")
+            self.assertTrue(details["capabilities"]["supports_multistage_validation"])
+        finally:
+            ModelRegistry._registry.pop("_test_multistage", None)
+
+    def test_multistage_false_when_run_not_overridden(self):
+        """A model that claims support but lacks run_multistage_validation should report False."""
+        from simpletuner.helpers.models.common import ModelFoundation
+        from simpletuner.helpers.models.registry import ModelRegistry
+
+        class _FakeClaimsOnly(ModelFoundation):
+            NAME = "fake_claims_only"
+            HUGGINGFACE_PATHS = {"default": "fake/path"}
+
+            def supports_multistage_validation(self) -> bool:
+                return True
+
+        ModelRegistry.register("_test_claims_only", _FakeClaimsOnly)
+        try:
+            details = self.service.get_model_details("_test_claims_only")
+            self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+        finally:
+            ModelRegistry._registry.pop("_test_claims_only", None)
+
 
 if __name__ == "__main__":
     unittest.main()

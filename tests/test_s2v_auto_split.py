@@ -163,6 +163,69 @@ class TestS2VAudioInjection(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIsNone(result[0].get("s2v_datasets"))
 
+    def test_inject_skips_video_backend_without_audio_config_for_optional_audio_model(self):
+        """When a model supports but does not require audio, video backends
+        without an explicit audio section must not get an auto-injected audio
+        dataset — the user hasn't opted in."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        model = MagicMock()
+        model.requires_s2v_datasets.return_value = False
+        model.supports_audio_inputs.return_value = True
+
+        factory = FactoryRegistry(self.args, self.accelerator, None, None, model)
+
+        data_backend_config = [
+            {
+                "id": "test-videos",
+                "type": "local",
+                "dataset_type": "video",
+                "instance_data_dir": "/data/videos",
+                # No "audio" section at all
+            }
+        ]
+
+        result = factory._inject_s2v_audio_configs(data_backend_config)
+
+        # Should only have the original backend — no auto-generated audio
+        self.assertEqual(len(result), 1)
+        self.assertIsNone(result[0].get("s2v_datasets"))
+        self.assertNotIn("audio", result[0])
+
+    def test_inject_creates_audio_for_optional_audio_model_with_explicit_audio_config(self):
+        """When a model supports audio and the user explicitly adds an audio
+        section (even without setting auto_split), auto_split should default
+        to True and an audio dataset should be created."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        model = MagicMock()
+        model.requires_s2v_datasets.return_value = False
+        model.supports_audio_inputs.return_value = True
+
+        factory = FactoryRegistry(self.args, self.accelerator, None, None, model)
+
+        data_backend_config = [
+            {
+                "id": "test-videos",
+                "type": "local",
+                "dataset_type": "video",
+                "instance_data_dir": "/data/videos",
+                "cache_dir_vae": "/cache/vae/videos",
+                "audio": {
+                    "sample_rate": 16000,
+                    "channels": 1,
+                },
+            }
+        ]
+
+        result = factory._inject_s2v_audio_configs(data_backend_config)
+
+        # Should have original video backend + auto-generated audio backend
+        self.assertEqual(len(result), 2)
+        audio_backends = [b for b in result if b.get("dataset_type") == "audio"]
+        self.assertEqual(len(audio_backends), 1)
+        self.assertTrue(result[0].get("_s2v_audio_autoinjected"))
+
     def test_inject_s2v_audio_inherits_backend_settings(self):
         """Test that S3/HF backend settings are inherited."""
         factory = self._make_factory()

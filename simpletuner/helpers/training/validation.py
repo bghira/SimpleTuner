@@ -2131,6 +2131,13 @@ class Validation:
             if getattr(te, "device", None) and te.device.type == "meta":
                 setattr(self.model.pipeline, attr, None)
 
+        # Patch ModelMixin.device so ramtorch models report the target GPU instead of CPU.
+        # Must run before pipeline.to() and pipeline.__call__ which rely on device detection.
+        if getattr(self.config, "ramtorch", False):
+            from simpletuner.helpers.ramtorch_extensions import patch_model_device_for_ramtorch
+
+            patch_model_device_for_ramtorch()
+
         # For FSDP models, skip .to() call - DTensor parameters are already device-aware
         # and calling .to() causes: "RuntimeError: Attempted to set the storage of a tensor
         # on device 'cpu' to a storage on different device 'cuda:0'"
@@ -2139,19 +2146,29 @@ class Validation:
 
         if not is_fsdp:
             base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+            _musubi_swap = getattr(self.config, "musubi_blocks_to_swap", None)
+            musubi_active = isinstance(_musubi_swap, int) and _musubi_swap > 0
             if "torchao" in base_precision:
                 logger.info(
                     "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
+                )
+            elif musubi_active:
+                logger.info(
+                    "Skipping pipeline.to for musubi block-swap model; block placement is managed by the forward pass."
                 )
             else:
                 self.model.pipeline.to(self.accelerator.device)
 
         self.model.pipeline.set_progress_bar_config(disable=True)
+        if getattr(self.accelerator, "_tlora_active", False):
+            self.model.pipeline._tlora_config = self.accelerator._tlora_config
         if hasattr(self.model, "configure_assistant_lora_for_inference"):
             self.model.configure_assistant_lora_for_inference()
 
     def clean_pipeline(self):
         """Remove the pipeline."""
+        if getattr(self.model, "pipeline", None) is not None and hasattr(self.model.pipeline, "_tlora_config"):
+            del self.model.pipeline._tlora_config
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
             self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
         if hasattr(self.model, "configure_assistant_lora_for_training"):
@@ -3461,7 +3478,17 @@ class Validation:
                             self.inference_device.type,
                             dtype=self.config.weight_dtype,
                         ):
-                            pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                            if self.model.supports_multistage_validation():
+
+                                def _pipeline_call(kwargs):
+                                    return self.model.pipeline(**kwargs)
+
+                                pipeline_result = self.model.run_multistage_validation(
+                                    pipeline_kwargs,
+                                    _pipeline_call,
+                                )
+                            else:
+                                pipeline_result = self.model.pipeline(**pipeline_kwargs)
                         current_results = None
                         if hasattr(pipeline_result, "frames"):
                             current_results = pipeline_result.frames
