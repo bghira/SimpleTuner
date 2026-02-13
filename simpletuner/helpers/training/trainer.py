@@ -4583,11 +4583,15 @@ class Trainer:
         if hub_upload_planned:
             if self.accelerator.is_main_process:
                 validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+                captured_step = self.state["global_step"]
+                captured_epoch = self.state["current_epoch"]
 
                 def _upload_latest_checkpoint():
                     remote_path, local_path, repo_url = self.hub_manager.upload_latest_checkpoint(
                         validation_images=validation_images,
                         webhook_handler=self.webhook_handler,
+                        global_step=captured_step,
+                        epoch=captured_epoch,
                     )
                     return remote_path, local_path, repo_url
 
@@ -6135,9 +6139,16 @@ class Trainer:
                 logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
 
             if self.hub_manager is not None and self.accelerator.is_main_process:
+                captured_step = self.state["global_step"]
+                captured_epoch = self.state["current_epoch"]
 
                 def _upload_final_model():
-                    repo_url = self.hub_manager.upload_model(validation_images, self.webhook_handler)
+                    repo_url = self.hub_manager.upload_model(
+                        validation_images,
+                        self.webhook_handler,
+                        global_step=captured_step,
+                        epoch=captured_epoch,
+                    )
                     return repo_url, self.config.output_dir, repo_url
 
                 try:
