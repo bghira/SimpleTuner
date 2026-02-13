@@ -1096,7 +1096,16 @@ class QwenImage(ImageModelFoundation):
                 f"Noise prediction shape {tuple(noise_pred.shape)} does not match target latents shape {tuple(target_latents.shape)}"
             )
 
-        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": noise_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     class _EditV1ConditioningImageEmbedder:
         def __init__(self, processor, device, dtype):
@@ -1225,7 +1234,16 @@ class QwenImage(ImageModelFoundation):
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)
 
-        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": noise_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def _model_predict_edit_plus(self, prepared_batch):
         latent_model_input = prepared_batch["noisy_latents"]
@@ -1364,7 +1382,16 @@ class QwenImage(ImageModelFoundation):
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)
 
-        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": noise_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def pre_vae_encode_transform_sample(self, sample):
         """

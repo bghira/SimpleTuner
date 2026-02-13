@@ -2,6 +2,8 @@
 
 Cross-frame Representation Alignment（CREPA）は動画モデル向けの軽量な正則化です。各フレームの隠れ状態を、凍結済みビジョンエンコーダの特徴（当該フレーム**および近傍フレーム**）へ寄せることで、主損失を変えずに時間的一貫性を改善します。
 
+> **画像モデルをお探しですか？** 画像DiTモデル（Flux、SD3など）のREPAサポートとUNetモデル（SDXL、SD1.5、Kolors）のU-REPAサポートについては [IMAGE_REPA.ja.md](IMAGE_REPA.ja.md) をご覧ください。
+
 ## 使いどき
 
 - 複雑な動き、シーン変化、オクルージョンを含む動画を学習している。
@@ -20,7 +22,7 @@ Cross-frame Representation Alignment（CREPA）は動画モデル向けの軽量
 4. **Weight** は `0.5` のまま開始。
 5. **Adjacent Distance** は `1`、**Temporal Decay** は `1.0` にして、CREPA 論文に近い設定にする。
 6. ビジョンエンコーダは既定（`dinov2_vitg14`、解像度 `518`）を使用。VRAM を節約したい場合のみ小さいエンコーダ（例: `dinov2_vits14` + 画像サイズ `224`）に変更。
-7. 通常通り学習。CREPA は補助損失を追加し、`crepa_loss` / `crepa_similarity` をログします。
+7. 通常通り学習。CREPA は補助損失を追加し、`crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self` をログします。
 
 ## クイック設定（config JSON / CLI）
 
@@ -153,7 +155,7 @@ CREPA は訓練中に係数（`crepa_lambda`）をスケジュールする機能
 
 - 実装: `simpletuner/helpers/training/crepa.py`。`ModelFoundation._init_crepa_regularizer` から登録され、学習対象モデルに付与（プロジェクタは最適化対象になるようモデル側に保持）。
 - 隠れ状態キャプチャ: `crepa_enabled` が true のとき、動画 Transformer が `crepa_hidden_states`（必要なら `crepa_frame_features`）を保持。バックボーンモードでは共有バッファの `layer_{idx}` も使用。
-- 損失経路: `crepa_use_backbone_features` が有効でない限り、VAE で潜在をピクセルにデコード。投影された隠れ状態とエンコーダ特徴を正規化し、距離重み付きコサイン類似度を適用、`crepa_loss` / `crepa_similarity` をログしてスケール損失を加算。
+- 損失経路: `crepa_use_backbone_features` が有効でない限り、VAE で潜在をピクセルにデコード。投影された隠れ状態とエンコーダ特徴を正規化し、距離重み付きコサイン類似度を適用、`crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self` をログしてスケール損失を加算。
 - 相互作用: LayerSync より前に実行し、同じ隠れ状態バッファを再利用。終了後にバッファをクリア。有効なブロックインデックスと Transformer 設定からの隠れサイズが必要。
 
 </details>

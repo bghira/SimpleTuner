@@ -1011,7 +1011,7 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
 - **内容**: 学習中に CREPA 正則化を有効化します。
 - **理由**: 隣接フレームの DINOv2 特徴と DiT 隠れ状態を整合させ、動画フレーム間の意味的一貫性を向上させます。
 - **既定**: `false`
-- **注記**: 動画モデル（Wan、LTXVideo、SanaVideo、Kandinsky5）のみ対象です。
+- **注記**: Transformer 系拡散モデル（DiT スタイル）のみ対象です。UNet モデル（SDXL、SD1.5、Kolors）は U-REPA を使用してください。
 
 ### `--crepa_block_index`
 
@@ -1043,6 +1043,12 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
 - **理由**:
   - **隣接モード（既定）**: 距離 `d` のフレームのみ整合（論文の $K = \{f-d, f+d\}$）。
   - **累積モード**: 距離 1 から `d` まで全フレームと整合し、勾配が滑らかになります。
+- **既定**: `false`
+
+### `--crepa_normalize_neighbour_sum`
+
+- **内容**: 近傍和の整合をフレームごとの重み合計で正規化します。
+- **理由**: `crepa_alignment_score` を [-1, 1] に収め、損失スケールをより直感的にします。論文の式 (6) からの実験的な逸脱です。
 - **既定**: `false`
 
 ### `--crepa_normalize_by_frames`
@@ -1128,7 +1134,7 @@ CREPA は動画拡散モデルのファインチューニング向け正則化�
 ### `--crepa_similarity_threshold`
 
 - **内容**: CREPA カットオフをトリガーする類似度 EMA 閾値。
-- **理由**: 類似度の指数移動平均がこの値に達すると、深層エンコーダ特徴への過学習を防ぐために CREPA が無効化されます。text2video 学習に特に有用です。
+- **理由**: 対象は整合スコア（`crepa_alignment_score`）の指数移動平均です。これがこの値に達すると、深層エンコーダ特徴への過学習を防ぐために CREPA が無効化されます。text2video 学習に特に有用です。`crepa_normalize_neighbour_sum` を有効にしない場合、整合スコアは 1.0 を超えることがあります。
 - **既定**: なし（無効）
 
 ### `--crepa_similarity_ema_decay`
@@ -1153,6 +1159,7 @@ crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
 crepa_cumulative_neighbors = false
+crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"
@@ -1169,6 +1176,125 @@ crepa_encoder_image_size = 518
 # crepa_cutoff_step = 5000             # ハードカットオフステップ（0 = 無効）
 # crepa_similarity_threshold = 0.9    # 類似度ベースのカットオフ
 # crepa_threshold_mode = "permanent"   # permanent または recoverable
+```
+
+---
+
+## 🎯 U-REPA（UNet 表現整合）
+
+U-REPA は UNet ベースの拡散モデル（SDXL、SD1.5、Kolors）向けの正則化手法です。UNet の中間ブロック特徴を事前学習ビジョン特徴に整合させ、相対的な類似構造を保つためのマニフォールド損失を追加します。
+
+### `--urepa_enabled`
+
+- **内容**: 学習中に U-REPA 正則化を有効化します。
+- **理由**: 凍結したビジョンエンコーダを用いて UNet 中間ブロック特徴を整合させます。
+- **既定**: `false`
+- **注記**: UNet モデル（SDXL、SD1.5、Kolors）のみ対象です。
+
+### `--urepa_lambda`
+
+- **内容**: U-REPA 整合損失の重み（主損失に対する比率）。
+- **理由**: 整合正則化の強さを制御します。
+- **既定**: `0.5`
+
+### `--urepa_manifold_weight`
+
+- **内容**: マニフォールド損失の重み（整合損失に対する比率）。
+- **理由**: 特徴の相対的な類似構造を重視します（論文の既定は 3.0）。
+- **既定**: `3.0`
+
+### `--urepa_model`
+
+- **内容**: 凍結ビジョンエンコーダの torch hub 識別子。
+- **理由**: 既定は DINOv2 ViT-G/14。`dinov2_vits14` など小型モデルは高速です。
+- **既定**: `dinov2_vitg14`
+
+### `--urepa_encoder_image_size`
+
+- **内容**: ビジョンエンコーダ前処理の入力解像度。
+- **理由**: エンコーダのネイティブ解像度を使用（DINOv2 ViT-G/14 は 518、ViT-S/14 は 224）。
+- **既定**: `518`
+
+### `--urepa_use_tae`
+
+- **内容**: フル VAE の代わりに Tiny AutoEncoder を使用します。
+- **理由**: 高速で VRAM 使用量が少ない一方、復元品質は低下します。
+- **既定**: `false`
+
+### `--urepa_scheduler`
+
+- **内容**: 学習中の U-REPA 係数の減衰スケジュール。
+- **理由**: 学習の進行に合わせて正則化強度を下げられます。
+- **選択肢**: `constant`、`linear`、`cosine`、`polynomial`
+- **既定**: `constant`
+
+### `--urepa_warmup_steps`
+
+- **内容**: U-REPA 重みを 0 から `urepa_lambda` まで線形に増やすステップ数。
+- **理由**: 初期学習の安定化に有効です。
+- **既定**: `0`
+
+### `--urepa_decay_steps`
+
+- **内容**: 減衰に使う総ステップ数（ウォームアップ後）。0 にすると学習全体で減衰します。
+- **理由**: 減衰フェーズの長さを制御します。
+- **既定**: `0`（`max_train_steps` を使用）
+
+### `--urepa_lambda_end`
+
+- **内容**: 減衰完了後の最終 U-REPA 重み。
+- **理由**: 0 にすると学習末期で U-REPA を実質無効化します。
+- **既定**: `0.0`
+
+### `--urepa_power`
+
+- **内容**: 多項式減衰の指数。1.0 = 線形、2.0 = 二次など。
+- **理由**: 値を上げると初期減衰が速く、後半が緩やかになります。
+- **既定**: `1.0`
+
+### `--urepa_cutoff_step`
+
+- **内容**: このステップ以降で U-REPA を無効化するハードカット。
+- **理由**: 整合が収束した後にオフにするのに便利です。
+- **既定**: `0`（ステップ制のカットなし）
+
+### `--urepa_similarity_threshold`
+
+- **内容**: U-REPA の類似度 EMA 閾値。
+- **理由**: 類似度（`urepa_similarity`）の指数移動平均がこの値に達すると U-REPA を無効化します。
+- **既定**: None（無効）
+
+### `--urepa_similarity_ema_decay`
+
+- **内容**: 類似度追跡の指数移動平均の減衰係数。
+- **理由**: 高い値ほど平滑（0.99 ≈ 100 ステップ）、低い値ほど反応が速い。
+- **既定**: `0.99`
+
+### `--urepa_threshold_mode`
+
+- **内容**: 閾値到達時の挙動。
+- **選択肢**: `permanent`（一度達したら U-REPA を保持してオフ）、`recoverable`（類似度低下で再有効化）
+- **既定**: `permanent`
+
+### 設定例
+
+```toml
+# UNet 微調整向けに U-REPA を有効化（SDXL、SD1.5、Kolors）
+urepa_enabled = true
+urepa_lambda = 0.5
+urepa_manifold_weight = 3.0
+urepa_model = "dinov2_vitg14"
+urepa_encoder_image_size = 518
+urepa_use_tae = false
+
+# U-REPA スケジューリング（任意）
+# urepa_scheduler = "cosine"           # 減衰タイプ：constant、linear、cosine、polynomial
+# urepa_warmup_steps = 100             # U-REPA 有効化前のウォームアップ
+# urepa_decay_steps = 1000             # 減衰ステップ数（0 = 学習全体）
+# urepa_lambda_end = 0.0               # 減衰後の最終重み
+# urepa_cutoff_step = 5000             # ハードカット（0 = 無効）
+# urepa_similarity_threshold = 0.9     # 類似度ベースのカットオフ
+# urepa_threshold_mode = "permanent"   # permanent または recoverable
 ```
 
 ---

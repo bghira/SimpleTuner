@@ -2,6 +2,8 @@
 
 Cross-frame Representation Alignment (CREPA) e um regularizador leve para modelos de video. Ele empurra os hidden states de cada frame em direcao aos recursos de um encoder de visao congelado do frame atual **e de seus vizinhos**, melhorando a consistencia temporal sem mudar sua loss principal.
 
+> **Procurando modelos de imagem?** Veja [IMAGE_REPA.pt-BR.md](IMAGE_REPA.pt-BR.md) para suporte REPA em modelos DiT de imagem (Flux, SD3, etc.) e U-REPA para modelos UNet (SDXL, SD1.5, Kolors).
+
 ## Quando usar
 
 - Voce treina videos com movimento complexo, mudancas de cena ou oclusoes.
@@ -20,7 +22,7 @@ Cross-frame Representation Alignment (CREPA) e um regularizador leve para modelo
 4. Deixe **Weight** em `0.5` para comecar.
 5. Mantenha **Adjacent Distance** em `1` e **Temporal Decay** em `1.0` para um setup que corresponde ao paper original do CREPA.
 6. Use os defaults para o encoder de visao (`dinov2_vitg14`, resolucao `518`). Mude apenas se precisar de um encoder menor (ex.: `dinov2_vits14` + tamanho de imagem `224` para economizar VRAM).
-7. Treine normalmente. O CREPA adiciona uma loss auxiliar e registra `crepa_loss` / `crepa_similarity`.
+7. Treine normalmente. O CREPA adiciona uma loss auxiliar e registra `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self`.
 
 ## Config rapida (config JSON / CLI)
 
@@ -153,7 +155,7 @@ Corte antecipado previne artefatos de listras em fundos uniformes.
 
 - Implementacao: `simpletuner/helpers/training/crepa.py`; registrada em `ModelFoundation._init_crepa_regularizer` e anexada ao modelo treinavel (projetor fica no modelo para cobertura do otimizador).
 - Captura de hidden state: transformers de video guardam `crepa_hidden_states` (e opcionalmente `crepa_frame_features`) quando `crepa_enabled` e true; modo backbone tambem pode puxar `layer_{idx}` do buffer de hidden states compartilhado.
-- Caminho de loss: decodifica latentes com o VAE para pixels a menos que `crepa_use_backbone_features` esteja ligado; normaliza hidden states projetados e recursos do encoder, aplica similaridade de cosseno ponderada por distancia, registra `crepa_loss` / `crepa_similarity` e adiciona a loss escalada.
+- Caminho de loss: decodifica latentes com o VAE para pixels a menos que `crepa_use_backbone_features` esteja ligado; normaliza hidden states projetados e recursos do encoder, aplica similaridade de cosseno ponderada por distancia, registra `crepa_loss` / `crepa_alignment_score` / `crepa_similarity_self` e adiciona a loss escalada.
 - Interacao: roda antes de LayerSync para que ambos reutilizem o buffer de hidden states; limpa o buffer depois. Exige um indice de bloco valido e um hidden size inferido do config do transformer.
 
 </details>

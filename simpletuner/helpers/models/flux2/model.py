@@ -898,7 +898,17 @@ class Flux2(ImageModelFoundation):
         # Unpack: (B, S, C) -> (B, C, H, W)
         unpacked = unpack_latents(model_pred, img_ids)
 
-        return {"model_prediction": unpacked, "hidden_states_buffer": hidden_states_buffer}
+        # Extract CREPA hidden states from buffer if requested
+        crepa_hidden = None
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+
+        return {
+            "model_prediction": unpacked,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     @torch.no_grad()
     def encode_images(self, images: List[Tensor]) -> Tensor:

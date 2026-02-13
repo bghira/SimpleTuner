@@ -1007,7 +1007,7 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **What**: Enable CREPA regularization during training.
 - **Why**: Improves semantic consistency across video frames by aligning DiT hidden states with DINOv2 features from neighboring frames.
 - **Default**: `false`
-- **Note**: Only applies to video models (Wan, LTXVideo, SanaVideo, Kandinsky5).
+- **Note**: Only applies to transformer-based diffusion models (DiT-style). For UNet models (SDXL, SD1.5, Kolors), use U-REPA.
 
 ### `--crepa_block_index`
 
@@ -1039,6 +1039,12 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Why**:
   - **Adjacent mode (default)**: Only aligns with frames at exact distance `d` (matches paper's $K = \{f-d, f+d\}$)
   - **Cumulative mode**: Aligns with all frames from distance 1 to `d`, providing smoother gradients
+- **Default**: `false`
+
+### `--crepa_normalize_neighbour_sum`
+
+- **What**: Normalize the neighbour-sum alignment by the per-frame weight sum.
+- **Why**: Keeps `crepa_alignment_score` within [-1, 1] and makes the loss scale more literal. This is an experimental deviation from the paper's Eq. (6).
 - **Default**: `false`
 
 ### `--crepa_normalize_by_frames`
@@ -1124,7 +1130,7 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 ### `--crepa_similarity_threshold`
 
 - **What**: Similarity EMA threshold at which CREPA cutoff triggers.
-- **Why**: When the exponential moving average of similarity reaches this value, CREPA is disabled to prevent overfitting on deep encoder features. This is particularly useful for text2video training.
+- **Why**: When the exponential moving average of the alignment score (`crepa_alignment_score`) reaches this value, CREPA is disabled to prevent overfitting on deep encoder features. This is particularly useful for text2video training. The alignment score can exceed 1.0 unless `crepa_normalize_neighbour_sum` is enabled.
 - **Default**: None (disabled)
 
 ### `--crepa_similarity_ema_decay`
@@ -1149,6 +1155,7 @@ crepa_lambda = 0.5
 crepa_adjacent_distance = 1
 crepa_adjacent_tau = 1.0
 crepa_cumulative_neighbors = false
+crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"
@@ -1165,6 +1172,125 @@ crepa_encoder_image_size = 518
 # crepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
 # crepa_similarity_threshold = 0.9    # Similarity-based cutoff
 # crepa_threshold_mode = "permanent"   # permanent or recoverable
+```
+
+---
+
+## 🎯 U-REPA (UNet Representation Alignment)
+
+U-REPA is a regularization technique for UNet-based diffusion models (SDXL, SD1.5, Kolors). It aligns UNet mid-block features with pretrained vision features and adds a manifold loss to preserve relative similarity structure.
+
+### `--urepa_enabled`
+
+- **What**: Enable U-REPA regularization during training.
+- **Why**: Adds representation alignment for UNet mid-block features using a frozen vision encoder.
+- **Default**: `false`
+- **Note**: Only applies to UNet models (SDXL, SD1.5, Kolors).
+
+### `--urepa_lambda`
+
+- **What**: Weight of the U-REPA alignment loss relative to the main training loss.
+- **Why**: Controls how strongly alignment regularization influences training.
+- **Default**: `0.5`
+
+### `--urepa_manifold_weight`
+
+- **What**: Weight of the manifold loss relative to the alignment loss.
+- **Why**: Emphasizes matching the relative similarity structure of features (paper default is 3.0).
+- **Default**: `3.0`
+
+### `--urepa_model`
+
+- **What**: Torch hub identifier for the frozen vision encoder.
+- **Why**: Defaults to DINOv2 ViT-G/14; smaller encoders (e.g., `dinov2_vits14`) are faster.
+- **Default**: `dinov2_vitg14`
+
+### `--urepa_encoder_image_size`
+
+- **What**: Input resolution for the vision encoder preprocessing.
+- **Why**: Use the encoder’s native resolution (518 for DINOv2 ViT-G/14, 224 for ViT-S/14).
+- **Default**: `518`
+
+### `--urepa_use_tae`
+
+- **What**: Use Tiny AutoEncoder instead of full VAE for decoding.
+- **Why**: Faster and uses less VRAM, but lower quality decoded images.
+- **Default**: `false`
+
+### `--urepa_scheduler`
+
+- **What**: Schedule for U-REPA coefficient decay over training.
+- **Why**: Allows reducing U-REPA regularization strength as training progresses.
+- **Options**: `constant`, `linear`, `cosine`, `polynomial`
+- **Default**: `constant`
+
+### `--urepa_warmup_steps`
+
+- **What**: Number of steps to linearly ramp U-REPA weight from 0 to `urepa_lambda`.
+- **Why**: Gradual warmup can help stabilize early training.
+- **Default**: `0`
+
+### `--urepa_decay_steps`
+
+- **What**: Total steps for decay (after warmup). Set to 0 to decay over entire training run.
+- **Why**: Controls the duration of the decay phase. Decay starts after warmup completes.
+- **Default**: `0` (uses `max_train_steps`)
+
+### `--urepa_lambda_end`
+
+- **What**: Final U-REPA weight after decay completes.
+- **Why**: Setting to 0 effectively disables U-REPA at end of training.
+- **Default**: `0.0`
+
+### `--urepa_power`
+
+- **What**: Power factor for polynomial decay. 1.0 = linear, 2.0 = quadratic, etc.
+- **Why**: Higher values cause faster initial decay that slows down towards the end.
+- **Default**: `1.0`
+
+### `--urepa_cutoff_step`
+
+- **What**: Hard cutoff step after which U-REPA is disabled.
+- **Why**: Useful for disabling U-REPA after the model has converged on alignment.
+- **Default**: `0` (no step-based cutoff)
+
+### `--urepa_similarity_threshold`
+
+- **What**: Similarity EMA threshold at which U-REPA cutoff triggers.
+- **Why**: When the exponential moving average of the similarity (`urepa_similarity`) reaches this value, U-REPA is disabled to prevent overfitting.
+- **Default**: None (disabled)
+
+### `--urepa_similarity_ema_decay`
+
+- **What**: Exponential moving average decay factor for similarity tracking.
+- **Why**: Higher values provide smoother tracking (0.99 ≈ 100-step window), lower values react faster to changes.
+- **Default**: `0.99`
+
+### `--urepa_threshold_mode`
+
+- **What**: Behavior when similarity threshold is reached.
+- **Options**: `permanent` (U-REPA stays off once threshold is hit), `recoverable` (U-REPA re-enables if similarity drops)
+- **Default**: `permanent`
+
+### Example Configuration
+
+```toml
+# Enable U-REPA for UNet fine-tuning (SDXL, SD1.5, Kolors)
+urepa_enabled = true
+urepa_lambda = 0.5
+urepa_manifold_weight = 3.0
+urepa_model = "dinov2_vitg14"
+urepa_encoder_image_size = 518
+urepa_use_tae = false
+
+# U-REPA Scheduling (optional)
+# urepa_scheduler = "cosine"           # Decay type: constant, linear, cosine, polynomial
+# urepa_warmup_steps = 100             # Warmup before U-REPA kicks in
+# urepa_decay_steps = 1000             # Steps for decay (0 = entire training)
+# urepa_lambda_end = 0.0               # Final weight after decay
+# urepa_cutoff_step = 5000             # Hard cutoff step (0 = disabled)
+# urepa_similarity_threshold = 0.9     # Similarity-based cutoff
+# urepa_threshold_mode = "permanent"   # permanent or recoverable
 ```
 
 ---
