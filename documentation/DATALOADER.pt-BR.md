@@ -125,6 +125,42 @@ Backends de áudio suportam um bloco `audio` dedicado para que metadados e cálc
 - **`target_resolution`** – resolução de vídeo alvo para o modo apenas áudio (usada para calcular dimensões de latentes).
 - Configurações padrão de áudio (contagem de canais, diretório de cache) mapeiam diretamente para o backend de áudio em runtime criado por `simpletuner.helpers.data_backend.factory`. O padding é intencionalmente evitado — clipes são truncados em vez de estendidos para manter o comportamento consistente com treinadores de difusão como o ACE-Step.
 
+#### Configuração de áudio para treinamento S2V
+
+O bloco `audio` pode ser colocado em datasets de **vídeo** para extrair áudio automaticamente dos arquivos de vídeo. Para modelos que requerem treinamento S2V (Sound-to-Video) (ex: Wan S2V), este bloco é injetado automaticamente. Para modelos que suportam mas não exigem áudio (ex: LTX-2), você deve adicionar uma seção `audio` explicitamente para optar — sem ela, apenas vídeo é treinado e a loss de áudio é mascarada automaticamente.
+
+```json
+{
+  "id": "my-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "instance_data_dir": "datasets/videos",
+  "cache_dir_vae": "cache/vae/videos",
+  "audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "allow_zero_audio": false
+  }
+}
+```
+
+Isso cria automaticamente um dataset `my-videos_audio` e o vincula via `s2v_datasets`.
+
+| Campo | Tipo | Padrão | Descrição |
+|-------|------|--------|-----------|
+| `audio.auto_split` | bool | true | Gera automaticamente dataset de áudio a partir de arquivos de vídeo. Padrão true quando a seção `audio` está presente. Para modelos que exigem S2V, padrão true mesmo sem seção `audio`. |
+| `audio.source_from_video` | bool | false | (Auto-definido) Indica que o áudio é extraído do vídeo |
+| `audio.allow_zero_audio` | bool | false | Gera áudio zerado para vídeos sem stream de áudio |
+| `audio.audio_only` | bool | false | Modo de treinamento apenas áudio (LTX-2): treina geração de áudio sem arquivos de vídeo |
+| `audio.target_resolution` | int | null | Resolução de vídeo alvo para modo apenas áudio (usada para calcular dimensões de latentes) |
+| `audio.sample_rate` | int | 16000 | Taxa de amostragem alvo para extração de áudio |
+| `audio.channels` | int | 1 | Número de canais de áudio (1=mono, 2=estéreo) |
+| `audio.bucket_strategy` | string | "duration" | Estratégia de bucketing para amostras de áudio |
+| `audio.duration_interval` | float | 3.0 | Intervalo de duração para agrupamento em buckets (segundos) |
+| `audio.max_duration_seconds` | float | null | Duração máxima de áudio (arquivos mais longos são ignorados) |
+| `audio.truncation_mode` | string | "beginning" | Como truncar áudio longo: "beginning", "end", "random" |
+
 ### Captions de áudio (Hugging Face)
 Para datasets de áudio do Hugging Face, você pode especificar quais colunas formam a caption (prompt) e qual coluna contém as letras:
 ```json

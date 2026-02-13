@@ -161,12 +161,6 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
-    "audio": {
-        "auto_split": true,
-        "sample_rate": 16000,
-        "channels": 1,
-        "duration_interval": 3.0
-    },
     "repeats": 10
   },
   {
@@ -189,9 +183,22 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
   - `resolution_frames`: `WxH@F` 形式 (例: `1920x1080@61`) で解像度/長さを併せてグループ化。
 - `frame_interval`: `resolution_frames` 使用時にフレーム数を丸める間隔。
 
-音声 auto-split は video dataset でデフォルト有効です。sample rate/channels を調整する場合は `audio` block を
-追加し、無効化したい場合は `audio.auto_split: false` を設定します。別の audio dataset を用意して
-`s2v_datasets` で紐付けることもできます。SimpleTuner は audio latents を video latents と一緒にキャッシュします。
+LTX-2 は音声なしのビデオのみトレーニングをサポートしています。音声トレーニングを有効にするには、ビデオデータセット設定に `audio` ブロックを追加してください：
+
+```json
+"audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "duration_interval": 3.0,
+    "allow_zero_audio": false
+}
+```
+
+`audio` セクションが存在する場合、SimpleTuner はビデオファイルからオーディオデータセットを自動生成し、
+ビデオ latents と一緒にオーディオ latents をキャッシュします。ビデオに音声ストリームがない場合は
+`audio.allow_zero_audio: true` を設定してください。`audio` セクションがない場合、LTX-2 はビデオのみでトレーニングし、
+オーディオ損失は自動的にマスクされます。
 
 > caption_strategy のオプションと要件は [DATALOADER.md](../DATALOADER.md#caption_strategy) を参照してください。
 

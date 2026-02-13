@@ -125,6 +125,42 @@ Audio backends एक dedicated `audio` block सपोर्ट करते �
 - **`target_resolution`** – केवल ऑडियो मोड के लिए लक्ष्य वीडियो resolution (latent dimensions की गणना के लिए उपयोग)।
 - standard audio settings (channel count, cache directory) सीधे `simpletuner.helpers.data_backend.factory` द्वारा बनाए गए runtime audio backend पर मैप होते हैं। Padding जानबूझकर नहीं किया जाता—clips truncate होते हैं ताकि behavior ACE-Step जैसे diffusion trainers के साथ consistent रहे।
 
+#### S2V training के लिए Audio configuration
+
+`audio` block को **video** datasets पर रखा जा सकता है ताकि video files से audio स्वचालित रूप से extract हो। S2V (Sound-to-Video) training की आवश्यकता वाले models (जैसे Wan S2V) के लिए, यह block auto-inject होता है। ऐसे models जो audio support करते हैं लेकिन अनिवार्य नहीं करते (जैसे LTX-2), उनके लिए आपको `audio` section स्पष्ट रूप से जोड़ना होगा — इसके बिना, केवल video train होता है और audio loss स्वचालित रूप से mask हो जाता है।
+
+```json
+{
+  "id": "my-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "instance_data_dir": "datasets/videos",
+  "cache_dir_vae": "cache/vae/videos",
+  "audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "allow_zero_audio": false
+  }
+}
+```
+
+यह स्वचालित रूप से एक `my-videos_audio` dataset बनाता है और इसे `s2v_datasets` के माध्यम से link करता है।
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `audio.auto_split` | bool | true | Video files से audio dataset auto-generate करें। `audio` section मौजूद होने पर default true। S2V-required models के लिए `audio` section न होने पर भी default true। |
+| `audio.source_from_video` | bool | false | (Auto-set) दर्शाता है कि audio video से extract किया गया है |
+| `audio.allow_zero_audio` | bool | false | बिना audio stream वाले videos के लिए zero-filled audio generate करें |
+| `audio.audio_only` | bool | false | केवल audio training mode (LTX-2): video files के बिना audio generation train करें |
+| `audio.target_resolution` | int | null | केवल audio mode के लिए target video resolution (latent dimensions गणना हेतु) |
+| `audio.sample_rate` | int | 16000 | Audio extraction के लिए target sample rate |
+| `audio.channels` | int | 1 | Audio channels की संख्या (1=mono, 2=stereo) |
+| `audio.bucket_strategy` | string | "duration" | Audio samples के लिए bucketing strategy |
+| `audio.duration_interval` | float | 3.0 | Bucket grouping के लिए duration interval (seconds) |
+| `audio.max_duration_seconds` | float | null | अधिकतम audio duration (लंबी files skip होंगी) |
+| `audio.truncation_mode` | string | "beginning" | लंबे audio को कैसे truncate करें: "beginning", "end", "random" |
+
 ### Audio Captions (Hugging Face)
 Hugging Face audio datasets के लिए, आप यह निर्दिष्ट कर सकते हैं कि कौन‑से columns caption (prompt) बनाएँ और कौन‑सा column lyrics रखता है:
 ```json

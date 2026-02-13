@@ -125,7 +125,10 @@ Audio backends support a dedicated `audio` block so metadata and bucket math sta
 
 #### Audio configuration for S2V training
 
-For S2V (Sound-to-Video) training, the `audio` block can be placed on **video** datasets to automatically extract audio from video files:
+The `audio` block can be placed on **video** datasets to automatically extract audio from video files. For models
+that require S2V (Sound-to-Video) training (e.g. Wan S2V), this block is auto-injected. For models that support
+but do not require audio (e.g. LTX-2), you must add an `audio` section explicitly to opt in — without it, only
+video is trained and audio loss is masked automatically.
 
 ```json
 {
@@ -147,7 +150,7 @@ This automatically creates a `my-videos_audio` dataset and links it via `s2v_dat
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `audio.auto_split` | bool | false | Auto-generate audio dataset from video files |
+| `audio.auto_split` | bool | true | Auto-generate audio dataset from video files. Defaults to true when an `audio` section is present. For S2V-required models, defaults to true even without an `audio` section. |
 | `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
 | `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
 | `audio.audio_only` | bool | false | Audio-only training mode (LTX-2): train audio generation without video files |

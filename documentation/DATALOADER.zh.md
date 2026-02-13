@@ -125,6 +125,42 @@
 - **`target_resolution`** – 纯音频模式下的目标视频分辨率（用于计算 latent 维度）。
 - 标准音频设置（声道数、缓存目录）会直接映射到 `simpletuner.helpers.data_backend.factory` 创建的运行时音频后端。刻意避免 padding——片段被截断而不是延长，以保持与 ACE-Step 等扩散训练器的行为一致。
 
+#### S2V 训练的音频配置
+
+`audio` 块可以放在**视频**数据集上，以自动从视频文件中提取音频。对于需要 S2V（Sound-to-Video）训练的模型（如 Wan S2V），此块会自动注入。对于支持但不强制要求音频的模型（如 LTX-2），必须显式添加 `audio` 部分来启用——不添加时，仅训练视频，音频损失会自动屏蔽。
+
+```json
+{
+  "id": "my-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "instance_data_dir": "datasets/videos",
+  "cache_dir_vae": "cache/vae/videos",
+  "audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "allow_zero_audio": false
+  }
+}
+```
+
+这会自动创建一个 `my-videos_audio` 数据集并通过 `s2v_datasets` 进行关联。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `audio.auto_split` | bool | true | 从视频文件自动生成音频数据集。当存在 `audio` 部分时默认为 true。对于要求 S2V 的模型，即使没有 `audio` 部分也默认为 true。 |
+| `audio.source_from_video` | bool | false | （自动设置）表示音频从视频中提取 |
+| `audio.allow_zero_audio` | bool | false | 为没有音频流的视频生成全零音频 |
+| `audio.audio_only` | bool | false | 纯音频训练模式（LTX-2）：不使用视频文件仅训练音频生成 |
+| `audio.target_resolution` | int | null | 纯音频模式下的目标视频分辨率（用于计算 latent 维度） |
+| `audio.sample_rate` | int | 16000 | 音频提取的目标采样率 |
+| `audio.channels` | int | 1 | 音频声道数（1=单声道，2=立体声） |
+| `audio.bucket_strategy` | string | "duration" | 音频样本的分桶策略 |
+| `audio.duration_interval` | float | 3.0 | 分桶的时长间隔（秒） |
+| `audio.max_duration_seconds` | float | null | 最大音频时长（超过则跳过） |
+| `audio.truncation_mode` | string | "beginning" | 如何截断过长音频："beginning"、"end"、"random" |
+
 ### 音频字幕（Hugging Face）
 对 Hugging Face 音频数据集，可以指定哪些列用于组成字幕（提示词），以及哪一列包含歌词：
 ```json
