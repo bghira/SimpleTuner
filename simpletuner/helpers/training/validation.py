@@ -2146,7 +2146,8 @@ class Validation:
 
         if not is_fsdp:
             base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
-            musubi_active = (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0
+            _musubi_swap = getattr(self.config, "musubi_blocks_to_swap", None)
+            musubi_active = isinstance(_musubi_swap, int) and _musubi_swap > 0
             if "torchao" in base_precision:
                 logger.info(
                     "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
