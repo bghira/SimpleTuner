@@ -2146,9 +2146,14 @@ class Validation:
 
         if not is_fsdp:
             base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
+            musubi_active = (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0
             if "torchao" in base_precision:
                 logger.info(
                     "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
+                )
+            elif musubi_active:
+                logger.info(
+                    "Skipping pipeline.to for musubi block-swap model; block placement is managed by the forward pass."
                 )
             else:
                 self.model.pipeline.to(self.accelerator.device)
