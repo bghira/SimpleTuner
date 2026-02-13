@@ -45,8 +45,14 @@ def prepare_sample(
     filepath: str = None,
     model=None,
 ):
-    metadata = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=data_backend_id)
     data_backend = StateTracker.get_data_backend(data_backend_id)
+    dataset_type = data_backend.get("dataset_type", "image")
+    search_types = ["image", "video", "conditioning"]
+    if dataset_type not in search_types:
+        search_types.append(dataset_type)
+    metadata = StateTracker.get_metadata_by_filepath(
+        filepath, data_backend_id=data_backend_id, search_dataset_types=search_types
+    )
     data_sampler = data_backend.get("sampler")
     image_data = image
     if image_data is None:
@@ -126,6 +132,10 @@ class VAECache(WebhookMixin):
         self.id = id
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.dataset_type = self.dataset_type_enum.value
+        _base_search_types = ["image", "video", "conditioning"]
+        self._metadata_search_types = (
+            _base_search_types if self.dataset_type in _base_search_types else _base_search_types + [self.dataset_type]
+        )
         if image_data_backend and image_data_backend.id != id:
             raise ValueError(f"VAECache received incorrect image_data_backend: {image_data_backend}")
         self.image_data_backend = image_data_backend
@@ -348,7 +358,9 @@ class VAECache(WebhookMixin):
         for filepath in filepaths:
             resolved_metadata = None
             try:
-                resolved_metadata = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=self.id)
+                resolved_metadata = StateTracker.get_metadata_by_filepath(
+                    filepath, data_backend_id=self.id, search_dataset_types=self._metadata_search_types
+                )
             except Exception as exc:
                 logger.debug(f"StateTracker metadata lookup failed for {filepath}: {exc}")
             if resolved_metadata is None and self.metadata_backend:

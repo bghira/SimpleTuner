@@ -1501,5 +1501,346 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             self.assertIn("caption_strategy=parquet", str(context.exception))
 
 
+class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
+    """Test that eval datasets have metadata populated when VAECache processes them."""
+
+    def test_eval_metadata_populated_after_refresh_buckets(self):
+        """After refresh_buckets, image_metadata must contain target_size for all images.
+
+        The DiscoveryMetadataBackend populates image_metadata during
+        compute_aspect_ratio_bucket_indices.  When the data_backend_config
+        stored in StateTracker is missing resolution/resolution_type (e.g.
+        because the caller mocked StateTracker), TrainingSample.__init__
+        fails silently inside _process_for_bucket and metadata stays empty.
+        This test uses the *real* StateTracker to verify that the metadata
+        is populated for an eval dataset.
+        """
+        from PIL import Image
+
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+        from simpletuner.helpers.training import image_file_extensions
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        # Create a test image
+        data_dir = os.path.join(self.temp_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        img = Image.new("RGB", (1024, 1024), color="red")
+        img_path = os.path.join(data_dir, "test_eval_image.png")
+        img.save(img_path)
+
+        # Set up the real StateTracker
+        self.args.output_dir = self.temp_dir
+        self.args.aspect_bucket_worker_count = 1
+        self.args.enable_multiprocessing = False
+        self.args.ignore_missing_files = True
+        self.args.allow_dataset_oversubscription = False
+        StateTracker.set_args(self.args)
+
+        # Must set the data backend config BEFORE creating the metadata backend
+        backend_config = {
+            "resolution": 1024,
+            "resolution_type": "pixel",
+            "crop": False,
+            "crop_style": "random",
+            "crop_aspect": "square",
+            "dataset_type": "eval",
+            "maximum_image_size": None,
+            "target_downsample_size": None,
+        }
+        StateTracker.set_data_backend_config("eval-test", backend_config)
+
+        # Model mock needs MAXIMUM_CANVAS_SIZE attribute
+        model_mock = MagicMock()
+        model_mock.MAXIMUM_CANVAS_SIZE = None
+        StateTracker.set_model(model_mock)
+
+        data_backend = LocalDataBackend(
+            accelerator=self.accelerator,
+            id="eval-test",
+        )
+
+        all_files = data_backend.list_files(
+            instance_data_dir=data_dir,
+            file_extensions=image_file_extensions,
+        )
+        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+
+        metadata_backend = DiscoveryMetadataBackend(
+            id="eval-test",
+            instance_data_dir=data_dir,
+            data_backend=data_backend,
+            accelerator=self.accelerator,
+            resolution=1024,
+            resolution_type="pixel",
+            batch_size=1,
+            cache_file=os.path.join(data_dir, "aspect_ratio_bucket_indices"),
+            metadata_file=os.path.join(data_dir, "aspect_ratio_bucket_metadata"),
+            delete_problematic_images=False,
+            delete_unwanted_images=False,
+            metadata_update_interval=60,
+            cache_file_suffix="eval-test",
+        )
+
+        metadata_backend.refresh_buckets()
+
+        # Bucket indices must contain the image
+        all_bucket_files = set()
+        for bucket_files in metadata_backend.aspect_ratio_bucket_indices.values():
+            all_bucket_files.update(str(f) for f in bucket_files)
+        self.assertTrue(len(all_bucket_files) > 0, "No files in bucket indices after refresh")
+
+        # image_metadata must contain target_size for every bucket file
+        for filepath in all_bucket_files:
+            meta = metadata_backend.get_metadata_by_filepath(filepath)
+            self.assertIsNotNone(
+                meta,
+                f"get_metadata_by_filepath returned None for {filepath}",
+            )
+            self.assertIn(
+                "target_size",
+                meta,
+                f"Metadata for {filepath} missing 'target_size'. Keys: {list(meta.keys())}",
+            )
+
+    def test_eval_metadata_survives_reload_cycle(self):
+        """Metadata must survive the save/reload cycle that non-main processes use.
+
+        In multi-GPU setups:
+          1. Main process: refresh_buckets → saves image_metadata to JSON
+          2. Non-main process: reload_cache (loads buckets only) → load_image_metadata (loads metadata)
+
+        After step 2, get_metadata_by_filepath must return valid metadata
+        for every file in the bucket indices.
+        """
+        from PIL import Image
+
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+        from simpletuner.helpers.training import image_file_extensions
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        data_dir = os.path.join(self.temp_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        img = Image.new("RGB", (1024, 1024), color="red")
+        img_path = os.path.join(data_dir, "test_eval_image.png")
+        img.save(img_path)
+
+        self.args.output_dir = self.temp_dir
+        self.args.aspect_bucket_worker_count = 1
+        self.args.enable_multiprocessing = False
+        self.args.ignore_missing_files = True
+        self.args.allow_dataset_oversubscription = False
+        StateTracker.set_args(self.args)
+
+        backend_config = {
+            "resolution": 1024,
+            "resolution_type": "pixel",
+            "crop": False,
+            "crop_style": "random",
+            "crop_aspect": "square",
+            "dataset_type": "eval",
+            "maximum_image_size": None,
+            "target_downsample_size": None,
+        }
+        StateTracker.set_data_backend_config("eval-test", backend_config)
+
+        model_mock = MagicMock()
+        model_mock.MAXIMUM_CANVAS_SIZE = None
+        StateTracker.set_model(model_mock)
+
+        data_backend = LocalDataBackend(
+            accelerator=self.accelerator,
+            id="eval-test",
+        )
+
+        all_files = data_backend.list_files(
+            instance_data_dir=data_dir,
+            file_extensions=image_file_extensions,
+        )
+        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+
+        # --- MAIN PROCESS: refresh_buckets writes metadata to disk ---
+        main_metadata_backend = DiscoveryMetadataBackend(
+            id="eval-test",
+            instance_data_dir=data_dir,
+            data_backend=data_backend,
+            accelerator=self.accelerator,
+            resolution=1024,
+            resolution_type="pixel",
+            batch_size=1,
+            cache_file=os.path.join(data_dir, "aspect_ratio_bucket_indices"),
+            metadata_file=os.path.join(data_dir, "aspect_ratio_bucket_metadata"),
+            delete_problematic_images=False,
+            delete_unwanted_images=False,
+            metadata_update_interval=60,
+            cache_file_suffix="eval-test",
+        )
+        main_metadata_backend.refresh_buckets()
+
+        # Verify main process has metadata
+        self.assertTrue(len(main_metadata_backend.image_metadata) > 0, "Main process has no image metadata")
+
+        # --- NON-MAIN PROCESS: simulate reload_cache + load_image_metadata ---
+        non_main_metadata_backend = DiscoveryMetadataBackend(
+            id="eval-test",
+            instance_data_dir=data_dir,
+            data_backend=data_backend,
+            accelerator=self.accelerator,
+            resolution=1024,
+            resolution_type="pixel",
+            batch_size=1,
+            cache_file=os.path.join(data_dir, "aspect_ratio_bucket_indices"),
+            metadata_file=os.path.join(data_dir, "aspect_ratio_bucket_metadata"),
+            delete_problematic_images=False,
+            delete_unwanted_images=False,
+            metadata_update_interval=60,
+            cache_file_suffix="eval-test",
+        )
+
+        # reload_cache is called in __init__ already; verify bucket indices loaded
+        self.assertTrue(
+            len(non_main_metadata_backend.aspect_ratio_bucket_indices) > 0,
+            "Non-main process has no bucket indices after reload_cache",
+        )
+
+        # At this point, image_metadata may or may not be loaded (depends on __init__ flow).
+        # Simulate what _handle_error_scanning_and_metadata does for non-main processes:
+        non_main_metadata_backend.load_image_metadata()
+
+        # Now verify that get_metadata_by_filepath works for every bucket file
+        all_bucket_files = set()
+        for bucket_files in non_main_metadata_backend.aspect_ratio_bucket_indices.values():
+            all_bucket_files.update(str(f) for f in bucket_files)
+        self.assertTrue(len(all_bucket_files) > 0, "No files in bucket indices")
+
+        for filepath in all_bucket_files:
+            meta = non_main_metadata_backend.get_metadata_by_filepath(filepath)
+            self.assertIsNotNone(
+                meta,
+                f"Non-main process: get_metadata_by_filepath returned None for {filepath}",
+            )
+            self.assertIn(
+                "target_size",
+                meta,
+                f"Non-main process: metadata for {filepath} missing 'target_size'. Keys: {list(meta.keys())}",
+            )
+
+    def test_eval_dataset_statetracker_metadata_lookup(self):
+        """StateTracker.get_metadata_by_filepath must find eval dataset metadata.
+
+        StateTracker.get_metadata_by_filepath filters by dataset type using
+        search_dataset_types which defaults to ["image", "video", "conditioning"].
+        Eval datasets (type "eval") must be found when searching for metadata
+        during VAE cache processing.
+        """
+        from PIL import Image
+
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+        from simpletuner.helpers.training import image_file_extensions
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        data_dir = os.path.join(self.temp_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        img = Image.new("RGB", (1024, 1024), color="red")
+        img_path = os.path.join(data_dir, "test_eval_image.png")
+        img.save(img_path)
+
+        self.args.output_dir = self.temp_dir
+        self.args.aspect_bucket_worker_count = 1
+        self.args.enable_multiprocessing = False
+        self.args.ignore_missing_files = True
+        self.args.allow_dataset_oversubscription = False
+        StateTracker.set_args(self.args)
+
+        backend_config = {
+            "resolution": 1024,
+            "resolution_type": "pixel",
+            "crop": False,
+            "crop_style": "random",
+            "crop_aspect": "square",
+            "dataset_type": "eval",
+            "maximum_image_size": None,
+            "target_downsample_size": None,
+        }
+        StateTracker.set_data_backend_config("eval-test", backend_config)
+
+        model_mock = MagicMock()
+        model_mock.MAXIMUM_CANVAS_SIZE = None
+        StateTracker.set_model(model_mock)
+
+        data_backend = LocalDataBackend(
+            accelerator=self.accelerator,
+            id="eval-test",
+        )
+
+        all_files = data_backend.list_files(
+            instance_data_dir=data_dir,
+            file_extensions=image_file_extensions,
+        )
+        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+
+        metadata_backend = DiscoveryMetadataBackend(
+            id="eval-test",
+            instance_data_dir=data_dir,
+            data_backend=data_backend,
+            accelerator=self.accelerator,
+            resolution=1024,
+            resolution_type="pixel",
+            batch_size=1,
+            cache_file=os.path.join(data_dir, "aspect_ratio_bucket_indices"),
+            metadata_file=os.path.join(data_dir, "aspect_ratio_bucket_metadata"),
+            delete_problematic_images=False,
+            delete_unwanted_images=False,
+            metadata_update_interval=60,
+            cache_file_suffix="eval-test",
+        )
+        metadata_backend.refresh_buckets()
+
+        # Register the data backend in StateTracker (as factory does at line 4141)
+        init_backend = {
+            "id": "eval-test",
+            "data_backend": data_backend,
+            "metadata_backend": metadata_backend,
+            "dataset_type": "eval",
+        }
+        StateTracker.register_data_backend(init_backend)
+
+        # Get a filepath from the bucket indices
+        all_bucket_files = []
+        for bucket_files in metadata_backend.aspect_ratio_bucket_indices.values():
+            all_bucket_files.extend(str(f) for f in bucket_files)
+        self.assertTrue(len(all_bucket_files) > 0)
+
+        filepath = all_bucket_files[0]
+
+        # Direct metadata_backend lookup should work (used by process_aspect_grouped_images)
+        direct_meta = metadata_backend.get_metadata_by_filepath(filepath)
+        self.assertIsNotNone(direct_meta, "Direct metadata_backend lookup returned None")
+        self.assertIn("target_size", direct_meta)
+
+        # StateTracker lookup with default search_dataset_types excludes eval
+        # (intentional: training loops should not see eval data by default)
+        st_meta_default = StateTracker.get_metadata_by_filepath(filepath, data_backend_id="eval-test")
+        self.assertIsNone(
+            st_meta_default,
+            "Default search_dataset_types should NOT include eval datasets.",
+        )
+
+        # StateTracker lookup with eval explicitly included must work
+        # (this is the code path VAECache uses via _metadata_search_types)
+        st_meta_eval = StateTracker.get_metadata_by_filepath(
+            filepath,
+            data_backend_id="eval-test",
+            search_dataset_types=["image", "video", "conditioning", "eval"],
+        )
+        self.assertIsNotNone(
+            st_meta_eval,
+            "StateTracker.get_metadata_by_filepath with eval in search types "
+            "returned None. VAE cache processing requires this to work.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
