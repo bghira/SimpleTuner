@@ -161,12 +161,6 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
-    "audio": {
-        "auto_split": true,
-        "sample_rate": 16000,
-        "channels": 1,
-        "duration_interval": 3.0
-    },
     "repeats": 10
   },
   {
@@ -189,8 +183,20 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
   - `resolution_frames`：按 `WxH@F` 格式（如 `1920x1080@61`）分桶，适合混合分辨率/时长数据。
 - `frame_interval`: 使用 `resolution_frames` 时，将帧数舍入到该间隔。
 
-音频 auto-split 在视频数据集中默认启用。需要调整采样率/通道时添加 `audio` 块，设置 `audio.auto_split: false`
-可关闭，或提供单独音频数据集并通过 `s2v_datasets` 关联。SimpleTuner 会缓存音频 latents，并与视频 latents 一并管理。
+LTX-2 支持无音频的纯视频训练。若要启用音频训练，请在视频数据集配置中添加 `audio` 块：
+
+```json
+"audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "duration_interval": 3.0,
+    "allow_zero_audio": false
+}
+```
+
+当 `audio` 部分存在时，SimpleTuner 会自动从视频文件中提取音频并缓存音频 latents。如果视频没有音频流，请设置
+`audio.allow_zero_audio: true`。不添加 `audio` 部分时，LTX-2 仅训练视频并自动屏蔽音频损失。
 
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 

@@ -1923,8 +1923,19 @@ class FactoryRegistry:
             if not isinstance(audio_config, dict):
                 continue
             if "auto_split" not in audio_config:
-                audio_config["auto_split"] = True
-                backend["audio"] = audio_config
+                # Only default auto_split=True when the model requires S2V datasets
+                # (e.g. Wan S2V). For models that merely support audio (e.g. LTX-2),
+                # the user must opt in via an explicit audio config section.
+                if self._requires_s2v_datasets():
+                    audio_config["auto_split"] = True
+                    backend["audio"] = audio_config
+                elif "audio" not in backend:
+                    # User has no audio config at all — skip auto-injection
+                    continue
+                else:
+                    # User provided an audio section but didn't set auto_split;
+                    # default to True since they've opted into audio configuration.
+                    audio_config["auto_split"] = True
             if not audio_config.get("auto_split"):
                 continue
 

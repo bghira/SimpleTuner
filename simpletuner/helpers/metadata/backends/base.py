@@ -524,6 +524,8 @@ class MetadataBackend:
                     meta["duration_seconds"] = truncated
             self.save_cache(enforce_constraints=False)
             if self.bucket_report:
+                if self.filtering_statistics:
+                    self.bucket_report.update_statistics(self.filtering_statistics)
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
             logger.info(f"Audio bucket rebuild complete. {len(self.aspect_ratio_bucket_indices)} buckets created.")
             return

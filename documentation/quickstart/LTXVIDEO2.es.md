@@ -160,12 +160,6 @@ Los datasets de video requieren una configuración cuidadosa. Crea `config/multi
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
-    "audio": {
-        "auto_split": true,
-        "sample_rate": 16000,
-        "channels": 1,
-        "duration_interval": 3.0
-    },
     "repeats": 10
   },
   {
@@ -188,9 +182,19 @@ En la subsección `video`:
   - `resolution_frames`: Agrupar por formato `WxH@F` (p. ej., `1920x1080@61`) para datasets de resolución/duración mixta.
 - `frame_interval`: Al usar `resolution_frames`, redondea recuentos de frames a este intervalo.
 
-El auto-split de audio está habilitado por defecto en datasets de video. Agrega un bloque `audio` para ajustar la
-frecuencia de muestreo/canales, pon `audio.auto_split: false` para desactivarlo, o proporciona un dataset de audio
-separado y enlázalo con `s2v_datasets`. SimpleTuner cacheará los latentes de audio junto con los latentes de video.
+LTX-2 soporta entrenamiento solo de video sin audio. Para habilitar el entrenamiento con audio, agrega un bloque `audio` a la configuración de tu dataset de video:
+
+```json
+"audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "duration_interval": 3.0,
+    "allow_zero_audio": false
+}
+```
+
+Cuando la sección `audio` está presente, SimpleTuner genera automáticamente un dataset de audio a partir de tus archivos de video y cachea los latentes de audio junto con los latentes de video. Establece `audio.allow_zero_audio: true` si tus videos no tienen stream de audio. Sin una sección `audio`, LTX-2 entrena solo video y enmascara la pérdida de audio automáticamente.
 
 > Consulta las opciones y requisitos de caption_strategy en [DATALOADER.md](../DATALOADER.md#caption_strategy).
 

@@ -125,6 +125,42 @@
 - **`target_resolution`** – 音声のみモードでのターゲット動画解像度（潜在変数の次元計算に使用）。
 - 標準の音声設定（チャンネル数、キャッシュディレクトリなど）は `simpletuner.helpers.data_backend.factory` によって作成されるランタイム音声バックエンドに直接マッピングされます。パディングは意図的に回避され、クリップは延長ではなく切り詰められるため、ACE-Step のような拡散トレーナーの挙動と整合します。
 
+#### S2V トレーニング用の音声設定
+
+`audio` ブロックは**ビデオ**データセットに配置して、ビデオファイルから自動的に音声を抽出できます。S2V（Sound-to-Video）トレーニングを必要とするモデル（例: Wan S2V）では、このブロックは自動的に注入されます。音声をサポートするが必須としないモデル（例: LTX-2）では、明示的に `audio` セクションを追加してオプトインする必要があります。追加しない場合、ビデオのみがトレーニングされ、オーディオ損失は自動的にマスクされます。
+
+```json
+{
+  "id": "my-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "instance_data_dir": "datasets/videos",
+  "cache_dir_vae": "cache/vae/videos",
+  "audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "allow_zero_audio": false
+  }
+}
+```
+
+これにより `my-videos_audio` データセットが自動的に作成され、`s2v_datasets` を通じてリンクされます。
+
+| フィールド | 型 | デフォルト | 説明 |
+|------------|-----|-----------|------|
+| `audio.auto_split` | bool | true | ビデオファイルからオーディオデータセットを自動生成。`audio` セクションが存在する場合、デフォルトは true。S2V 必須モデルでは `audio` セクションがなくてもデフォルトで true。 |
+| `audio.source_from_video` | bool | false | （自動設定）オーディオがビデオから抽出されたことを示す |
+| `audio.allow_zero_audio` | bool | false | 音声ストリームのないビデオに対してゼロ埋めオーディオを生成 |
+| `audio.audio_only` | bool | false | 音声のみトレーニングモード（LTX-2）：ビデオファイルなしで音声生成のみトレーニング |
+| `audio.target_resolution` | int | null | 音声のみモードのターゲットビデオ解像度（latent 次元の計算に使用） |
+| `audio.sample_rate` | int | 16000 | 音声抽出のターゲットサンプルレート |
+| `audio.channels` | int | 1 | オーディオチャンネル数（1=モノラル、2=ステレオ） |
+| `audio.bucket_strategy` | string | "duration" | オーディオサンプルのバケット戦略 |
+| `audio.duration_interval` | float | 3.0 | バケットグループ化の時間間隔（秒） |
+| `audio.max_duration_seconds` | float | null | 最大オーディオ長（超過するとスキップ） |
+| `audio.truncation_mode` | string | "beginning" | 長いオーディオの切り詰め方法："beginning"、"end"、"random" |
+
 ### 音声キャプション（Hugging Face）
 Hugging Face の音声データセットでは、キャプション（プロンプト）を構成する列と歌詞を含む列を指定できます:
 ```json

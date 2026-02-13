@@ -169,6 +169,13 @@ class BucketReport:
                 f"Increase 'audio.max_duration_seconds' (currently {self.constraints['max_duration_seconds']}) "
                 "or trim long clips offline."
             )
+        if self.skip_counts.get("no_audio"):
+            recommendations.append(
+                "Videos have no audio stream. Set 'audio.allow_zero_audio: true' to generate silent audio, "
+                "or provide videos with audio tracks."
+            )
+        if self.skip_counts.get("processing_error"):
+            recommendations.append("Some audio samples failed during processing. Check logs for detailed error messages.")
         if post_refresh and post_refresh["total_samples"] == 0 and not self.skip_counts:
             recommendations.append("Confirm skip filters (caption, quality, or custom filters) leave usable samples.")
         if post_split and post_split["total_samples"] == 0 and post_refresh and post_refresh["total_samples"] > 0:

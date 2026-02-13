@@ -160,12 +160,6 @@ SimpleTuner में प्रयोगात्मक फीचर्स श�
         "frame_rate": 25,
         "bucket_strategy": "aspect_ratio"
     },
-    "audio": {
-        "auto_split": true,
-        "sample_rate": 16000,
-        "channels": 1,
-        "duration_interval": 3.0
-    },
     "repeats": 10
   },
   {
@@ -188,9 +182,21 @@ SimpleTuner में प्रयोगात्मक फीचर्स श�
   - `resolution_frames`: mixed resolution/duration datasets के लिए `WxH@F` फॉर्मैट (जैसे `1920x1080@61`) के अनुसार समूहित।
 - `frame_interval`: `resolution_frames` उपयोग करते समय फ्रेम काउंट को इस इंटरवल तक राउंड करें।
 
-Audio auto-split video datasets के लिए default रूप से enabled है। Sample rate/channels बदलने के लिए `audio` block जोड़ें,
-`audio.auto_split: false` करके opt-out करें, या अलग audio dataset देकर उसे `s2v_datasets` से लिंक करें। SimpleTuner
-audio latents को video latents के साथ cache करेगा।
+LTX-2 बिना audio के video-only training को support करता है। Audio training enable करने के लिए, अपने video dataset configuration में `audio` block जोड़ें:
+
+```json
+"audio": {
+    "auto_split": true,
+    "sample_rate": 16000,
+    "channels": 1,
+    "duration_interval": 3.0,
+    "allow_zero_audio": false
+}
+```
+
+जब `audio` section मौजूद होता है, तो SimpleTuner आपकी video files से automatically audio dataset बनाता है और video latents
+के साथ audio latents cache करता है। यदि आपकी videos में audio stream नहीं है तो `audio.allow_zero_audio: true` सेट करें।
+`audio` section के बिना, LTX-2 केवल video पर train करता है और audio loss को automatically mask कर देता है।
 
 > `caption_strategy` विकल्प और आवश्यकताओं के लिए [DATALOADER.md](../DATALOADER.md#caption_strategy) देखें।
 

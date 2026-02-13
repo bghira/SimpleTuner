@@ -528,3 +528,69 @@ class TestAudioMetadataBackends(unittest.TestCase):
         self.assertEqual(audio_metadata["original_size"], (num_samples, 2))
         self.assertEqual(audio_metadata["intermediary_size"], (num_samples, 2))
         self.assertEqual(audio_metadata["target_size"], (num_samples, 2))
+
+    def test_discovery_audio_processing_error_tracked_in_statistics(self):
+        """When _process_audio_sample hits an unexpected exception, the error
+        should be recorded in the statistics dict rather than silently swallowed."""
+        dataset_id = "audio_discovery_error_tracking"
+        bad_audio_path = os.path.join(self.tempdir.name, "corrupt.wav")
+        with open(bad_audio_path, "wb") as f:
+            f.write(b"NOT_A_REAL_AUDIO_FILE")
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id)
+        discovery_backend = DiscoveryMetadataBackend(
+            id=dataset_id,
+            instance_data_dir=self.tempdir.name,
+            cache_file=os.path.join(self.tempdir.name, "cache_err"),
+            metadata_file=os.path.join(self.tempdir.name, "metadata_err"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=1.0,
+            resolution_type="pixel",
+        )
+
+        metadata_updates = {}
+        stats = {"skipped": {}}
+        bucket_indices = discovery_backend._process_audio_sample(
+            image_path_str=bad_audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics=stats,
+        )
+
+        self.assertEqual(bucket_indices, {})
+        self.assertEqual(metadata_updates, {})
+        self.assertEqual(stats["skipped"].get("processing_error"), 1)
+
+
+class TestBucketReportAudioRecommendations(unittest.TestCase):
+    def test_no_audio_recommendation(self):
+        from simpletuner.helpers.data_backend.bucket_report import BucketReport
+
+        report = BucketReport(dataset_id="test", dataset_type="audio")
+        report.update_statistics({"skipped": {"no_audio": 5}})
+        report.record_bucket_snapshot("post_refresh", {})
+
+        recommendations = report._derive_recommendations()
+        self.assertTrue(any("allow_zero_audio" in r for r in recommendations))
+
+    def test_processing_error_recommendation(self):
+        from simpletuner.helpers.data_backend.bucket_report import BucketReport
+
+        report = BucketReport(dataset_id="test", dataset_type="audio")
+        report.update_statistics({"skipped": {"processing_error": 3}})
+        report.record_bucket_snapshot("post_refresh", {})
+
+        recommendations = report._derive_recommendations()
+        self.assertTrue(any("processing" in r.lower() for r in recommendations))
+
+    def test_no_skip_counts_gives_generic_recommendation(self):
+        from simpletuner.helpers.data_backend.bucket_report import BucketReport
+
+        report = BucketReport(dataset_id="test", dataset_type="audio")
+        report.record_bucket_snapshot("post_refresh", {})
+
+        recommendations = report._derive_recommendations()
+        self.assertTrue(any("skip filters" in r.lower() for r in recommendations))
