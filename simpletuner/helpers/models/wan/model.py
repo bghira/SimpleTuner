@@ -1196,6 +1196,10 @@ class Wan(VideoModelFoundation):
                 self.config.weight_dtype
             )
 
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            wan_transformer_kwargs["grounding_kwargs"] = grounding_kwargs
+
         self._apply_i2v_conditioning_to_kwargs(prepared_batch, wan_transformer_kwargs)
 
         # For masking with TREAD, avoid dropping any tokens that are in the mask

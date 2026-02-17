@@ -2150,7 +2150,7 @@ class FactoryRegistry:
         feature_backend.unload()
 
     def _inject_gligen_layers_if_needed(self, data_backend_config: List[Dict[str, Any]]):
-        """Inject GLIGEN layers into the UNet if grounding is enabled."""
+        """Inject GLIGEN layers into the model if grounding is enabled."""
         try:
             max_grounding_entities = int(getattr(self.args, "max_grounding_entities", 0) or 0)
         except (TypeError, ValueError):
@@ -2161,28 +2161,37 @@ class FactoryRegistry:
         if not self.model.supports_grounding():
             return
 
-        from diffusers import UNet2DConditionModel
+        from simpletuner.helpers.training.grounding.gligen_layers import _extract_block_dims, inject_gligen_layers
 
-        unet = self.model.get_trained_component(base_model=True)
-        if not isinstance(unet, UNet2DConditionModel):
-            return
+        component = self.model.get_trained_component(base_model=True)
 
-        from simpletuner.helpers.training.grounding.gligen_layers import inject_gligen_layers
-
-        cross_attention_dim = unet.config.cross_attention_dim
+        # Determine cross_attention_dim from model config or by probing blocks
+        cross_attention_dim = getattr(getattr(component, "config", None), "cross_attention_dim", None)
         if isinstance(cross_attention_dim, (list, tuple)):
             cross_attention_dim = cross_attention_dim[0]
+
+        if cross_attention_dim is None:
+            # Probe first block that has a recognisable attention sub-module
+            for module in component.modules():
+                dims = _extract_block_dims(module)
+                if dims is not None:
+                    cross_attention_dim = dims[0]  # query_dim
+                    break
+
+        if cross_attention_dim is None:
+            info_log("GLIGEN: could not determine cross_attention_dim, skipping injection")
+            return
 
         grounding_model_path = getattr(self.args, "pretrained_grounding_model_name_or_path", None)
         feature_type = "text-image" if grounding_model_path else "text-only"
 
         inject_gligen_layers(
-            unet=unet,
+            model=component,
             positive_len=cross_attention_dim,
             cross_attention_dim=cross_attention_dim,
             feature_type=feature_type,
         )
-        info_log("GLIGEN layers injected into UNet")
+        info_log("GLIGEN layers injected into model")
 
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""

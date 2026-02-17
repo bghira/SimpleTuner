@@ -1162,11 +1162,15 @@ class ModelFoundation(ABC):
 
     def supports_grounding(self) -> bool:
         """Returns True when the model supports spatial grounding annotations."""
-        return False
+        return getattr(self.config, "max_grounding_entities", 0) > 0
 
     @staticmethod
     def _build_gligen_cross_attention_kwargs(grounding_batch) -> dict | None:
-        """Build ``cross_attention_kwargs`` dict for the UNet from a ``GroundingBatch``."""
+        """Build ``cross_attention_kwargs`` dict for the UNet from a ``GroundingBatch``.
+
+        Used by UNet-based models (SD1.x, SDXL, Kolors) where grounding is
+        passed via ``cross_attention_kwargs["gligen"]``.
+        """
         if grounding_batch is None:
             return None
         if grounding_batch.image_embeds is not None:
@@ -1186,6 +1190,66 @@ class ModelFoundation(ABC):
                 "masks": grounding_batch.validity_mask,
                 "positive_embeddings": grounding_batch.text_embeds,
             }
+        }
+
+    @staticmethod
+    def _build_grounding_position_net_kwargs(grounding_batch, flatten_temporal: bool = True) -> dict | None:
+        """Build kwargs for ``position_net.forward()`` from a ``GroundingBatch``.
+
+        Used by transformer-based models where grounding is called explicitly
+        in the transformer forward (not via ``cross_attention_kwargs``).
+
+        When ``flatten_temporal`` is True and the batch has ``num_frames > 1``,
+        temporal dimensions are flattened: ``(B, T, N, ...) -> (B*T, N, ...)``.
+        """
+        if grounding_batch is None:
+            return None
+
+        boxes = grounding_batch.boxes
+        masks = grounding_batch.validity_mask
+        num_frames = getattr(grounding_batch, "num_frames", 1)
+
+        # Flatten temporal dims for video: (B, T, N, ...) -> (B*T, N, ...)
+        if flatten_temporal and num_frames > 1:
+
+            def _flatten_bt(t):
+                if t is None:
+                    return None
+                # t shape: (B, T, N, ...) -> (B*T, N, ...)
+                return t.flatten(0, 1)
+
+            boxes = _flatten_bt(boxes)
+            masks = _flatten_bt(masks)
+
+            if grounding_batch.image_embeds is not None:
+                return {
+                    "boxes": boxes,
+                    "masks": masks,
+                    "phrases_masks": _flatten_bt(grounding_batch.text_masks),
+                    "image_masks": _flatten_bt(grounding_batch.image_masks),
+                    "phrases_embeddings": _flatten_bt(grounding_batch.text_embeds),
+                    "image_embeddings": _flatten_bt(grounding_batch.image_embeds),
+                }
+            return {
+                "boxes": boxes,
+                "masks": masks,
+                "positive_embeddings": _flatten_bt(grounding_batch.text_embeds),
+            }
+
+        # Image path (num_frames == 1): shapes are (B, N, ...)
+        if grounding_batch.image_embeds is not None:
+            return {
+                "boxes": boxes,
+                "masks": masks,
+                "phrases_masks": grounding_batch.text_masks,
+                "image_masks": grounding_batch.image_masks,
+                "phrases_embeddings": grounding_batch.text_embeds,
+                "image_embeddings": grounding_batch.image_embeds,
+            }
+        return {
+            "boxes": boxes,
+            "masks": masks,
+            "positive_embeddings": grounding_batch.text_embeds,
         }
 
     def supports_audio_inputs(self) -> bool:

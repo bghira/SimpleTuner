@@ -1339,6 +1339,10 @@ class LTXVideo2(VideoModelFoundation):
         if is_audio_only:
             transformer_kwargs["audio_only"] = True
 
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            transformer_kwargs["grounding_kwargs"] = grounding_kwargs
+
         model_output = self.model(**transformer_kwargs)
         if capture_hidden:
             if isinstance(model_output, tuple):

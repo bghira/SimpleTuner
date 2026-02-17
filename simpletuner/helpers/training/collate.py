@@ -1206,11 +1206,16 @@ def collate_fn(batch):
             max_entities=max_grounding_entities,
             vae_scale_factor=model.vae_output_scaling_factor if hasattr(model, "vae_output_scaling_factor") else 8,
         )
+        # Detect video batches: latent_batch has 5 dims (B, C, T, H, W)
+        grounding_num_frames = 1
+        if latent_batch is not None and latent_batch.dim() == 5:
+            grounding_num_frames = latent_batch.shape[2]
         grounding_batch = grounding_collate.build_batch(
             examples=examples,
             data_backend_id=data_backend_id,
             text_embed_cache=text_embed_cache,
             grounding_image_cache=grounding_image_cache,
+            num_frames=grounding_num_frames,
         )
 
     return {

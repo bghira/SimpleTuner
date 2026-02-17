@@ -255,9 +255,6 @@ class SDXL(ImageModelFoundation):
             )[0]
         }
 
-    def supports_grounding(self) -> bool:
-        return getattr(self.config, "max_grounding_entities", 0) > 0
-
     def model_predict(self, prepared_batch):
         logger.debug(
             "Input shapes:"

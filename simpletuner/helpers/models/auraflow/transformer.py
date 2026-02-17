@@ -20,6 +20,7 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -594,6 +595,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         skip_layers: Optional[List[int]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
+        grounding_kwargs: dict | None = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The AuraFlowTransformer2DModel forward method with additional support for skip_layers and controlnet.
@@ -679,6 +681,11 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                 for r in routes
             ]
 
+        # GLIGEN grounding
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         # Total number of blocks for ControlNet integration
         total_blocks = len(self.joint_transformer_blocks) + len(self.single_transformer_blocks)
         capture_idx = 0
@@ -748,6 +755,9 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     temb=temb,
                     attention_kwargs=attention_kwargs,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             # controlnet residual
             if block_controlnet_hidden_states is not None:
@@ -855,6 +865,11 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                         hidden_states=combined_hidden_states,
                         temb=temb,
                         attention_kwargs=attention_kwargs,
+                    )
+
+                if grounding_objs is not None and hasattr(block, "fuser"):
+                    combined_hidden_states = apply_grounding_fuser(
+                        block.fuser, combined_hidden_states, grounding_objs, txt_len=encoder_seq_len
                     )
 
                 # controlnet residual for single transformer blocks

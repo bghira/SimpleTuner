@@ -33,3 +33,4 @@ class GroundingBatch:
     text_masks: torch.Tensor  # (B, N) per-entity text feature mask after random drop
     image_masks: torch.Tensor  # (B, N) per-entity image feature mask after random drop
     max_entities: int
+    num_frames: int = 1  # 1 for images; T for video (shapes become (B, T, N, ...))

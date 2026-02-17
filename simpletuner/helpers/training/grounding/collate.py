@@ -27,8 +27,14 @@ class GroundingCollate:
         data_backend_id: str,
         text_embed_cache,
         grounding_image_cache=None,
+        num_frames: int = 1,
     ) -> Optional[GroundingBatch]:
         """Build a ``GroundingBatch`` from per-sample metadata.
+
+        Args:
+            num_frames: Number of temporal frames.  When > 1 (video),
+                per-entity tensors are expanded to ``(B, T, N, ...)`` using
+                the first frame's annotations for all frames.
 
         Returns ``None`` if no samples in the batch have grounding annotations.
         """
@@ -120,20 +126,37 @@ class GroundingCollate:
             if has_image_cache:
                 all_image_embeds.append(torch.stack(sample_image_embeds))
 
+        boxes = torch.stack(all_boxes)
         validity_mask = torch.stack(all_validity)
         text_masks, image_masks = self._random_drop_features(validity_mask, has_image_cache)
-
+        text_embeds = torch.stack(all_text_embeds)
         image_embeds_tensor = torch.stack(all_image_embeds) if has_image_cache else None
 
+        # Video: expand (B, N, ...) -> (B, T, N, ...) using first-frame annotations
+        if num_frames > 1:
+
+            def _expand_temporal(t):
+                if t is None:
+                    return None
+                return t.unsqueeze(1).expand(-1, num_frames, *[-1] * (t.dim() - 1)).contiguous()
+
+            boxes = _expand_temporal(boxes)
+            validity_mask = _expand_temporal(validity_mask)
+            text_masks = _expand_temporal(text_masks)
+            image_masks = _expand_temporal(image_masks)
+            text_embeds = _expand_temporal(text_embeds)
+            image_embeds_tensor = _expand_temporal(image_embeds_tensor)
+
         return GroundingBatch(
-            boxes=torch.stack(all_boxes),
+            boxes=boxes,
             validity_mask=validity_mask,
             spatial_masks=torch.stack(all_masks),
-            text_embeds=torch.stack(all_text_embeds),
+            text_embeds=text_embeds,
             image_embeds=image_embeds_tensor,
             text_masks=text_masks,
             image_masks=image_masks,
             max_entities=N,
+            num_frames=num_frames,
         )
 
     @staticmethod

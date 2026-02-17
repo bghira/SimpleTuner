@@ -155,6 +155,7 @@ class Sana(ImageModelFoundation):
 
     def model_predict(self, prepared_batch):
         hidden_states_buffer = self._new_hidden_state_buffer()
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         model_pred = self.model(
             hidden_states=prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -169,6 +170,7 @@ class Sana(ImageModelFoundation):
             ),
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            grounding_kwargs=grounding_kwargs,
         )[0]
 
         crepa_hidden = None

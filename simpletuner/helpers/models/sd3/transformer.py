@@ -29,6 +29,7 @@ from diffusers.models.normalization import AdaLayerNormContinuous
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -342,6 +343,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         skip_layers: Optional[List[int]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
+        grounding_kwargs: dict | None = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`SD3Transformer2DModel`] forward method.
@@ -440,6 +442,11 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
+        # GLIGEN grounding
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
@@ -499,6 +506,9 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                     encoder_hidden_states=encoder_hidden_states,
                     temb=temb,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             # controlnet residual
             if block_controlnet_hidden_states is not None and block.context_pre_only is False:

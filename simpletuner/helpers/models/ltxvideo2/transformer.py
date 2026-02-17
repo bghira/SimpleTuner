@@ -31,6 +31,7 @@ from diffusers.models.normalization import RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -1241,6 +1242,7 @@ class LTX2VideoTransformer3DModel(
         hidden_state_layer: Optional[int] = None,
         hidden_states_buffer: Optional[dict] = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        grounding_kwargs: Optional[Dict[str, Any]] = None,
     ) -> torch.Tensor:
         """
         Forward pass for LTX-2.0 audiovisual video transformer.
@@ -1548,6 +1550,11 @@ class LTX2VideoTransformer3DModel(
                 )
             force_keep_mask = force_keep_mask.to(device=hidden_states.device, dtype=torch.bool)
 
+        # GLIGEN grounding
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         # 5. Run transformer blocks
         grad_enabled = torch.is_grad_enabled()
         musubi_manager = self._musubi_block_swap
@@ -1623,6 +1630,15 @@ class LTX2VideoTransformer3DModel(
                     ca_audio_rotary_emb=audio_cross_attn_rotary_emb,
                     encoder_attention_mask=encoder_attention_mask,
                     audio_encoder_attention_mask=audio_encoder_attention_mask,
+                )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(
+                    block.fuser,
+                    hidden_states,
+                    grounding_objs,
+                    tokens_per_frame=post_patch_height * post_patch_width,
+                    num_frames=post_patch_num_frames,
                 )
 
             if routing_now and block_idx == routes[route_ptr]["end_layer_idx"]:

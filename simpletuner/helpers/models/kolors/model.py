@@ -187,9 +187,6 @@ class Kolors(ImageModelFoundation):
         prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
         return prompt_embeds, pooled_prompt_embeds
 
-    def supports_grounding(self) -> bool:
-        return getattr(self.config, "max_grounding_entities", 0) > 0
-
     def model_predict(self, prepared_batch):
         # Check if U-REPA is enabled and we need to capture mid-block hidden states
         urepa = getattr(self, "urepa_regularizer", None)

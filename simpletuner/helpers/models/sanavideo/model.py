@@ -310,6 +310,10 @@ class SanaVideo(VideoModelFoundation):
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            transformer_kwargs["grounding_kwargs"] = grounding_kwargs
+
         model_output = self.model(
             noisy_latents,
             **transformer_kwargs,

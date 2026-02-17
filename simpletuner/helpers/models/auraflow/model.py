@@ -281,6 +281,7 @@ class Auraflow(ImageModelFoundation):
         )  # normalize to [0, 1]
 
         timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -294,6 +295,7 @@ class Auraflow(ImageModelFoundation):
             timestep_sign=timestep_sign,
             return_dict=True,
             hidden_states_buffer=hidden_states_buffer,
+            grounding_kwargs=grounding_kwargs,
         ).sample
 
         crepa_hidden = None

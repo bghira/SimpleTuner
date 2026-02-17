@@ -1,5 +1,5 @@
 """
-Integration tests for GLIGEN grounding token injection and UNet forward pass.
+Integration tests for GLIGEN grounding token injection and forward pass.
 """
 
 import unittest
@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
-from simpletuner.helpers.training.grounding.gligen_layers import get_gligen_trainable_parameters, inject_gligen_layers
+from simpletuner.helpers.training.grounding.gligen_layers import (
+    _extract_block_dims,
+    apply_grounding_fuser,
+    get_gligen_trainable_parameters,
+    inject_gligen_layers,
+)
 from simpletuner.helpers.training.grounding.types import GroundingBatch
 
 
@@ -59,6 +64,75 @@ class TestInjectGligenLayers(unittest.TestCase):
         inject_gligen_layers(unet, positive_len=768, cross_attention_dim=768, feature_type="text-image")
         self.assertTrue(hasattr(unet.position_net, "linears_text"))
         self.assertTrue(hasattr(unet.position_net, "linears_image"))
+
+
+class TestInjectGligenLayersCustomBlocks(unittest.TestCase):
+    """Test inject_gligen_layers with non-BasicTransformerBlock blocks."""
+
+    def _make_custom_block(self, dim=768, n_heads=8):
+        """Build a minimal custom block with an attn1 sub-module."""
+        from diffusers.models.attention_processor import Attention
+
+        block = torch.nn.Module()
+        block.attn1 = Attention(query_dim=dim, heads=n_heads, dim_head=dim // n_heads)
+        block.ff = torch.nn.Linear(dim, dim)
+        return block
+
+    def test_auto_detect_custom_blocks(self):
+        model = torch.nn.Module()
+        model.blocks = torch.nn.ModuleList([self._make_custom_block() for _ in range(3)])
+        inject_gligen_layers(model, positive_len=768, cross_attention_dim=768)
+        self.assertTrue(hasattr(model, "position_net"))
+        for block in model.blocks:
+            self.assertTrue(hasattr(block, "fuser"))
+
+    def test_explicit_block_types(self):
+        """When block_types is set, only matching blocks get fusers."""
+        from diffusers.models.attention import BasicTransformerBlock
+
+        model = torch.nn.Module()
+        model.custom = self._make_custom_block()
+        model.basic = BasicTransformerBlock(dim=768, num_attention_heads=8, attention_head_dim=96, cross_attention_dim=768)
+        inject_gligen_layers(model, positive_len=768, cross_attention_dim=768, block_types=(BasicTransformerBlock,))
+        self.assertTrue(hasattr(model.basic, "fuser"))
+        self.assertFalse(hasattr(model.custom, "fuser"))
+
+    def test_skip_blocks_with_existing_fuser(self):
+        model = torch.nn.Module()
+        block = self._make_custom_block()
+        block.fuser = torch.nn.Identity()  # pre-existing fuser
+        model.blocks = torch.nn.ModuleList([block])
+        inject_gligen_layers(model, positive_len=768, cross_attention_dim=768)
+        # Should not overwrite the existing fuser
+        self.assertIsInstance(block.fuser, torch.nn.Identity)
+
+
+class TestExtractBlockDims(unittest.TestCase):
+    """Test _extract_block_dims helper."""
+
+    def test_standard_attention(self):
+        from diffusers.models.attention_processor import Attention
+
+        block = torch.nn.Module()
+        block.attn1 = Attention(query_dim=512, heads=8, dim_head=64)
+        dims = _extract_block_dims(block)
+        self.assertEqual(dims, (512, 8))
+
+    def test_attn_attr_override(self):
+        from diffusers.models.attention_processor import Attention
+
+        block = torch.nn.Module()
+        block.my_attn = Attention(query_dim=1024, heads=16, dim_head=64)
+        # Default candidates won't find 'my_attn'
+        self.assertIsNone(_extract_block_dims(block))
+        # With explicit attr
+        dims = _extract_block_dims(block, attn_attr="my_attn")
+        self.assertEqual(dims, (1024, 16))
+
+    def test_no_attention_returns_none(self):
+        block = torch.nn.Module()
+        block.ff = torch.nn.Linear(768, 768)
+        self.assertIsNone(_extract_block_dims(block))
 
 
 class TestGetGligenTrainableParameters(unittest.TestCase):
@@ -135,6 +209,169 @@ class TestBuildGligenCrossAttentionKwargs(unittest.TestCase):
         self.assertIn("phrases_embeddings", result["gligen"])
         self.assertIn("image_embeddings", result["gligen"])
         self.assertNotIn("positive_embeddings", result["gligen"])
+
+
+class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
+    """Test _build_grounding_position_net_kwargs for transformer models."""
+
+    def test_none_returns_none(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        result = ImageModelFoundation._build_grounding_position_net_kwargs(None)
+        self.assertIsNone(result)
+
+    def test_image_text_only(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        batch = GroundingBatch(
+            boxes=torch.zeros(2, 4, 4),
+            validity_mask=torch.ones(2, 4),
+            spatial_masks=torch.zeros(2, 4, 8, 8),
+            text_embeds=torch.randn(2, 4, 768),
+            image_embeds=None,
+            text_masks=torch.ones(2, 4),
+            image_masks=torch.zeros(2, 4),
+            max_entities=4,
+        )
+        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch)
+        self.assertIn("boxes", result)
+        self.assertIn("masks", result)
+        self.assertIn("positive_embeddings", result)
+        self.assertNotIn("phrases_embeddings", result)
+        self.assertEqual(result["boxes"].shape, (2, 4, 4))
+
+    def test_image_text_image_mode(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        batch = GroundingBatch(
+            boxes=torch.zeros(2, 4, 4),
+            validity_mask=torch.ones(2, 4),
+            spatial_masks=torch.zeros(2, 4, 8, 8),
+            text_embeds=torch.randn(2, 4, 768),
+            image_embeds=torch.randn(2, 4, 1024),
+            text_masks=torch.ones(2, 4),
+            image_masks=torch.ones(2, 4),
+            max_entities=4,
+        )
+        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch)
+        self.assertIn("phrases_embeddings", result)
+        self.assertIn("image_embeddings", result)
+        self.assertNotIn("positive_embeddings", result)
+
+    def test_video_flatten_temporal(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        B, T, N = 2, 4, 3
+        batch = GroundingBatch(
+            boxes=torch.zeros(B, T, N, 4),
+            validity_mask=torch.ones(B, T, N),
+            spatial_masks=torch.zeros(B, N, 8, 8),
+            text_embeds=torch.randn(B, T, N, 768),
+            image_embeds=None,
+            text_masks=torch.ones(B, T, N),
+            image_masks=torch.zeros(B, T, N),
+            max_entities=N,
+            num_frames=T,
+        )
+        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch, flatten_temporal=True)
+        # (B, T, N, ...) -> (B*T, N, ...)
+        self.assertEqual(result["boxes"].shape, (B * T, N, 4))
+        self.assertEqual(result["masks"].shape, (B * T, N))
+        self.assertEqual(result["positive_embeddings"].shape, (B * T, N, 768))
+
+    def test_video_no_flatten(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        B, T, N = 2, 4, 3
+        batch = GroundingBatch(
+            boxes=torch.zeros(B, T, N, 4),
+            validity_mask=torch.ones(B, T, N),
+            spatial_masks=torch.zeros(B, N, 8, 8),
+            text_embeds=torch.randn(B, T, N, 768),
+            image_embeds=None,
+            text_masks=torch.ones(B, T, N),
+            image_masks=torch.zeros(B, T, N),
+            max_entities=N,
+            num_frames=T,
+        )
+        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch, flatten_temporal=False)
+        # No flattening: shapes remain (B, T, N, ...)
+        self.assertEqual(result["boxes"].shape, (B, T, N, 4))
+
+
+class TestApplyGroundingFuser(unittest.TestCase):
+    """Test apply_grounding_fuser utility."""
+
+    def _make_fuser(self, query_dim=768, context_dim=768, n_heads=8):
+        from diffusers.models.attention import GatedSelfAttentionDense
+
+        return GatedSelfAttentionDense(
+            query_dim=query_dim,
+            context_dim=context_dim,
+            n_heads=n_heads,
+            d_head=query_dim // n_heads,
+        )
+
+    def test_image_only(self):
+        fuser = self._make_fuser()
+        B, S, D, N = 2, 16, 768, 4
+        hidden = torch.randn(B, S, D)
+        objs = torch.randn(B, N, D)
+        result = apply_grounding_fuser(fuser, hidden, objs)
+        self.assertEqual(result.shape, (B, S, D))
+
+    def test_text_image_split(self):
+        fuser = self._make_fuser()
+        B, txt_len, S_img, D, N = 2, 10, 16, 768, 4
+        hidden = torch.randn(B, txt_len + S_img, D)
+        objs = torch.randn(B, N, D)
+        result = apply_grounding_fuser(fuser, hidden, objs, txt_len=txt_len)
+        self.assertEqual(result.shape, (B, txt_len + S_img, D))
+        # Text portion should be unchanged (fuser alpha init to 0 so
+        # the fuser output is the identity, but let's check shapes)
+
+    def test_video_temporal_fold(self):
+        fuser = self._make_fuser()
+        B, T, S_frame, D, N = 2, 4, 16, 768, 3
+        hidden = torch.randn(B, T * S_frame, D)
+        objs = torch.randn(B * T, N, D)
+        result = apply_grounding_fuser(
+            fuser,
+            hidden,
+            objs,
+            tokens_per_frame=S_frame,
+            num_frames=T,
+        )
+        self.assertEqual(result.shape, (B, T * S_frame, D))
+
+    def test_video_with_text_split(self):
+        fuser = self._make_fuser()
+        B, T, txt_len, S_frame, D, N = 1, 3, 5, 8, 768, 2
+        hidden = torch.randn(B, txt_len + T * S_frame, D)
+        objs = torch.randn(B * T, N, D)
+        result = apply_grounding_fuser(
+            fuser,
+            hidden,
+            objs,
+            txt_len=txt_len,
+            tokens_per_frame=S_frame,
+            num_frames=T,
+        )
+        self.assertEqual(result.shape, (B, txt_len + T * S_frame, D))
+
+    def test_video_requires_tokens_per_frame(self):
+        fuser = self._make_fuser()
+        hidden = torch.randn(2, 64, 768)
+        objs = torch.randn(8, 4, 768)
+        with self.assertRaises(AssertionError):
+            apply_grounding_fuser(fuser, hidden, objs, num_frames=4)
+
+    def test_video_shape_mismatch(self):
+        fuser = self._make_fuser()
+        hidden = torch.randn(2, 60, 768)  # 60 != 4 * 16
+        objs = torch.randn(8, 4, 768)
+        with self.assertRaises(AssertionError):
+            apply_grounding_fuser(fuser, hidden, objs, tokens_per_frame=16, num_frames=4)
 
 
 class TestPositionNetForward(unittest.TestCase):

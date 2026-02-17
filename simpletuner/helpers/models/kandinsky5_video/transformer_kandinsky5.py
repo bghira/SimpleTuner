@@ -31,6 +31,7 @@ from diffusers.utils import logging
 from torch import Tensor
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -751,6 +752,7 @@ class Kandinsky5Transformer3DModel(
         hidden_state_layer: Optional[int] = None,
         hidden_states_buffer: Optional[dict] = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        grounding_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
         Forward pass of the Kandinsky5 3D Transformer.
@@ -854,6 +856,11 @@ class Kandinsky5Transformer3DModel(
                 )
             force_keep_mask = force_keep_mask.to(device=visual_embed.device, dtype=torch.bool)
 
+        # GLIGEN grounding
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         captured_frame_hidden: Optional[torch.Tensor] = None
 
         for layer_idx, visual_transformer_block in enumerate(self.visual_transformer_blocks):
@@ -892,6 +899,15 @@ class Kandinsky5Transformer3DModel(
                 )
             else:
                 visual_embed = visual_transformer_block(visual_embed, text_embed, time_embed, current_rope, sparse_params)
+
+            if grounding_objs is not None and hasattr(visual_transformer_block, "fuser"):
+                visual_embed = apply_grounding_fuser(
+                    visual_transformer_block.fuser,
+                    visual_embed,
+                    grounding_objs,
+                    tokens_per_frame=visual_shape[2] * visual_shape[3],
+                    num_frames=visual_shape[1],
+                )
 
             if routing_now and layer_idx == routes[route_ptr]["end_layer_idx"]:
                 visual_embed = router.end_route(
