@@ -19,6 +19,7 @@ class DatasetType(str, Enum):
     CONDITIONING_IMAGE_EMBEDS = "conditioning_image_embeds"
     DISTILLATION_CACHE = "distillation_cache"
     CAPTION = "caption"
+    GROUNDING = "grounding"
 
     @classmethod
     def from_value(cls, value: Optional[object], default: Optional["DatasetType"] = None) -> "DatasetType":

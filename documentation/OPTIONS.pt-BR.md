@@ -202,6 +202,12 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo Gemma pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Ao treinar modelos baseados em Gemma (por exemplo LTX-2, Sana ou Lumina2), voce pode apontar para um checkpoint Gemma compartilhado sem mudar o caminho do modelo base de difusao.
 
+### `--max_grounding_entities`
+- Numero maximo de entidades de grounding por imagem para anotacoes espaciais no estilo GLIGEN. Padrao: 0 (desabilitado). Valores tipicos: 4-16.
+
+### `--pretrained_grounding_model_name_or_path`
+- Modelo pre-treinado opcional para extracao de features de imagem por entidade. Padrao: None.
+
 ### `--custom_text_encoder_intermediary_layers`
 
 - **O que**: Sobrescreve quais camadas de estado oculto extrair do encoder de texto para modelos FLUX.2.

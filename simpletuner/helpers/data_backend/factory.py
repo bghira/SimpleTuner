@@ -179,6 +179,7 @@ def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
         DatasetType.EVAL,
         DatasetType.VIDEO,
         DatasetType.CAPTION,
+        DatasetType.GROUNDING,
     }
     raw_type = backend.get("dataset_type")
     if raw_type is None:
@@ -389,6 +390,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         DatasetType.EVAL,
         DatasetType.VIDEO,
         DatasetType.CAPTION,
+        DatasetType.GROUNDING,
     ]
     controlnet_enabled = getattr(StateTracker.get_args(), "controlnet", False)
     if not isinstance(controlnet_enabled, bool):
@@ -2017,6 +2019,61 @@ class FactoryRegistry:
 
         return data_backend_config
 
+    def _inject_grounding_configs(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Auto-generate grounding datasets for image/video datasets with a ``grounding`` config block."""
+        auto_grounding_configs: List[Dict[str, Any]] = []
+        existing_ids = {cfg.get("id") for cfg in data_backend_config if isinstance(cfg, dict)}
+
+        for backend in data_backend_config:
+            if not isinstance(backend, dict):
+                continue
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+
+            dataset_type = backend.get("dataset_type")
+            if dataset_type not in ("image", "video"):
+                continue
+
+            grounding_config = backend.get("grounding")
+            if not isinstance(grounding_config, dict) or not grounding_config.get("enabled", False):
+                continue
+
+            # Skip if already has grounding_data configured
+            if backend.get("grounding_data"):
+                continue
+
+            source_id = backend.get("id")
+            if not source_id:
+                continue
+
+            grounding_backend_id_base = f"{source_id}_grounding"
+            grounding_backend_id = grounding_backend_id_base
+            suffix = 1
+            while grounding_backend_id in existing_ids:
+                grounding_backend_id = f"{grounding_backend_id_base}_{suffix}"
+                suffix += 1
+            existing_ids.add(grounding_backend_id)
+
+            grounding_dataset_config = {
+                "id": grounding_backend_id,
+                "type": backend.get("type", "local"),
+                "dataset_type": "grounding",
+                "instance_data_dir": backend.get("instance_data_dir"),
+                "source_dataset_id": source_id,
+                "auto_generated": True,
+                "probability": 0.0,
+            }
+
+            auto_grounding_configs.append(grounding_dataset_config)
+            backend["grounding_data"] = [grounding_backend_id]
+
+            info_log(f"(id={source_id}) Auto-generated grounding dataset '{grounding_backend_id}'")
+
+        if auto_grounding_configs:
+            data_backend_config.extend(auto_grounding_configs)
+
+        return data_backend_config
+
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""
         conditioning_datasets = []
@@ -2929,6 +2986,8 @@ class FactoryRegistry:
             not in [
                 # masks must align to source metadata; skip independent discovery.
                 "mask",
+                # grounding datasets share the same directory as their parent; skip independent discovery.
+                "grounding",
                 # controlnet uses pixel values for older Unets but encoded latents for newer models.
                 # when we require encoded latents, we also must scan for aspect ratio buckets here.
                 # This approach is inefficient as it effectively doubles the I/O to discover the conditioning dataset,
@@ -2966,6 +3025,7 @@ class FactoryRegistry:
             and conditioning_type
             not in [
                 "mask",
+                "grounding",
                 "controlnet" if not self.model.requires_conditioning_latents() else -1,
                 "reference_strict",
             ]
@@ -3414,6 +3474,32 @@ class FactoryRegistry:
                 else:
                     key_value = caption
                 prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
+
+            # Add entity label records for images with grounding annotations
+            grounding_label_count = 0
+            metadata_backend = init_backend.get("metadata_backend")
+            if metadata_backend is not None:
+                for image_path in caption_image_paths:
+                    image_path_str = str(image_path)
+                    img_meta = metadata_backend.get_metadata_by_filepath(image_path_str)
+                    if not isinstance(img_meta, dict):
+                        continue
+                    bbox_entities = img_meta.get("bbox_entities")
+                    if not bbox_entities:
+                        continue
+                    normalized_identifier = normalize_data_path(image_path_str, dataset_root)
+                    for idx, entity in enumerate(bbox_entities):
+                        label = entity.get("label", "")
+                        if not label:
+                            continue
+                        entity_key = f"{normalized_identifier}__bbox_{idx}"
+                        prompt_records.append({"prompt": label, "key": entity_key, "metadata": {"grounding_entity": True}})
+                        grounding_label_count += 1
+            if grounding_label_count > 0:
+                info_log(
+                    f"(id={init_backend['id']}) Added {grounding_label_count} grounding entity labels for text embedding."
+                )
+
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 prompt_records, return_concat=False, load_from_cache=False
             )
@@ -4278,6 +4364,7 @@ class FactoryRegistry:
             data_backend_config = self.load_configuration()
 
         data_backend_config = self._inject_i2v_conditioning_configs(data_backend_config)
+        data_backend_config = self._inject_grounding_configs(data_backend_config)
         data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
 

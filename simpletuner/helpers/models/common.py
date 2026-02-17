@@ -1160,6 +1160,10 @@ class ModelFoundation(ABC):
         """
         return False
 
+    def supports_grounding(self) -> bool:
+        """Returns True when the model supports spatial grounding annotations."""
+        return False
+
     def supports_audio_inputs(self) -> bool:
         return False
 

@@ -2985,7 +2985,13 @@ class Trainer:
                 except Exception:
                     caption_batches_supported = False
 
-        training_dataset_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}
+        training_dataset_types = {
+            DatasetType.IMAGE,
+            DatasetType.VIDEO,
+            DatasetType.AUDIO,
+            DatasetType.CONDITIONING,
+            DatasetType.GROUNDING,
+        }
         if caption_batches_supported:
             training_dataset_types.add(DatasetType.CAPTION)
 
@@ -3106,7 +3112,13 @@ class Trainer:
         max_steps = getattr(self.config, "max_train_steps", None)
         for dataset_id, backend in StateTracker.get_data_backends().items():
             backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}:
+            if backend_type not in {
+                DatasetType.IMAGE,
+                DatasetType.VIDEO,
+                DatasetType.AUDIO,
+                DatasetType.CONDITIONING,
+                DatasetType.GROUNDING,
+            }:
                 continue
             schedule = StateTracker.get_dataset_schedule(dataset_id) or {}
             start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend.get("config", {}).get("start_epoch", 1)))

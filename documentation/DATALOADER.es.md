@@ -777,6 +777,40 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 
 - Los nombres de archivo de las entradas de caché VAE siempre se hashean. Esto no es configurable por el usuario y garantiza que datasets con nombres de archivo muy largos puedan usarse sin problemas de longitud de ruta. Cualquier configuración `hash_filenames` en tu configuración será ignorada.
 
+## Grounding (Anotaciones Espaciales)
+
+El pipeline de grounding permite anotaciones de bounding box y mascara por entidad para el grounding espacial durante el entrenamiento. Esto es util para prevenir el sangrado de sujetos (subject bleeding) durante el fine-tuning con multiples sujetos.
+
+### Habilitando el grounding
+
+Agrega un bloque `grounding` a cualquier dataset de imagen o video:
+
+```json
+{
+  "id": "my-dataset",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/path/to/images",
+  "grounding": {
+    "enabled": true
+  }
+}
+```
+
+Tambien debes establecer `--max_grounding_entities` a un valor mayor que 0 (por ejemplo, 8) para habilitar el pipeline de grounding.
+
+### Archivos sidecar `.bbox`
+
+Coloca un archivo `.bbox` junto a cada imagen con el mismo nombre base.
+
+El archivo `.bbox` soporta tres formatos: array JSON, JSON lines, formato txt YOLO.
+
+Las coordenadas del bounding box estan normalizadas a [0, 1] en formato XYXY. El formato YOLO usa XYWH basado en el centro y se convierte automaticamente. El campo `mask` es opcional.
+
+### Columna bbox Parquet / HuggingFace
+
+Para datasets parquet o HuggingFace, especifica un `bbox_column` en la configuracion del backend.
+
 ## Filtrado de captions
 
 ### `caption_filter_list`

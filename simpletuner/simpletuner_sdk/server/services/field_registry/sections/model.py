@@ -969,3 +969,42 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             documentation="OPTIONS.md#--custom_text_encoder_intermediary_layers",
         )
     )
+
+    # Grounding: max entities per image
+    registry._add_field(
+        ConfigField(
+            name="max_grounding_entities",
+            arg_name="--max_grounding_entities",
+            ui_label="Max Grounding Entities",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=0,
+            help_text="Maximum number of grounding entities per image for GLIGEN-style spatial annotations. Set to 0 to disable grounding.",
+            tooltip="When > 0, enables the grounding pipeline. Each entity is padded to this count per sample. Typical values: 4-16.",
+            importance=ImportanceLevel.ADVANCED,
+            order=35,
+            documentation="OPTIONS.md#--max_grounding_entities",
+        )
+    )
+
+    # Grounding: pretrained feature extractor model
+    registry._add_field(
+        ConfigField(
+            name="pretrained_grounding_model_name_or_path",
+            arg_name="--pretrained_grounding_model_name_or_path",
+            ui_label="Grounding Feature Model",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=None,
+            placeholder="facebook/dinov2-large",
+            help_text="Optional pretrained model for per-entity image feature extraction. When unset, only text embeddings and bbox coordinates are used.",
+            tooltip="Provide a HuggingFace model ID (e.g., 'facebook/dinov2-large') for visual entity features from cropped regions.",
+            importance=ImportanceLevel.ADVANCED,
+            order=36,
+            documentation="OPTIONS.md#--pretrained_grounding_model_name_or_path",
+        )
+    )

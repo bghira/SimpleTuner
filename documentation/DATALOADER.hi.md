@@ -777,6 +777,40 @@ WebUI file browser में datasets browse करते समय, किस�
 
 - VAE cache entries की filenames हमेशा hashed होती हैं। यह user‑configurable नहीं है और लंबे filenames वाले datasets को बिना path length issues के उपयोग करने में मदद करता है। आपके कॉन्फ़िगरेशन में कोई भी `hash_filenames` सेटिंग ignore की जाएगी।
 
+## Grounding (Spatial Annotations)
+
+Grounding pipeline प्रत्येक entity के लिए bounding box और mask annotations सक्षम करता है, जो training के दौरान spatial grounding के लिए उपयोग होते हैं। यह multi-subject fine-tuning में subject bleeding को रोकने के लिए उपयोगी है।
+
+### Grounding सक्षम करना
+
+किसी भी image या video dataset में `grounding` block जोड़ें:
+
+```json
+{
+  "id": "my-dataset",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/path/to/images",
+  "grounding": {
+    "enabled": true
+  }
+}
+```
+
+Grounding pipeline सक्षम करने के लिए `--max_grounding_entities` को 0 से बड़े मान पर सेट करना भी आवश्यक है (उदा. 8)।
+
+### `.bbox` sidecar फ़ाइलें
+
+प्रत्येक image के साथ उसी base name की `.bbox` फ़ाइल रखें।
+
+`.bbox` फ़ाइल तीन formats सपोर्ट करती है: JSON array, JSON lines, YOLO txt format।
+
+Bounding box coordinates XYXY format में [0, 1] पर normalised होते हैं। YOLO format centre-based XYWH का उपयोग करता है और स्वचालित रूप से convert होता है। `mask` field वैकल्पिक है।
+
+### Parquet / HuggingFace bbox column
+
+Parquet या HuggingFace datasets के लिए, backend config में `bbox_column` specify करें।
+
 ## Captions फ़िल्टर करना
 
 ### `caption_filter_list`
