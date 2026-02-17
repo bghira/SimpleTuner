@@ -22,4 +22,70 @@
             </div>
         </div>
     </div>
+
+    <!-- Auto-detect settings (visible only when grounding is enabled) -->
+    <div x-show="dataset.grounding && dataset.grounding.enabled"
+         x-init="if (!dataset.grounding.auto_detect) dataset.grounding.auto_detect = {enabled: false, model: 'microsoft/Florence-2-large', labels: '', batch_size: 4}"
+         x-cloak>
+        <div class="dataset-subgroup-title mt-3">Auto-Detect Bounding Boxes</div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div class="checkbox-item">
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               :id="`grounding-auto-detect-enabled-${datasetSafeId(dataset)}`"
+                               x-model="dataset.grounding.auto_detect.enabled"
+                               @change="markAsUnsaved()">
+                        <div class="checkbox-content">
+                            <label class="form-check-label" :for="`grounding-auto-detect-enabled-${datasetSafeId(dataset)}`">
+                                Enable Auto-Detect
+                            </label>
+                            <div class="form-text">
+                                Automatically generate <code>.bbox</code> sidecar files using Florence-2.
+                                Images that already have <code>.bbox</code> files will be skipped.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div x-show="dataset.grounding.auto_detect && dataset.grounding.auto_detect.enabled" x-cloak>
+            <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                    <label :for="`grounding-auto-detect-model-${datasetSafeId(dataset)}`" class="form-label">Model</label>
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           :id="`grounding-auto-detect-model-${datasetSafeId(dataset)}`"
+                           x-model="dataset.grounding.auto_detect.model"
+                           @change="markAsUnsaved()"
+                           placeholder="microsoft/Florence-2-large">
+                    <div class="form-text">HuggingFace Florence-2 model ID.</div>
+                </div>
+                <div class="col-md-6">
+                    <label :for="`grounding-auto-detect-labels-${datasetSafeId(dataset)}`" class="form-label">Labels (optional)</label>
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           :id="`grounding-auto-detect-labels-${datasetSafeId(dataset)}`"
+                           x-model="dataset.grounding.auto_detect.labels"
+                           @change="markAsUnsaved()"
+                           placeholder="person, dog, cat">
+                    <div class="form-text">Comma-separated labels for guided detection. Leave empty for automatic captioning and grounding.</div>
+                </div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                    <label :for="`grounding-auto-detect-batch-size-${datasetSafeId(dataset)}`" class="form-label">Batch Size</label>
+                    <input type="number"
+                           class="form-control form-control-sm"
+                           :id="`grounding-auto-detect-batch-size-${datasetSafeId(dataset)}`"
+                           x-model.number="dataset.grounding.auto_detect.batch_size"
+                           @change="markAsUnsaved()"
+                           min="1" step="1"
+                           placeholder="4">
+                    <div class="form-text">Number of images per inference batch.</div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>

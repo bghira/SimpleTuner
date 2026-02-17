@@ -799,6 +799,39 @@ Grounding pipeline प्रत्येक entity के लिए bounding box
 
 Grounding pipeline सक्षम करने के लिए `--max_grounding_entities` को 0 से बड़े मान पर सेट करना भी आवश्यक है (उदा. 8)।
 
+### Bounding boxes की स्वचालित पहचान
+
+यदि आपके पास पहले से `.bbox` annotations नहीं हैं, तो आप SimpleTuner को [Florence-2](https://huggingface.co/microsoft/Florence-2-large) का उपयोग करके स्वचालित रूप से उत्पन्न करने दे सकते हैं। `grounding` config के अंदर एक `auto_detect` block जोड़ें:
+
+```json
+{
+    "id": "my-images",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/images",
+    "grounding": {
+        "enabled": true,
+        "auto_detect": {
+            "enabled": true,
+            "model": "microsoft/Florence-2-large",
+            "labels": ["person", "dog", "cat"],
+            "batch_size": 4
+        }
+    }
+}
+```
+
+| Key | Default | विवरण |
+|-----|---------|-------------|
+| `enabled` | `false` | स्वचालित पहचान सक्षम करें। |
+| `model` | `microsoft/Florence-2-large` | HuggingFace Florence-2 model ID। |
+| `labels` | `[]` | Guided detection के लिए वैकल्पिक entity labels की सूची (`<OPEN_VOCABULARY_DETECTION>` का उपयोग करती है)। खाली होने पर, Florence-2 स्वचालित रूप से प्रत्येक image का caption बनाता है और पाए गए phrases को ground करता है (`<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>` का उपयोग करता है)। |
+| `batch_size` | `4` | प्रति inference batch में images की संख्या। |
+
+स्वचालित पहचान dataset setup के दौरान एक बार चलती है। जिन images में पहले से `.bbox` sidecar फ़ाइल है, उन्हें छोड़ दिया जाता है, इसलिए interruption के बाद सुरक्षित रूप से resume किया जा सकता है। Model accelerator device पर load होता है और detection पूरा होने के बाद तुरंत free हो जाता है।
+
+> **नोट:** स्वचालित पहचान केवल `type: "local"` backends को सपोर्ट करती है।
+
 ### `.bbox` sidecar फ़ाइलें
 
 प्रत्येक image के साथ उसी base name की `.bbox` फ़ाइल रखें।

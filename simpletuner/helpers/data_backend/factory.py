@@ -2042,6 +2042,22 @@ class FactoryRegistry:
             if backend.get("grounding_data"):
                 continue
 
+            # Auto-detect bounding boxes if configured
+            auto_detect = grounding_config.get("auto_detect")
+            if isinstance(auto_detect, dict) and auto_detect.get("enabled", False):
+                if backend.get("type", "local") != "local":
+                    raise ValueError(
+                        f"(id={backend.get('id')}) auto_detect requires a local backend, "
+                        f"got type={backend.get('type')!r}."
+                    )
+                instance_data_dir = backend.get("instance_data_dir")
+                if instance_data_dir:
+                    from simpletuner.helpers.data_generation.bbox_generator import BboxGenerator
+
+                    bbox_gen = BboxGenerator(config=auto_detect, accelerator=self.accelerator)
+                    with self.accelerator.main_process_first():
+                        bbox_gen.generate(instance_data_dir=instance_data_dir)
+
             source_id = backend.get("id")
             if not source_id:
                 continue

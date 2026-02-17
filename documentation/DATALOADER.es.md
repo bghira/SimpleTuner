@@ -799,6 +799,39 @@ Agrega un bloque `grounding` a cualquier dataset de imagen o video:
 
 Tambien debes establecer `--max_grounding_entities` a un valor mayor que 0 (por ejemplo, 8) para habilitar el pipeline de grounding.
 
+### Auto-deteccion de bounding boxes
+
+Si no tienes anotaciones `.bbox` preexistentes, puedes dejar que SimpleTuner las genere automaticamente usando [Florence-2](https://huggingface.co/microsoft/Florence-2-large). Agrega un bloque `auto_detect` dentro de la configuracion `grounding`:
+
+```json
+{
+    "id": "my-images",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/images",
+    "grounding": {
+        "enabled": true,
+        "auto_detect": {
+            "enabled": true,
+            "model": "microsoft/Florence-2-large",
+            "labels": ["person", "dog", "cat"],
+            "batch_size": 4
+        }
+    }
+}
+```
+
+| Clave | Predeterminado | Descripcion |
+|-----|---------|-------------|
+| `enabled` | `false` | Habilitar auto-deteccion. |
+| `model` | `microsoft/Florence-2-large` | ID del modelo HuggingFace Florence-2. |
+| `labels` | `[]` | Lista opcional de etiquetas de entidades para deteccion guiada (usa `<OPEN_VOCABULARY_DETECTION>`). Cuando esta vacia, Florence-2 genera automaticamente una descripcion de cada imagen y localiza las frases encontradas (usa `<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>`). |
+| `batch_size` | `4` | Numero de imagenes por lote de inferencia. |
+
+La auto-deteccion se ejecuta una vez durante la configuracion del dataset. Las imagenes que ya tienen un archivo sidecar `.bbox` se omiten, por lo que puedes reanudar de forma segura despues de una interrupcion. El modelo se carga en el dispositivo del acelerador y se libera inmediatamente despues de completar la deteccion.
+
+> **Nota:** La auto-deteccion solo soporta backends `type: "local"`.
+
 ### Archivos sidecar `.bbox`
 
 Coloca un archivo `.bbox` junto a cada imagen con el mismo nombre base.
