@@ -3662,6 +3662,7 @@ class ModelFoundation(ABC):
                     text_masks=grounding_batch.text_masks.to(device=device, dtype=dtype),
                     image_masks=grounding_batch.image_masks.to(device=device, dtype=dtype),
                     max_entities=grounding_batch.max_entities,
+                    num_frames=grounding_batch.num_frames,
                 )
 
         return batch
