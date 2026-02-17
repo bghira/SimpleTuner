@@ -1201,6 +1201,7 @@ def collate_fn(batch):
     if max_grounding_entities and max_grounding_entities > 0:
         from simpletuner.helpers.training.grounding.collate import GroundingCollate
 
+        grounding_image_cache = StateTracker.get_grounding_image_embed_cache(data_backend_id)
         grounding_collate = GroundingCollate(
             max_entities=max_grounding_entities,
             vae_scale_factor=model.vae_output_scaling_factor if hasattr(model, "vae_output_scaling_factor") else 8,
@@ -1209,6 +1210,7 @@ def collate_fn(batch):
             examples=examples,
             data_backend_id=data_backend_id,
             text_embed_cache=text_embed_cache,
+            grounding_image_cache=grounding_image_cache,
         )
 
     return {

@@ -2090,6 +2090,100 @@ class FactoryRegistry:
 
         return data_backend_config
 
+    def _configure_grounding_image_embed_caches(self, data_backend_config: List[Dict[str, Any]]):
+        """Initialize Florence-2 (or other) image embed caches for grounding datasets."""
+        grounding_model_path = getattr(self.args, "pretrained_grounding_model_name_or_path", None)
+        if not grounding_model_path:
+            return
+
+        try:
+            max_grounding_entities = int(getattr(self.args, "max_grounding_entities", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if max_grounding_entities <= 0:
+            return
+
+        backends_needing_cache = []
+        for backend in data_backend_config:
+            if not isinstance(backend, dict) or backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            grounding_config = backend.get("grounding")
+            if not isinstance(grounding_config, dict) or not grounding_config.get("enabled", False):
+                continue
+            source_id = backend.get("id")
+            if source_id:
+                backends_needing_cache.append(backend)
+
+        if not backends_needing_cache:
+            return
+
+        from simpletuner.helpers.caching.grounding_image_embed import GroundingImageEmbedCache
+        from simpletuner.helpers.training.grounding.feature_backend import Florence2FeatureBackend
+
+        info_log(f"Loading grounding feature model: {grounding_model_path}")
+        device = str(self.accelerator.device) if self.accelerator else "cpu"
+        feature_backend = Florence2FeatureBackend(model_name_or_path=grounding_model_path, device=device)
+
+        for backend in backends_needing_cache:
+            source_id = backend["id"]
+            instance_data_dir = backend.get("instance_data_dir", "")
+            output_dir = getattr(self.args, "output_dir", "output")
+            cache_dir = os.path.join(output_dir, "cache", "grounding_image_embeds", source_id)
+
+            cache = GroundingImageEmbedCache(
+                feature_backend=feature_backend,
+                cache_dir=cache_dir,
+                instance_data_dir=instance_data_dir,
+            )
+
+            init_backend = StateTracker.get_data_backend(source_id) if source_id in StateTracker.data_backends else None
+            if init_backend is not None:
+                metadata_backend = init_backend.get("metadata_backend")
+                data_backend_obj = init_backend.get("data_backend")
+                if metadata_backend and data_backend_obj:
+                    with self.accelerator.main_process_first():
+                        cache.process_all(metadata_backend, data_backend_obj)
+
+            StateTracker.set_grounding_image_embed_cache(source_id, cache)
+            info_log(f"(id={source_id}) Grounding image embed cache configured at {cache_dir}")
+
+        feature_backend.unload()
+
+    def _inject_gligen_layers_if_needed(self, data_backend_config: List[Dict[str, Any]]):
+        """Inject GLIGEN layers into the UNet if grounding is enabled."""
+        try:
+            max_grounding_entities = int(getattr(self.args, "max_grounding_entities", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if max_grounding_entities <= 0:
+            return
+
+        if not self.model.supports_grounding():
+            return
+
+        from diffusers import UNet2DConditionModel
+
+        unet = self.model.get_trained_component(base_model=True)
+        if not isinstance(unet, UNet2DConditionModel):
+            return
+
+        from simpletuner.helpers.training.grounding.gligen_layers import inject_gligen_layers
+
+        cross_attention_dim = unet.config.cross_attention_dim
+        if isinstance(cross_attention_dim, (list, tuple)):
+            cross_attention_dim = cross_attention_dim[0]
+
+        grounding_model_path = getattr(self.args, "pretrained_grounding_model_name_or_path", None)
+        feature_type = "text-image" if grounding_model_path else "text-only"
+
+        inject_gligen_layers(
+            unet=unet,
+            positive_len=cross_attention_dim,
+            cross_attention_dim=cross_attention_dim,
+            feature_type=feature_type,
+        )
+        info_log("GLIGEN layers injected into UNet")
+
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""
         conditioning_datasets = []
@@ -4389,6 +4483,8 @@ class FactoryRegistry:
         self.configure_conditioning_image_embed_backends(data_backend_config)
         self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
+        self._configure_grounding_image_embed_caches(data_backend_config)
+        self._inject_gligen_layers_if_needed(data_backend_config)
 
         self._configure_model_data_signals(data_backend_config)
 

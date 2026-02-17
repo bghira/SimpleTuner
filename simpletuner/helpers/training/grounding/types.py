@@ -28,5 +28,8 @@ class GroundingBatch:
     boxes: torch.Tensor  # (B, N, 4) normalized XYXY
     validity_mask: torch.Tensor  # (B, N) which entity slots are real
     spatial_masks: torch.Tensor  # (B, N, H_latent, W_latent) per-entity masks
-    text_embeds: torch.Tensor  # (B, N, D) pooled per-entity text features
+    text_embeds: torch.Tensor  # (B, N, D_text) pooled per-entity text features
+    image_embeds: Optional[torch.Tensor]  # (B, N, D_img) Florence-2 entity crop features
+    text_masks: torch.Tensor  # (B, N) per-entity text feature mask after random drop
+    image_masks: torch.Tensor  # (B, N) per-entity image feature mask after random drop
     max_entities: int

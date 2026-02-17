@@ -187,10 +187,15 @@ class Kolors(ImageModelFoundation):
         prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
         return prompt_embeds, pooled_prompt_embeds
 
+    def supports_grounding(self) -> bool:
+        return getattr(self.config, "max_grounding_entities", 0) > 0
+
     def model_predict(self, prepared_batch):
         # Check if U-REPA is enabled and we need to capture mid-block hidden states
         urepa = getattr(self, "urepa_regularizer", None)
         capture_mid_block = urepa is not None and urepa.enabled
+
+        cross_attention_kwargs = self._build_gligen_cross_attention_kwargs(prepared_batch.get("grounding_batch"))
 
         urepa_hidden = None
         if capture_mid_block:
@@ -213,6 +218,7 @@ class Kolors(ImageModelFoundation):
                         dtype=self.config.weight_dtype,
                     ),
                     added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+                    cross_attention_kwargs=cross_attention_kwargs,
                     return_dict=False,
                 )[0]
                 urepa_hidden = capture.get_captured()
@@ -232,6 +238,7 @@ class Kolors(ImageModelFoundation):
                     dtype=self.config.weight_dtype,
                 ),
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+                cross_attention_kwargs=cross_attention_kwargs,
                 return_dict=False,
             )[0]
 

@@ -187,10 +187,15 @@ class StableDiffusion1(ImageModelFoundation):
             )[0]
         }
 
+    def supports_grounding(self) -> bool:
+        return getattr(self.config, "max_grounding_entities", 0) > 0
+
     def model_predict(self, prepared_batch):
         # Check if U-REPA is enabled and we need to capture mid-block hidden states
         urepa = getattr(self, "urepa_regularizer", None)
         capture_mid_block = urepa is not None and urepa.enabled
+
+        cross_attention_kwargs = self._build_gligen_cross_attention_kwargs(prepared_batch.get("grounding_batch"))
 
         urepa_hidden = None
         if capture_mid_block:
@@ -208,6 +213,7 @@ class StableDiffusion1(ImageModelFoundation):
                         device=self.accelerator.device,
                         dtype=self.config.base_weight_dtype,
                     ),
+                    cross_attention_kwargs=cross_attention_kwargs,
                     return_dict=False,
                 )[0]
                 urepa_hidden = capture.get_captured()
@@ -222,6 +228,7 @@ class StableDiffusion1(ImageModelFoundation):
                     device=self.accelerator.device,
                     dtype=self.config.base_weight_dtype,
                 ),
+                cross_attention_kwargs=cross_attention_kwargs,
                 return_dict=False,
             )[0]
 

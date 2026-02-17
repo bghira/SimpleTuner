@@ -1164,6 +1164,30 @@ class ModelFoundation(ABC):
         """Returns True when the model supports spatial grounding annotations."""
         return False
 
+    @staticmethod
+    def _build_gligen_cross_attention_kwargs(grounding_batch) -> dict | None:
+        """Build ``cross_attention_kwargs`` dict for the UNet from a ``GroundingBatch``."""
+        if grounding_batch is None:
+            return None
+        if grounding_batch.image_embeds is not None:
+            return {
+                "gligen": {
+                    "boxes": grounding_batch.boxes,
+                    "masks": grounding_batch.validity_mask,
+                    "phrases_masks": grounding_batch.text_masks,
+                    "image_masks": grounding_batch.image_masks,
+                    "phrases_embeddings": grounding_batch.text_embeds,
+                    "image_embeddings": grounding_batch.image_embeds,
+                }
+            }
+        return {
+            "gligen": {
+                "boxes": grounding_batch.boxes,
+                "masks": grounding_batch.validity_mask,
+                "positive_embeddings": grounding_batch.text_embeds,
+            }
+        }
+
     def supports_audio_inputs(self) -> bool:
         return False
 
@@ -3550,6 +3574,32 @@ class ModelFoundation(ABC):
         if isinstance(conditioning_embeds, list) and len(conditioning_embeds) > 0:
             if not isinstance(conditioning_embeds[0], dict):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
+
+        # Move grounding batch tensors to device, with 10% CFG null drop
+        grounding_batch = batch.get("grounding_batch")
+        if grounding_batch is not None:
+            if random.random() < 0.1:
+                batch["grounding_batch"] = None
+            else:
+                from simpletuner.helpers.training.grounding.types import GroundingBatch
+
+                device = self.accelerator.device
+                dtype = self.config.weight_dtype
+                batch["grounding_batch"] = GroundingBatch(
+                    boxes=grounding_batch.boxes.to(device=device, dtype=dtype),
+                    validity_mask=grounding_batch.validity_mask.to(device=device, dtype=dtype),
+                    spatial_masks=grounding_batch.spatial_masks.to(device=device, dtype=dtype),
+                    text_embeds=grounding_batch.text_embeds.to(device=device, dtype=dtype),
+                    image_embeds=(
+                        grounding_batch.image_embeds.to(device=device, dtype=dtype)
+                        if grounding_batch.image_embeds is not None
+                        else None
+                    ),
+                    text_masks=grounding_batch.text_masks.to(device=device, dtype=dtype),
+                    image_masks=grounding_batch.image_masks.to(device=device, dtype=dtype),
+                    max_entities=grounding_batch.max_entities,
+                )
+
         return batch
 
     def _get_patch_size_for_dynamic_shift(self, noise_scheduler):

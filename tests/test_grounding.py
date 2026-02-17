@@ -207,6 +207,28 @@ class TestGroundingCollatePoolTextEncoderOutput(unittest.TestCase):
         result = GroundingCollate._pool_text_encoder_output({})
         self.assertEqual(result.shape, (768,))
 
+    def test_with_attention_mask_key(self):
+        """Test that 'attention_mask' (singular) key is recognized."""
+        seq_len = 10
+        dim = 512
+        embeds = torch.randn(1, seq_len, dim)
+        mask = torch.ones(1, seq_len)
+        mask[0, 5:] = 0
+        output = {"prompt_embeds": embeds, "attention_mask": mask}
+        result = GroundingCollate._pool_text_encoder_output(output)
+        self.assertEqual(result.shape, (dim,))
+
+    def test_with_prompt_attention_mask_key(self):
+        """Test that 'prompt_attention_mask' key is recognized."""
+        seq_len = 10
+        dim = 512
+        embeds = torch.randn(1, seq_len, dim)
+        mask = torch.ones(1, seq_len)
+        mask[0, 7:] = 0
+        output = {"prompt_embeds": embeds, "prompt_attention_mask": mask}
+        result = GroundingCollate._pool_text_encoder_output(output)
+        self.assertEqual(result.shape, (dim,))
+
 
 class TestGroundingBatchDataclass(unittest.TestCase):
     """Test GroundingBatch dataclass structure."""
@@ -217,13 +239,67 @@ class TestGroundingBatchDataclass(unittest.TestCase):
             validity_mask=torch.zeros(2, 4),
             spatial_masks=torch.zeros(2, 4, 8, 8),
             text_embeds=torch.zeros(2, 4, 768),
+            image_embeds=None,
+            text_masks=torch.zeros(2, 4),
+            image_masks=torch.zeros(2, 4),
             max_entities=4,
         )
         self.assertEqual(batch.boxes.shape, (2, 4, 4))
         self.assertEqual(batch.validity_mask.shape, (2, 4))
         self.assertEqual(batch.spatial_masks.shape, (2, 4, 8, 8))
         self.assertEqual(batch.text_embeds.shape, (2, 4, 768))
+        self.assertIsNone(batch.image_embeds)
+        self.assertEqual(batch.text_masks.shape, (2, 4))
+        self.assertEqual(batch.image_masks.shape, (2, 4))
         self.assertEqual(batch.max_entities, 4)
+
+    def test_creation_with_image_embeds(self):
+        batch = GroundingBatch(
+            boxes=torch.zeros(2, 4, 4),
+            validity_mask=torch.ones(2, 4),
+            spatial_masks=torch.zeros(2, 4, 8, 8),
+            text_embeds=torch.zeros(2, 4, 768),
+            image_embeds=torch.zeros(2, 4, 1024),
+            text_masks=torch.ones(2, 4),
+            image_masks=torch.ones(2, 4),
+            max_entities=4,
+        )
+        self.assertEqual(batch.image_embeds.shape, (2, 4, 1024))
+        self.assertEqual(batch.text_masks.shape, (2, 4))
+        self.assertEqual(batch.image_masks.shape, (2, 4))
+
+
+class TestRandomDropFeatures(unittest.TestCase):
+    """Test GroundingCollate._random_drop_features."""
+
+    def test_no_image_mode(self):
+        validity = torch.ones(2, 4)
+        text_masks, image_masks = GroundingCollate._random_drop_features(validity, has_image=False)
+        self.assertTrue(torch.equal(text_masks, validity))
+        self.assertTrue(torch.equal(image_masks, torch.zeros_like(validity)))
+
+    def test_with_image_mode_shapes(self):
+        validity = torch.ones(2, 4)
+        text_masks, image_masks = GroundingCollate._random_drop_features(validity, has_image=True)
+        self.assertEqual(text_masks.shape, (2, 4))
+        self.assertEqual(image_masks.shape, (2, 4))
+
+    def test_invalid_entities_stay_zero(self):
+        validity = torch.tensor([[1.0, 1.0, 0.0, 0.0]])
+        text_masks, image_masks = GroundingCollate._random_drop_features(validity, has_image=True)
+        # Invalid entities must remain 0 in both masks
+        self.assertEqual(text_masks[0, 2].item(), 0.0)
+        self.assertEqual(text_masks[0, 3].item(), 0.0)
+        self.assertEqual(image_masks[0, 2].item(), 0.0)
+        self.assertEqual(image_masks[0, 3].item(), 0.0)
+
+    def test_never_drops_both(self):
+        """Over many runs, valid entities should never have both masks zeroed."""
+        validity = torch.ones(1, 1)
+        for _ in range(100):
+            text_masks, image_masks = GroundingCollate._random_drop_features(validity, has_image=True)
+            # At least one of text or image mask should be active for valid entity
+            self.assertGreater(text_masks[0, 0].item() + image_masks[0, 0].item(), 0.0)
 
 
 class TestTrainingBatchCompat(unittest.TestCase):
