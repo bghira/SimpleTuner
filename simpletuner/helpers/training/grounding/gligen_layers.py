@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 import torch
 import torch.nn as nn
@@ -197,6 +198,37 @@ def apply_grounding_fuser(
     if text_part is not None:
         return torch.cat([text_part, image_part], dim=1)
     return image_part
+
+
+def enable_all_fusers(model: nn.Module, enabled: bool = True) -> int:
+    """Set ``enabled`` on all ``GatedSelfAttentionDense`` modules.
+
+    Returns the number of fusers found.
+    """
+    from diffusers.models.attention import GatedSelfAttentionDense
+
+    count = 0
+    for module in model.modules():
+        if isinstance(module, GatedSelfAttentionDense):
+            module.enabled = enabled
+            count += 1
+    return count
+
+
+def make_grounding_step_callback(
+    model: nn.Module,
+    num_inference_steps: int,
+    scheduled_sampling_beta: float = 0.3,
+) -> Callable:
+    """Return a ``callback_on_step_end`` that disables fusers after ``beta * num_steps``."""
+    cutoff = int(scheduled_sampling_beta * num_inference_steps)
+
+    def _callback(pipe, step, timestep, callback_kwargs):
+        if step == cutoff:
+            enable_all_fusers(model, enabled=False)
+        return callback_kwargs
+
+    return _callback
 
 
 def get_gligen_trainable_parameters(model: nn.Module) -> list[nn.Parameter]:

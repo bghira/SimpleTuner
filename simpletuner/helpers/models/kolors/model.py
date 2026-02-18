@@ -34,6 +34,7 @@ class Kolors(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.UNET
+    ATTENTION_KWARG_NAME = "cross_attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")

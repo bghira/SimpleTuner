@@ -213,6 +213,7 @@ class Wan(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
     _TAE_SPEC_21 = VideoTAESpec(filename="taew2_1.pth", description="Wan 2.1 / 2.2 14B VAE")

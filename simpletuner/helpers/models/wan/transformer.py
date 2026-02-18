@@ -849,7 +849,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 for r in routes
             ]
 
-        # GLIGEN grounding
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (attention_kwargs or {}).get("_grounding_kwargs")
         grounding_objs = None
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)

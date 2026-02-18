@@ -461,6 +461,9 @@ class ModelFoundation(ABC):
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
 
+    # Attention kwarg name used by the model's pipeline (for grounding tunneling)
+    ATTENTION_KWARG_NAME: str = "joint_attention_kwargs"
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         """Return the maximum number of blocks that can be swapped for Musubi block swap.
@@ -1251,6 +1254,18 @@ class ModelFoundation(ABC):
             "masks": masks,
             "positive_embeddings": grounding_batch.text_embeds,
         }
+
+    def _build_validation_grounding_pipeline_kwargs(self, grounding_batch) -> dict:
+        """Build pipeline kwargs that carry grounding data through to the model.
+
+        For UNet models: returns ``{"cross_attention_kwargs": {"gligen": {...}}}``.
+        For transformer models: returns ``{<ATTENTION_KWARG_NAME>: {"_grounding_kwargs": {...}}}``.
+        """
+        if self.MODEL_TYPE is ModelTypes.UNET:
+            return {"cross_attention_kwargs": self._build_gligen_cross_attention_kwargs(grounding_batch)}
+
+        position_net_kwargs = self._build_grounding_position_net_kwargs(grounding_batch)
+        return {self.ATTENTION_KWARG_NAME: {"_grounding_kwargs": position_net_kwargs}}
 
     def supports_audio_inputs(self) -> bool:
         return False

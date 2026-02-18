@@ -1550,7 +1550,9 @@ class LTX2VideoTransformer3DModel(
                 )
             force_keep_mask = force_keep_mask.to(device=hidden_states.device, dtype=torch.bool)
 
-        # GLIGEN grounding
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (attention_kwargs or {}).get("_grounding_kwargs")
         grounding_objs = None
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)

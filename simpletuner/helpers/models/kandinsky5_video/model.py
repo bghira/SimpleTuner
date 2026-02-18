@@ -44,6 +44,7 @@ class Kandinsky5Video(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLHunyuanVideoOptimized
     LATENT_CHANNEL_COUNT = 16
     DEFAULT_NOISE_SCHEDULER = "flow_matching"

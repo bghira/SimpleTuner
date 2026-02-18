@@ -36,6 +36,7 @@ class Auraflow(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")

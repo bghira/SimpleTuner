@@ -10,8 +10,10 @@ import torch
 from simpletuner.helpers.training.grounding.gligen_layers import (
     _extract_block_dims,
     apply_grounding_fuser,
+    enable_all_fusers,
     get_gligen_trainable_parameters,
     inject_gligen_layers,
+    make_grounding_step_callback,
 )
 from simpletuner.helpers.training.grounding.types import GroundingBatch
 
@@ -411,6 +413,144 @@ class TestPositionNetForward(unittest.TestCase):
         )
         # text-image mode concatenates text and image objects: (B, 2N, out_dim)
         self.assertEqual(objs.shape, (B, 2 * N, 768))
+
+
+class TestEnableAllFusers(unittest.TestCase):
+    """Test enable_all_fusers utility."""
+
+    def _make_model_with_fusers(self, n_blocks=4, dim=768, n_heads=8):
+        from diffusers.models.attention import BasicTransformerBlock
+
+        model = torch.nn.Module()
+        blocks = []
+        for _ in range(n_blocks):
+            block = BasicTransformerBlock(
+                dim=dim,
+                num_attention_heads=n_heads,
+                attention_head_dim=dim // n_heads,
+                cross_attention_dim=dim,
+            )
+            blocks.append(block)
+        model.blocks = torch.nn.ModuleList(blocks)
+        inject_gligen_layers(model, positive_len=dim, cross_attention_dim=dim)
+        return model
+
+    def test_disable_all_fusers(self):
+        model = self._make_model_with_fusers(n_blocks=3)
+        count = enable_all_fusers(model, enabled=False)
+        self.assertEqual(count, 3)
+        from diffusers.models.attention import GatedSelfAttentionDense
+
+        for m in model.modules():
+            if isinstance(m, GatedSelfAttentionDense):
+                self.assertFalse(m.enabled)
+
+    def test_re_enable_all_fusers(self):
+        model = self._make_model_with_fusers(n_blocks=3)
+        enable_all_fusers(model, enabled=False)
+        count = enable_all_fusers(model, enabled=True)
+        self.assertEqual(count, 3)
+        from diffusers.models.attention import GatedSelfAttentionDense
+
+        for m in model.modules():
+            if isinstance(m, GatedSelfAttentionDense):
+                self.assertTrue(m.enabled)
+
+    def test_no_fusers_returns_zero(self):
+        model = torch.nn.Module()
+        model.linear = torch.nn.Linear(10, 10)
+        count = enable_all_fusers(model, enabled=False)
+        self.assertEqual(count, 0)
+
+
+class TestMakeGroundingStepCallback(unittest.TestCase):
+    """Test make_grounding_step_callback factory."""
+
+    def _make_model_with_fusers(self):
+        from diffusers.models.attention import BasicTransformerBlock
+
+        model = torch.nn.Module()
+        block = BasicTransformerBlock(dim=768, num_attention_heads=8, attention_head_dim=96, cross_attention_dim=768)
+        model.blocks = torch.nn.ModuleList([block])
+        inject_gligen_layers(model, positive_len=768, cross_attention_dim=768)
+        return model
+
+    def test_callback_disables_at_cutoff(self):
+        model = self._make_model_with_fusers()
+        # beta=0.3, steps=10 -> cutoff at step 3
+        callback = make_grounding_step_callback(model, num_inference_steps=10, scheduled_sampling_beta=0.3)
+        from diffusers.models.attention import GatedSelfAttentionDense
+
+        # Before cutoff: fusers should remain enabled
+        for step in range(3):
+            result = callback(None, step, None, {})
+            self.assertIsInstance(result, dict)
+            for m in model.modules():
+                if isinstance(m, GatedSelfAttentionDense):
+                    self.assertTrue(m.enabled, f"Fuser should be enabled at step {step}")
+
+        # At cutoff step 3: fusers should be disabled
+        callback(None, 3, None, {})
+        for m in model.modules():
+            if isinstance(m, GatedSelfAttentionDense):
+                self.assertFalse(m.enabled)
+
+    def test_callback_returns_kwargs(self):
+        model = self._make_model_with_fusers()
+        callback = make_grounding_step_callback(model, num_inference_steps=10)
+        result = callback(None, 0, None, {"latents": torch.zeros(1)})
+        self.assertIn("latents", result)
+
+
+class TestGroundingBatchTo(unittest.TestCase):
+    """Test GroundingBatch.to() method."""
+
+    def _make_batch(self, device="cpu", dtype=torch.float32):
+        return GroundingBatch(
+            boxes=torch.zeros(1, 2, 4, device=device, dtype=dtype),
+            validity_mask=torch.ones(1, 2, device=device, dtype=dtype),
+            spatial_masks=torch.zeros(1, 2, 8, 8, device=device, dtype=dtype),
+            text_embeds=torch.randn(1, 2, 768, device=device, dtype=dtype),
+            image_embeds=torch.randn(1, 2, 512, device=device, dtype=dtype),
+            text_masks=torch.ones(1, 2, device=device, dtype=dtype),
+            image_masks=torch.ones(1, 2, device=device, dtype=dtype),
+            max_entities=2,
+            num_frames=1,
+        )
+
+    def test_to_preserves_shapes(self):
+        batch = self._make_batch()
+        moved = batch.to(device=torch.device("cpu"), dtype=torch.float16)
+        self.assertEqual(moved.boxes.shape, batch.boxes.shape)
+        self.assertEqual(moved.text_embeds.shape, batch.text_embeds.shape)
+        self.assertEqual(moved.image_embeds.shape, batch.image_embeds.shape)
+
+    def test_to_changes_dtype(self):
+        batch = self._make_batch(dtype=torch.float32)
+        moved = batch.to(device=torch.device("cpu"), dtype=torch.float16)
+        self.assertEqual(moved.boxes.dtype, torch.float16)
+        self.assertEqual(moved.text_embeds.dtype, torch.float16)
+
+    def test_to_preserves_scalars(self):
+        batch = self._make_batch()
+        moved = batch.to(device=torch.device("cpu"))
+        self.assertEqual(moved.max_entities, batch.max_entities)
+        self.assertEqual(moved.num_frames, batch.num_frames)
+
+    def test_to_with_none_image_embeds(self):
+        batch = GroundingBatch(
+            boxes=torch.zeros(1, 2, 4),
+            validity_mask=torch.ones(1, 2),
+            spatial_masks=torch.zeros(1, 2, 8, 8),
+            text_embeds=torch.randn(1, 2, 768),
+            image_embeds=None,
+            text_masks=torch.ones(1, 2),
+            image_masks=torch.zeros(1, 2),
+            max_entities=2,
+        )
+        moved = batch.to(device=torch.device("cpu"), dtype=torch.float16)
+        self.assertIsNone(moved.image_embeds)
+        self.assertEqual(moved.text_embeds.dtype, torch.float16)
 
 
 class TestStateTrackerGroundingCache(unittest.TestCase):

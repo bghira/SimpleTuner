@@ -622,7 +622,9 @@ class LTXVideoTransformer3DModel(
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
-        # GLIGEN grounding
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (attention_kwargs or {}).get("_grounding_kwargs")
         grounding_objs = None
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)

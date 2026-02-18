@@ -63,6 +63,7 @@ class LTXVideo2(VideoModelFoundation):
     DEFAULT_AUDIO_CHANNELS = 2
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLLTX2Video
     LATENT_CHANNEL_COUNT = 128
     DEFAULT_NOISE_SCHEDULER = "flow_matching"

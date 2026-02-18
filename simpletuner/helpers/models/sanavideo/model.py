@@ -43,6 +43,7 @@ class SanaVideo(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
 

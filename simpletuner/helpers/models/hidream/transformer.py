@@ -1471,7 +1471,9 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             ids = torch.cat((img_ids, txt_ids), dim=1)
             rope = self.pe_embedder(ids)
 
-        # GLIGEN grounding
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (joint_attention_kwargs or {}).get("_grounding_kwargs")
         grounding_objs = None
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)

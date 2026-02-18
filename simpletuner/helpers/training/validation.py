@@ -1017,6 +1017,77 @@ def _stitch_single_pair(left_image, right_image, separator_width=5, labels=None)
     return new_image
 
 
+def _build_validation_grounding_batch(
+    image_path: str,
+    data_backend_id: str,
+    embed_cache,
+    max_entities: int,
+    vae_scale_factor: int,
+    grounding_image_cache=None,
+):
+    """Build a single-sample ``GroundingBatch`` for validation inference.
+
+    Returns ``None`` when no bbox sidecar data exists for *image_path*.
+    """
+    from simpletuner.helpers.training.grounding.collate import GroundingCollate
+    from simpletuner.helpers.training.grounding.metadata import BboxMetadata
+
+    # Locate the .bbox sidecar file next to the image
+    sidecar_path = Path(image_path).with_suffix(".bbox")
+    if not sidecar_path.exists():
+        return None
+
+    try:
+        entities = BboxMetadata.from_file(str(sidecar_path))
+    except Exception:
+        logger.debug(f"Failed to parse bbox sidecar for validation: {sidecar_path}")
+        return None
+
+    if not entities:
+        return None
+
+    # Build a single-sample examples list matching the collate interface
+    metadata = StateTracker.get_metadata_by_filepath(str(image_path), data_backend_id) or {}
+    target_size = metadata.get("target_size", (512, 512))
+    entity_dicts = [{"label": e.label, "bbox": list(e.bbox)} for e in entities]
+    example = {
+        "image_path": str(image_path),
+        "image_metadata": {
+            "target_size": target_size,
+            "bbox_entities": entity_dicts,
+        },
+    }
+
+    collate = GroundingCollate(max_entities=max_entities, vae_scale_factor=vae_scale_factor)
+    grounding_batch = collate.build_batch(
+        examples=[example],
+        data_backend_id=data_backend_id,
+        text_embed_cache=embed_cache,
+        grounding_image_cache=grounding_image_cache,
+    )
+
+    if grounding_batch is None:
+        return None
+
+    # Disable random feature dropping for inference: all valid entities contribute
+    grounding_batch = type(grounding_batch)(
+        boxes=grounding_batch.boxes,
+        validity_mask=grounding_batch.validity_mask,
+        spatial_masks=grounding_batch.spatial_masks,
+        text_embeds=grounding_batch.text_embeds,
+        image_embeds=grounding_batch.image_embeds,
+        text_masks=grounding_batch.validity_mask.clone(),
+        image_masks=(
+            grounding_batch.validity_mask.clone()
+            if grounding_batch.image_embeds is not None
+            else grounding_batch.image_masks
+        ),
+        max_entities=grounding_batch.max_entities,
+        num_frames=grounding_batch.num_frames,
+    )
+    return grounding_batch
+
+
 @dataclass(frozen=True)
 class _ValidationWorkItem:
     index: int
@@ -1024,6 +1095,8 @@ class _ValidationWorkItem:
     prompt: str
     conditioning: Any
     adapter_strength: float | None
+    image_path: str | None = None
+    data_backend_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2527,6 +2600,7 @@ class Validation:
             conditioning: Any = None
             shortname: str | None = None
             adapter_strength: float | None = None
+            image_path: str | None = None
             if isinstance(entry, PromptLibraryEntry):
                 prompt_text = entry.prompt
                 adapter_strength = entry.adapter_strength
@@ -2546,7 +2620,7 @@ class Validation:
                 elif len(entry) == 3 and isinstance(entry[2], Image.Image):
                     shortname, prompt_text, conditioning = entry
                 elif len(entry) == 4 and isinstance(entry[3], Image.Image):
-                    shortname, prompt_text, _, conditioning = entry
+                    shortname, prompt_text, image_path, conditioning = entry
                 else:
                     candidate_shortname = entry[0] if len(entry) > 0 else None
                     candidate_prompt = entry[1] if len(entry) > 1 else prompt_text
@@ -2559,6 +2633,10 @@ class Validation:
                     shortname = f"validation_{idx}"
             if not isinstance(prompt_text, str):
                 prompt_text = str(prompt_text)
+            # Derive data_backend_id from the shortname prefix (format: "{backend_id}_{idx}")
+            data_backend_id = None
+            if image_path is not None and shortname and "_" in shortname:
+                data_backend_id = shortname.rsplit("_", 1)[0]
             work_items.append(
                 _ValidationWorkItem(
                     index=idx,
@@ -2566,6 +2644,8 @@ class Validation:
                     prompt=prompt_text,
                     conditioning=conditioning,
                     adapter_strength=adapter_strength,
+                    image_path=str(image_path) if image_path is not None else None,
+                    data_backend_id=data_backend_id,
                 )
             )
         return work_items
@@ -2654,6 +2734,8 @@ class Validation:
             validation_type,
             adapter_strength=item.adapter_strength,
             cache_shortname=item.shortname,
+            image_path=item.image_path,
+            data_backend_id=item.data_backend_id,
         )
         return {
             "index": item.index,
@@ -3167,6 +3249,8 @@ class Validation:
         validation_type=None,
         adapter_strength: float | None = None,
         cache_shortname: str | None = None,
+        image_path: str | None = None,
+        data_backend_id: str | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -3415,6 +3499,25 @@ class Validation:
                 if self.config.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = self.config.sana_complex_human_instruction
 
+                # GLIGEN grounding: build grounding kwargs and fuser scheduling callback
+                _grounding_active = False
+                if self.model.supports_grounding() and image_path and data_backend_id:
+                    grounding_batch = _build_validation_grounding_batch(
+                        image_path=image_path,
+                        data_backend_id=data_backend_id,
+                        embed_cache=self.embed_cache,
+                        max_entities=getattr(self.config, "max_grounding_entities", 4),
+                        vae_scale_factor=self.model.vae_scale_factor(),
+                    )
+                    if grounding_batch is not None:
+                        grounding_batch = grounding_batch.to(
+                            device=self.inference_device,
+                            dtype=self.config.weight_dtype,
+                        )
+                        grounding_pipeline_kwargs = self.model._build_validation_grounding_pipeline_kwargs(grounding_batch)
+                        pipeline_kwargs.update(grounding_pipeline_kwargs)
+                        _grounding_active = True
+
                 validation_types = self._validation_types()
                 all_validation_type_results = {}
                 all_validation_type_audio = {}
@@ -3442,6 +3545,19 @@ class Validation:
                         pipeline_kwargs["num_videos_per_prompt"] = pipeline_kwargs.pop("num_images_per_prompt")
                     logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
 
+                    # Set up grounding fuser scheduling + enable fusers before each run
+                    if _grounding_active:
+                        from simpletuner.helpers.training.grounding.gligen_layers import (
+                            enable_all_fusers,
+                            make_grounding_step_callback,
+                        )
+
+                        denoiser = getattr(self.model.pipeline, "transformer", None) or getattr(
+                            self.model.pipeline, "unet", None
+                        )
+                        if denoiser is not None:
+                            enable_all_fusers(denoiser, enabled=True)
+
                     # Add abort checking callback for pipeline execution
                     if "callback_on_step_end" in call_kwargs:
 
@@ -3449,8 +3565,19 @@ class Validation:
                             self._check_abort()
                             return callback_kwargs
 
-                        # Only set callback if not already provided
-                        if "callback_on_step_end" not in pipeline_kwargs:
+                        # Build combined callback: grounding scheduling + abort check
+                        if _grounding_active and denoiser is not None:
+                            _grounding_cb = make_grounding_step_callback(
+                                denoiser, num_inference_steps, scheduled_sampling_beta=0.3
+                            )
+
+                            def _combined_callback(pipe, step_index, timestep, callback_kwargs):
+                                callback_kwargs = _grounding_cb(pipe, step_index, timestep, callback_kwargs)
+                                self._check_abort()
+                                return callback_kwargs
+
+                            pipeline_kwargs["callback_on_step_end"] = _combined_callback
+                        elif "callback_on_step_end" not in pipeline_kwargs:
                             pipeline_kwargs["callback_on_step_end"] = abort_check_callback
 
                     # remove any kwargs that are not in the pipeline call
@@ -3521,6 +3648,10 @@ class Validation:
                                 all_validation_type_audio[current_validation_type] = audio_results
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
+
+                    # Re-enable fusers after pipeline completes (may have been disabled by scheduled sampling)
+                    if _grounding_active and denoiser is not None:
+                        enable_all_fusers(denoiser, enabled=True)
 
                     # Check for abort after pipeline completes
                     self._check_abort()

@@ -857,6 +857,7 @@ class Kandinsky5Transformer3DModel(
             force_keep_mask = force_keep_mask.to(device=visual_embed.device, dtype=torch.bool)
 
         # GLIGEN grounding
+        # (no attention_kwargs tunnel for Kandinsky5 — grounding_kwargs is passed directly)
         grounding_objs = None
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)

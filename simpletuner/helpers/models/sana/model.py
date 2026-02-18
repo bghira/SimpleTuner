@@ -42,6 +42,7 @@ class Sana(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderDC
     LATENT_CHANNEL_COUNT = 32
     # The safe diffusers default value for LoRA training targets.
