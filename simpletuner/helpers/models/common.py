@@ -1165,7 +1165,8 @@ class ModelFoundation(ABC):
 
     def supports_grounding(self) -> bool:
         """Returns True when the model supports spatial grounding annotations."""
-        return getattr(self.config, "max_grounding_entities", 0) > 0
+        val = getattr(self.config, "max_grounding_entities", 0)
+        return isinstance(val, int) and val > 0
 
     @staticmethod
     def _build_gligen_cross_attention_kwargs(grounding_batch) -> dict | None:
