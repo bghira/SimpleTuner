@@ -357,5 +357,147 @@ class TestDatasetTypeGrounding(unittest.TestCase):
         self.assertEqual(result, DatasetType.GROUNDING)
 
 
+class TestGroundingCollateBuildBatch(unittest.TestCase):
+    """Test GroundingCollate.build_batch reads bbox_entities from the example dict."""
+
+    def _make_mock_text_embed_cache(self, embed_dim=768):
+        """Return a minimal mock text embed cache."""
+
+        class _MockCache:
+            def compute_prompt_embeddings_with_model(self, prompt_records):
+                return {"pooled_prompt_embeds": torch.randn(1, embed_dim)}
+
+        return _MockCache()
+
+    def _patch_state_tracker(self):
+        """Register a fake data backend so _get_entity_embed doesn't crash."""
+        from unittest.mock import patch
+
+        return patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend",
+            return_value={"instance_data_dir": "/fake"},
+        )
+
+    def test_build_batch_reads_bbox_entities_from_top_level(self):
+        """bbox_entities should be read from the top-level example dict,
+        not from a nested 'image_metadata' key."""
+        collate = GroundingCollate(max_entities=2, vae_scale_factor=8)
+        examples = [
+            {
+                "image_path": "/fake/img.png",
+                "target_size": (512, 512),
+                "bbox_entities": [
+                    {"label": "cat", "bbox": [0.1, 0.1, 0.5, 0.5]},
+                ],
+            }
+        ]
+        cache = self._make_mock_text_embed_cache()
+        with self._patch_state_tracker():
+            result = collate.build_batch(
+                examples=examples,
+                data_backend_id="test",
+                text_embed_cache=cache,
+            )
+        self.assertIsNotNone(result, "build_batch should return a GroundingBatch, not None")
+        self.assertEqual(result.boxes.shape, (1, 2, 4))
+        self.assertAlmostEqual(result.validity_mask[0, 0].item(), 1.0)
+        self.assertAlmostEqual(result.validity_mask[0, 1].item(), 0.0)
+
+    def test_build_batch_no_bbox_entities_returns_none(self):
+        """When no examples have bbox_entities, build_batch returns None."""
+        collate = GroundingCollate(max_entities=2, vae_scale_factor=8)
+        examples = [
+            {
+                "image_path": "/fake/img.png",
+                "target_size": (512, 512),
+            }
+        ]
+        cache = self._make_mock_text_embed_cache()
+        with self._patch_state_tracker():
+            result = collate.build_batch(
+                examples=examples,
+                data_backend_id="test",
+                text_embed_cache=cache,
+            )
+        self.assertIsNone(result)
+
+
+class TestBuildInlineGroundingBatch(unittest.TestCase):
+    """Test _build_inline_grounding_batch via _build_validation_grounding_batch inline path."""
+
+    def _make_mock_embed_cache(self, embed_dim=768):
+        class _MockCache:
+            def compute_prompt_embeddings_with_model(self, prompt_records):
+                return {"pooled_prompt_embeds": torch.randn(1, embed_dim)}
+
+        return _MockCache()
+
+    def test_inline_batch_shape(self):
+        from simpletuner.helpers.training.validation import _build_validation_grounding_batch
+
+        cache = self._make_mock_embed_cache()
+        bbox_entities = [
+            {"label": "cat", "bbox": [0.2, 0.3, 0.6, 0.8]},
+            {"label": "table", "bbox": [0.0, 0.5, 1.0, 1.0]},
+        ]
+        batch = _build_validation_grounding_batch(
+            embed_cache=cache,
+            max_entities=4,
+            vae_scale_factor=8,
+            bbox_entities=bbox_entities,
+            shortname="test_entry",
+            target_size=(512, 512),
+        )
+        self.assertIsNotNone(batch)
+        self.assertEqual(batch.boxes.shape, (1, 4, 4))
+        self.assertEqual(batch.validity_mask.shape, (1, 4))
+        self.assertAlmostEqual(batch.validity_mask[0, 0].item(), 1.0)
+        self.assertAlmostEqual(batch.validity_mask[0, 1].item(), 1.0)
+        self.assertAlmostEqual(batch.validity_mask[0, 2].item(), 0.0)
+        self.assertAlmostEqual(batch.validity_mask[0, 3].item(), 0.0)
+        self.assertEqual(batch.spatial_masks.shape, (1, 4, 64, 64))
+        self.assertEqual(batch.text_embeds.shape, (1, 4, 768))
+        self.assertIsNone(batch.image_embeds)
+        # text_masks should equal validity_mask (no random drop for inference)
+        self.assertTrue(torch.equal(batch.text_masks, batch.validity_mask))
+        self.assertTrue(torch.equal(batch.image_masks, torch.zeros_like(batch.validity_mask)))
+
+    def test_inline_batch_entity_key_format(self):
+        """Verify that embed retrieval uses the expected key format."""
+        from simpletuner.helpers.training.validation import _build_validation_grounding_batch
+
+        captured_keys = []
+
+        class _SpyCache:
+            def compute_prompt_embeddings_with_model(self, prompt_records):
+                for r in prompt_records:
+                    captured_keys.append(r.get("key"))
+                return {"pooled_prompt_embeds": torch.randn(1, 768)}
+
+        cache = _SpyCache()
+        bbox_entities = [{"label": "dog", "bbox": [0.1, 0.1, 0.9, 0.9]}]
+        _build_validation_grounding_batch(
+            embed_cache=cache,
+            max_entities=2,
+            vae_scale_factor=8,
+            bbox_entities=bbox_entities,
+            shortname="my_prompt",
+            target_size=(256, 256),
+        )
+        self.assertIn("__grounding_val_my_prompt__bbox_0", captured_keys)
+
+    def test_inline_returns_none_without_entities(self):
+        """When bbox_entities is None and no image_path, returns None."""
+        from simpletuner.helpers.training.validation import _build_validation_grounding_batch
+
+        cache = self._make_mock_embed_cache()
+        batch = _build_validation_grounding_batch(
+            embed_cache=cache,
+            max_entities=4,
+            vae_scale_factor=8,
+        )
+        self.assertIsNone(batch)
+
+
 if __name__ == "__main__":
     unittest.main()

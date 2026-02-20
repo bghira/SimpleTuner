@@ -88,6 +88,145 @@ class PromptLibraryServiceTestCase(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_bbox_entities_round_trip(self) -> None:
+        entities = [
+            {"label": "cat", "bbox": [0.2, 0.3, 0.6, 0.8]},
+            {"label": "table", "bbox": [0.0, 0.5, 1.0, 1.0]},
+        ]
+        entries = {
+            "cat_table": {
+                "prompt": "a cat on a table",
+                "bbox_entities": entities,
+            },
+        }
+        result = self.service.save_library("user_prompt_library-bbox.json", entries)
+        saved = result["entries"]["cat_table"]
+        self.assertEqual(saved["prompt"], "a cat on a table")
+        self.assertEqual(len(saved["bbox_entities"]), 2)
+        self.assertEqual(saved["bbox_entities"][0]["label"], "cat")
+        self.assertAlmostEqual(saved["bbox_entities"][0]["bbox"][0], 0.2)
+
+        payload = self.service.read_library("user_prompt_library-bbox.json")
+        reloaded = payload["entries"]["cat_table"]
+        self.assertEqual(len(reloaded["bbox_entities"]), 2)
+        self.assertEqual(reloaded["bbox_entities"][1]["label"], "table")
+
+
+class PromptLibraryEntryBboxTestCase(unittest.TestCase):
+    def test_from_payload_with_bbox_entities(self) -> None:
+        payload = {
+            "prompt": "test prompt",
+            "bbox_entities": [
+                {"label": "dog", "bbox": [0.1, 0.1, 0.5, 0.5]},
+            ],
+        }
+        entry = PromptLibraryEntry.from_payload(payload)
+        self.assertEqual(entry.prompt, "test prompt")
+        self.assertIsNotNone(entry.bbox_entities)
+        self.assertEqual(len(entry.bbox_entities), 1)
+        self.assertEqual(entry.bbox_entities[0]["label"], "dog")
+
+    def test_from_payload_string_has_no_bbox(self) -> None:
+        entry = PromptLibraryEntry.from_payload("simple prompt")
+        self.assertIsNone(entry.bbox_entities)
+
+    def test_from_payload_without_bbox_has_none(self) -> None:
+        entry = PromptLibraryEntry.from_payload({"prompt": "no bbox"})
+        self.assertIsNone(entry.bbox_entities)
+
+    def test_bbox_entities_not_list_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload({"prompt": "p", "bbox_entities": "bad"})
+
+    def test_bbox_entities_item_not_dict_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload({"prompt": "p", "bbox_entities": ["bad"]})
+
+    def test_bbox_entities_missing_label_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_entities": [{"bbox": [0.1, 0.1, 0.5, 0.5]}],
+                }
+            )
+
+    def test_bbox_entities_missing_bbox_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_entities": [{"label": "a"}],
+                }
+            )
+
+    def test_bbox_entities_wrong_length_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_entities": [{"label": "a", "bbox": [0.1, 0.1, 0.5]}],
+                }
+            )
+
+    def test_bbox_entities_degenerate_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_entities": [{"label": "a", "bbox": [0.5, 0.5, 0.5, 0.5]}],
+                }
+            )
+
+    def test_bbox_entities_clamping(self) -> None:
+        entry = PromptLibraryEntry.from_payload(
+            {
+                "prompt": "p",
+                "bbox_entities": [{"label": "a", "bbox": [-0.1, -0.2, 1.5, 1.3]}],
+            }
+        )
+        bbox = entry.bbox_entities[0]["bbox"]
+        self.assertAlmostEqual(bbox[0], 0.0)
+        self.assertAlmostEqual(bbox[1], 0.0)
+        self.assertAlmostEqual(bbox[2], 1.0)
+        self.assertAlmostEqual(bbox[3], 1.0)
+
+    def test_serialise_includes_bbox_entities(self) -> None:
+        entry = PromptLibraryEntry(
+            prompt="test",
+            bbox_entities=[{"label": "cat", "bbox": [0.1, 0.2, 0.3, 0.4]}],
+        )
+        data = entry.serialise()
+        self.assertIn("bbox_entities", data)
+        self.assertEqual(data["bbox_entities"][0]["label"], "cat")
+
+    def test_serialise_omits_bbox_when_none(self) -> None:
+        entry = PromptLibraryEntry(prompt="test")
+        data = entry.serialise()
+        self.assertNotIn("bbox_entities", data)
+
+    def test_serialise_entries_uses_dict_for_bbox(self) -> None:
+        entries = {
+            "plain": PromptLibraryEntry(prompt="simple"),
+            "grounded": PromptLibraryEntry(
+                prompt="with bbox",
+                bbox_entities=[{"label": "a", "bbox": [0.1, 0.1, 0.5, 0.5]}],
+            ),
+        }
+        result = PromptLibraryService.serialise_entries(entries)
+        self.assertEqual(result["plain"], "simple")
+        self.assertIsInstance(result["grounded"], dict)
+        self.assertIn("bbox_entities", result["grounded"])
+
+    def test_empty_bbox_entities_list_becomes_none(self) -> None:
+        entry = PromptLibraryEntry.from_payload(
+            {
+                "prompt": "p",
+                "bbox_entities": [],
+            }
+        )
+        self.assertIsNone(entry.bbox_entities)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -166,18 +166,40 @@ class TestGetGligenTrainableParameters(unittest.TestCase):
             self.assertFalse(p.requires_grad)
 
 
+def _make_model_stub(text_image_mode=False, model_type=None):
+    """Create a stub that exposes grounding builder methods as bound methods."""
+    from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes
+
+    stub = MagicMock(spec=ImageModelFoundation)
+    component = MagicMock()
+    if text_image_mode:
+        component.position_net = MagicMock(spec=["null_text_feature", "null_image_feature"])
+    else:
+        component.position_net = MagicMock(spec=["null_positive_feature"])
+    stub.get_trained_component = MagicMock(return_value=component)
+    if model_type is not None:
+        stub.MODEL_TYPE = model_type
+    # Bind the real methods to the mock
+    for method_name in (
+        "_build_gligen_cross_attention_kwargs",
+        "_build_grounding_position_net_kwargs",
+        "_build_validation_grounding_pipeline_kwargs",
+    ):
+        setattr(stub, method_name, getattr(ImageModelFoundation, method_name).__get__(stub))
+    stub._cfg_double_gligen_dict = ImageModelFoundation._cfg_double_gligen_dict
+    return stub
+
+
 class TestBuildGligenCrossAttentionKwargs(unittest.TestCase):
-    """Test _build_gligen_cross_attention_kwargs static method."""
+    """Test _build_gligen_cross_attention_kwargs."""
 
     def test_none_grounding_batch(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
-        result = ImageModelFoundation._build_gligen_cross_attention_kwargs(None)
+        stub = _make_model_stub()
+        result = stub._build_gligen_cross_attention_kwargs(None)
         self.assertIsNone(result)
 
     def test_text_only_mode(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
+        stub = _make_model_stub(text_image_mode=False)
         batch = GroundingBatch(
             boxes=torch.zeros(1, 2, 4),
             validity_mask=torch.ones(1, 2),
@@ -188,14 +210,13 @@ class TestBuildGligenCrossAttentionKwargs(unittest.TestCase):
             image_masks=torch.zeros(1, 2),
             max_entities=2,
         )
-        result = ImageModelFoundation._build_gligen_cross_attention_kwargs(batch)
+        result = stub._build_gligen_cross_attention_kwargs(batch)
         self.assertIn("gligen", result)
         self.assertIn("positive_embeddings", result["gligen"])
         self.assertNotIn("phrases_embeddings", result["gligen"])
 
     def test_text_image_mode(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
+        stub = _make_model_stub(text_image_mode=True)
         batch = GroundingBatch(
             boxes=torch.zeros(1, 2, 4),
             validity_mask=torch.ones(1, 2),
@@ -206,25 +227,46 @@ class TestBuildGligenCrossAttentionKwargs(unittest.TestCase):
             image_masks=torch.ones(1, 2),
             max_entities=2,
         )
-        result = ImageModelFoundation._build_gligen_cross_attention_kwargs(batch)
+        result = stub._build_gligen_cross_attention_kwargs(batch)
         self.assertIn("gligen", result)
         self.assertIn("phrases_embeddings", result["gligen"])
         self.assertIn("image_embeddings", result["gligen"])
         self.assertNotIn("positive_embeddings", result["gligen"])
+
+    def test_text_image_mode_without_image_embeds(self):
+        """When position_net is text-image but image_embeds is None, should
+        use text-image format with zero image embeddings."""
+        stub = _make_model_stub(text_image_mode=True)
+        batch = GroundingBatch(
+            boxes=torch.zeros(1, 2, 4),
+            validity_mask=torch.ones(1, 2),
+            spatial_masks=torch.zeros(1, 2, 8, 8),
+            text_embeds=torch.randn(1, 2, 768),
+            image_embeds=None,
+            text_masks=torch.ones(1, 2),
+            image_masks=torch.zeros(1, 2),
+            max_entities=2,
+        )
+        result = stub._build_gligen_cross_attention_kwargs(batch)
+        self.assertIn("gligen", result)
+        self.assertIn("phrases_embeddings", result["gligen"])
+        self.assertIn("image_embeddings", result["gligen"])
+        self.assertNotIn("positive_embeddings", result["gligen"])
+        # image_embeddings should be zeros, image_masks should be zeros
+        self.assertTrue(torch.all(result["gligen"]["image_embeddings"] == 0))
+        self.assertTrue(torch.all(result["gligen"]["image_masks"] == 0))
 
 
 class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
     """Test _build_grounding_position_net_kwargs for transformer models."""
 
     def test_none_returns_none(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
-        result = ImageModelFoundation._build_grounding_position_net_kwargs(None)
+        stub = _make_model_stub()
+        result = stub._build_grounding_position_net_kwargs(None)
         self.assertIsNone(result)
 
     def test_image_text_only(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
+        stub = _make_model_stub(text_image_mode=False)
         batch = GroundingBatch(
             boxes=torch.zeros(2, 4, 4),
             validity_mask=torch.ones(2, 4),
@@ -235,7 +277,7 @@ class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
             image_masks=torch.zeros(2, 4),
             max_entities=4,
         )
-        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch)
+        result = stub._build_grounding_position_net_kwargs(batch)
         self.assertIn("boxes", result)
         self.assertIn("masks", result)
         self.assertIn("positive_embeddings", result)
@@ -243,8 +285,7 @@ class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
         self.assertEqual(result["boxes"].shape, (2, 4, 4))
 
     def test_image_text_image_mode(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
+        stub = _make_model_stub(text_image_mode=True)
         batch = GroundingBatch(
             boxes=torch.zeros(2, 4, 4),
             validity_mask=torch.ones(2, 4),
@@ -255,14 +296,13 @@ class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
             image_masks=torch.ones(2, 4),
             max_entities=4,
         )
-        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch)
+        result = stub._build_grounding_position_net_kwargs(batch)
         self.assertIn("phrases_embeddings", result)
         self.assertIn("image_embeddings", result)
         self.assertNotIn("positive_embeddings", result)
 
     def test_video_flatten_temporal(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
+        stub = _make_model_stub(text_image_mode=False)
         B, T, N = 2, 4, 3
         batch = GroundingBatch(
             boxes=torch.zeros(B, T, N, 4),
@@ -275,15 +315,14 @@ class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
             max_entities=N,
             num_frames=T,
         )
-        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch, flatten_temporal=True)
+        result = stub._build_grounding_position_net_kwargs(batch, flatten_temporal=True)
         # (B, T, N, ...) -> (B*T, N, ...)
         self.assertEqual(result["boxes"].shape, (B * T, N, 4))
         self.assertEqual(result["masks"].shape, (B * T, N))
         self.assertEqual(result["positive_embeddings"].shape, (B * T, N, 768))
 
     def test_video_no_flatten(self):
-        from simpletuner.helpers.models.common import ImageModelFoundation
-
+        stub = _make_model_stub(text_image_mode=False)
         B, T, N = 2, 4, 3
         batch = GroundingBatch(
             boxes=torch.zeros(B, T, N, 4),
@@ -296,7 +335,7 @@ class TestBuildGroundingPositionNetKwargs(unittest.TestCase):
             max_entities=N,
             num_frames=T,
         )
-        result = ImageModelFoundation._build_grounding_position_net_kwargs(batch, flatten_temporal=False)
+        result = stub._build_grounding_position_net_kwargs(batch, flatten_temporal=False)
         # No flattening: shapes remain (B, T, N, ...)
         self.assertEqual(result["boxes"].shape, (B, T, N, 4))
 
@@ -572,6 +611,106 @@ class TestStateTrackerGroundingCache(unittest.TestCase):
 
         result = StateTracker.get_grounding_image_embed_cache("nonexistent_backend")
         self.assertIsNone(result)
+
+
+class TestCfgDoubleGligenDict(unittest.TestCase):
+    """Test _cfg_double_gligen_dict doubles tensors and zeros unconditional masks."""
+
+    def test_text_only_doubling(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        gligen = {
+            "boxes": torch.ones(1, 2, 4),
+            "masks": torch.ones(1, 2),
+            "positive_embeddings": torch.randn(1, 2, 768),
+        }
+        result = ImageModelFoundation._cfg_double_gligen_dict(gligen)
+        self.assertEqual(result["boxes"].shape[0], 2)
+        self.assertEqual(result["masks"].shape[0], 2)
+        self.assertEqual(result["positive_embeddings"].shape[0], 2)
+        # Unconditional half (first) should have masks zeroed
+        self.assertTrue(torch.all(result["masks"][0] == 0))
+        # Conditional half (second) should retain masks
+        self.assertTrue(torch.all(result["masks"][1] == 1))
+
+    def test_text_image_doubling(self):
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        gligen = {
+            "boxes": torch.ones(1, 2, 4),
+            "masks": torch.ones(1, 2),
+            "phrases_masks": torch.ones(1, 2),
+            "image_masks": torch.ones(1, 2),
+            "phrases_embeddings": torch.randn(1, 2, 768),
+            "image_embeddings": torch.randn(1, 2, 768),
+        }
+        result = ImageModelFoundation._cfg_double_gligen_dict(gligen)
+        self.assertEqual(result["boxes"].shape[0], 2)
+        # Unconditional half masks zeroed
+        self.assertTrue(torch.all(result["masks"][0] == 0))
+        self.assertTrue(torch.all(result["phrases_masks"][0] == 0))
+        self.assertTrue(torch.all(result["image_masks"][0] == 0))
+        # Conditional half masks retained
+        self.assertTrue(torch.all(result["masks"][1] == 1))
+        self.assertTrue(torch.all(result["phrases_masks"][1] == 1))
+        self.assertTrue(torch.all(result["image_masks"][1] == 1))
+
+
+class TestBuildValidationGroundingPipelineKwargs(unittest.TestCase):
+    """Test _build_validation_grounding_pipeline_kwargs with CFG doubling."""
+
+    def _make_batch(self):
+        return GroundingBatch(
+            boxes=torch.zeros(1, 2, 4),
+            validity_mask=torch.ones(1, 2),
+            spatial_masks=torch.zeros(1, 2, 8, 8),
+            text_embeds=torch.randn(1, 2, 768),
+            image_embeds=None,
+            text_masks=torch.ones(1, 2),
+            image_masks=torch.zeros(1, 2),
+            max_entities=2,
+        )
+
+    def test_unet_no_cfg(self):
+        from simpletuner.helpers.models.common import ModelTypes
+
+        stub = _make_model_stub(text_image_mode=False, model_type=ModelTypes.UNET)
+        batch = self._make_batch()
+        result = stub._build_validation_grounding_pipeline_kwargs(batch, do_cfg=False)
+        self.assertIn("cross_attention_kwargs", result)
+        gligen = result["cross_attention_kwargs"]["gligen"]
+        self.assertEqual(gligen["boxes"].shape[0], 1)
+
+    def test_unet_with_cfg(self):
+        from simpletuner.helpers.models.common import ModelTypes
+
+        stub = _make_model_stub(text_image_mode=False, model_type=ModelTypes.UNET)
+        batch = self._make_batch()
+        result = stub._build_validation_grounding_pipeline_kwargs(batch, do_cfg=True)
+        self.assertIn("cross_attention_kwargs", result)
+        gligen = result["cross_attention_kwargs"]["gligen"]
+        # Batch should be doubled
+        self.assertEqual(gligen["boxes"].shape[0], 2)
+        self.assertEqual(gligen["masks"].shape[0], 2)
+        # Unconditional half masks zeroed
+        self.assertTrue(torch.all(gligen["masks"][0] == 0))
+        # Conditional half masks retained
+        self.assertTrue(torch.all(gligen["masks"][1] == 1))
+
+    def test_transformer_with_cfg(self):
+        from simpletuner.helpers.models.common import ModelTypes
+
+        stub = _make_model_stub(text_image_mode=False, model_type=ModelTypes.TRANSFORMER)
+        stub.ATTENTION_KWARG_NAME = "joint_attention_kwargs"
+        batch = self._make_batch()
+        result = stub._build_validation_grounding_pipeline_kwargs(batch, do_cfg=True)
+        self.assertIn("joint_attention_kwargs", result)
+        gk = result["joint_attention_kwargs"]["_grounding_kwargs"]
+        # Batch should be doubled
+        self.assertEqual(gk["boxes"].shape[0], 2)
+        self.assertEqual(gk["masks"].shape[0], 2)
+        # Unconditional half masks zeroed
+        self.assertTrue(torch.all(gk["masks"][0] == 0))
 
 
 if __name__ == "__main__":

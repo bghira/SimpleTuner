@@ -212,7 +212,7 @@ class TestLabelsParsing(unittest.TestCase):
 
     def test_default_model(self):
         gen = BboxGenerator(config={}, accelerator=_make_accelerator())
-        self.assertEqual(gen.model_name, "microsoft/Florence-2-large")
+        self.assertEqual(gen.model_name, "florence-community/Florence-2-large")
 
 
 class TestGenerateEndToEnd(unittest.TestCase):
