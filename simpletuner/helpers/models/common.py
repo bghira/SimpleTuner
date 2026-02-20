@@ -452,6 +452,8 @@ class ModelFoundation(ABC):
     ]
     SLIDER_LORA_TARGET = DEFAULT_SLIDER_LORA_TARGET
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    GLIGEN_LORA_TARGET = ["position_net", "fuser"]
+    GLIGEN_LYCORIS_TARGET = ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
@@ -797,6 +799,7 @@ class ModelFoundation(ABC):
         has_images: bool = False,
         has_video: bool = False,
         has_audio: bool = False,
+        has_grounding: bool = False,
     ) -> None:
         """
         Configure data type signals from the dataloader.
@@ -810,10 +813,12 @@ class ModelFoundation(ABC):
             has_images: Whether image data is present
             has_video: Whether video data is present
             has_audio: Whether audio data is present
+            has_grounding: Whether grounding annotations are present
         """
         self._data_has_images = has_images
         self._data_has_video = has_video
         self._data_has_audio = has_audio
+        self._data_has_grounding = has_grounding
 
     def _get_additional_lora_targets(self) -> list[str]:
         """
@@ -866,6 +871,13 @@ class ModelFoundation(ABC):
             return manual_targets
 
         lora_type = getattr(self.config, "lora_type", "standard")
+
+        # GLIGEN: only target the injected grounding layers, freeze base model.
+        if getattr(self, "_data_has_grounding", False) and self.supports_grounding():
+            if lora_type.lower() == "lycoris":
+                return self.GLIGEN_LYCORIS_TARGET
+            return self.GLIGEN_LORA_TARGET
+
         base_targets = None
         if lora_type.lower() == "standard":
             if getattr(self.config, "slider_lora_target", False):
@@ -1168,8 +1180,7 @@ class ModelFoundation(ABC):
         val = getattr(self.config, "max_grounding_entities", 0)
         return isinstance(val, int) and val > 0
 
-    @staticmethod
-    def _build_gligen_cross_attention_kwargs(grounding_batch) -> dict | None:
+    def _build_gligen_cross_attention_kwargs(self, grounding_batch) -> dict | None:
         """Build ``cross_attention_kwargs`` dict for the UNet from a ``GroundingBatch``.
 
         Used by UNet-based models (SD1.x, SDXL, Kolors) where grounding is
@@ -1177,15 +1188,26 @@ class ModelFoundation(ABC):
         """
         if grounding_batch is None:
             return None
-        if grounding_batch.image_embeds is not None:
+
+        # Detect whether position_net was built in text-image or text-only mode.
+        component = self.get_trained_component(base_model=True)
+        position_net = getattr(component, "position_net", None) if component else None
+        text_image_mode = position_net is not None and hasattr(position_net, "null_text_feature")
+
+        if grounding_batch.image_embeds is not None or text_image_mode:
+            image_embeds = grounding_batch.image_embeds
+            image_masks = grounding_batch.image_masks
+            if image_embeds is None:
+                image_embeds = torch.zeros_like(grounding_batch.text_embeds)
+                image_masks = torch.zeros_like(grounding_batch.text_masks)
             return {
                 "gligen": {
                     "boxes": grounding_batch.boxes,
                     "masks": grounding_batch.validity_mask,
                     "phrases_masks": grounding_batch.text_masks,
-                    "image_masks": grounding_batch.image_masks,
+                    "image_masks": image_masks,
                     "phrases_embeddings": grounding_batch.text_embeds,
-                    "image_embeddings": grounding_batch.image_embeds,
+                    "image_embeddings": image_embeds,
                 }
             }
         return {
@@ -1196,8 +1218,7 @@ class ModelFoundation(ABC):
             }
         }
 
-    @staticmethod
-    def _build_grounding_position_net_kwargs(grounding_batch, flatten_temporal: bool = True) -> dict | None:
+    def _build_grounding_position_net_kwargs(self, grounding_batch, flatten_temporal: bool = True) -> dict | None:
         """Build kwargs for ``position_net.forward()`` from a ``GroundingBatch``.
 
         Used by transformer-based models where grounding is called explicitly
@@ -1209,8 +1230,33 @@ class ModelFoundation(ABC):
         if grounding_batch is None:
             return None
 
+        # Detect whether position_net was built in text-image or text-only mode.
+        component = self.get_trained_component(base_model=True)
+        position_net = getattr(component, "position_net", None) if component else None
+        text_image_mode = position_net is not None and hasattr(position_net, "null_text_feature")
+
         boxes = grounding_batch.boxes
         masks = grounding_batch.validity_mask
+
+        def _text_image_kwargs(b, m, text_masks, image_masks, text_embeds, image_embeds):
+            ie = image_embeds
+            im = image_masks
+            if ie is None:
+                ie = torch.zeros_like(text_embeds)
+                im = torch.zeros_like(text_masks)
+            return {
+                "boxes": b,
+                "masks": m,
+                "phrases_masks": text_masks,
+                "image_masks": im,
+                "phrases_embeddings": text_embeds,
+                "image_embeddings": ie,
+            }
+
+        def _text_only_kwargs(b, m, text_embeds):
+            return {"boxes": b, "masks": m, "positive_embeddings": text_embeds}
+
+        use_text_image = grounding_batch.image_embeds is not None or text_image_mode
         num_frames = getattr(grounding_batch, "num_frames", 1)
 
         # Flatten temporal dims for video: (B, T, N, ...) -> (B*T, N, ...)
@@ -1219,53 +1265,77 @@ class ModelFoundation(ABC):
             def _flatten_bt(t):
                 if t is None:
                     return None
-                # t shape: (B, T, N, ...) -> (B*T, N, ...)
                 return t.flatten(0, 1)
 
             boxes = _flatten_bt(boxes)
             masks = _flatten_bt(masks)
 
-            if grounding_batch.image_embeds is not None:
-                return {
-                    "boxes": boxes,
-                    "masks": masks,
-                    "phrases_masks": _flatten_bt(grounding_batch.text_masks),
-                    "image_masks": _flatten_bt(grounding_batch.image_masks),
-                    "phrases_embeddings": _flatten_bt(grounding_batch.text_embeds),
-                    "image_embeddings": _flatten_bt(grounding_batch.image_embeds),
-                }
-            return {
-                "boxes": boxes,
-                "masks": masks,
-                "positive_embeddings": _flatten_bt(grounding_batch.text_embeds),
-            }
+            if use_text_image:
+                return _text_image_kwargs(
+                    boxes,
+                    masks,
+                    _flatten_bt(grounding_batch.text_masks),
+                    _flatten_bt(grounding_batch.image_masks),
+                    _flatten_bt(grounding_batch.text_embeds),
+                    _flatten_bt(grounding_batch.image_embeds),
+                )
+            return _text_only_kwargs(boxes, masks, _flatten_bt(grounding_batch.text_embeds))
 
         # Image path (num_frames == 1): shapes are (B, N, ...)
-        if grounding_batch.image_embeds is not None:
-            return {
-                "boxes": boxes,
-                "masks": masks,
-                "phrases_masks": grounding_batch.text_masks,
-                "image_masks": grounding_batch.image_masks,
-                "phrases_embeddings": grounding_batch.text_embeds,
-                "image_embeddings": grounding_batch.image_embeds,
-            }
-        return {
-            "boxes": boxes,
-            "masks": masks,
-            "positive_embeddings": grounding_batch.text_embeds,
-        }
+        if use_text_image:
+            return _text_image_kwargs(
+                boxes,
+                masks,
+                grounding_batch.text_masks,
+                grounding_batch.image_masks,
+                grounding_batch.text_embeds,
+                grounding_batch.image_embeds,
+            )
+        return _text_only_kwargs(boxes, masks, grounding_batch.text_embeds)
 
-    def _build_validation_grounding_pipeline_kwargs(self, grounding_batch) -> dict:
+    @staticmethod
+    def _cfg_double_gligen_dict(gligen_dict: dict) -> dict:
+        """Double gligen tensors for classifier-free guidance.
+
+        Concatenates each tensor along the batch dimension and zeros the
+        masks for the unconditional (first) half so that the unconditional
+        denoising pass receives no grounding signal.
+        """
+        doubled = {}
+        for key, val in gligen_dict.items():
+            if isinstance(val, torch.Tensor):
+                doubled[key] = torch.cat([val] * 2)
+            else:
+                doubled[key] = val
+        # Zero unconditional half's masks so grounding has no effect there.
+        batch = doubled["masks"].shape[0]
+        uncond_half = batch // 2
+        doubled["masks"][:uncond_half] = 0
+        if "phrases_masks" in doubled:
+            doubled["phrases_masks"][:uncond_half] = 0
+        if "image_masks" in doubled:
+            doubled["image_masks"][:uncond_half] = 0
+        return doubled
+
+    def _build_validation_grounding_pipeline_kwargs(self, grounding_batch, do_cfg: bool = False) -> dict:
         """Build pipeline kwargs that carry grounding data through to the model.
 
         For UNet models: returns ``{"cross_attention_kwargs": {"gligen": {...}}}``.
         For transformer models: returns ``{<ATTENTION_KWARG_NAME>: {"_grounding_kwargs": {...}}}``.
+
+        When ``do_cfg`` is True, all grounding tensors are doubled along the
+        batch dimension and the unconditional half's masks are zeroed, matching
+        the original GLIGEN pipeline's CFG handling.
         """
         if self.MODEL_TYPE is ModelTypes.UNET:
-            return {"cross_attention_kwargs": self._build_gligen_cross_attention_kwargs(grounding_batch)}
+            ca_kwargs = self._build_gligen_cross_attention_kwargs(grounding_batch)
+            if do_cfg and ca_kwargs is not None:
+                ca_kwargs["gligen"] = self._cfg_double_gligen_dict(ca_kwargs["gligen"])
+            return {"cross_attention_kwargs": ca_kwargs}
 
         position_net_kwargs = self._build_grounding_position_net_kwargs(grounding_batch)
+        if do_cfg and position_net_kwargs is not None:
+            position_net_kwargs = self._cfg_double_gligen_dict(position_net_kwargs)
         return {self.ATTENTION_KWARG_NAME: {"_grounding_kwargs": position_net_kwargs}}
 
     def supports_audio_inputs(self) -> bool:
@@ -3655,31 +3725,44 @@ class ModelFoundation(ABC):
             if not isinstance(conditioning_embeds[0], dict):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
 
-        # Move grounding batch tensors to device, with 10% CFG null drop
+        # Move grounding batch tensors to device, with 10% CFG null drop.
+        # CFG null-drop zeroes the validity masks rather than removing the
+        # grounding batch entirely so that position_net/fusers are still
+        # invoked and gradients flow through their (possibly trainable) params.
         grounding_batch = batch.get("grounding_batch")
         if grounding_batch is not None:
-            if random.random() < 0.1:
-                batch["grounding_batch"] = None
-            else:
-                from simpletuner.helpers.training.grounding.types import GroundingBatch
+            from simpletuner.helpers.training.grounding.types import GroundingBatch
 
-                device = self.accelerator.device
-                dtype = self.config.weight_dtype
-                batch["grounding_batch"] = GroundingBatch(
-                    boxes=grounding_batch.boxes.to(device=device, dtype=dtype),
-                    validity_mask=grounding_batch.validity_mask.to(device=device, dtype=dtype),
-                    spatial_masks=grounding_batch.spatial_masks.to(device=device, dtype=dtype),
-                    text_embeds=grounding_batch.text_embeds.to(device=device, dtype=dtype),
-                    image_embeds=(
-                        grounding_batch.image_embeds.to(device=device, dtype=dtype)
-                        if grounding_batch.image_embeds is not None
-                        else None
-                    ),
-                    text_masks=grounding_batch.text_masks.to(device=device, dtype=dtype),
-                    image_masks=grounding_batch.image_masks.to(device=device, dtype=dtype),
-                    max_entities=grounding_batch.max_entities,
-                    num_frames=grounding_batch.num_frames,
-                )
+            device = self.accelerator.device
+            dtype = self.config.weight_dtype
+            null_drop = random.random() < 0.1
+            batch["grounding_batch"] = GroundingBatch(
+                boxes=grounding_batch.boxes.to(device=device, dtype=dtype),
+                validity_mask=(
+                    torch.zeros_like(grounding_batch.validity_mask).to(device=device, dtype=dtype)
+                    if null_drop
+                    else grounding_batch.validity_mask.to(device=device, dtype=dtype)
+                ),
+                spatial_masks=grounding_batch.spatial_masks.to(device=device, dtype=dtype),
+                text_embeds=grounding_batch.text_embeds.to(device=device, dtype=dtype),
+                image_embeds=(
+                    grounding_batch.image_embeds.to(device=device, dtype=dtype)
+                    if grounding_batch.image_embeds is not None
+                    else None
+                ),
+                text_masks=(
+                    torch.zeros_like(grounding_batch.text_masks).to(device=device, dtype=dtype)
+                    if null_drop
+                    else grounding_batch.text_masks.to(device=device, dtype=dtype)
+                ),
+                image_masks=(
+                    torch.zeros_like(grounding_batch.image_masks).to(device=device, dtype=dtype)
+                    if null_drop
+                    else grounding_batch.image_masks.to(device=device, dtype=dtype)
+                ),
+                max_entities=grounding_batch.max_entities,
+                num_frames=grounding_batch.num_frames,
+            )
 
         return batch
 
