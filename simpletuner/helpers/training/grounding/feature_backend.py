@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
-from typing import Optional, Union
-from unittest.mock import patch
+from typing import Optional
 
 import torch
 from PIL import Image
@@ -30,38 +28,25 @@ class GroundingFeatureBackend(ABC):
         """Release model resources."""
 
 
-def _fixed_get_imports(filename: Union[str, os.PathLike]) -> list[str]:
-    """Workaround for Florence-2 flash_attn import on systems without it."""
-    from transformers.dynamic_module_utils import get_imports
-
-    if not str(filename).endswith("/modeling_florence2.py"):
-        return get_imports(filename)
-    imports = get_imports(filename)
-    if "flash_attn" in imports:
-        imports.remove("flash_attn")
-    return imports
-
-
 class Florence2FeatureBackend(GroundingFeatureBackend):
     """Florence-2 DaViT vision encoder features for entity crops."""
 
-    DEFAULT_MODEL = "microsoft/Florence-2-large"
+    DEFAULT_MODEL = "florence-community/Florence-2-large"
 
     def __init__(self, model_name_or_path: str = DEFAULT_MODEL, device: Optional[str] = None):
-        from transformers import AutoModelForCausalLM, AutoProcessor
+        from transformers import AutoProcessor, Florence2ForConditionalGeneration
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         torch_dtype = torch.float16 if "cuda" in str(self.device) else torch.float32
 
-        with patch("transformers.dynamic_module_utils.get_imports", _fixed_get_imports):
-            self._model = (
-                AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True, torch_dtype=torch_dtype)
-                .eval()
-                .to(self.device)
-            )
-            self._processor = AutoProcessor.from_pretrained(model_name_or_path, trust_remote_code=True)
+        self._model = (
+            Florence2ForConditionalGeneration.from_pretrained(model_name_or_path, torch_dtype=torch_dtype)
+            .eval()
+            .to(self.device)
+        )
+        self._processor = AutoProcessor.from_pretrained(model_name_or_path)
 
-        self._embed_dim = self._model.config.vision_config.hidden_size
+        self._embed_dim = self._model.config.vision_config.embed_dim[-1]
 
     @property
     def embed_dim(self) -> int:
@@ -88,8 +73,8 @@ class Florence2FeatureBackend(GroundingFeatureBackend):
         features = vision_tower(pixel_values)
         if isinstance(features, (tuple, list)):
             features = features[0]
-        # features shape: (N, seq_len, hidden_size) — pool over spatial tokens
-        pooled = features.mean(dim=1)
+        # Native Florence-2 vision tower outputs (N, C, H, W) — pool over spatial dims.
+        pooled = features.mean(dim=(2, 3))
         return pooled.float().cpu()
 
     def unload(self):
