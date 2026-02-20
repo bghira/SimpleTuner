@@ -45,10 +45,9 @@ class GroundingCollate:
         per_sample_entities: list[list[dict]] = []
 
         for example in examples:
-            metadata = example.get("image_metadata") or {}
-            if isinstance(metadata, str):
-                # metadata might be a path; resolve via StateTracker
-                metadata = StateTracker.get_metadata_by_filepath(metadata, data_backend_id) or {}
+            # In the collate, each example IS the image_metadata dict itself
+            # (not wrapped in a nested "image_metadata" key).
+            metadata = example
             bbox_entities = metadata.get("bbox_entities", [])
             per_sample_entities.append(bbox_entities)
             if bbox_entities:
@@ -69,7 +68,7 @@ class GroundingCollate:
 
         for sample_idx, entities in enumerate(per_sample_entities):
             example = examples[sample_idx]
-            target_size = (example.get("image_metadata") or {}).get("target_size")
+            target_size = example.get("target_size")
             if target_size is None:
                 target_size = (512, 512)
             target_w, target_h = target_size
@@ -221,17 +220,16 @@ class GroundingCollate:
 
     @staticmethod
     def _pool_text_encoder_output(text_encoder_output: dict) -> torch.Tensor:
-        """Pool text encoder output to a single vector per entity."""
-        pooled = text_encoder_output.get("pooled_prompt_embeds")
-        if pooled is not None:
-            if isinstance(pooled, torch.Tensor):
-                return pooled.squeeze(0)
+        """Pool text encoder output to a single vector per entity.
 
+        Prefers mean-pooled ``prompt_embeds`` over ``pooled_prompt_embeds``
+        because the hidden-state dimension of ``prompt_embeds`` matches the
+        model's ``cross_attention_dim`` (and therefore ``position_net``'s
+        ``positive_len``), whereas ``pooled_prompt_embeds`` may have a
+        different projection size (e.g. 1280 for SDXL vs cross_attention_dim 2048).
+        """
         prompt_embeds = text_encoder_output.get("prompt_embeds")
-        if prompt_embeds is None:
-            return torch.zeros(768)
-
-        if isinstance(prompt_embeds, torch.Tensor):
+        if prompt_embeds is not None and isinstance(prompt_embeds, torch.Tensor):
             # prompt_embeds shape: (1, seq_len, dim) or (seq_len, dim)
             if prompt_embeds.dim() == 3:
                 prompt_embeds = prompt_embeds.squeeze(0)
@@ -249,6 +247,11 @@ class GroundingCollate:
                 return masked.sum(dim=0) / denom
             # Simple mean pooling
             return prompt_embeds.mean(dim=0)
+
+        # Fallback to pooled_prompt_embeds if prompt_embeds unavailable
+        pooled = text_encoder_output.get("pooled_prompt_embeds")
+        if pooled is not None and isinstance(pooled, torch.Tensor):
+            return pooled.squeeze(0)
 
         return torch.zeros(768)
 
