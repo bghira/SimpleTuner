@@ -801,7 +801,7 @@ Grounding pipeline सक्षम करने के लिए `--max_groundin
 
 ### Bounding boxes की स्वचालित पहचान
 
-यदि आपके पास पहले से `.bbox` annotations नहीं हैं, तो आप SimpleTuner को [Florence-2](https://huggingface.co/microsoft/Florence-2-large) का उपयोग करके स्वचालित रूप से उत्पन्न करने दे सकते हैं। `grounding` config के अंदर एक `auto_detect` block जोड़ें:
+यदि आपके पास पहले से `.bbox` annotations नहीं हैं, तो आप SimpleTuner को [Florence-2](https://huggingface.co/florence-community/Florence-2-large) का उपयोग करके स्वचालित रूप से उत्पन्न करने दे सकते हैं। `grounding` config के अंदर एक `auto_detect` block जोड़ें:
 
 ```json
 {
@@ -813,7 +813,7 @@ Grounding pipeline सक्षम करने के लिए `--max_groundin
         "enabled": true,
         "auto_detect": {
             "enabled": true,
-            "model": "microsoft/Florence-2-large",
+            "model": "florence-community/Florence-2-large",
             "labels": ["person", "dog", "cat"],
             "batch_size": 4
         }
@@ -824,7 +824,7 @@ Grounding pipeline सक्षम करने के लिए `--max_groundin
 | Key | Default | विवरण |
 |-----|---------|-------------|
 | `enabled` | `false` | स्वचालित पहचान सक्षम करें। |
-| `model` | `microsoft/Florence-2-large` | HuggingFace Florence-2 model ID। |
+| `model` | `florence-community/Florence-2-large` | HuggingFace Florence-2 model ID। |
 | `labels` | `[]` | Guided detection के लिए वैकल्पिक entity labels की सूची (`<OPEN_VOCABULARY_DETECTION>` का उपयोग करती है)। खाली होने पर, Florence-2 स्वचालित रूप से प्रत्येक image का caption बनाता है और पाए गए phrases को ground करता है (`<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>` का उपयोग करता है)। |
 | `batch_size` | `4` | प्रति inference batch में images की संख्या। |
 

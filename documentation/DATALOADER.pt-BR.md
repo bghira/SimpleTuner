@@ -801,7 +801,7 @@ Voce tambem deve definir `--max_grounding_entities` para um valor maior que 0 (p
 
 ### Auto-deteccao de bounding boxes
 
-Se voce nao possui anotacoes `.bbox` pre-existentes, pode deixar o SimpleTuner gera-las automaticamente usando [Florence-2](https://huggingface.co/microsoft/Florence-2-large). Adicione um bloco `auto_detect` dentro da configuracao `grounding`:
+Se voce nao possui anotacoes `.bbox` pre-existentes, pode deixar o SimpleTuner gera-las automaticamente usando [Florence-2](https://huggingface.co/florence-community/Florence-2-large). Adicione um bloco `auto_detect` dentro da configuracao `grounding`:
 
 ```json
 {
@@ -813,7 +813,7 @@ Se voce nao possui anotacoes `.bbox` pre-existentes, pode deixar o SimpleTuner g
         "enabled": true,
         "auto_detect": {
             "enabled": true,
-            "model": "microsoft/Florence-2-large",
+            "model": "florence-community/Florence-2-large",
             "labels": ["person", "dog", "cat"],
             "batch_size": 4
         }
@@ -824,7 +824,7 @@ Se voce nao possui anotacoes `.bbox` pre-existentes, pode deixar o SimpleTuner g
 | Chave | Padrao | Descricao |
 |-----|---------|-------------|
 | `enabled` | `false` | Habilitar auto-deteccao. |
-| `model` | `microsoft/Florence-2-large` | ID do modelo HuggingFace Florence-2. |
+| `model` | `florence-community/Florence-2-large` | ID do modelo HuggingFace Florence-2. |
 | `labels` | `[]` | Lista opcional de labels de entidades para deteccao guiada (usa `<OPEN_VOCABULARY_DETECTION>`). Quando vazia, Florence-2 gera automaticamente uma descricao de cada imagem e localiza as frases encontradas (usa `<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>`). |
 | `batch_size` | `4` | Numero de imagens por lote de inferencia. |
 

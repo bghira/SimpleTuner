@@ -802,7 +802,7 @@ You must also set `--max_grounding_entities` to a value greater than 0 (e.g., 8)
 
 ### Auto-detecting bounding boxes
 
-If you don't have pre-existing `.bbox` annotations you can let SimpleTuner generate them automatically using [Florence-2](https://huggingface.co/microsoft/Florence-2-large). Add an `auto_detect` block inside the `grounding` config:
+If you don't have pre-existing `.bbox` annotations you can let SimpleTuner generate them automatically using [Florence-2](https://huggingface.co/florence-community/Florence-2-large). Add an `auto_detect` block inside the `grounding` config:
 
 ```json
 {
@@ -814,7 +814,7 @@ If you don't have pre-existing `.bbox` annotations you can let SimpleTuner gener
         "enabled": true,
         "auto_detect": {
             "enabled": true,
-            "model": "microsoft/Florence-2-large",
+            "model": "florence-community/Florence-2-large",
             "labels": ["person", "dog", "cat"],
             "batch_size": 4
         }
@@ -825,7 +825,7 @@ If you don't have pre-existing `.bbox` annotations you can let SimpleTuner gener
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Enable auto-detection. |
-| `model` | `microsoft/Florence-2-large` | HuggingFace Florence-2 model ID. |
+| `model` | `florence-community/Florence-2-large` | HuggingFace Florence-2 model ID. |
 | `labels` | `[]` | Optional list of entity labels for guided detection (uses `<OPEN_VOCABULARY_DETECTION>`). When empty, Florence-2 automatically captions each image and grounds the phrases it finds (uses `<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>`). |
 | `batch_size` | `4` | Number of images per inference batch. |
 
