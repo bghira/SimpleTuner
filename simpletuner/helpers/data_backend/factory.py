@@ -2149,50 +2149,6 @@ class FactoryRegistry:
 
         feature_backend.unload()
 
-    def _inject_gligen_layers_if_needed(self, data_backend_config: List[Dict[str, Any]]):
-        """Inject GLIGEN layers into the model if grounding is enabled."""
-        try:
-            max_grounding_entities = int(getattr(self.args, "max_grounding_entities", 0) or 0)
-        except (TypeError, ValueError):
-            return
-        if max_grounding_entities <= 0:
-            return
-
-        if not self.model.supports_grounding():
-            return
-
-        from simpletuner.helpers.training.grounding.gligen_layers import _extract_block_dims, inject_gligen_layers
-
-        component = self.model.get_trained_component(base_model=True)
-
-        # Determine cross_attention_dim from model config or by probing blocks
-        cross_attention_dim = getattr(getattr(component, "config", None), "cross_attention_dim", None)
-        if isinstance(cross_attention_dim, (list, tuple)):
-            cross_attention_dim = cross_attention_dim[0]
-
-        if cross_attention_dim is None:
-            # Probe first block that has a recognisable attention sub-module
-            for module in component.modules():
-                dims = _extract_block_dims(module)
-                if dims is not None:
-                    cross_attention_dim = dims[0]  # query_dim
-                    break
-
-        if cross_attention_dim is None:
-            info_log("GLIGEN: could not determine cross_attention_dim, skipping injection")
-            return
-
-        grounding_model_path = getattr(self.args, "pretrained_grounding_model_name_or_path", None)
-        feature_type = "text-image" if grounding_model_path else "text-only"
-
-        inject_gligen_layers(
-            model=component,
-            positive_len=cross_attention_dim,
-            cross_attention_dim=cross_attention_dim,
-            feature_type=feature_type,
-        )
-        info_log("GLIGEN layers injected into model")
-
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""
         conditioning_datasets = []
@@ -2869,6 +2825,7 @@ class FactoryRegistry:
         has_images = False
         has_video = False
         has_audio = False
+        has_grounding = False
 
         for backend in data_backend_config:
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -2880,11 +2837,15 @@ class FactoryRegistry:
                 has_video = True
             elif dataset_type is DatasetType.AUDIO:
                 has_audio = True
+            grounding_config = backend.get("grounding")
+            if isinstance(grounding_config, dict) and grounding_config.get("enabled", False):
+                has_grounding = True
 
         self.model.configure_data_signals(
             has_images=has_images,
             has_video=has_video,
             has_audio=has_audio,
+            has_grounding=has_grounding,
         )
 
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
@@ -4493,7 +4454,6 @@ class FactoryRegistry:
         self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
         self._configure_grounding_image_embed_caches(data_backend_config)
-        self._inject_gligen_layers_if_needed(data_backend_config)
 
         self._configure_model_data_signals(data_backend_config)
 
