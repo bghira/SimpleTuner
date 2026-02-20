@@ -59,6 +59,7 @@ const DATASET_COLLAPSE_SECTION_MAP = {
     captions: '_showCaptions',
     video: '_showVideoSettings',
     conditioning: '_showConditioning',
+    grounding: '_showGrounding',
     advanced: '_showAdvanced'
 };
 
@@ -446,6 +447,12 @@ function dataloaderSectionComponent() {
                 dataset.conditioning = [];
             }
         }
+        if (!dataset.grounding || typeof dataset.grounding !== 'object') {
+            dataset.grounding = { enabled: false };
+        }
+        if (!dataset.grounding.auto_detect || typeof dataset.grounding.auto_detect !== 'object') {
+            dataset.grounding.auto_detect = { enabled: false, model: 'florence-community/Florence-2-large', labels: '', batch_size: 4 };
+        }
         if (dataset._showAdvanced === undefined) {
             dataset._showAdvanced = false;
         }
@@ -472,6 +479,9 @@ function dataloaderSectionComponent() {
         }
         if (dataset._showVideoSettings === undefined) {
             dataset._showVideoSettings = true;
+        }
+        if (dataset._showGrounding === undefined) {
+            dataset._showGrounding = true;
         }
         // Initialize schedule mode based on start_epoch and start_step values
         if (dataset._scheduleMode === undefined) {

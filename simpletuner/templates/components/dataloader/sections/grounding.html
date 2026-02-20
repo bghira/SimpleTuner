@@ -1,5 +1,6 @@
 <template x-if="dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
-    <div class="dataset-section grounding-settings">
+    <div class="dataset-section grounding-settings"
+         x-data="{ editingDataset: dataset }">
         <div class="dataset-section-header d-flex align-items-center">
             <button type="button"
                     class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
