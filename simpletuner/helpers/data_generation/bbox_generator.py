@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Any, Union
-from unittest.mock import patch
+from typing import Any
 
 from simpletuner.helpers.training import image_file_extensions
 
@@ -30,18 +28,6 @@ _IMAGE_ONLY_EXTENSIONS: set[str] = image_file_extensions - {
 }
 
 
-def _fixed_get_imports(filename: Union[str, os.PathLike]) -> list[str]:
-    """Workaround for Florence-2 flash_attn import on systems without it."""
-    from transformers.dynamic_module_utils import get_imports
-
-    if not str(filename).endswith("/modeling_florence2.py"):
-        return get_imports(filename)
-    imports = get_imports(filename)
-    if "flash_attn" in imports:
-        imports.remove("flash_attn")
-    return imports
-
-
 class BboxGenerator:
     """Run Florence-2 detection and write ``.bbox`` sidecars next to source images.
 
@@ -55,7 +41,7 @@ class BboxGenerator:
     on first use and explicitly freed after :meth:`generate` completes.
     """
 
-    DEFAULT_MODEL = "microsoft/Florence-2-large"
+    DEFAULT_MODEL = "florence-community/Florence-2-large"
 
     def __init__(self, config: dict[str, Any], accelerator):
         self.model_name: str = config.get("model", self.DEFAULT_MODEL)
@@ -120,18 +106,15 @@ class BboxGenerator:
 
     def _load_model(self):
         import torch
-        from transformers import AutoModelForCausalLM, AutoProcessor
+        from transformers import AutoProcessor, Florence2ForConditionalGeneration
 
         device = self.accelerator.device
         torch_dtype = torch.float16 if str(device).startswith("cuda") else torch.float32
 
-        with patch("transformers.dynamic_module_utils.get_imports", _fixed_get_imports):
-            self._model = (
-                AutoModelForCausalLM.from_pretrained(self.model_name, trust_remote_code=True, torch_dtype=torch_dtype)
-                .eval()
-                .to(device)
-            )
-            self._processor = AutoProcessor.from_pretrained(self.model_name, trust_remote_code=True)
+        self._model = (
+            Florence2ForConditionalGeneration.from_pretrained(self.model_name, torch_dtype=torch_dtype).eval().to(device)
+        )
+        self._processor = AutoProcessor.from_pretrained(self.model_name)
 
         logger.info(f"BboxGenerator: loaded Florence-2 model {self.model_name!r} on {device}.")
 
