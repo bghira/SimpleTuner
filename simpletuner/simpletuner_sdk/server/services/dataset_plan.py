@@ -172,6 +172,18 @@ def compute_validations(
                 )
             )
 
+        grounding = dataset.get("grounding")
+        if isinstance(grounding, dict) and grounding.get("enabled"):
+            auto_detect = grounding.get("auto_detect")
+            if isinstance(auto_detect, dict) and auto_detect.get("enabled") and backend_type.lower() != "local":
+                validations.append(
+                    ValidationMessage(
+                        field=f"{_normalise_identifier(dataset)}.grounding",
+                        message="Grounding auto-detect requires a local backend.",
+                        level="error",
+                    )
+                )
+
     for dataset_id, count in id_counts.items():
         if count > 1:
             validations.append(
