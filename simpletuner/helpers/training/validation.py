@@ -681,6 +681,17 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 "key": shortname,
             }
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
+            if entry.bbox_entities:
+                entity_records = []
+                for idx, entity in enumerate(entry.bbox_entities):
+                    entity_key = f"__grounding_val_{shortname}__bbox_{idx}"
+                    entity_records.append({"prompt": entity["label"], "key": entity_key})
+                embed_cache.compute_embeddings_for_prompts(
+                    entity_records,
+                    return_concat=False,
+                    is_validation=True,
+                    load_from_cache=False,
+                )
             validation_prompts.append(entry)
             validation_shortnames.append(shortname)
     if allow_prompt_library and args.validation_prompt is not None and args.validation_prompt != "None":
@@ -1018,17 +1029,45 @@ def _stitch_single_pair(left_image, right_image, separator_width=5, labels=None)
 
 
 def _build_validation_grounding_batch(
-    image_path: str,
-    data_backend_id: str,
+    *,
     embed_cache,
     max_entities: int,
     vae_scale_factor: int,
+    # Sidecar path (existing):
+    image_path: str | None = None,
+    data_backend_id: str | None = None,
+    # Inline path (new):
+    bbox_entities: list[dict] | None = None,
+    shortname: str | None = None,
+    target_size: tuple[int, int] | None = None,
     grounding_image_cache=None,
 ):
     """Build a single-sample ``GroundingBatch`` for validation inference.
 
-    Returns ``None`` when no bbox sidecar data exists for *image_path*.
+    Two modes:
+
+    *Sidecar*: provide ``image_path`` + ``data_backend_id``.  Reads a ``.bbox``
+    sidecar file and delegates to ``GroundingCollate.build_batch``.
+
+    *Inline*: provide ``bbox_entities`` + ``shortname`` + ``target_size``.
+    Builds the batch directly from pre-cached entity embeds without needing
+    a real dataset backend.
+
+    Returns ``None`` when no grounding data is available.
     """
+    if bbox_entities and shortname:
+        return _build_inline_grounding_batch(
+            embed_cache=embed_cache,
+            max_entities=max_entities,
+            vae_scale_factor=vae_scale_factor,
+            bbox_entities=bbox_entities,
+            shortname=shortname,
+            target_size=target_size or (512, 512),
+        )
+
+    if not image_path or not data_backend_id:
+        return None
+
     from simpletuner.helpers.training.grounding.collate import GroundingCollate
     from simpletuner.helpers.training.grounding.metadata import BboxMetadata
 
@@ -1048,14 +1087,12 @@ def _build_validation_grounding_batch(
 
     # Build a single-sample examples list matching the collate interface
     metadata = StateTracker.get_metadata_by_filepath(str(image_path), data_backend_id) or {}
-    target_size = metadata.get("target_size", (512, 512))
+    file_target_size = metadata.get("target_size", (512, 512))
     entity_dicts = [{"label": e.label, "bbox": list(e.bbox)} for e in entities]
     example = {
         "image_path": str(image_path),
-        "image_metadata": {
-            "target_size": target_size,
-            "bbox_entities": entity_dicts,
-        },
+        "target_size": file_target_size,
+        "bbox_entities": entity_dicts,
     }
 
     collate = GroundingCollate(max_entities=max_entities, vae_scale_factor=vae_scale_factor)
@@ -1069,8 +1106,12 @@ def _build_validation_grounding_batch(
     if grounding_batch is None:
         return None
 
-    # Disable random feature dropping for inference: all valid entities contribute
-    grounding_batch = type(grounding_batch)(
+    return _disable_random_feature_drop(grounding_batch)
+
+
+def _disable_random_feature_drop(grounding_batch):
+    """Replace random-drop masks with full validity for deterministic inference."""
+    return type(grounding_batch)(
         boxes=grounding_batch.boxes,
         validity_mask=grounding_batch.validity_mask,
         spatial_masks=grounding_batch.spatial_masks,
@@ -1085,7 +1126,75 @@ def _build_validation_grounding_batch(
         max_entities=grounding_batch.max_entities,
         num_frames=grounding_batch.num_frames,
     )
-    return grounding_batch
+
+
+def _build_inline_grounding_batch(
+    *,
+    embed_cache,
+    max_entities: int,
+    vae_scale_factor: int,
+    bbox_entities: list[dict],
+    shortname: str,
+    target_size: tuple[int, int],
+):
+    """Build a ``GroundingBatch`` from inline bbox_entities + pre-cached embeds."""
+    import torch
+
+    from simpletuner.helpers.training.grounding.collate import GroundingCollate
+    from simpletuner.helpers.training.grounding.types import GroundingBatch
+
+    target_w, target_h = target_size
+    latent_h = target_h // vae_scale_factor
+    latent_w = target_w // vae_scale_factor
+    N = max_entities
+
+    collate = GroundingCollate(max_entities=N, vae_scale_factor=vae_scale_factor)
+
+    sample_boxes = []
+    sample_validity = []
+    sample_masks = []
+    sample_text_embeds = []
+
+    for ent_idx in range(N):
+        if ent_idx < len(bbox_entities):
+            entity = bbox_entities[ent_idx]
+            bbox = entity.get("bbox", [0, 0, 0, 0])
+            x1, y1, x2, y2 = bbox
+            sample_boxes.append([x1, y1, x2, y2])
+            sample_validity.append(1.0)
+            mask = collate._bbox_to_mask(x1, y1, x2, y2, latent_h, latent_w)
+            sample_masks.append(mask)
+
+            entity_key = f"__grounding_val_{shortname}__bbox_{ent_idx}"
+            text_encoder_output = embed_cache.compute_prompt_embeddings_with_model(
+                prompt_records=[{"prompt": "", "key": entity_key, "metadata": {}}],
+            )
+            embed = GroundingCollate._pool_text_encoder_output(text_encoder_output)
+            sample_text_embeds.append(embed)
+        else:
+            sample_boxes.append([0.0, 0.0, 0.0, 0.0])
+            sample_validity.append(0.0)
+            sample_masks.append(torch.zeros(latent_h, latent_w))
+            text_dim = sample_text_embeds[0].shape[-1] if sample_text_embeds else 768
+            sample_text_embeds.append(torch.zeros(text_dim))
+
+    boxes = torch.stack([torch.tensor(sample_boxes, dtype=torch.float32)])
+    validity_mask = torch.stack([torch.tensor(sample_validity, dtype=torch.float32)])
+    spatial_masks = torch.stack([torch.stack(sample_masks)])
+    text_embeds = torch.stack([torch.stack(sample_text_embeds)])
+
+    grounding_batch = GroundingBatch(
+        boxes=boxes,
+        validity_mask=validity_mask,
+        spatial_masks=spatial_masks,
+        text_embeds=text_embeds,
+        image_embeds=None,
+        text_masks=validity_mask.clone(),
+        image_masks=torch.zeros_like(validity_mask),
+        max_entities=N,
+    )
+
+    return _disable_random_feature_drop(grounding_batch)
 
 
 @dataclass(frozen=True)
@@ -1097,6 +1206,7 @@ class _ValidationWorkItem:
     adapter_strength: float | None
     image_path: str | None = None
     data_backend_id: str | None = None
+    bbox_entities: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -2601,9 +2711,11 @@ class Validation:
             shortname: str | None = None
             adapter_strength: float | None = None
             image_path: str | None = None
+            bbox_entities: list[dict] | None = None
             if isinstance(entry, PromptLibraryEntry):
                 prompt_text = entry.prompt
                 adapter_strength = entry.adapter_strength
+                bbox_entities = entry.bbox_entities
             elif isinstance(entry, dict) and "prompt" in entry:
                 prompt_text = entry.get("prompt")
                 try:
@@ -2646,6 +2758,7 @@ class Validation:
                     adapter_strength=adapter_strength,
                     image_path=str(image_path) if image_path is not None else None,
                     data_backend_id=data_backend_id,
+                    bbox_entities=bbox_entities,
                 )
             )
         return work_items
@@ -2736,6 +2849,7 @@ class Validation:
             cache_shortname=item.shortname,
             image_path=item.image_path,
             data_backend_id=item.data_backend_id,
+            bbox_entities=item.bbox_entities,
         )
         return {
             "index": item.index,
@@ -3251,6 +3365,7 @@ class Validation:
         cache_shortname: str | None = None,
         image_path: str | None = None,
         data_backend_id: str | None = None,
+        bbox_entities: list[dict] | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -3501,20 +3616,33 @@ class Validation:
 
                 # GLIGEN grounding: build grounding kwargs and fuser scheduling callback
                 _grounding_active = False
-                if self.model.supports_grounding() and image_path and data_backend_id:
-                    grounding_batch = _build_validation_grounding_batch(
-                        image_path=image_path,
-                        data_backend_id=data_backend_id,
-                        embed_cache=self.embed_cache,
-                        max_entities=getattr(self.config, "max_grounding_entities", 4),
-                        vae_scale_factor=self.model.vae_scale_factor(),
-                    )
+                if self.model.supports_grounding():
+                    grounding_batch = None
+                    if bbox_entities:
+                        grounding_batch = _build_validation_grounding_batch(
+                            embed_cache=self.embed_cache,
+                            max_entities=getattr(self.config, "max_grounding_entities", 4),
+                            vae_scale_factor=8,
+                            bbox_entities=bbox_entities,
+                            shortname=cache_key,
+                            target_size=(int(validation_resolution_width), int(validation_resolution_height)),
+                        )
+                    elif image_path and data_backend_id:
+                        grounding_batch = _build_validation_grounding_batch(
+                            embed_cache=self.embed_cache,
+                            max_entities=getattr(self.config, "max_grounding_entities", 4),
+                            vae_scale_factor=8,
+                            image_path=image_path,
+                            data_backend_id=data_backend_id,
+                        )
                     if grounding_batch is not None:
                         grounding_batch = grounding_batch.to(
                             device=self.inference_device,
                             dtype=self.config.weight_dtype,
                         )
-                        grounding_pipeline_kwargs = self.model._build_validation_grounding_pipeline_kwargs(grounding_batch)
+                        grounding_pipeline_kwargs = self.model._build_validation_grounding_pipeline_kwargs(
+                            grounding_batch, do_cfg=(guidance_scale > 1.0)
+                        )
                         pipeline_kwargs.update(grounding_pipeline_kwargs)
                         _grounding_active = True
 
