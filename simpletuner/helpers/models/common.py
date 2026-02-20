@@ -1180,6 +1180,11 @@ class ModelFoundation(ABC):
         val = getattr(self.config, "max_grounding_entities", 0)
         return isinstance(val, int) and val > 0
 
+    @property
+    def gligen(self) -> bool:
+        """Convenience: True when GLIGEN grounding is active."""
+        return self.supports_grounding()
+
     def _build_gligen_cross_attention_kwargs(self, grounding_batch) -> dict | None:
         """Build ``cross_attention_kwargs`` dict for the UNet from a ``GroundingBatch``.
 
