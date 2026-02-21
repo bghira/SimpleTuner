@@ -692,6 +692,23 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                     is_validation=True,
                     load_from_cache=False,
                 )
+            if entry.bbox_keyframes:
+                seen_labels: set[str] = set()
+                for kf in entry.bbox_keyframes:
+                    for entity in kf.get("entities", []):
+                        label = entity.get("label", "")
+                        if label and label not in seen_labels:
+                            seen_labels.add(label)
+                if seen_labels:
+                    kf_records = [
+                        {"prompt": label, "key": f"__grounding_val_{shortname}__kf_{label}"} for label in sorted(seen_labels)
+                    ]
+                    embed_cache.compute_embeddings_for_prompts(
+                        kf_records,
+                        return_concat=False,
+                        is_validation=True,
+                        load_from_cache=False,
+                    )
             validation_prompts.append(entry)
             validation_shortnames.append(shortname)
     if allow_prompt_library and args.validation_prompt is not None and args.validation_prompt != "None":
@@ -1197,6 +1214,99 @@ def _build_inline_grounding_batch(
     return _disable_random_feature_drop(grounding_batch)
 
 
+def _build_video_keyframe_grounding_batch(
+    *,
+    embed_cache,
+    max_entities: int,
+    vae_scale_factor: int,
+    per_frame_entities: list[list[dict]],
+    shortname: str,
+    target_size: tuple[int, int],
+):
+    """Build a per-frame GroundingBatch from interpolated keyframe entities.
+
+    Each frame has its own set of bbox positions (entities matched by label),
+    producing (1, T, N, ...) tensors rather than broadcasting a single frame.
+    """
+    import torch
+
+    from simpletuner.helpers.training.grounding.collate import GroundingCollate
+    from simpletuner.helpers.training.grounding.types import GroundingBatch
+
+    target_w, target_h = target_size
+    latent_h = target_h // vae_scale_factor
+    latent_w = target_w // vae_scale_factor
+    N = max_entities
+    T = len(per_frame_entities)
+
+    collate = GroundingCollate(max_entities=N, vae_scale_factor=vae_scale_factor)
+
+    # Cache text embeddings per unique label
+    label_embed_cache: dict[str, "torch.Tensor"] = {}
+
+    all_frame_boxes = []
+    all_frame_validity = []
+    all_frame_masks = []
+    all_frame_text_embeds = []
+
+    for t in range(T):
+        entities = per_frame_entities[t]
+        frame_boxes = []
+        frame_validity = []
+        frame_masks = []
+        frame_text_embeds = []
+
+        for ent_idx in range(N):
+            if ent_idx < len(entities):
+                entity = entities[ent_idx]
+                bbox = entity.get("bbox", [0, 0, 0, 0])
+                label = entity.get("label", "")
+                x1, y1, x2, y2 = bbox
+                frame_boxes.append([x1, y1, x2, y2])
+                frame_validity.append(1.0)
+                mask = collate._bbox_to_mask(x1, y1, x2, y2, latent_h, latent_w)
+                frame_masks.append(mask)
+
+                if label not in label_embed_cache:
+                    entity_key = f"__grounding_val_{shortname}__kf_{label}"
+                    text_encoder_output = embed_cache.compute_prompt_embeddings_with_model(
+                        prompt_records=[{"prompt": "", "key": entity_key, "metadata": {}}],
+                    )
+                    label_embed_cache[label] = GroundingCollate._pool_text_encoder_output(text_encoder_output)
+                frame_text_embeds.append(label_embed_cache[label])
+            else:
+                frame_boxes.append([0.0, 0.0, 0.0, 0.0])
+                frame_validity.append(0.0)
+                frame_masks.append(torch.zeros(latent_h, latent_w))
+                text_dim = next(iter(label_embed_cache.values())).shape[-1] if label_embed_cache else 768
+                frame_text_embeds.append(torch.zeros(text_dim))
+
+        all_frame_boxes.append(torch.tensor(frame_boxes, dtype=torch.float32))
+        all_frame_validity.append(torch.tensor(frame_validity, dtype=torch.float32))
+        all_frame_masks.append(torch.stack(frame_masks))
+        all_frame_text_embeds.append(torch.stack(frame_text_embeds))
+
+    # Stack: (T, N, ...) then unsqueeze to (1, T, N, ...)
+    boxes = torch.stack(all_frame_boxes).unsqueeze(0)
+    validity_mask = torch.stack(all_frame_validity).unsqueeze(0)
+    spatial_masks = torch.stack(all_frame_masks)  # (T, N, H, W) - kept as-is for spatial
+    text_embeds = torch.stack(all_frame_text_embeds).unsqueeze(0)
+
+    grounding_batch = GroundingBatch(
+        boxes=boxes,
+        validity_mask=validity_mask,
+        spatial_masks=spatial_masks,
+        text_embeds=text_embeds,
+        image_embeds=None,
+        text_masks=validity_mask.clone(),
+        image_masks=torch.zeros_like(validity_mask),
+        max_entities=N,
+        num_frames=T,
+    )
+
+    return _disable_random_feature_drop(grounding_batch)
+
+
 @dataclass(frozen=True)
 class _ValidationWorkItem:
     index: int
@@ -1207,6 +1317,7 @@ class _ValidationWorkItem:
     image_path: str | None = None
     data_backend_id: str | None = None
     bbox_entities: list[dict] | None = None
+    bbox_keyframes: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -2712,10 +2823,12 @@ class Validation:
             adapter_strength: float | None = None
             image_path: str | None = None
             bbox_entities: list[dict] | None = None
+            bbox_keyframes: list[dict] | None = None
             if isinstance(entry, PromptLibraryEntry):
                 prompt_text = entry.prompt
                 adapter_strength = entry.adapter_strength
                 bbox_entities = entry.bbox_entities
+                bbox_keyframes = entry.bbox_keyframes
             elif isinstance(entry, dict) and "prompt" in entry:
                 prompt_text = entry.get("prompt")
                 try:
@@ -2759,6 +2872,7 @@ class Validation:
                     image_path=str(image_path) if image_path is not None else None,
                     data_backend_id=data_backend_id,
                     bbox_entities=bbox_entities,
+                    bbox_keyframes=bbox_keyframes,
                 )
             )
         return work_items
@@ -2850,6 +2964,7 @@ class Validation:
             image_path=item.image_path,
             data_backend_id=item.data_backend_id,
             bbox_entities=item.bbox_entities,
+            bbox_keyframes=item.bbox_keyframes,
         )
         return {
             "index": item.index,
@@ -3366,6 +3481,7 @@ class Validation:
         image_path: str | None = None,
         data_backend_id: str | None = None,
         bbox_entities: list[dict] | None = None,
+        bbox_keyframes: list[dict] | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -3618,7 +3734,20 @@ class Validation:
                 _grounding_active = False
                 if self.model.supports_grounding():
                     grounding_batch = None
-                    if bbox_entities:
+                    if bbox_keyframes and self.model.is_video_model():
+                        from simpletuner.helpers.training.grounding.interpolation import interpolate_bbox_keyframes
+
+                        num_video_frames = getattr(self.config, "validation_num_video_frames", 25) or 25
+                        per_frame_entities = interpolate_bbox_keyframes(bbox_keyframes, num_video_frames)
+                        grounding_batch = _build_video_keyframe_grounding_batch(
+                            embed_cache=self.embed_cache,
+                            max_entities=getattr(self.config, "max_grounding_entities", 4),
+                            vae_scale_factor=8,
+                            per_frame_entities=per_frame_entities,
+                            shortname=cache_key,
+                            target_size=(int(validation_resolution_width), int(validation_resolution_height)),
+                        )
+                    elif bbox_entities:
                         grounding_batch = _build_validation_grounding_batch(
                             embed_cache=self.embed_cache,
                             max_entities=getattr(self.config, "max_grounding_entities", 4),

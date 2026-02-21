@@ -228,5 +228,150 @@ class PromptLibraryEntryBboxTestCase(unittest.TestCase):
         self.assertIsNone(entry.bbox_entities)
 
 
+class PromptLibraryEntryBboxKeyframesTestCase(unittest.TestCase):
+    def test_from_payload_with_bbox_keyframes(self) -> None:
+        payload = {
+            "prompt": "test prompt",
+            "bbox_keyframes": [
+                {"frame": 0, "entities": [{"label": "cat", "bbox": [0.1, 0.2, 0.5, 0.6]}]},
+                {"frame": 10, "entities": [{"label": "cat", "bbox": [0.3, 0.4, 0.7, 0.8]}]},
+            ],
+        }
+        entry = PromptLibraryEntry.from_payload(payload)
+        self.assertEqual(entry.prompt, "test prompt")
+        self.assertIsNotNone(entry.bbox_keyframes)
+        self.assertEqual(len(entry.bbox_keyframes), 2)
+        self.assertEqual(entry.bbox_keyframes[0]["frame"], 0)
+        self.assertEqual(entry.bbox_keyframes[1]["frame"], 10)
+
+    def test_from_payload_string_has_no_keyframes(self) -> None:
+        entry = PromptLibraryEntry.from_payload("simple prompt")
+        self.assertIsNone(entry.bbox_keyframes)
+
+    def test_from_payload_without_keyframes_has_none(self) -> None:
+        entry = PromptLibraryEntry.from_payload({"prompt": "no keyframes"})
+        self.assertIsNone(entry.bbox_keyframes)
+
+    def test_bbox_keyframes_not_list_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload({"prompt": "p", "bbox_keyframes": "bad"})
+
+    def test_bbox_keyframes_item_not_dict_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload({"prompt": "p", "bbox_keyframes": ["bad"]})
+
+    def test_bbox_keyframes_missing_frame_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_keyframes": [{"entities": [{"label": "a", "bbox": [0.1, 0.1, 0.5, 0.5]}]}],
+                }
+            )
+
+    def test_bbox_keyframes_negative_frame_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_keyframes": [{"frame": -1, "entities": [{"label": "a", "bbox": [0.1, 0.1, 0.5, 0.5]}]}],
+                }
+            )
+
+    def test_bbox_keyframes_empty_entities_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_keyframes": [{"frame": 0, "entities": []}],
+                }
+            )
+
+    def test_bbox_keyframes_invalid_entity_raises(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload(
+                {
+                    "prompt": "p",
+                    "bbox_keyframes": [{"frame": 0, "entities": [{"label": "", "bbox": [0, 0, 1, 1]}]}],
+                }
+            )
+
+    def test_bbox_keyframes_sorted_by_frame(self) -> None:
+        payload = {
+            "prompt": "p",
+            "bbox_keyframes": [
+                {"frame": 10, "entities": [{"label": "a", "bbox": [0.1, 0.1, 0.5, 0.5]}]},
+                {"frame": 0, "entities": [{"label": "a", "bbox": [0.2, 0.2, 0.6, 0.6]}]},
+            ],
+        }
+        entry = PromptLibraryEntry.from_payload(payload)
+        self.assertEqual(entry.bbox_keyframes[0]["frame"], 0)
+        self.assertEqual(entry.bbox_keyframes[1]["frame"], 10)
+
+    def test_empty_bbox_keyframes_list_becomes_none(self) -> None:
+        entry = PromptLibraryEntry.from_payload({"prompt": "p", "bbox_keyframes": []})
+        self.assertIsNone(entry.bbox_keyframes)
+
+    def test_serialise_includes_bbox_keyframes(self) -> None:
+        entry = PromptLibraryEntry(
+            prompt="test",
+            bbox_keyframes=[{"frame": 0, "entities": [{"label": "cat", "bbox": [0.1, 0.2, 0.3, 0.4]}]}],
+        )
+        data = entry.serialise()
+        self.assertIn("bbox_keyframes", data)
+        self.assertEqual(data["bbox_keyframes"][0]["frame"], 0)
+
+    def test_serialise_omits_keyframes_when_none(self) -> None:
+        entry = PromptLibraryEntry(prompt="test")
+        data = entry.serialise()
+        self.assertNotIn("bbox_keyframes", data)
+
+    def test_serialise_entries_uses_dict_for_keyframes(self) -> None:
+        entries = {
+            "plain": PromptLibraryEntry(prompt="simple"),
+            "keyed": PromptLibraryEntry(
+                prompt="with keyframes",
+                bbox_keyframes=[{"frame": 0, "entities": [{"label": "a", "bbox": [0.1, 0.1, 0.5, 0.5]}]}],
+            ),
+        }
+        result = PromptLibraryService.serialise_entries(entries)
+        self.assertEqual(result["plain"], "simple")
+        self.assertIsInstance(result["keyed"], dict)
+        self.assertIn("bbox_keyframes", result["keyed"])
+
+
+class PromptLibraryKeyframeRoundTripTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.base_dir = Path(self._tmpdir.name)
+        self.service = PromptLibraryService(config_dir=self.base_dir)
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+
+    def test_keyframes_round_trip(self) -> None:
+        keyframes = [
+            {"frame": 0, "entities": [{"label": "cat", "bbox": [0.1, 0.2, 0.5, 0.6]}]},
+            {"frame": 20, "entities": [{"label": "cat", "bbox": [0.3, 0.4, 0.7, 0.8]}]},
+        ]
+        entries = {
+            "moving_cat": {
+                "prompt": "a cat walking across the room",
+                "bbox_keyframes": keyframes,
+            },
+        }
+        result = self.service.save_library("user_prompt_library-kf.json", entries)
+        saved = result["entries"]["moving_cat"]
+        self.assertEqual(saved["prompt"], "a cat walking across the room")
+        self.assertEqual(len(saved["bbox_keyframes"]), 2)
+        self.assertEqual(saved["bbox_keyframes"][0]["frame"], 0)
+        self.assertEqual(saved["bbox_keyframes"][1]["frame"], 20)
+
+        payload = self.service.read_library("user_prompt_library-kf.json")
+        reloaded = payload["entries"]["moving_cat"]
+        self.assertEqual(len(reloaded["bbox_keyframes"]), 2)
+        self.assertEqual(reloaded["bbox_keyframes"][0]["entities"][0]["label"], "cat")
+
+
 if __name__ == "__main__":
     unittest.main()

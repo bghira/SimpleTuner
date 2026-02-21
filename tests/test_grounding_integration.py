@@ -713,5 +713,37 @@ class TestBuildValidationGroundingPipelineKwargs(unittest.TestCase):
         self.assertTrue(torch.all(gk["masks"][0] == 0))
 
 
+class TestGligenProperty(unittest.TestCase):
+    """Test ModelFoundation.gligen property wraps supports_grounding()."""
+
+    def _make_stub(self, **config_attrs):
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        stub = MagicMock(spec=ModelFoundation)
+        stub.config = MagicMock(**config_attrs)
+        # Wire up the real property via the real methods
+        stub.supports_grounding = lambda: ModelFoundation.supports_grounding(stub)
+        type(stub).gligen = ModelFoundation.gligen
+
+        return stub
+
+    def test_gligen_true_when_grounding_enabled(self):
+        model = self._make_stub(max_grounding_entities=4)
+        self.assertTrue(model.gligen)
+
+    def test_gligen_false_when_grounding_disabled(self):
+        model = self._make_stub(max_grounding_entities=0)
+        self.assertFalse(model.gligen)
+
+    def test_gligen_false_when_no_attribute(self):
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        stub = MagicMock(spec=ModelFoundation)
+        stub.config = MagicMock(spec=[])
+        stub.supports_grounding = lambda: ModelFoundation.supports_grounding(stub)
+        type(stub).gligen = ModelFoundation.gligen
+        self.assertFalse(stub.gligen)
+
+
 if __name__ == "__main__":
     unittest.main()
