@@ -35,6 +35,7 @@ class ZImage(ImageModelFoundation):
     LATENT_CHANNEL_COUNT = 16
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
     SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_LORA_EXCLUDE_TARGETS = "noise_refiner|context_refiner"
 
     MODEL_CLASS = ZImageTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
