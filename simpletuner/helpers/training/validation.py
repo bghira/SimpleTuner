@@ -3458,7 +3458,7 @@ class Validation:
                     pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
                     logger.debug(f"Running validations with inputs: {pipeline_kwargs.keys()}")
                     if removed_kwargs:
-                        logger.warning(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
+                        logger.debug(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
                     # run in autocast ctx
                     preview_ctx = nullcontext()
                     if self.preview and current_validation_type == "checkpoint":
