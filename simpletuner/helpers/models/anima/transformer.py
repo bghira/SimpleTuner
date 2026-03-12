@@ -136,6 +136,8 @@ def _patch_diffusers_rmsnorm_to_anima(module: nn.Module) -> None:
 class _RotaryEmbedding(nn.Module):
     def __init__(self, head_dim: int, theta: float = 10000.0):
         super().__init__()
+        if head_dim % 2 != 0:
+            raise ValueError(f"RoPE head_dim must be even, got {head_dim}.")
         half_dim = head_dim // 2
         index = torch.arange(half_dim, dtype=torch.float32)
         exponent = (2.0 / float(head_dim)) * index
@@ -153,6 +155,8 @@ class _RotaryEmbedding(nn.Module):
 class _AdapterAttention(nn.Module):
     def __init__(self, query_dim: int, context_dim: int, heads: int):
         super().__init__()
+        if query_dim % heads != 0:
+            raise ValueError(f"Adapter attention query_dim must be divisible by heads, got {query_dim} and {heads}.")
         inner = query_dim
         head_dim = inner // heads
         self.heads = heads

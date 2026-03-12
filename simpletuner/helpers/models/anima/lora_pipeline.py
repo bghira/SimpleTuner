@@ -72,7 +72,6 @@ def _fetch_anima_lora_state_dict(
         dl_kwargs = {
             "cache_dir": cache_dir,
             "force_download": force_download,
-            "proxies": proxies,
             "revision": revision,
             "local_files_only": bool(local_files_only),
             "token": token,

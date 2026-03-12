@@ -295,8 +295,8 @@ def load_tokenizer_from_source(
         kwargs["token"] = options.token
     if options.revision is not None:
         kwargs["revision"] = options.revision
-    if options.proxies is not None:
-        kwargs["proxies"] = options.proxies
+    # transformers / huggingface_hub no longer consistently accept `proxies`.
+    # Proxy configuration should use HTTP(S)_PROXY or global hub configuration.
     return AutoTokenizer.from_pretrained(repo_or_path, **kwargs)
 
 

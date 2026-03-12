@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestAnimaModel(unittest.TestCase):
@@ -39,6 +40,49 @@ class TestAnimaModel(unittest.TestCase):
         self.assertIn("anima", metadata)
         self.assertEqual(metadata["anima"]["class_name"], "Anima")
         self.assertEqual(metadata["anima"]["module_path"], "simpletuner.helpers.models.anima.model")
+
+    def test_tokenizer_loader_ignores_proxies(self):
+        from simpletuner.helpers.models.anima.loading import AnimaLoaderOptions, load_tokenizer_from_source
+
+        options = AnimaLoaderOptions(local_files_only=True, proxies={"https": "http://proxy"})
+        with patch("simpletuner.helpers.models.anima.loading.AutoTokenizer.from_pretrained") as mock_from_pretrained:
+            load_tokenizer_from_source("repo::tokenizer", options=options)
+
+        self.assertNotIn("proxies", mock_from_pretrained.call_args.kwargs)
+
+    def test_lora_loader_ignores_proxies(self):
+        from simpletuner.helpers.models.anima.lora_pipeline import _fetch_anima_lora_state_dict
+
+        with (
+            patch("simpletuner.helpers.models.anima.lora_pipeline.hf_hub_download") as mock_download,
+            patch("simpletuner.helpers.models.anima.lora_pipeline.torch.load") as mock_torch_load,
+        ):
+            mock_download.return_value = "weights.bin"
+            mock_torch_load.return_value = {"transformer.block.lora_A.weight": object()}
+            _fetch_anima_lora_state_dict(
+                "repo-id",
+                weight_name="weights.bin",
+                use_safetensors=False,
+                local_files_only=True,
+                cache_dir=None,
+                force_download=False,
+                proxies={"https": "http://proxy"},
+                token=None,
+                revision=None,
+                subfolder=None,
+                allow_pickle=True,
+            )
+
+        self.assertNotIn("proxies", mock_download.call_args.kwargs)
+
+    def test_transformer_validation_guards(self):
+        from simpletuner.helpers.models.anima.transformer import _AdapterAttention, _RotaryEmbedding
+
+        with self.assertRaisesRegex(ValueError, "even"):
+            _RotaryEmbedding(63)
+
+        with self.assertRaisesRegex(ValueError, "divisible"):
+            _AdapterAttention(query_dim=1025, context_dim=1024, heads=16)
 
 
 if __name__ == "__main__":

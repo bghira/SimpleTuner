@@ -304,7 +304,6 @@ class Anima(ImageModelFoundation):
             prepared_batch["encoder_hidden_states"].to(device=self.accelerator.device, dtype=self.config.weight_dtype),
             t5xxl_ids=prepared_batch.get("t5xxl_ids"),
             t5xxl_weights=prepared_batch.get("t5xxl_weights"),
-            use_gradient_checkpointing=getattr(self.config, "gradient_checkpointing", False),
         )
         if hasattr(noise_pred, "sample"):
             noise_pred = noise_pred.sample
