@@ -8,7 +8,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from simpletuner.helpers.models.common import PipelineTypes
+from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes
 from simpletuner.helpers.training.save_hooks import MODEL_SPEC_VERSION, SaveHookManager
 
 
@@ -58,6 +58,31 @@ class _DummyModel:
 
     def get_text_encoder(self, index: int):
         return self._text_encoders.get(index)
+
+
+class _DummySavePipeline:
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory,
+        transformer_lora_layers=None,
+        save_function=None,
+        weight_name=None,
+        safe_serialization=True,
+        **kwargs,
+    ):
+        if save_function is None:
+            raise ValueError("save_function is required for this test pipeline")
+        filename = os.path.join(save_directory, weight_name or "pytorch_lora_weights.safetensors")
+        packed = {f"transformer.{key}": value for key, value in (transformer_lora_layers or {}).items()}
+        save_function(packed, filename)
+
+
+class _DummySaveModel:
+    PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummySavePipeline, PipelineTypes.CONTROLNET: _DummySavePipeline}
+
+    def __init__(self, model_family, lora_format="comfyui", controlnet=False):
+        self.config = SimpleNamespace(model_family=model_family, lora_format=lora_format, controlnet=controlnet)
 
 
 _ema_stub = SimpleNamespace(
@@ -203,6 +228,43 @@ class FluxPipelineMetadataTests(unittest.TestCase):
         self.assertIn("lora_adapter_metadata", kwargs)
         self.assertEqual(kwargs["lora_adapter_metadata"]["transformer.r"], 4)
         self.assertEqual(kwargs["lora_adapter_metadata"]["transformer.lora_alpha"], 8)
+
+
+class ComfyUILoraPrefixTests(unittest.TestCase):
+    def test_non_native_transformer_models_write_diffusion_model_prefix(self):
+        weights = {
+            "blocks.0.attn.to_q.lora.down.weight": torch.zeros(4, 8),
+            "blocks.0.attn.to_q.lora.up.weight": torch.zeros(8, 4),
+            "context_refiner.blocks.0.attn.to_k.lora.down.weight": torch.zeros(4, 8),
+            "context_refiner.blocks.0.attn.to_k.lora.up.weight": torch.zeros(8, 4),
+            "noise_refiner.blocks.0.attn.to_v.lora.down.weight": torch.zeros(4, 8),
+            "noise_refiner.blocks.0.attn.to_v.lora.up.weight": torch.zeros(8, 4),
+        }
+
+        for model_family in ("z_image", "qwen_image"):
+            with self.subTest(model_family=model_family):
+                model = _DummySaveModel(model_family=model_family)
+
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    ModelFoundation.save_lora_weights(
+                        model,
+                        save_directory=tmpdir,
+                        transformer_lora_layers=weights,
+                    )
+
+                    lora_path = os.path.join(tmpdir, "pytorch_lora_weights.safetensors")
+                    with safe_open(lora_path, framework="pt", device="cpu") as handle:
+                        keys = list(handle.keys())
+
+                self.assertTrue(keys)
+                self.assertTrue(all(key.startswith("diffusion_model.") for key in keys))
+                self.assertIn("diffusion_model.blocks.0.attn.to_q.lora_A.weight", keys)
+                self.assertIn("diffusion_model.blocks.0.attn.to_q.alpha", keys)
+                self.assertIn("diffusion_model.context_refiner.blocks.0.attn.to_k.lora_A.weight", keys)
+                self.assertIn("diffusion_model.context_refiner.blocks.0.attn.to_k.alpha", keys)
+                self.assertIn("diffusion_model.noise_refiner.blocks.0.attn.to_v.lora_B.weight", keys)
+                self.assertIn("diffusion_model.noise_refiner.blocks.0.attn.to_v.alpha", keys)
+                self.assertFalse(any(key.startswith("transformer.") for key in keys))
 
 
 if __name__ == "__main__":
