@@ -25,7 +25,7 @@ from diffusers.models.attention_processor import (
     AuraFlowAttnProcessor2_0,
     FusedAuraFlowAttnProcessor2_0,
 )
-from diffusers.models.controlnet import zero_module
+from diffusers.models.controlnets.controlnet import zero_module
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
