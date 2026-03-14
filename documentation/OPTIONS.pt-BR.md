@@ -1076,11 +1076,32 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 - **Por que**: Evita carregar DINOv2 quando o backbone ja tem uma camada semantica mais forte para supervisionar.
 - **Padrao**: `false`
 
+### `--crepa_feature_source`
+
+- **O que**: Seleciona de onde o CREPA obtem o sinal de professor.
+- **Por que**: Use `encoder` para o caminho classico com encoder externo, `backbone` para alinhamento interno bloco a bloco, ou `self_flow` para o professor EMA com visao mais limpa usado no Self-Flow.
+- **Opcoes**: `encoder`, `backbone`, `self_flow`
+- **Padrao**: `encoder`
+
+### `--crepa_self_flow`
+
+- **O que**: Alias booleano legado que ativa o modo Self-Flow.
+- **Por que**: Configs antigas ainda podem usa-lo, mas configs novas devem preferir `crepa_feature_source=self_flow`.
+- **Padrao**: `false`
+- **Nota**: Entra em conflito com `crepa_use_backbone_features` e com `crepa_feature_source` apontando para outro modo.
+
+### `--crepa_self_flow_mask_ratio`
+
+- **O que**: Fracao de tokens que recebe o timestep alternativo no Self-Flow.
+- **Por que**: Controla quanta assimetria de informacao existe entre tokens mais limpos e mais ruidosos. Valores altos fortalecem o sinal auto-supervisionado, mas podem desestabilizar o treino.
+- **Padrao**: `0.1`
+- **Faixa**: `0.0` a `0.5`
+
 ### `--crepa_teacher_block_index`
 
-- **O que**: Indice do bloco professor ao usar features do backbone.
-- **Por que**: Permite alinhar um bloco estudante mais cedo a um bloco professor mais profundo sem encoder externo. Usa o bloco estudante quando nao definido.
-- **Padrao**: Usa `crepa_block_index` se nao for fornecido.
+- **O que**: Indice do bloco professor ao usar features do backbone ou Self-Flow.
+- **Por que**: Permite alinhar um bloco estudante mais cedo a um bloco professor mais profundo sem encoder externo. No Self-Flow ele e exigido explicitamente para que o professor EMA leia uma camada semantica mais profunda.
+- **Padrao**: Usa `crepa_block_index` se nao for fornecido no modo backbone; e obrigatorio no modo Self-Flow.
 
 ### `--crepa_encoder_image_size`
 

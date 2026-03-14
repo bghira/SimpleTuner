@@ -52,6 +52,14 @@
 
     [:octicons-arrow-right-24: Guias de Modelos](quickstart/index.md)
 
+-   :material-flask-outline:{ .lg .middle } __Métodos experimentais__
+
+    ---
+
+    Recursos de pesquisa como Self-Flow, LayerSync, Diff2Flow e Video CREPA
+
+    [:octicons-arrow-right-24: Self-Flow](experimental/SELF_FLOW.md)
+
 </div>
 
 ## Recursos

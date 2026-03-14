@@ -52,6 +52,14 @@
 
     [:octicons-arrow-right-24: Model Guides](quickstart/index.md)
 
+-   :material-flask-outline:{ .lg .middle } __Experimental Methods__
+
+    ---
+
+    Research features such as Self-Flow, LayerSync, Diff2Flow, and Video CREPA
+
+    [:octicons-arrow-right-24: Self-Flow](experimental/SELF_FLOW.md)
+
 </div>
 
 ## Features
