@@ -347,6 +347,15 @@
             "2b-480p"
         ]
     },
+    "anima": {
+        "class_name": "Anima",
+        "module_path": "simpletuner.helpers.models.anima.model",
+        "name": "Anima",
+        "prediction_type": "flow_matching",
+        "flavour_choices": [
+            "preview"
+        ]
+    },
     "sd3": {
         "class_name": "SD3",
         "module_path": "simpletuner.helpers.models.sd3.model",
