@@ -1040,6 +1040,9 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         x_freqs_cis = pad_sequence(x_freqs_cis, batch_first=True, padding_value=0.0)
         x_freqs_cis = x_freqs_cis[:, : x.shape[1]]
 
+        x_pad_mask_tensor = pad_sequence(x_inner_pad_mask, batch_first=True, padding_value=True)
+        x_pad_mask_tensor = x_pad_mask_tensor[:, : x.shape[1]]
+
         x_noise_mask_tensor = []
         for i in range(bsz):
             x_mask = torch.tensor(x_noise_mask[i], dtype=torch.long, device=device)
@@ -1057,15 +1060,18 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             for i in range(bsz):
                 seq_len = x_item_seqlens[i]
                 noise_mask = x_noise_mask_tensor[i, :seq_len].bool()
-                clean_vals = pooled_clean_x[i].unsqueeze(0).expand(seq_len, -1)
-                noisy_vals = pooled_noisy_x[i].unsqueeze(0).expand(seq_len, -1)
-                target_count = int(noise_mask.sum().item())
+                pad_mask = x_pad_mask_tensor[i, :seq_len]
+                target_mask = noise_mask & ~pad_mask
+                clean_vals = pooled_clean_x[i].unsqueeze(0).repeat(seq_len, 1)
+                noisy_vals = pooled_noisy_x[i].unsqueeze(0).repeat(seq_len, 1)
+                target_positions = torch.nonzero(target_mask, as_tuple=False).flatten()
+                target_count = int(target_positions.numel())
                 if target_count != t_noisy_x.shape[1]:
                     raise ValueError(
                         f"Z-Image Omni tokenwise timesteps expected {t_noisy_x.shape[1]} noisy image tokens, got {target_count}."
                     )
-                clean_vals[noise_mask] = t_clean_x[i]
-                noisy_vals[noise_mask] = t_noisy_x[i]
+                clean_vals[target_positions] = t_clean_x[i]
+                noisy_vals[target_positions] = t_noisy_x[i]
                 tokenwise_clean_x[i, :seq_len] = clean_vals
                 tokenwise_noisy_x[i, :seq_len] = noisy_vals
             t_noisy_x = tokenwise_noisy_x
@@ -1294,15 +1300,26 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             unified = layer_out
 
             if hidden_states_buffer is not None:
+                max_target_tokens = 1
+                target_positions_per_batch = []
+                for b in range(bsz):
+                    target_positions = torch.nonzero(
+                        x_noise_mask_tensor[b, : x_item_seqlens[b]].bool() & ~x_pad_mask_tensor[b, : x_item_seqlens[b]],
+                        as_tuple=False,
+                    ).flatten()
+                    target_positions_per_batch.append(target_positions)
+                    max_target_tokens = max(max_target_tokens, int(target_positions.numel()))
                 img_tokens = torch.zeros(
-                    (bsz, x_max_item_seqlen, unified.shape[-1]),
+                    (bsz, max_target_tokens, unified.shape[-1]),
                     dtype=unified.dtype,
                     device=unified.device,
                 )
                 for b in range(bsz):
                     cap_len = cap_item_seqlens[b]
-                    x_len = x_item_seqlens[b]
-                    img_tokens[b, :x_len] = unified[b, cap_len : cap_len + x_len]
+                    target_positions = target_positions_per_batch[b]
+                    target_count = int(target_positions.numel())
+                    if target_count > 0:
+                        img_tokens[b, :target_count] = unified[b, cap_len + target_positions]
                 _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", img_tokens, image_tokens_start=0)
                 capture_idx += 1
 

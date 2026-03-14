@@ -211,6 +211,28 @@ class TestZImageOmniTransformer(unittest.TestCase):
                 siglip_feats=siglip_feats,
             )
 
+    def test_hidden_state_capture_trims_to_target_tokens(self):
+        transformer = self._build_small_transformer().eval()
+
+        x = [torch.zeros(2, 1, 4, 4)]
+        cap_feats = [[torch.zeros(2, 4), torch.zeros(2, 4)]]
+        cond_latents = [[torch.zeros(2, 1, 4, 4)]]
+        siglip_feats = [[None, None]]
+        timesteps = torch.tensor([[0.5, 0.25, 0.75, 0.1]])
+        hidden_states_buffer = {}
+
+        transformer.forward(
+            x=x,
+            t=timesteps,
+            cap_feats=cap_feats,
+            cond_latents=cond_latents,
+            siglip_feats=siglip_feats,
+            hidden_states_buffer=hidden_states_buffer,
+        )
+
+        self.assertIn("layer_0", hidden_states_buffer)
+        self.assertEqual(hidden_states_buffer["layer_0"].shape[1], 4)
+
 
 if __name__ == "__main__":
     unittest.main()
