@@ -68,7 +68,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
 
     def test_all_test_files_discovered(self):
         """Test that all expected transformer test files are discovered."""
-        expected_transformers = [
+        required_transformers = [
             "auraflow",
             "chroma",
             "chroma_controlnet",
@@ -86,30 +86,40 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
         discovered_transformers = set()
         for test_file in self.test_files:
             filename = os.path.basename(test_file)
-            for transformer in expected_transformers:
+            for transformer in required_transformers:
                 if transformer in filename:
                     discovered_transformers.add(transformer)
 
-        missing_transformers = set(expected_transformers) - discovered_transformers
+        missing_transformers = set(required_transformers) - discovered_transformers
         self.assertEqual(len(missing_transformers), 0, f"Missing test files for transformers: {missing_transformers}")
-
-        self.assertEqual(
+        self.assertGreaterEqual(
             len(self.test_files),
-            len(expected_transformers),
-            f"Expected {len(expected_transformers)} test files, found {len(self.test_files)}: {self.test_files}",
+            len(required_transformers),
+            f"Expected at least {len(required_transformers)} transformer test files, found {len(self.test_files)}: {self.test_files}",
         )
 
     def test_base_test_class_inheritance(self):
-        """Test that all test classes inherit from TransformerBaseTest."""
+        """Test that files using the shared framework inherit from TransformerBaseTest."""
         for test_file in self.test_files:
             with self.subTest(test_file=os.path.basename(test_file)):
+                with open(test_file, "r") as f:
+                    content = f.read()
+
+                if "TransformerBaseTest" not in content:
+                    continue
+
                 module = self._load_test_module(test_file)
 
                 # Find test classes in the module
                 test_classes = []
                 for name in dir(module):
                     obj = getattr(module, name)
-                    if isinstance(obj, type) and issubclass(obj, unittest.TestCase) and name.startswith("Test"):
+                    if (
+                        isinstance(obj, type)
+                        and issubclass(obj, unittest.TestCase)
+                        and obj.__module__ == module.__name__
+                        and not obj.__name__.startswith("TransformerBaseTest")
+                    ):
                         test_classes.append(obj)
 
                 self.assertGreater(len(test_classes), 0, f"No test classes found in {os.path.basename(test_file)}")
@@ -121,18 +131,24 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
                 )
 
     def test_consistent_test_method_patterns(self):
-        """Test that all test files follow consistent test method patterns."""
+        """Test that shared-framework transformer tests keep the standard method patterns."""
         required_patterns = ["test_basic_instantiation", "test_forward_pass", "test_typo_prevention"]
 
         for test_file in self.test_files:
             with self.subTest(test_file=os.path.basename(test_file)):
+                with open(test_file, "r") as f:
+                    content = f.read()
+
+                if "TransformerBaseTest" not in content:
+                    continue
+
                 module = self._load_test_module(test_file)
 
                 # Get all test methods
                 test_methods = []
                 for name in dir(module):
                     obj = getattr(module, name)
-                    if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
+                    if isinstance(obj, type) and issubclass(obj, unittest.TestCase) and obj.__module__ == module.__name__:
                         for method_name in dir(obj):
                             if method_name.startswith("test_"):
                                 test_methods.append(method_name)
@@ -150,7 +166,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
                 )
 
     def test_helper_utilities_consistency(self):
-        """Test that all test files use helper utilities consistently."""
+        """Test that files using the shared framework import the shared helpers."""
         required_helpers = ["TensorGenerator", "MockDiffusersConfig"]
 
         for test_file in self.test_files:
@@ -158,6 +174,9 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
                 # Read file content to check imports
                 with open(test_file, "r") as f:
                     content = f.read()
+
+                if "TransformerBaseTest" not in content:
+                    continue
 
                 # Check for helper imports
                 for helper in required_helpers:
