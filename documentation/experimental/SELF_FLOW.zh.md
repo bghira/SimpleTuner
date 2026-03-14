@@ -2,6 +2,15 @@
 
 Self-Flow 是一种 CREPA 模式，用同一模型更干净的 EMA 教师视图替代外部视觉编码器。它较为贴近 Black Forest Labs 论文中的做法：学生分支使用混合的 token 级噪声调度，EMA 教师看到更干净的视图，同时保持正常生成 loss 并对齐内部 hidden states。
 
+与附近的 SimpleTuner 方法相比：
+
+| 方法 | 教师来源 | 噪声非对称性 | 额外教师模型 | 核心思路 |
+| --- | --- | --- | --- | --- |
+| REPA / VIDEO_CREPA | 冻结的外部编码器，通常是 DINOv2 | 否 | 是 | 将模型 hidden states 对齐到外部语义特征 |
+| LayerSync | 同一次 forward pass 中更深的层 | 否 | 否 | 将较早层对齐到更强的后续层 |
+| TwinFlow | EMA 教师与递归轨迹目标 | 没有 token 级 cleaner / noisier 切分 | 无外部模型 | 少步数轨迹匹配，可选负时间符号语义 |
+| Self-Flow | 同一模型在更干净视图上的 EMA 教师 | 是 | 无外部模型 | 通过 dual-timestep scheduling 学习更强的内部表示 |
+
 > **如果你想要外部编码器对齐**：REPA / U-REPA 请看 [IMAGE_REPA.zh.md](IMAGE_REPA.zh.md)，视频时间对齐 CREPA 请看 [VIDEO_CREPA.zh.md](VIDEO_CREPA.zh.md)。
 
 ## 何时使用

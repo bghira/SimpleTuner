@@ -2,6 +2,15 @@
 
 Self-Flow e um modo de CREPA que substitui o encoder visual externo por uma visao EMA mais limpa do proprio modelo. Ele segue de perto a ideia do paper da Black Forest Labs: treinar o estudante com ruido tokenwise misto, rodar o professor EMA numa visao mais limpa e alinhar hidden states internos enquanto mantem a loss generativa normal.
 
+Comparado com metodos proximos do SimpleTuner:
+
+| Metodo | Fonte do professor | Assimetria de ruido | Modelo professor extra | Ideia principal |
+| --- | --- | --- | --- | --- |
+| REPA / VIDEO_CREPA | Encoder externo congelado, geralmente DINOv2 | Nao | Sim | Alinhar hidden states do modelo a features semanticas externas |
+| LayerSync | Camada mais profunda do mesmo forward pass | Nao | Nao | Alinhar uma camada mais cedo a uma camada posterior mais forte |
+| TwinFlow | Professor EMA e alvos recursivos de trajetoria | Sem divisao tokenwise entre visoes mais limpa e mais ruidosa | Sem modelo externo | Matching de trajetoria em poucos passos, opcionalmente com semantica de sinal de tempo negativo |
+| Self-Flow | Professor EMA do mesmo modelo em uma visao mais limpa | Sim | Sem modelo externo | Aprender representacoes internas mais fortes via dual-timestep scheduling |
+
 > **Quer alinhamento com encoder externo?** Veja [IMAGE_REPA.pt-BR.md](IMAGE_REPA.pt-BR.md) para REPA / U-REPA e [VIDEO_CREPA.pt-BR.md](VIDEO_CREPA.pt-BR.md) para CREPA temporal.
 
 ## Quando usar

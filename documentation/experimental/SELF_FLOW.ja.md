@@ -2,6 +2,15 @@
 
 Self-Flow は、外部ビジョンエンコーダを同一モデルのよりクリーンな EMA 教師ビューで置き換える CREPA モードです。Black Forest Labs の論文にかなり近い形で、学生には混合トークン単位ノイズ、教師にはよりクリーンなビューを与え、通常の生成 loss を保ったまま内部 hidden state を整合させます。
 
+近い SimpleTuner 手法との比較:
+
+| 手法 | 教師ソース | ノイズ非対称性 | 追加の教師モデル | 主な考え方 |
+| --- | --- | --- | --- | --- |
+| REPA / VIDEO_CREPA | 凍結された外部エンコーダ。通常は DINOv2 | なし | あり | モデル hidden state を外部の意味特徴に整合させる |
+| LayerSync | 同一 forward pass 内のより深い層 | なし | なし | 早い層をより強い後段層に整合させる |
+| TwinFlow | EMA 教師と再帰的な軌跡ターゲット | トークン単位の cleaner / noisier 分離はなし | 外部モデルなし | 少ステップの軌跡整合。必要に応じて負時間 sign semantics を使う |
+| Self-Flow | 同一モデルの cleaner view 上の EMA 教師 | あり | 外部モデルなし | dual-timestep scheduling で内部表現を強化する |
+
 > **外部エンコーダ整合が欲しい場合**: REPA / U-REPA は [IMAGE_REPA.ja.md](IMAGE_REPA.ja.md)、時間整合付き CREPA は [VIDEO_CREPA.ja.md](VIDEO_CREPA.ja.md) を参照してください。
 
 ## 使う場面

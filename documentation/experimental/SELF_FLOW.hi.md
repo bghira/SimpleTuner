@@ -2,6 +2,15 @@
 
 Self-Flow, CREPA का एक mode है जो external vision encoder की जगह उसी model का cleaner EMA teacher view उपयोग करता है। यह Black Forest Labs paper की core idea के काफी करीब है: student को mixed tokenwise noise schedule पर train करना, EMA teacher को cleaner view पर चलाना, और normal generative loss को बनाए रखते हुए internal hidden states align करना।
 
+SimpleTuner के आसपास के methods से तुलना:
+
+| Method | Teacher source | Noise asymmetry | Extra teacher model | Main idea |
+| --- | --- | --- | --- | --- |
+| REPA / VIDEO_CREPA | Frozen external encoder, आमतौर पर DINOv2 | नहीं | हाँ | Model hidden states को external semantic features से align करना |
+| LayerSync | उसी forward pass की deeper layer | नहीं | नहीं | Earlier layer को stronger later layer से align करना |
+| TwinFlow | EMA teacher और recursive trajectory targets | Tokenwise cleaner / noisier split नहीं | कोई external model नहीं | Few-step trajectory matching, optionally negative-time sign semantics के साथ |
+| Self-Flow | उसी model का EMA teacher cleaner view पर | हाँ | कोई external model नहीं | Dual-timestep scheduling के जरिए stronger internal representations सीखना |
+
 > **अगर external encoder alignment चाहिए**: REPA / U-REPA के लिए [IMAGE_REPA.hi.md](IMAGE_REPA.hi.md) और temporal CREPA के लिए [VIDEO_CREPA.hi.md](VIDEO_CREPA.hi.md) देखें।
 
 ## कब उपयोग करें

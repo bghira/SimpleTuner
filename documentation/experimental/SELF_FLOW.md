@@ -2,7 +2,14 @@
 
 Self-Flow is a CREPA mode that replaces the external vision encoder with a cleaner EMA teacher view of the same model. It follows the Black Forest Labs paper idea closely: train the student on a mixed tokenwise noise schedule, run the EMA teacher on a cleaner view, and align internal hidden states while keeping the normal generative loss.
 
-Unlike REPA / VIDEO_CREPA, Self-Flow does not need DINOv2. Unlike LayerSync, it does not align two layers from the same forward pass at the same noise level. The asymmetry comes from the student seeing mixed corruption while the teacher sees the cleaner target.
+Compared with nearby SimpleTuner methods:
+
+| Method | Teacher source | Noise asymmetry | Extra teacher model | Main idea |
+| --- | --- | --- | --- | --- |
+| REPA / VIDEO_CREPA | Frozen external encoder, usually DINOv2 | No | Yes | Align model hidden states to external semantic features |
+| LayerSync | Deeper layer from the same forward pass | No | No | Align an earlier layer to a stronger later layer |
+| TwinFlow | EMA teacher and recursive trajectory targets | No tokenwise cleaner/noisier split | No external model | Few-step trajectory matching, optionally with negative-time sign semantics |
+| Self-Flow | EMA teacher from the same model on a cleaner view | Yes | No external model | Learn stronger internal representations through dual-timestep scheduling |
 
 > **Looking for external-encoder alignment?** See [IMAGE_REPA.md](IMAGE_REPA.md) for REPA / U-REPA and [VIDEO_CREPA.md](VIDEO_CREPA.md) for temporal CREPA.
 
