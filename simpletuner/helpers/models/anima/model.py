@@ -10,6 +10,7 @@ from transformers import Qwen3Model
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.crepa import CrepaMode
 
 from .loading import (
     _QWEN_TOKENIZER_SOURCE,
@@ -77,6 +78,144 @@ class Anima(ImageModelFoundation):
             "subfolder": "split_files/text_encoders",
         }
     }
+
+    @property
+    def crepa_mode(self) -> CrepaMode:
+        return CrepaMode.IMAGE
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        if hidden_states_buffer is None:
+            return None
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+
+        _, _, num_frames, height, width = latents.shape
+        p_t, p_h, p_w = self._crepa_self_flow_patch_size()
+        token_frames = max(num_frames // p_t, 1)
+        token_height = max(height // p_h, 1)
+        token_width = max(width // p_w, 1)
+
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(
+                latents.shape[0],
+                token_frames,
+                token_height,
+                token_width,
+                device=latents.device,
+                dtype=latents.dtype,
+            )
+            < mask_ratio
+        )
+
+        base_sigma_view = base_sigmas.view(-1, 1, 1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1, 1, 1)
+        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = self._expand_crepa_self_flow_patch_values(student_token_sigmas, (p_t, p_h, p_w), latents.shape)
+        student_sigma_grid = student_sigma_grid.to(dtype=latents.dtype)
+
+        base_timestep_view = base_timesteps.view(-1, 1, 1, 1)
+        alt_timestep_view = alt_timesteps.view(-1, 1, 1, 1)
+        student_token_timesteps = torch.where(token_mask, alt_timestep_view, base_timestep_view)
+
+        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1, 1)
+        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
+
+        batch["sigmas"] = student_sigma_grid
+        batch["timesteps"] = student_token_timesteps.flatten(1)
+        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+        batch["crepa_self_flow_mask"] = token_mask
+        return batch
+
+    def _crepa_self_flow_patch_size(self) -> tuple[int, int, int]:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        config = getattr(transformer, "config", None)
+        patch_size = getattr(config, "patch_size", (1, 2, 2))
+        if isinstance(patch_size, int):
+            patch_size = (patch_size, patch_size, patch_size)
+        if not isinstance(patch_size, (tuple, list)) or len(patch_size) != 3:
+            raise ValueError(f"Unexpected Anima patch size for Self-Flow: {patch_size!r}")
+        return tuple(max(int(value), 1) for value in patch_size)
+
+    def _expand_crepa_self_flow_patch_values(
+        self,
+        values: torch.Tensor,
+        patch_size: tuple[int, int, int],
+        target_shape: tuple[int, ...],
+    ) -> torch.Tensor:
+        p_t, p_h, p_w = patch_size
+        expanded = values.unsqueeze(1)
+        expanded = expanded.repeat_interleave(p_t, dim=2)
+        expanded = expanded.repeat_interleave(p_h, dim=3)
+        expanded = expanded.repeat_interleave(p_w, dim=4)
+        _, _, target_t, target_h, target_w = target_shape
+        return expanded[:, :, :target_t, :target_h, :target_w]
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        p_t, p_h, p_w = self._crepa_self_flow_patch_size()
+        return max(
+            (latent_tensor.shape[2] // p_t) * (latent_tensor.shape[3] // p_h) * (latent_tensor.shape[4] // p_w),
+            1,
+        )
+
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            return raw_timesteps.expand(batch_size)
+        if raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(f"Anima expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}.")
+        if raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Anima expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size, -1)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"Anima expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+            )
+        raise ValueError(
+            f"Anima expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+        )
 
     def _loader_options(self) -> AnimaLoaderOptions:
         return AnimaLoaderOptions(
@@ -292,11 +431,15 @@ class Anima(ImageModelFoundation):
         latents = prepared_batch["noisy_latents"]
         if latents.dim() == 4:
             latents = latents.unsqueeze(2)
-        timesteps = prepared_batch["timesteps"]
-        if not torch.is_tensor(timesteps):
-            timesteps = torch.tensor(timesteps, device=self.accelerator.device, dtype=torch.float32)
-        else:
-            timesteps = timesteps.to(device=self.accelerator.device, dtype=torch.float32)
+        batch_size = latents.shape[0]
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=batch_size,
+            sequence_length=self._latent_sequence_length(latents),
+            device=self.accelerator.device,
+            dtype=torch.float32,
+        )
+        hidden_states_buffer = self._new_hidden_state_buffer()
 
         noise_pred = self.model(
             latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype),
@@ -304,6 +447,7 @@ class Anima(ImageModelFoundation):
             prepared_batch["encoder_hidden_states"].to(device=self.accelerator.device, dtype=self.config.weight_dtype),
             t5xxl_ids=prepared_batch.get("t5xxl_ids"),
             t5xxl_weights=prepared_batch.get("t5xxl_weights"),
+            hidden_states_buffer=hidden_states_buffer,
         )
         if hasattr(noise_pred, "sample"):
             noise_pred = noise_pred.sample
@@ -311,7 +455,11 @@ class Anima(ImageModelFoundation):
             noise_pred = noise_pred[0]
         if noise_pred.dim() == 5 and noise_pred.shape[2] == 1:
             noise_pred = noise_pred.squeeze(2)
-        return {"model_prediction": noise_pred.float(), "hidden_states_buffer": None}
+        return {
+            "model_prediction": noise_pred.float(),
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def get_latent_shapes(self, resolution: tuple) -> tuple:
         height, width = resolution

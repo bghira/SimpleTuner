@@ -1,7 +1,12 @@
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import torch
+
+from simpletuner.helpers.training.crepa import CrepaMode
 
 
 class TestAnimaModel(unittest.TestCase):
@@ -83,6 +88,73 @@ class TestAnimaModel(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "divisible"):
             _AdapterAttention(query_dim=1025, context_dim=1024, heads=16)
+
+    def test_model_supports_crepa_self_flow_and_image_mode(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        self.assertTrue(model.supports_crepa_self_flow())
+        self.assertEqual(model.crepa_mode, CrepaMode.IMAGE)
+
+    def test_prepare_crepa_self_flow_batch_builds_tokenwise_student_and_teacher_views(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32, crepa_self_flow_mask_ratio=0.5)
+        model.model = MagicMock(config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model.sample_flow_sigmas = MagicMock(return_value=(torch.tensor([0.8]), torch.tensor([800.0])))
+
+        batch = {
+            "latents": torch.zeros(1, 16, 1, 4, 4, dtype=torch.float32),
+            "input_noise": torch.ones(1, 16, 1, 4, 4, dtype=torch.float32),
+            "sigmas": torch.tensor([0.2], dtype=torch.float32),
+            "timesteps": torch.tensor([200.0], dtype=torch.float32),
+        }
+        fake_mask_rand = torch.tensor([[[[0.2, 0.7], [0.9, 0.1]]]], dtype=torch.float32)
+
+        with patch("torch.rand", return_value=fake_mask_rand):
+            result = model._prepare_crepa_self_flow_batch(batch, state={})
+
+        self.assertEqual(result["timesteps"].shape, (1, 4))
+        self.assertEqual(result["sigmas"].shape, (1, 1, 1, 4, 4))
+        self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
+        unique_timesteps = torch.unique(result["timesteps"].view(-1)).cpu()
+        torch.testing.assert_close(unique_timesteps, torch.tensor([200.0, 800.0], dtype=torch.float32))
+        self.assertTrue(torch.equal(result["crepa_self_flow_mask"], fake_mask_rand < 0.5))
+
+    def test_model_predict_preserves_tokenwise_timesteps_and_capture_override(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32)
+        captured = torch.randn(1, 4, 8)
+
+        def _forward(hidden_states, timestep, encoder_hidden_states, **kwargs):
+            kwargs["hidden_states_buffer"]["layer_7"] = captured
+            self.assertTrue(torch.equal(timestep, torch.tensor([[100.0, 900.0, 100.0, 900.0]], dtype=torch.float32)))
+            return (torch.randn(1, 16, 1, 4, 4),)
+
+        model.model = MagicMock(side_effect=_forward, config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=2)
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 16, 1, 4, 4),
+            "timesteps": torch.tensor([[100.0, 900.0, 100.0, 900.0]], dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(1, 3, 8),
+            "crepa_capture_block_index": 7,
+            "t5xxl_ids": None,
+            "t5xxl_weights": None,
+        }
+
+        result = model.model_predict(prepared_batch)
+
+        self.assertIs(result["crepa_hidden_states"], captured)
+        self.assertIs(result["hidden_states_buffer"], model._new_hidden_state_buffer.return_value)
 
 
 if __name__ == "__main__":

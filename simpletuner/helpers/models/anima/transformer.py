@@ -353,6 +353,7 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     ) -> Transformer2DModelOutput | tuple[torch.Tensor]:
         t5xxl_ids = kwargs.pop("t5xxl_ids", None)
         t5xxl_weights = kwargs.pop("t5xxl_weights", None)
+        hidden_states_buffer = kwargs.pop("hidden_states_buffer", None)
         if t5xxl_ids is not None:
             encoder_hidden_states = self.preprocess_text_embeds(
                 encoder_hidden_states, t5xxl_ids, t5xxl_weights=t5xxl_weights
@@ -368,6 +369,7 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             timestep=timestep,
             encoder_hidden_states=encoder_hidden_states,
             padding_mask=padding_mask,
+            hidden_states_buffer=hidden_states_buffer,
             return_dict=False,
         )[0]
 
