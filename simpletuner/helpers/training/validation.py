@@ -4157,12 +4157,20 @@ class Evaluation:
                                 device=prepared_eval_batch["noisy_latents"].device,
                             )
                         )
-                        eval_prediction = model_predict(
+                        current_eval_batch = self._prepare_eval_batch_for_timestep(
                             prepared_batch=prepared_eval_batch,
                             custom_timesteps=current_eval_timestep_tensor,
+                            model_predict=model_predict,
                         )
+                        if current_eval_batch is prepared_eval_batch:
+                            eval_prediction = model_predict(
+                                prepared_batch=prepared_eval_batch,
+                                custom_timesteps=current_eval_timestep_tensor,
+                            )
+                        else:
+                            eval_prediction = model_predict(prepared_batch=current_eval_batch)
                         eval_loss = calculate_loss(
-                            prepared_batch=prepared_eval_batch,
+                            prepared_batch=current_eval_batch,
                             model_output=eval_prediction,
                             apply_conditioning_mask=False,
                         )
@@ -4181,6 +4189,13 @@ class Evaluation:
             torch.cuda.set_rng_state(cuda_rng_state)
 
         return accumulated_eval_losses
+
+    def _prepare_eval_batch_for_timestep(self, prepared_batch: dict, custom_timesteps: torch.Tensor, model_predict):
+        owner = getattr(model_predict, "__self__", None)
+        prepare_fn = getattr(owner, "_prepare_custom_timestep_batch", None)
+        if callable(prepare_fn):
+            return prepare_fn(prepared_batch, custom_timesteps)
+        return prepared_batch
 
     def execute_eval(
         self,

@@ -3761,7 +3761,7 @@ class ModelFoundation(ABC):
         layersync = getattr(self, "layersync_regularizer", None)
         ls_needed = bool(layersync and layersync.wants_hidden_states())
         crepa = getattr(self, "crepa_regularizer", None)
-        crepa_buffer = bool(crepa and crepa.enabled and getattr(crepa, "use_backbone_features", False))
+        crepa_buffer = bool(crepa and crepa.wants_hidden_states())
         return ls_needed or crepa_buffer
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:

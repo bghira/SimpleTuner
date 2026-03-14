@@ -671,6 +671,13 @@ class CrepaModelFoundationTests(unittest.TestCase):
         source = foundation._validate_crepa_configuration()
         self.assertEqual(source, CrepaFeatureSource.SELF_FLOW)
 
+    def test_self_flow_crepa_requests_hidden_state_buffer(self):
+        foundation = _DummyCrepaFoundation(SimpleNamespace())
+        foundation.layersync_regularizer = None
+        foundation.crepa_regularizer = SimpleNamespace(enabled=True, wants_hidden_states=lambda: True)
+
+        self.assertTrue(foundation._needs_hidden_state_buffer())
+
     def test_ema_teacher_context_swaps_and_restores_weights(self):
         component = torch.nn.Linear(2, 2)
         original_weight = component.weight.detach().clone()
