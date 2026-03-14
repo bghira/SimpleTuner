@@ -1087,6 +1087,55 @@ class TestAuraFlowTransformer2DModel(TransformerBaseTest):
             self.assertEqual(sample.shape[2], expected_hw)  # height
             self.assertEqual(sample.shape[3], expected_hw)  # width
 
+    def test_forward_accepts_tokenwise_timesteps(self):
+        model = AuraFlowTransformer2DModel(
+            sample_size=8,
+            patch_size=2,
+            in_channels=4,
+            out_channels=4,
+            num_mmdit_layers=1,
+            num_single_dit_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=16,
+            caption_projection_dim=16,
+            pos_embed_max_size=16,
+        )
+
+        output = model(
+            hidden_states=torch.randn(1, 4, 8, 8),
+            encoder_hidden_states=torch.randn(1, 3, 16),
+            timestep=torch.tensor(
+                [[0.1, 0.9, 0.25, 0.75, 0.1, 0.9, 0.25, 0.75, 0.1, 0.9, 0.25, 0.75, 0.1, 0.9, 0.25, 0.75]]
+            ),
+            return_dict=False,
+        )[0]
+
+        self.assertEqual(output.shape, (1, 4, 8, 8))
+
+    def test_forward_rejects_wrong_tokenwise_timestep_length(self):
+        model = AuraFlowTransformer2DModel(
+            sample_size=8,
+            patch_size=2,
+            in_channels=4,
+            out_channels=4,
+            num_mmdit_layers=1,
+            num_single_dit_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=16,
+            caption_projection_dim=16,
+            pos_embed_max_size=16,
+        )
+
+        with self.assertRaisesRegex(ValueError, "tokenwise timestep embedding expected shape"):
+            model(
+                hidden_states=torch.randn(1, 4, 8, 8),
+                encoder_hidden_states=torch.randn(1, 3, 16),
+                timestep=torch.tensor([[0.1, 0.9]]),
+                return_dict=False,
+            )
+
 
 class TestAuraFlowTransformerPerformance(TransformerBaseTest):
     """Performance and benchmarking tests for AuraFlow transformer components."""

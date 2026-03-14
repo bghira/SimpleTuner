@@ -69,6 +69,12 @@ class Flux(ImageModelFoundation):
     ASSISTANT_LORA_PATH = "ostris/FLUX.1-schnell-training-adapter"
     ASSISTANT_LORA_WEIGHT_NAME = None
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=2)
+
     MODEL_CLASS = FluxTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
@@ -537,6 +543,79 @@ class Flux(ImageModelFoundation):
 
         return super().prepare_batch_conditions(batch=batch, state=state)  # fixes ControlNet latents in super class.
 
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Flux expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Flux expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Flux expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Flux expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return timesteps / self.noise_schedule.config.num_train_timesteps
+
+    def _extend_conditioning_timesteps(
+        self,
+        timesteps: torch.Tensor,
+        *,
+        batch_size: int,
+        scene_sequence_length: int,
+        conditioning_sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if conditioning_sequence_length <= 0:
+            return timesteps
+
+        cond_timesteps = torch.zeros(batch_size, conditioning_sequence_length, device=device, dtype=dtype)
+        if timesteps.ndim == 1:
+            timesteps = timesteps[:, None].expand(-1, scene_sequence_length)
+        return torch.cat([timesteps, cond_timesteps], dim=1)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
     def model_predict(self, prepared_batch):
         # handle guidance
         hidden_states_buffer = self._new_hidden_state_buffer()
@@ -580,11 +659,12 @@ class Flux(ImageModelFoundation):
             self.accelerator.device,
             self.config.weight_dtype,
         )
-        prepared_batch["timesteps"] = (
-            torch.tensor(prepared_batch["timesteps"])
-            .expand(prepared_batch["noisy_latents"].shape[0])
-            .to(device=self.accelerator.device, dtype=torch.float32)
-            / self.noise_schedule.config.num_train_timesteps
+        prepared_batch["timesteps"] = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=prepared_batch["noisy_latents"].shape[0],
+            sequence_length=packed_noisy_latents.shape[1],
+            device=self.accelerator.device,
+            dtype=torch.float32,
         )
 
         text_ids = torch.zeros(
@@ -613,6 +693,15 @@ class Flux(ImageModelFoundation):
 
         use_cond = cond_seq is not None
         logger.debug(f"Using conditioning: {use_cond}")
+        if use_cond:
+            prepared_batch["timesteps"] = self._extend_conditioning_timesteps(
+                prepared_batch["timesteps"],
+                batch_size=prepared_batch["latents"].shape[0],
+                scene_sequence_length=packed_noisy_latents.shape[1],
+                conditioning_sequence_length=cond_seq.shape[1],
+                device=self.accelerator.device,
+                dtype=torch.float32,
+            )
         lat_in = torch.cat([packed_noisy_latents, cond_seq], dim=1) if use_cond else packed_noisy_latents
         id_in = torch.cat([img_ids, cond_ids], dim=1) if use_cond else img_ids
 
@@ -677,11 +766,9 @@ class Flux(ImageModelFoundation):
             model_pred = model_pred[:, :scene_seq_len, :]  # (B, S_scene, C*4)
 
         # Extract CREPA hidden states from buffer if enabled
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            layer_key = f"layer_{crepa.block_index}"
-            crepa_hidden = hidden_states_buffer.get(layer_key)
+        crepa_hidden = self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer)
+        if use_cond and crepa_hidden is not None:
+            crepa_hidden = crepa_hidden[:, : packed_noisy_latents.shape[1], ...]
 
         return {
             "model_prediction": unpack_latents(

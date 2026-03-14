@@ -211,18 +211,48 @@ class Kandinsky5TimeEmbeddings(nn.Module):
 
     @torch.autocast(device_type="cuda", dtype=torch.float32)
     def forward(self, time, timestep_sign: Optional[torch.Tensor] = None):
+        original_shape = time.shape
+        time = time.reshape(-1)
         args = torch.outer(time, self.freqs.to(device=time.device))
         time_embed = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         time_embed = self.out_layer(self.activation(self.in_layer(time_embed)))
+        time_embed = time_embed.view(*original_shape, -1)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=time_embed.device)
-            time_embed = time_embed + self.time_sign_embed(sign_idx).to(dtype=time_embed.dtype, device=time_embed.device)
+            if timestep_sign.shape != original_shape:
+                if timestep_sign.ndim == 1 and len(original_shape) == 2 and timestep_sign.shape[0] == original_shape[0]:
+                    timestep_sign = timestep_sign.unsqueeze(1).expand(original_shape)
+                else:
+                    raise ValueError(
+                        f"timestep_sign shape {tuple(timestep_sign.shape)} must match timestep shape {tuple(original_shape)}."
+                    )
+            sign_idx = (timestep_sign.reshape(-1) < 0).long().to(device=time_embed.device)
+            sign_embed = self.time_sign_embed(sign_idx).to(dtype=time_embed.dtype, device=time_embed.device)
+            time_embed = time_embed + sign_embed.view(*original_shape, -1)
         return time_embed
+
+
+def _broadcast_modulation_params(params: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if params.dim() == 2:
+        view_shape = [params.shape[0]] + [1] * (target.dim() - 2) + [params.shape[-1]]
+        return params.view(*view_shape)
+    if params.dim() == target.dim():
+        return params
+    if params.dim() == 3 and target.dim() == 5:
+        batch_size, duration, height, width, _ = target.shape
+        expected_tokens = duration * height * width
+        if params.shape[1] != expected_tokens:
+            raise ValueError(
+                f"Tokenwise timestep embedding has length {params.shape[1]}, expected {expected_tokens} visual tokens."
+            )
+        return params.view(batch_size, duration, height, width, -1)
+    raise ValueError(
+        f"Unsupported modulation broadcast from shape {tuple(params.shape)} to target shape {tuple(target.shape)}."
+    )
 
 
 class Kandinsky5TextEmbeddings(nn.Module):
@@ -497,11 +527,9 @@ class Kandinsky5OutLayer(nn.Module):
         self.out_layer = nn.Linear(model_dim, math.prod(patch_size) * visual_dim, bias=True)
 
     def forward(self, visual_embed, text_embed, time_embed):
-        shift, scale = torch.chunk(self.modulation(time_embed).unsqueeze(dim=1), 2, dim=-1)
+        shift, scale = torch.chunk(_broadcast_modulation_params(self.modulation(time_embed), visual_embed), 2, dim=-1)
 
-        visual_embed = (
-            self.norm(visual_embed.float()) * (scale.float()[:, None, None] + 1.0) + shift.float()[:, None, None]
-        ).type_as(visual_embed)
+        visual_embed = (self.norm(visual_embed.float()) * (scale.float() + 1.0) + shift.float()).type_as(visual_embed)
 
         x = self.out_layer(visual_embed)
 
@@ -537,7 +565,9 @@ class Kandinsky5TransformerEncoderBlock(nn.Module):
         self.feed_forward = Kandinsky5FeedForward(model_dim, ff_dim)
 
     def forward(self, x, time_embed, rope):
-        self_attn_params, ff_params = torch.chunk(self.text_modulation(time_embed).unsqueeze(dim=1), 2, dim=-1)
+        self_attn_params, ff_params = torch.chunk(
+            _broadcast_modulation_params(self.text_modulation(time_embed), x), 2, dim=-1
+        )
         shift, scale, gate = torch.chunk(self_attn_params, 3, dim=-1)
         try:
             out = (self.self_attention_norm(x.float()) * (scale.float() + 1.0) + shift.float()).type_as(x)
@@ -581,7 +611,7 @@ class Kandinsky5TransformerDecoderBlock(nn.Module):
 
     def forward(self, visual_embed, text_embed, time_embed, rope, sparse_params):
         self_attn_params, cross_attn_params, ff_params = torch.chunk(
-            self.visual_modulation(time_embed).unsqueeze(dim=1), 3, dim=-1
+            _broadcast_modulation_params(self.visual_modulation(time_embed), visual_embed), 3, dim=-1
         )
 
         shift, scale, gate = torch.chunk(self_attn_params, 3, dim=-1)
@@ -784,10 +814,25 @@ class Kandinsky5Transformer3DModel(
             time,
             timestep_sign=timestep_sign,
         )
-        time_embed = time_embed + self.pooled_text_embeddings(pooled_text_embed)
+        pooled_time_embed = self.pooled_text_embeddings(pooled_text_embed)
+        if time_embed.dim() == 2:
+            text_time_embed = time_embed + pooled_time_embed
+            visual_time_embed = text_time_embed
+        elif time_embed.dim() == 3:
+            visual_time_embed = time_embed + pooled_time_embed.unsqueeze(1)
+            text_time_embed = visual_time_embed.mean(dim=1)
+        else:
+            raise ValueError(f"Unsupported timestep rank {time_embed.dim()} for Kandinsky5 time conditioning.")
         visual_embed = self.visual_embeddings(x)
         text_rope = self.text_rope_embeddings(text_rope_pos)
         text_rope = text_rope.unsqueeze(dim=0)
+        visual_shape = visual_embed.shape[:-1]
+        if visual_time_embed.dim() == 3:
+            expected_tokens = visual_shape[1] * visual_shape[2] * visual_shape[3]
+            if visual_time_embed.shape[1] != expected_tokens:
+                raise ValueError(
+                    f"Tokenwise timestep count {visual_time_embed.shape[1]} does not match visual token count {expected_tokens}."
+                )
 
         for text_transformer_block in self.text_transformer_blocks:
             if torch.is_grad_enabled() and self.gradient_checkpointing:
@@ -798,11 +843,12 @@ class Kandinsky5Transformer3DModel(
                 else:
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-                text_embed = checkpoint_fn(text_transformer_block, text_embed, time_embed, text_rope, use_reentrant=False)
+                text_embed = checkpoint_fn(
+                    text_transformer_block, text_embed, text_time_embed, text_rope, use_reentrant=False
+                )
             else:
-                text_embed = text_transformer_block(text_embed, time_embed, text_rope)
+                text_embed = text_transformer_block(text_embed, text_time_embed, text_rope)
 
-        visual_shape = visual_embed.shape[:-1]
         visual_rope = self.visual_rope_embeddings(visual_shape, visual_rope_pos, scale_factor)
         to_fractal = sparse_params["to_fractal"] if sparse_params is not None else False
         visual_embed, visual_rope = fractal_flatten(visual_embed, visual_rope, visual_shape, block_mask=to_fractal)
@@ -885,13 +931,15 @@ class Kandinsky5Transformer3DModel(
                     visual_transformer_block,
                     visual_embed,
                     text_embed,
-                    time_embed,
+                    visual_time_embed,
                     current_rope,
                     sparse_params,
                     use_reentrant=False,
                 )
             else:
-                visual_embed = visual_transformer_block(visual_embed, text_embed, time_embed, current_rope, sparse_params)
+                visual_embed = visual_transformer_block(
+                    visual_embed, text_embed, visual_time_embed, current_rope, sparse_params
+                )
 
             if routing_now and layer_idx == routes[route_ptr]["end_layer_idx"]:
                 visual_embed = router.end_route(
@@ -934,7 +982,7 @@ class Kandinsky5Transformer3DModel(
                 _store_hidden_state(hidden_states_buffer, f"layer_{layer_idx}", tokens_view)
 
         visual_embed = fractal_unflatten(visual_embed, visual_shape, block_mask=to_fractal)
-        x = self.out_layer(visual_embed, text_embed, time_embed)
+        x = self.out_layer(visual_embed, text_embed, visual_time_embed)
 
         if not return_dict:
             if captured_frame_hidden is None:

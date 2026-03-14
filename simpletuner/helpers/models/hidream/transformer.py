@@ -165,16 +165,53 @@ class TimestepEmbed(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, timesteps, wdtype, timestep_sign: Optional[torch.Tensor] = None):
-        t_emb = self.time_proj(timesteps).to(dtype=wdtype)
-        t_emb = self.timestep_embedder(t_emb)
+        if timesteps.ndim == 2:
+            batch_size, sequence_length = timesteps.shape
+            t_emb = self.time_proj(timesteps.reshape(-1)).to(dtype=wdtype)
+            t_emb = self.timestep_embedder(t_emb).view(batch_size, sequence_length, -1)
+        else:
+            t_emb = self.time_proj(timesteps).to(dtype=wdtype)
+            t_emb = self.timestep_embedder(t_emb)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
-            t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+            sign_tensor = timestep_sign.to(device=t_emb.device)
+            if timesteps.ndim == 2:
+                if sign_tensor.ndim == 0:
+                    sign_idx = (sign_tensor < 0).long().expand(batch_size, sequence_length)
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_idx = (sign_tensor < 0).long().expand(batch_size, sequence_length)
+                    elif sign_tensor.shape[0] == batch_size:
+                        sign_idx = (sign_tensor < 0).long()[:, None].expand(-1, sequence_length)
+                    else:
+                        raise ValueError(
+                            f"HiDream tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                        )
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != sequence_length:
+                        raise ValueError(
+                            f"HiDream tokenwise timestep_sign expected sequence length {sequence_length}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_idx = (sign_tensor < 0).long().expand(batch_size, -1)
+                    elif sign_tensor.shape[0] == batch_size:
+                        sign_idx = (sign_tensor < 0).long()
+                    else:
+                        raise ValueError(
+                            f"HiDream tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"HiDream timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+                t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+            else:
+                sign_idx = (sign_tensor.view(-1) < 0).long().to(device=t_emb.device)
+                t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
 
 
@@ -193,8 +230,13 @@ class OutEmbed(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, adaln_input):
-        shift, scale = self.adaLN_modulation(adaln_input).chunk(2, dim=1)
-        x = self.norm_final(x) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        modulation = self.adaLN_modulation(adaln_input)
+        if modulation.ndim == 3:
+            shift, scale = modulation.chunk(2, dim=-1)
+            x = self.norm_final(x) * (1 + scale) + shift
+        else:
+            shift, scale = modulation.chunk(2, dim=1)
+            x = self.norm_final(x) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
         x = self.linear(x)
         return x
 
@@ -687,16 +729,18 @@ class HiDreamImageSingleTransformerBlock(PatchableModule):
     ) -> torch.FloatTensor:
         wtype = image_tokens.dtype
         ada_values = self.adaLN_modulation(adaln_input)
-        if ada_values.ndim > 2:
-            ada_values = ada_values.reshape(ada_values.shape[0], -1)
-        ada_values = ada_values.view(ada_values.shape[0], 6, -1)
-        shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = ada_values.unbind(dim=1)
-        shift_msa_i = shift_msa_i.unsqueeze(1)
-        scale_msa_i = scale_msa_i.unsqueeze(1)
-        gate_msa_i = gate_msa_i.unsqueeze(1)
-        shift_mlp_i = shift_mlp_i.unsqueeze(1)
-        scale_mlp_i = scale_mlp_i.unsqueeze(1)
-        gate_mlp_i = gate_mlp_i.unsqueeze(1)
+        if ada_values.ndim == 3:
+            ada_values = ada_values.view(ada_values.shape[0], ada_values.shape[1], 6, -1)
+            shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = ada_values.unbind(dim=2)
+        else:
+            ada_values = ada_values.view(ada_values.shape[0], 6, -1)
+            shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = ada_values.unbind(dim=1)
+            shift_msa_i = shift_msa_i.unsqueeze(1)
+            scale_msa_i = scale_msa_i.unsqueeze(1)
+            gate_msa_i = gate_msa_i.unsqueeze(1)
+            shift_mlp_i = shift_mlp_i.unsqueeze(1)
+            scale_mlp_i = scale_mlp_i.unsqueeze(1)
+            gate_mlp_i = gate_mlp_i.unsqueeze(1)
 
         # 1. MM-Attention
         norm_image_tokens = self.norm1_i(image_tokens).to(dtype=wtype)
@@ -768,36 +812,50 @@ class HiDreamImageTransformerBlock(PatchableModule):
         rope: torch.FloatTensor = None,
     ) -> torch.FloatTensor:
         wtype = image_tokens.dtype
-        ada_values = self.adaLN_modulation(adaln_input)
-        if ada_values.ndim > 2:
-            ada_values = ada_values.reshape(ada_values.shape[0], -1)
-        ada_values = ada_values.view(ada_values.shape[0], 12, -1)
-        (
-            shift_msa_i,
-            scale_msa_i,
-            gate_msa_i,
-            shift_mlp_i,
-            scale_mlp_i,
-            gate_mlp_i,
-            shift_msa_t,
-            scale_msa_t,
-            gate_msa_t,
-            shift_mlp_t,
-            scale_mlp_t,
-            gate_mlp_t,
-        ) = ada_values.unbind(dim=1)
-        shift_msa_i = shift_msa_i.unsqueeze(1)
-        scale_msa_i = scale_msa_i.unsqueeze(1)
-        gate_msa_i = gate_msa_i.unsqueeze(1)
-        shift_mlp_i = shift_mlp_i.unsqueeze(1)
-        scale_mlp_i = scale_mlp_i.unsqueeze(1)
-        gate_mlp_i = gate_mlp_i.unsqueeze(1)
-        shift_msa_t = shift_msa_t.unsqueeze(1)
-        scale_msa_t = scale_msa_t.unsqueeze(1)
-        gate_msa_t = gate_msa_t.unsqueeze(1)
-        shift_mlp_t = shift_mlp_t.unsqueeze(1)
-        scale_mlp_t = scale_mlp_t.unsqueeze(1)
-        gate_mlp_t = gate_mlp_t.unsqueeze(1)
+        if adaln_input.ndim == 3:
+            image_ada_values = self.adaLN_modulation(adaln_input).view(adaln_input.shape[0], adaln_input.shape[1], 12, -1)
+            text_adaln_input = adaln_input.mean(dim=1)
+            text_ada_values = self.adaLN_modulation(text_adaln_input).view(text_adaln_input.shape[0], 12, -1)
+            shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = image_ada_values[..., :6, :].unbind(
+                dim=2
+            )
+            shift_msa_t, scale_msa_t, gate_msa_t, shift_mlp_t, scale_mlp_t, gate_mlp_t = text_ada_values[:, 6:, :].unbind(
+                dim=1
+            )
+            shift_msa_t = shift_msa_t.unsqueeze(1)
+            scale_msa_t = scale_msa_t.unsqueeze(1)
+            gate_msa_t = gate_msa_t.unsqueeze(1)
+            shift_mlp_t = shift_mlp_t.unsqueeze(1)
+            scale_mlp_t = scale_mlp_t.unsqueeze(1)
+            gate_mlp_t = gate_mlp_t.unsqueeze(1)
+        else:
+            ada_values = self.adaLN_modulation(adaln_input).view(adaln_input.shape[0], 12, -1)
+            (
+                shift_msa_i,
+                scale_msa_i,
+                gate_msa_i,
+                shift_mlp_i,
+                scale_mlp_i,
+                gate_mlp_i,
+                shift_msa_t,
+                scale_msa_t,
+                gate_msa_t,
+                shift_mlp_t,
+                scale_mlp_t,
+                gate_mlp_t,
+            ) = ada_values.unbind(dim=1)
+            shift_msa_i = shift_msa_i.unsqueeze(1)
+            scale_msa_i = scale_msa_i.unsqueeze(1)
+            gate_msa_i = gate_msa_i.unsqueeze(1)
+            shift_mlp_i = shift_mlp_i.unsqueeze(1)
+            scale_mlp_i = scale_mlp_i.unsqueeze(1)
+            gate_mlp_i = gate_mlp_i.unsqueeze(1)
+            shift_msa_t = shift_msa_t.unsqueeze(1)
+            scale_msa_t = scale_msa_t.unsqueeze(1)
+            gate_msa_t = gate_msa_t.unsqueeze(1)
+            shift_mlp_t = shift_mlp_t.unsqueeze(1)
+            scale_mlp_t = scale_mlp_t.unsqueeze(1)
+            gate_mlp_t = gate_mlp_t.unsqueeze(1)
 
         # 1. MM-Attention
         norm_image_tokens = self.norm1_i(image_tokens).to(dtype=wtype)
@@ -1049,8 +1107,19 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 timesteps = timesteps.to(torch.float32)
         if timesteps.ndim == 0:
             timesteps = timesteps[None]
-        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-        timesteps = timesteps.expand(batch_size)
+        if timesteps.ndim == 1:
+            timesteps = timesteps.expand(batch_size)
+        elif timesteps.ndim == 2:
+            if timesteps.shape[0] == 1:
+                timesteps = timesteps.expand(batch_size, -1)
+            elif timesteps.shape[0] != batch_size:
+                raise ValueError(
+                    f"HiDream expected tokenwise timesteps for batch size {batch_size}, got {timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"HiDream expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(timesteps.shape)}."
+            )
         return timesteps
 
     def unpatchify(self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool) -> List[torch.Tensor]:
@@ -1302,7 +1371,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
             sign = timestep_sign
             if sign is not None:
-                sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype).view(timesteps.shape[0])
+                sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype)
             timesteps_emb = checkpoint_fn(
                 create_custom_forward_timestep(timesteps, sign),
                 self.t_embedder,
@@ -1314,16 +1383,22 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 self.p_embedder,
                 **ckpt_kwargs,
             )
-            adaln_input = timesteps_emb + pooled_emb
+            if timesteps_emb.ndim == 3:
+                adaln_input = timesteps_emb + pooled_emb.unsqueeze(1)
+            else:
+                adaln_input = timesteps_emb + pooled_emb
         else:
             # Standard processing without checkpointing
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
             sign = timestep_sign
             if sign is not None:
-                sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype).view(timesteps.shape[0])
+                sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype)
             timesteps = self.t_embedder(timesteps, hidden_states_type, timestep_sign=sign)
             p_embedder = self.p_embedder(pooled_embeds)
-            adaln_input = timesteps + p_embedder
+            if timesteps.ndim == 3:
+                adaln_input = timesteps + p_embedder.unsqueeze(1)
+            else:
+                adaln_input = timesteps + p_embedder
 
         # 2. Process input hidden states (no checkpointing for patchify)
         hidden_states, image_tokens_masks, img_sizes = self.patchify(hidden_states, self.max_seq, img_sizes)

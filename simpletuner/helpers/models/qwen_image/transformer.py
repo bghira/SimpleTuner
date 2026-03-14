@@ -367,6 +367,47 @@ class QwenTimestepProjEmbeddings(nn.Module):
             self.time_sign_embed = nn.Embedding(2, embedding_dim)
             nn.init.zeros_(self.time_sign_embed.weight)
 
+    def _apply_timestep_sign(
+        self,
+        conditioning: torch.Tensor,
+        timestep_sign: torch.Tensor,
+        *,
+        target_device: torch.device,
+    ) -> torch.Tensor:
+        if self.time_sign_embed is None:
+            raise ValueError(
+                "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+            )
+
+        sign_tensor = timestep_sign.to(device=target_device)
+        if conditioning.ndim == 3:
+            if sign_tensor.ndim == 0:
+                sign_tensor = sign_tensor.expand(conditioning.shape[0], conditioning.shape[1])
+            elif sign_tensor.ndim == 1:
+                if sign_tensor.shape[0] == 1:
+                    sign_tensor = sign_tensor.expand(conditioning.shape[0])
+                elif sign_tensor.shape[0] != conditioning.shape[0]:
+                    raise ValueError(
+                        f"Qwen tokenwise timestep_sign expected 1 or {conditioning.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                    )
+                sign_tensor = sign_tensor[:, None].expand(-1, conditioning.shape[1])
+            elif sign_tensor.ndim == 2:
+                if sign_tensor.shape != conditioning.shape[:2]:
+                    raise ValueError(
+                        f"Qwen tokenwise timestep_sign expected shape {tuple(conditioning.shape[:2])}, got {tuple(sign_tensor.shape)}."
+                    )
+            else:
+                raise ValueError(
+                    f"Qwen timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long()
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=conditioning.dtype, device=target_device)
+            return conditioning + sign_emb.view(conditioning.shape[0], conditioning.shape[1], -1)
+
+        sign_idx = (sign_tensor.view(-1) < 0).long().to(device=target_device)
+        return conditioning + self.time_sign_embed(sign_idx).to(dtype=conditioning.dtype, device=target_device)
+
     def forward(self, timestep, hidden_states, timestep_sign: Optional[torch.Tensor] = None):
         target_device = hidden_states.device
         target_dtype = hidden_states.dtype
@@ -381,22 +422,25 @@ class QwenTimestepProjEmbeddings(nn.Module):
             if embedder_params[0].dtype != target_dtype:
                 self.timestep_embedder = self.timestep_embedder.to(dtype=target_dtype)
 
-        timesteps_proj = self.time_proj(timestep.to(device=target_device))
-        timesteps_proj = timesteps_proj.to(device=target_device, dtype=target_dtype)
+        timestep = timestep.to(device=target_device)
+        if timestep.ndim == 2:
+            timesteps_proj = self.time_proj(timestep.reshape(-1))
+            timesteps_proj = timesteps_proj.to(device=target_device, dtype=target_dtype)
+            conditioning = self.timestep_embedder(timesteps_proj).view(timestep.shape[0], timestep.shape[1], -1)
+        else:
+            timesteps_proj = self.time_proj(timestep)
+            timesteps_proj = timesteps_proj.to(device=target_device, dtype=target_dtype)
+            conditioning = self.timestep_embedder(timesteps_proj)
 
-        timesteps_emb = self.timestep_embedder(timesteps_proj)
-        if timesteps_emb.dtype != target_dtype:
-            timesteps_emb = timesteps_emb.to(dtype=target_dtype)
+        if conditioning.dtype != target_dtype:
+            conditioning = conditioning.to(dtype=target_dtype)
 
-        conditioning = timesteps_emb
         if timestep_sign is not None:
-            if self.time_sign_embed is None:
-                raise ValueError(
-                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
-                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
-                )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=target_device)
-            conditioning = conditioning + self.time_sign_embed(sign_idx).to(dtype=conditioning.dtype, device=target_device)
+            conditioning = self._apply_timestep_sign(
+                conditioning,
+                timestep_sign,
+                target_device=target_device,
+            )
 
         return conditioning
 
@@ -681,6 +725,9 @@ class QwenImageTransformerBlock(PatchableModule):
         """
         shift, scale, gate = mod_params.chunk(3, dim=-1)
 
+        if mod_params.ndim == 3:
+            return x * (1 + scale) + shift, gate
+
         if modulate_index is not None:
             # mod_params has shape [2*actual_batch, dim] - split into two sets
             actual_batch = shift.size(0) // 2
@@ -724,8 +771,16 @@ class QwenImageTransformerBlock(PatchableModule):
         # When using zero_cond_t, temb has doubled batch size [2*B, D]
         img_mod_params = self.img_mod(temb)  # [B, 6*dim] or [2*B, 6*dim]
 
-        # For text stream, use only the actual timestep embedding (first half when zero_cond_t)
-        if modulate_index is not None:
+        # For text stream, use only the actual timestep embedding (first half when zero_cond_t).
+        # Tokenwise image timesteps are pooled down for the text stream.
+        if temb.ndim == 3:
+            if modulate_index is not None:
+                target_mask = (modulate_index == 0).to(dtype=temb.dtype).unsqueeze(-1)
+                target_count = target_mask.sum(dim=1).clamp_min(1.0)
+                txt_temb = (temb * target_mask).sum(dim=1) / target_count
+            else:
+                txt_temb = temb.mean(dim=1)
+        elif modulate_index is not None:
             txt_temb = torch.chunk(temb, 2, dim=0)[0]
         else:
             txt_temb = temb
@@ -1060,6 +1115,11 @@ class QwenImageTransformer2DModel(
                 raise ValueError("img_shapes must be provided when hidden_states are already tokenized.")
             img_shapes = [(1, patch_h, patch_w)] * hidden_states.shape[0]
 
+        if timestep.ndim == 2 and timestep.shape != hidden_states.shape[:2]:
+            raise ValueError(
+                f"Qwen tokenwise timesteps expected shape {tuple(hidden_states.shape[:2])}, got {tuple(timestep.shape)}."
+            )
+
         hidden_states = self.img_in(hidden_states)
 
         timestep = timestep.to(hidden_states.dtype)
@@ -1220,11 +1280,16 @@ class QwenImageTransformer2DModel(
 
         # Use only the image part (hidden_states) from the dual-stream blocks
         # When using zero_cond_t, use only the actual timestep embedding for final norm
-        if modulate_index is not None:
+        if modulate_index is not None and temb.ndim != 3:
             norm_temb = torch.chunk(temb, 2, dim=0)[0]
         else:
             norm_temb = temb
-        hidden_states = self.norm_out(hidden_states, norm_temb)
+        if norm_temb.ndim == 3:
+            emb = self.norm_out.linear(self.norm_out.silu(norm_temb).to(hidden_states.dtype))
+            scale, shift = torch.chunk(emb, 2, dim=-1)
+            hidden_states = self.norm_out.norm(hidden_states) * (1 + scale) + shift
+        else:
+            hidden_states = self.norm_out(hidden_states, norm_temb)
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:

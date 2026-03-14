@@ -70,6 +70,12 @@ class LongCatImage(ImageModelFoundation):
         # LongCat-Image has 19 double + 38 single = 57 transformer blocks
         return 56
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=2)
+
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
         # Common settings for memory optimization presets
@@ -329,6 +335,115 @@ class LongCatImage(ImageModelFoundation):
         pil_images = [self._tensor_to_pil(tensor) for tensor in image_tensors]
         return pil_images
 
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"LongCat-Image expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"LongCat-Image expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"LongCat-Image expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                "LongCat-Image expected a scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                f"got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return timesteps / self.noise_schedule.config.num_train_timesteps
+
+    def _extend_conditioning_sequence_values(
+        self,
+        values,
+        *,
+        batch_size: int,
+        scene_sequence_length: int,
+        conditioning_sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        fill_value: float = 0.0,
+    ):
+        if conditioning_sequence_length <= 0 or values is None:
+            return values
+
+        if not torch.is_tensor(values):
+            values = torch.tensor(values, device=device, dtype=dtype)
+        else:
+            values = values.to(device=device, dtype=dtype)
+
+        if values.ndim == 0:
+            values = values.expand(batch_size)
+        elif values.ndim == 1:
+            if values.shape[0] == 1:
+                values = values.expand(batch_size)
+            elif values.shape[0] != batch_size:
+                raise ValueError(f"LongCat-Image expected 1 value or {batch_size} per-batch values, got {values.shape[0]}.")
+        elif values.ndim == 2:
+            if values.shape[1] != scene_sequence_length:
+                raise ValueError(
+                    f"LongCat-Image expected tokenwise values with sequence length {scene_sequence_length}, got {values.shape[1]}."
+                )
+            if values.shape[0] == 1:
+                values = values.expand(batch_size, -1)
+            elif values.shape[0] != batch_size:
+                raise ValueError(
+                    f"LongCat-Image expected tokenwise values for batch size {batch_size}, got {values.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                "LongCat-Image expected a scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                f"got shape {tuple(values.shape)}."
+            )
+
+        conditioning_values = torch.full(
+            (batch_size, conditioning_sequence_length),
+            fill_value=fill_value,
+            device=device,
+            dtype=dtype,
+        )
+        if values.ndim == 1:
+            values = values[:, None].expand(-1, scene_sequence_length)
+        return torch.cat([values, conditioning_values], dim=1)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
     def _extract_prompt_image_from_context(self, context: dict):
         if not isinstance(context, dict):
             return None
@@ -527,12 +642,7 @@ class LongCatImage(ImageModelFoundation):
         )
         hidden_states_buffer = self._new_hidden_state_buffer()
         prompt_length = prompt_embeds.shape[1]
-        timesteps = (
-            torch.tensor(prepared_batch["timesteps"])
-            .expand(prepared_batch["noisy_latents"].shape[0])
-            .to(device=self.accelerator.device, dtype=torch.float32)
-            / self.noise_schedule.config.num_train_timesteps
-        )
+        batch_size = prepared_batch["noisy_latents"].shape[0]
         dtype_pos = torch.float64 if self.accelerator.device.type != "mps" else torch.float32
         text_ids = prepare_pos_ids(
             modality_id=0,
@@ -555,9 +665,18 @@ class LongCatImage(ImageModelFoundation):
             height=prepared_batch["latents"].shape[2],
             width=prepared_batch["latents"].shape[3],
         ).to(dtype=self.config.base_weight_dtype if hasattr(self.config, "base_weight_dtype") else self.config.weight_dtype)
+        scene_seq_len = packed_noisy_latents.shape[1]
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=batch_size,
+            sequence_length=scene_seq_len,
+            device=self.accelerator.device,
+            dtype=torch.float32,
+        )
 
         hidden_states = packed_noisy_latents
         img_ids_input = img_ids
+        conditioning_seq_len = 0
         if self._is_edit_flavour():
             conditioning = prepared_batch.get("conditioning_latents")
             if conditioning is None:
@@ -573,6 +692,16 @@ class LongCatImage(ImageModelFoundation):
                     self.config.base_weight_dtype if hasattr(self.config, "base_weight_dtype") else self.config.weight_dtype
                 )
             )
+            conditioning_seq_len = packed_ref_latents.shape[1]
+            timesteps = self._extend_conditioning_sequence_values(
+                timesteps,
+                batch_size=batch_size,
+                scene_sequence_length=scene_seq_len,
+                conditioning_sequence_length=conditioning_seq_len,
+                device=self.accelerator.device,
+                dtype=torch.float32,
+                fill_value=0.0,
+            )
             hidden_states = torch.cat([packed_noisy_latents, packed_ref_latents], dim=1)
             ref_ids = prepare_pos_ids(
                 modality_id=2,
@@ -583,12 +712,22 @@ class LongCatImage(ImageModelFoundation):
             ).to(self.accelerator.device, dtype=dtype_pos)
             img_ids_input = torch.cat([img_ids, ref_ids], dim=0)
 
+        timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+        if self._is_edit_flavour() and timestep_sign is not None:
+            timestep_sign = self._extend_conditioning_sequence_values(
+                timestep_sign,
+                batch_size=batch_size,
+                scene_sequence_length=scene_seq_len,
+                conditioning_sequence_length=conditioning_seq_len,
+                device=self.accelerator.device,
+                dtype=torch.float32,
+                fill_value=0.0,
+            )
+
         model_pred = self.model(
             hidden_states=hidden_states,
             timestep=timesteps,
-            timestep_sign=(
-                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
-            ),
+            timestep_sign=timestep_sign,
             guidance=None,
             encoder_hidden_states=prompt_embeds,
             txt_ids=text_ids,
@@ -601,10 +740,9 @@ class LongCatImage(ImageModelFoundation):
             scene_seq_len = packed_noisy_latents.shape[1]
             model_pred = model_pred[:, :scene_seq_len, :]
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+        crepa_hidden = self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer)
+        if crepa_hidden is not None and conditioning_seq_len > 0 and conditioning_seq_len < crepa_hidden.shape[1]:
+            crepa_hidden = crepa_hidden[:, :scene_seq_len, ...]
 
         return {
             "model_prediction": unpack_latents(

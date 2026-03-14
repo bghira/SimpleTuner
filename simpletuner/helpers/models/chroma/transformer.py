@@ -58,6 +58,66 @@ def adjust_rotary_embedding_dim(
     return cos_padded, sin_padded
 
 
+def _chroma_tokenwise_time_conditioning(
+    conditioning_module,
+    timestep: torch.Tensor,
+) -> torch.Tensor:
+    if timestep.ndim != 2:
+        return conditioning_module(timestep)
+
+    batch_size, sequence_length = timestep.shape
+    conditioning = conditioning_module(timestep.reshape(-1))
+    return conditioning.view(batch_size, sequence_length, *conditioning.shape[1:])
+
+
+def _chroma_prepare_sign_indices(
+    timestep_sign: torch.Tensor,
+    timestep: torch.Tensor,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    sign_tensor = timestep_sign.to(device=device)
+    batch_size = timestep.shape[0]
+
+    if timestep.ndim == 1:
+        if sign_tensor.ndim == 0:
+            return (sign_tensor < 0).long().expand(batch_size)
+        if sign_tensor.ndim == 1:
+            if sign_tensor.shape[0] == 1:
+                return (sign_tensor < 0).long().expand(batch_size)
+            if sign_tensor.shape[0] == batch_size:
+                return (sign_tensor < 0).long()
+            raise ValueError(f"Chroma timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}.")
+        raise ValueError(
+            f"Chroma timestep_sign expected a scalar or 1D batch tensor for scalar timesteps, got shape {tuple(sign_tensor.shape)}."
+        )
+
+    sequence_length = timestep.shape[1]
+    if sign_tensor.ndim == 0:
+        return (sign_tensor < 0).long().expand(batch_size, sequence_length)
+    if sign_tensor.ndim == 1:
+        if sign_tensor.shape[0] == 1:
+            return (sign_tensor < 0).long().expand(batch_size, sequence_length)
+        if sign_tensor.shape[0] == batch_size:
+            return (sign_tensor < 0).long()[:, None].expand(-1, sequence_length)
+        raise ValueError(
+            f"Chroma tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+        )
+    if sign_tensor.ndim == 2:
+        if sign_tensor.shape[1] != sequence_length:
+            raise ValueError(
+                f"Chroma tokenwise timestep_sign expected sequence length {sequence_length}, got {sign_tensor.shape[1]}."
+            )
+        if sign_tensor.shape[0] == 1:
+            return (sign_tensor < 0).long().expand(batch_size, -1)
+        if sign_tensor.shape[0] == batch_size:
+            return (sign_tensor < 0).long()
+        raise ValueError(f"Chroma tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}.")
+    raise ValueError(
+        f"Chroma timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+    )
+
+
 class ChromaAdaLayerNormZeroPruned(nn.Module):
     r"""
     Norm layer adaptive layer norm zero (adaLN-Zero).
@@ -93,8 +153,18 @@ class ChromaAdaLayerNormZeroPruned(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.emb is not None:
             emb = self.emb(timestep, class_labels, hidden_dtype=hidden_dtype)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.flatten(1, 2).chunk(6, dim=1)
-        x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
+        if emb.ndim == 4:
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.chunk(6, dim=2)
+            shift_msa = shift_msa.squeeze(2)
+            scale_msa = scale_msa.squeeze(2)
+            gate_msa = gate_msa.squeeze(2)
+            shift_mlp = shift_mlp.squeeze(2)
+            scale_mlp = scale_mlp.squeeze(2)
+            gate_mlp = gate_mlp.squeeze(2)
+            x = self.norm(x) * (1 + scale_msa) + shift_msa
+        else:
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.flatten(1, 2).chunk(6, dim=1)
+            x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
         return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
 
 
@@ -122,8 +192,15 @@ class ChromaAdaLayerNormZeroSinglePruned(nn.Module):
         x: torch.Tensor,
         emb: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        shift_msa, scale_msa, gate_msa = emb.flatten(1, 2).chunk(3, dim=1)
-        x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
+        if emb.ndim == 4:
+            shift_msa, scale_msa, gate_msa = emb.chunk(3, dim=2)
+            shift_msa = shift_msa.squeeze(2)
+            scale_msa = scale_msa.squeeze(2)
+            gate_msa = gate_msa.squeeze(2)
+            x = self.norm(x) * (1 + scale_msa) + shift_msa
+        else:
+            shift_msa, scale_msa, gate_msa = emb.flatten(1, 2).chunk(3, dim=1)
+            x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
         return x, gate_msa
 
 
@@ -160,8 +237,14 @@ class ChromaAdaLayerNormContinuousPruned(nn.Module):
             raise ValueError(f"unknown norm_type {norm_type}")
 
     def forward(self, x: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
-        shift, scale = torch.chunk(emb.flatten(1, 2).to(x.dtype), 2, dim=1)
-        x = self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
+        if emb.ndim == 4:
+            shift, scale = torch.chunk(emb.to(x.dtype), 2, dim=2)
+            shift = shift.squeeze(2)
+            scale = scale.squeeze(2)
+            x = self.norm(x) * (1 + scale) + shift
+        else:
+            shift, scale = torch.chunk(emb.flatten(1, 2).to(x.dtype), 2, dim=1)
+            x = self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
         return x
 
 
@@ -182,15 +265,21 @@ class ChromaCombinedTimestepTextProjEmbeddings(nn.Module):
 
     def forward(self, timestep: torch.Tensor) -> torch.Tensor:
         mod_index_length = self.mod_proj.shape[0]
-        batch_size = timestep.shape[0]
+        if timestep.ndim == 0:
+            timestep = timestep[None]
 
-        timesteps_proj = self.time_proj(timestep).to(dtype=timestep.dtype)
-        guidance_proj = self.guidance_proj(torch.tensor([0] * batch_size)).to(dtype=timestep.dtype, device=timestep.device)
+        flat_timestep = timestep.reshape(-1)
+        timesteps_proj = self.time_proj(flat_timestep).to(dtype=timestep.dtype)
+        guidance_proj = self.guidance_proj(torch.zeros_like(flat_timestep)).to(dtype=timestep.dtype, device=timestep.device)
 
-        mod_proj = self.mod_proj.to(dtype=timesteps_proj.dtype, device=timesteps_proj.device).repeat(batch_size, 1, 1)
-        timestep_guidance = torch.cat([timesteps_proj, guidance_proj], dim=1).unsqueeze(1).repeat(1, mod_index_length, 1)
-        input_vec = torch.cat([timestep_guidance, mod_proj], dim=-1)
-        return input_vec.to(timestep.dtype)
+        mod_proj = self.mod_proj.to(dtype=timesteps_proj.dtype, device=timesteps_proj.device).unsqueeze(0)
+        mod_proj = mod_proj.expand(flat_timestep.shape[0], -1, -1)
+        timestep_guidance = torch.cat([timesteps_proj, guidance_proj], dim=1).unsqueeze(1).expand(-1, mod_index_length, -1)
+        input_vec = torch.cat([timestep_guidance, mod_proj], dim=-1).to(timestep.dtype)
+
+        if timestep.ndim == 2:
+            return input_vec.view(timestep.shape[0], timestep.shape[1], mod_index_length, -1)
+        return input_vec
 
 
 class ChromaApproximator(nn.Module):
@@ -310,7 +399,8 @@ class ChromaSingleTransformerBlock(nn.Module):
         )
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
-        gate = gate.unsqueeze(1)
+        if gate.ndim == 2:
+            gate = gate.unsqueeze(1)
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
         if hidden_states.dtype == torch.float16:
@@ -355,16 +445,16 @@ class ChromaTransformerBlock(nn.Module):
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
-        temb: torch.Tensor,
+        image_temb: torch.Tensor,
+        text_temb: torch.Tensor,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        temb_img, temb_txt = temb[:, :6], temb[:, 6:]
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb_img)
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=image_temb)
 
         norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
-            encoder_hidden_states, emb=temb_txt
+            encoder_hidden_states, emb=text_temb
         )
         joint_attention_kwargs = joint_attention_kwargs or {}
         if attention_mask is not None:
@@ -410,27 +500,38 @@ class ChromaTransformerBlock(nn.Module):
         elif len(attention_outputs) == 3:
             attn_output, context_attn_output, ip_attn_output = attention_outputs
 
-        attn_output = gate_msa.unsqueeze(1) * attn_output
+        if gate_msa.ndim == 2:
+            gate_msa = gate_msa.unsqueeze(1)
+        attn_output = gate_msa * attn_output
         hidden_states = hidden_states + attn_output
 
         norm_hidden_states = self.norm2(hidden_states)
-        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        if scale_mlp.ndim == 2:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        else:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
 
         ff_output = self.ff(norm_hidden_states)
-        ff_output = gate_mlp.unsqueeze(1) * ff_output
+        if gate_mlp.ndim == 2:
+            gate_mlp = gate_mlp.unsqueeze(1)
+        ff_output = gate_mlp * ff_output
 
         hidden_states = hidden_states + ff_output
         if len(attention_outputs) == 3:
             hidden_states = hidden_states + ip_attn_output
 
-        context_attn_output = c_gate_msa.unsqueeze(1) * context_attn_output
+        if c_gate_msa.ndim == 2:
+            c_gate_msa = c_gate_msa.unsqueeze(1)
+        context_attn_output = c_gate_msa * context_attn_output
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
         norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
         norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
 
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
-        encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+        if c_gate_mlp.ndim == 2:
+            c_gate_mlp = c_gate_mlp.unsqueeze(1)
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
         if encoder_hidden_states.dtype == torch.float16:
             encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
 
@@ -632,8 +733,12 @@ class ChromaTransformer2DModel(
         hidden_states = self.x_embedder(hidden_states)
 
         timestep = timestep.to(hidden_states.dtype) * 1000
+        if timestep.ndim == 2 and timestep.shape[1] != hidden_states.shape[1]:
+            raise ValueError(
+                f"Chroma expected tokenwise timesteps with sequence length {hidden_states.shape[1]}, got {timestep.shape[1]}."
+            )
 
-        input_vec = self.time_text_embed(timestep)
+        input_vec = _chroma_tokenwise_time_conditioning(self.time_text_embed, timestep)
         pooled_temb = self.distilled_guidance_layer(input_vec)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
@@ -641,12 +746,18 @@ class ChromaTransformer2DModel(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
-            pooled_temb = pooled_temb + self.time_sign_embed(sign_idx).to(
-                dtype=pooled_temb.dtype, device=hidden_states.device
-            )
+            sign_idx = _chroma_prepare_sign_indices(timestep_sign, timestep, device=hidden_states.device)
+            sign_embed = self.time_sign_embed(sign_idx).to(dtype=pooled_temb.dtype, device=hidden_states.device)
+            if pooled_temb.ndim == 4:
+                pooled_temb = pooled_temb + sign_embed.unsqueeze(2)
+            else:
+                pooled_temb = pooled_temb + sign_embed.unsqueeze(1)
 
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
+        if pooled_temb.ndim == 4:
+            pooled_text_temb = pooled_temb.mean(dim=1)
+        else:
+            pooled_text_temb = pooled_temb
 
         if txt_ids.ndim == 3:
             logger.warning(
@@ -716,13 +827,12 @@ class ChromaTransformer2DModel(
             txt_offset = img_offset + 6 * len(self.transformer_blocks)
             img_modulation = img_offset + 6 * index_block
             text_modulation = txt_offset + 6 * index_block
-            temb = torch.cat(
-                (
-                    pooled_temb[:, img_modulation : img_modulation + 6],
-                    pooled_temb[:, text_modulation : text_modulation + 6],
-                ),
-                dim=1,
-            )
+            if pooled_temb.ndim == 4:
+                image_temb = pooled_temb[:, :, img_modulation : img_modulation + 6]
+                text_temb = pooled_text_temb[:, text_modulation : text_modulation + 6]
+            else:
+                image_temb = pooled_temb[:, img_modulation : img_modulation + 6]
+                text_temb = pooled_text_temb[:, text_modulation : text_modulation + 6]
 
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -788,7 +898,8 @@ class ChromaTransformer2DModel(
                     block,
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
+                    image_temb,
+                    text_temb,
                     current_rope,
                     attention_mask,
                 )
@@ -797,7 +908,8 @@ class ChromaTransformer2DModel(
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    temb=temb,
+                    image_temb=image_temb,
+                    text_temb=text_temb,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
@@ -834,7 +946,18 @@ class ChromaTransformer2DModel(
                 musubi_manager.stream_in(block, hidden_states.device)
             actual_index = global_idx
             start_idx = 3 * index_block
-            temb = pooled_temb[:, start_idx : start_idx + 3]
+            if pooled_temb.ndim == 4:
+                image_temb = pooled_temb[:, :, start_idx : start_idx + 3]
+                text_temb = pooled_text_temb[:, start_idx : start_idx + 3]
+                temb = torch.cat(
+                    (
+                        text_temb[:, None].expand(-1, txt_len, -1, -1),
+                        image_temb,
+                    ),
+                    dim=1,
+                )
+            else:
+                temb = pooled_temb[:, start_idx : start_idx + 3]
 
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -985,7 +1108,10 @@ class ChromaTransformer2DModel(
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
 
-        temb = pooled_temb[:, -2:]
+        if pooled_temb.ndim == 4:
+            temb = pooled_temb[:, :, -2:]
+        else:
+            temb = pooled_temb[:, -2:]
         hidden_states = self.norm_out(hidden_states, temb)
         output = self.proj_out(hidden_states)
 

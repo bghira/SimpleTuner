@@ -887,6 +887,20 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         self.assert_no_nan_or_inf(modulated)
         self.assert_no_nan_or_inf(gate)
 
+    def test_tokenwise_modulation_functionality(self):
+        """Tokenwise timestep modulation should modulate each image token independently."""
+        block = QwenImageTransformerBlock(512, 8, 64)
+
+        x = torch.randn(2, 8, 512)
+        mod_params = torch.randn(2, 8, 3 * 512)
+
+        modulated, gate = block._modulate(x, mod_params)
+
+        self.assert_tensor_shape(modulated, (2, 8, 512))
+        self.assert_tensor_shape(gate, (2, 8, 512))
+        self.assert_no_nan_or_inf(modulated)
+        self.assert_no_nan_or_inf(gate)
+
     def test_image_rotary_emb_parameter(self):
         """Test image_rotary_emb parameter handling."""
         block = QwenImageTransformerBlock(512, 8, 64)
@@ -1228,6 +1242,41 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
             )
 
         self.assertIsNotNone(output)
+
+    def test_forward_accepts_tokenwise_timesteps(self):
+        model = self._create_model_or_skip(**self.config)
+
+        hidden_states, img_shapes = self._generate_packed_hidden_states(1, 32, 32)
+        encoder_hidden_states = torch.randn(1, 77, 512)
+        timestep = torch.randint(0, 1000, (1, hidden_states.shape[1]), dtype=torch.float32)
+
+        output = model(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=timestep,
+            img_shapes=img_shapes,
+            txt_seq_lens=[77],
+            return_dict=False,
+        )[0]
+
+        self.assert_tensor_shape(output, hidden_states.shape)
+        self.assert_no_nan_or_inf(output)
+
+    def test_forward_rejects_wrong_tokenwise_timestep_length(self):
+        model = self._create_model_or_skip(**self.config)
+
+        hidden_states, img_shapes = self._generate_packed_hidden_states(1, 32, 32)
+        encoder_hidden_states = torch.randn(1, 77, 512)
+
+        with self.assertRaisesRegex(ValueError, "tokenwise timesteps expected shape"):
+            model(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep=torch.randint(0, 1000, (1, 2), dtype=torch.float32),
+                img_shapes=img_shapes,
+                txt_seq_lens=[77],
+                return_dict=False,
+            )
 
     def test_attention_kwargs_handling(self):
         """Test attention_kwargs parameter handling including LoRA scale."""

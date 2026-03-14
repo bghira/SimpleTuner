@@ -5443,7 +5443,11 @@ class Trainer:
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
                     if self.model.uses_noise_schedule():
-                        for timestep in prepared_batch["timesteps"].tolist():
+                        timesteps_for_logging = prepared_batch["timesteps"]
+                        if torch.is_tensor(timesteps_for_logging) and timesteps_for_logging.ndim > 1:
+                            reduce_dims = tuple(range(1, timesteps_for_logging.ndim))
+                            timesteps_for_logging = timesteps_for_logging.detach().float().mean(dim=reduce_dims)
+                        for timestep in timesteps_for_logging.tolist():
                             self.timesteps_buffer.append((self.state["global_step"], timestep))
                         if getattr(self.config, "twinflow_enabled", False):
                             sigmas = prepared_batch.get("sigmas")

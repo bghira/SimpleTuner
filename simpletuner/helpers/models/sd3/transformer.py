@@ -20,7 +20,7 @@ import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
-from diffusers.models.attention import JointTransformerBlock
+from diffusers.models.attention import JointTransformerBlock, _chunked_feed_forward
 from diffusers.models.attention_processor import Attention, AttentionProcessor, FusedJointAttnProcessor2_0
 from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings, PatchEmbed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -42,6 +42,146 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states[:, image_tokens_start:, ...]
     else:
         buffer[key] = hidden_states
+
+
+def _sd3_tokenwise_conditioning(
+    conditioning_module: CombinedTimestepTextProjEmbeddings,
+    timestep: torch.Tensor,
+    pooled_projections: torch.Tensor,
+) -> torch.Tensor:
+    if timestep.ndim != 2:
+        return conditioning_module(timestep, pooled_projections)
+
+    batch_size, sequence_length = timestep.shape
+    flat_timestep = timestep.reshape(-1)
+    repeated_pooled = (
+        pooled_projections[:, None, :].expand(-1, sequence_length, -1).reshape(-1, pooled_projections.shape[-1])
+    )
+    conditioning = conditioning_module(flat_timestep, repeated_pooled)
+    return conditioning.view(batch_size, sequence_length, -1)
+
+
+def _sd3_apply_ada_layer_norm_zero(norm, hidden_states: torch.Tensor, emb: torch.Tensor):
+    if emb.ndim == 2:
+        return norm(hidden_states, emb=emb)
+
+    modulation = norm.linear(norm.silu(emb))
+    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = modulation.chunk(6, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
+def _sd3_apply_ada_layer_norm_continuous(norm, hidden_states: torch.Tensor, conditioning_embedding: torch.Tensor):
+    if conditioning_embedding.ndim == 2:
+        return norm(hidden_states, conditioning_embedding)
+
+    emb = norm.linear(norm.silu(conditioning_embedding).to(hidden_states.dtype))
+    scale, shift = torch.chunk(emb, 2, dim=-1)
+    return norm.norm(hidden_states) * (1 + scale) + shift
+
+
+def _sd3_apply_joint_transformer_block(
+    block: JointTransformerBlock,
+    hidden_states: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+    temb_hidden: torch.Tensor,
+    temb_context: torch.Tensor,
+    joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    joint_attention_kwargs = joint_attention_kwargs or {}
+    if temb_hidden.ndim == 2 and temb_context.ndim == 2:
+        return block(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=temb_hidden,
+            joint_attention_kwargs=joint_attention_kwargs,
+        )
+
+    if block.use_dual_attention:
+        (
+            norm_hidden_states,
+            gate_msa,
+            shift_mlp,
+            scale_mlp,
+            gate_mlp,
+            norm_hidden_states2,
+            gate_msa2,
+        ) = block.norm1(hidden_states, emb=temb_hidden)
+    else:
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _sd3_apply_ada_layer_norm_zero(
+            block.norm1, hidden_states, temb_hidden
+        )
+
+    if block.context_pre_only:
+        norm_encoder_hidden_states = block.norm1_context(encoder_hidden_states, temb_context)
+    else:
+        (
+            norm_encoder_hidden_states,
+            c_gate_msa,
+            c_shift_mlp,
+            c_scale_mlp,
+            c_gate_mlp,
+        ) = _sd3_apply_ada_layer_norm_zero(block.norm1_context, encoder_hidden_states, temb_context)
+
+    attn_output, context_attn_output = block.attn(
+        hidden_states=norm_hidden_states,
+        encoder_hidden_states=norm_encoder_hidden_states,
+        **joint_attention_kwargs,
+    )
+
+    if gate_msa.ndim == 2:
+        gate_msa = gate_msa.unsqueeze(1)
+    attn_output = gate_msa * attn_output
+    hidden_states = hidden_states + attn_output
+
+    if block.use_dual_attention:
+        attn_output2 = block.attn2(hidden_states=norm_hidden_states2, **joint_attention_kwargs)
+        if gate_msa2.ndim == 2:
+            gate_msa2 = gate_msa2.unsqueeze(1)
+        attn_output2 = gate_msa2 * attn_output2
+        hidden_states = hidden_states + attn_output2
+
+    norm_hidden_states = block.norm2(hidden_states)
+    if scale_mlp.ndim == 2:
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+    else:
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+    if block._chunk_size is not None:
+        ff_output = _chunked_feed_forward(block.ff, norm_hidden_states, block._chunk_dim, block._chunk_size)
+    else:
+        ff_output = block.ff(norm_hidden_states)
+    if gate_mlp.ndim == 2:
+        gate_mlp = gate_mlp.unsqueeze(1)
+    ff_output = gate_mlp * ff_output
+    hidden_states = hidden_states + ff_output
+
+    if block.context_pre_only:
+        encoder_hidden_states = None
+    else:
+        if c_gate_msa.ndim == 2:
+            c_gate_msa = c_gate_msa.unsqueeze(1)
+        context_attn_output = c_gate_msa * context_attn_output
+        encoder_hidden_states = encoder_hidden_states + context_attn_output
+
+        norm_encoder_hidden_states = block.norm2_context(encoder_hidden_states)
+        if c_scale_mlp.ndim == 2:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        else:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
+        if block._chunk_size is not None:
+            context_ff_output = _chunked_feed_forward(
+                block.ff_context,
+                norm_encoder_hidden_states,
+                block._chunk_dim,
+                block._chunk_size,
+            )
+        else:
+            context_ff_output = block.ff_context(norm_encoder_hidden_states)
+        if c_gate_mlp.ndim == 2:
+            c_gate_mlp = c_gate_mlp.unsqueeze(1)
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
+
+    return encoder_hidden_states, hidden_states
 
 
 class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
@@ -391,6 +531,9 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         height, width = hidden_states.shape[-2:]
 
         hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
+        token_count = hidden_states.shape[1]
+        if timestep.ndim == 2 and timestep.shape[1] != token_count:
+            raise ValueError(f"SD3 tokenwise timesteps expected sequence length {token_count}, got {timestep.shape[1]}.")
         sign_emb = None
         if timestep_sign is not None:
             if self.time_sign_embed is None:
@@ -398,12 +541,47 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_tensor = timestep_sign.to(device=hidden_states.device)
+            if timestep.ndim == 2:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(timestep.shape[0], timestep.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0])
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"SD3 tokenwise timestep_sign expected 1 or {timestep.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, timestep.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != timestep.shape[1]:
+                        raise ValueError(
+                            f"SD3 tokenwise timestep_sign expected sequence length {timestep.shape[1]}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0], -1)
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"SD3 tokenwise timestep_sign expected batch size {timestep.shape[0]}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"SD3 timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=hidden_states.device)
             sign_emb = self.time_sign_embed(sign_idx)
+            if timestep.ndim == 2:
+                sign_emb = sign_emb.view(timestep.shape[0], timestep.shape[1], -1)
 
-        temb = self.time_text_embed(timestep, pooled_projections)
+        temb = _sd3_tokenwise_conditioning(self.time_text_embed, timestep, pooled_projections)
         if sign_emb is not None:
             temb = temb + sign_emb.to(device=hidden_states.device, dtype=temb.dtype)
+        if temb.ndim == 3:
+            temb_hidden = temb
+            temb_context = temb.mean(dim=1)
+        else:
+            temb_hidden = temb
+            temb_context = temb
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         # TREAD initialization
@@ -486,18 +664,45 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                encoder_hidden_states, hidden_states = checkpoint_fn(
-                    create_custom_forward(block),
+                if temb_hidden.ndim == 2:
+                    encoder_hidden_states, hidden_states = checkpoint_fn(
+                        create_custom_forward(block),
+                        hidden_states,
+                        encoder_hidden_states,
+                        temb_hidden,
+                        **ckpt_kwargs,
+                    )
+                else:
+
+                    def create_tokenwise_forward(module, attention_kwargs):
+                        def custom_forward(*inputs):
+                            return _sd3_apply_joint_transformer_block(
+                                module,
+                                inputs[0],
+                                inputs[1],
+                                inputs[2],
+                                inputs[3],
+                                joint_attention_kwargs=attention_kwargs,
+                            )
+
+                        return custom_forward
+
+                    encoder_hidden_states, hidden_states = checkpoint_fn(
+                        create_tokenwise_forward(block, joint_attention_kwargs),
+                        hidden_states,
+                        encoder_hidden_states,
+                        temb_hidden,
+                        temb_context,
+                        **ckpt_kwargs,
+                    )
+            else:
+                encoder_hidden_states, hidden_states = _sd3_apply_joint_transformer_block(
+                    block,
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
-                    **ckpt_kwargs,
-                )
-            else:
-                encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    temb=temb,
+                    temb_hidden,
+                    temb_context,
+                    joint_attention_kwargs=joint_attention_kwargs,
                 )
 
             # controlnet residual
@@ -521,7 +726,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             capture_idx += 1
             global_idx += 1
 
-        hidden_states = self.norm_out(hidden_states, temb)
+        hidden_states = _sd3_apply_ada_layer_norm_continuous(self.norm_out, hidden_states, temb_hidden)
         hidden_states = self.proj_out(hidden_states)
 
         # unpatchify

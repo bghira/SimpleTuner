@@ -144,6 +144,87 @@ class LTXVideo2(VideoModelFoundation):
             return list(self.AUDIO_LORA_TARGETS)
         return []
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
+        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
+        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+
+        _, _, num_frames, height, width = latents.shape
+        p_t, p_h, p_w = self._crepa_self_flow_patch_size()
+        token_frames = max(num_frames // p_t, 1)
+        token_height = max(height // p_h, 1)
+        token_width = max(width // p_w, 1)
+
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(
+                latents.shape[0],
+                token_frames,
+                token_height,
+                token_width,
+                device=latents.device,
+                dtype=latents.dtype,
+            )
+            < mask_ratio
+        )
+
+        base_sigma_view = base_sigmas.view(-1, 1, 1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1, 1, 1)
+        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = self._expand_crepa_self_flow_patch_values(student_token_sigmas, (p_t, p_h, p_w), latents.shape)
+        student_sigma_grid = student_sigma_grid.to(dtype=latents.dtype)
+
+        base_timestep_view = base_timesteps.view(-1, 1, 1, 1)
+        alt_timestep_view = alt_timesteps.view(-1, 1, 1, 1)
+        student_token_timesteps = torch.where(token_mask, alt_timestep_view, base_timestep_view)
+
+        teacher_sigmas_1d = torch.minimum(base_sigmas, alt_sigmas)
+        teacher_sigmas = teacher_sigmas_1d.view(-1, 1, 1, 1, 1)
+        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
+
+        batch["sigmas"] = student_sigma_grid
+        batch["timesteps"] = student_token_timesteps.flatten(1)
+        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+        audio_latents = batch.get("audio_latent_batch")
+        if torch.is_tensor(audio_latents):
+            audio_latents = audio_latents.to(device=latents.device, dtype=torch.float32)
+            audio_token_length = max(int(audio_latents.shape[2]), 1)
+            audio_token_mask = (
+                torch.rand(
+                    latents.shape[0],
+                    audio_token_length,
+                    device=latents.device,
+                    dtype=latents.dtype,
+                )
+                < mask_ratio
+            )
+            base_audio_sigma = base_sigmas.view(-1, 1)
+            alt_audio_sigma = alt_sigmas.view(-1, 1)
+            student_audio_sigmas = torch.where(audio_token_mask, alt_audio_sigma, base_audio_sigma)
+            base_audio_timestep = base_timesteps.view(-1, 1)
+            alt_audio_timestep = alt_timesteps.view(-1, 1)
+            student_audio_timesteps = torch.where(audio_token_mask, alt_audio_timestep, base_audio_timestep)
+            batch["audio_sigmas"] = student_audio_sigmas[:, None, :, None].to(dtype=torch.float32)
+            batch["audio_timesteps"] = student_audio_timesteps.to(dtype=torch.float32)
+            batch["crepa_self_flow_audio_mask"] = audio_token_mask
+        else:
+            batch["audio_sigmas"] = base_sigmas.to(dtype=torch.float32)
+            batch["audio_timesteps"] = base_timesteps.to(dtype=torch.float32)
+        batch["crepa_teacher_audio_sigmas"] = teacher_sigmas_1d.to(dtype=torch.float32)
+        batch["crepa_teacher_audio_timesteps"] = teacher_timesteps.to(dtype=torch.float32)
+        batch["crepa_self_flow_mask"] = token_mask
+        return batch
+
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
         if manual_targets:
@@ -1120,10 +1201,28 @@ class LTXVideo2(VideoModelFoundation):
             audio_input_noise = audio_noise + input_perturbation * torch.randn_like(audio_latents)
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            sigmas_1d = self._extract_sigmas_1d(batch["sigmas"]).to(dtype=torch.float32)
-            audio_sigmas = sigmas_1d.view(sigmas_1d.shape[0], *([1] * (audio_latents.ndim - 1)))
+            audio_sigmas = batch.get("audio_sigmas")
+            if audio_sigmas is None:
+                sigmas_1d = self._extract_sigmas_1d(batch["sigmas"]).to(dtype=torch.float32)
+                audio_sigmas = sigmas_1d.view(sigmas_1d.shape[0], *([1] * (audio_latents.ndim - 1)))
+            else:
+                audio_sigmas = audio_sigmas.to(device=target_device, dtype=torch.float32)
+                if audio_sigmas.ndim == 1:
+                    audio_sigmas = audio_sigmas.view(audio_sigmas.shape[0], *([1] * (audio_latents.ndim - 1)))
             audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
             batch["audio_sigmas"] = audio_sigmas
+
+            teacher_audio_sigmas = batch.get("crepa_teacher_audio_sigmas")
+            if teacher_audio_sigmas is not None:
+                teacher_audio_sigmas = teacher_audio_sigmas.to(device=target_device, dtype=torch.float32)
+                if teacher_audio_sigmas.ndim == 1:
+                    teacher_audio_sigmas = teacher_audio_sigmas.view(
+                        teacher_audio_sigmas.shape[0], *([1] * (audio_latents.ndim - 1))
+                    )
+                batch["crepa_teacher_audio_sigmas"] = teacher_audio_sigmas
+                batch["crepa_teacher_audio_noisy_latents"] = (
+                    1 - teacher_audio_sigmas
+                ) * audio_latents + teacher_audio_sigmas * audio_input_noise
         else:
             audio_noisy = self.noise_schedule.add_noise(
                 audio_latents.float(),
@@ -1134,6 +1233,12 @@ class LTXVideo2(VideoModelFoundation):
         batch["audio_latents"] = audio_latents
         batch["audio_latent_mask"] = audio_mask
         batch["audio_noise"] = audio_noise
+        audio_timesteps = batch.get("audio_timesteps")
+        if audio_timesteps is None:
+            audio_timesteps = batch["timesteps"]
+            if audio_timesteps.ndim != 1:
+                audio_timesteps = audio_timesteps.view(audio_timesteps.shape[0], -1)[:, 0]
+        batch["audio_timesteps"] = audio_timesteps.to(device=target_device, dtype=torch.float32)
         batch["audio_noisy_latents"] = audio_noisy.to(device=target_device, dtype=target_dtype)
 
         return batch
@@ -1167,6 +1272,47 @@ class LTXVideo2(VideoModelFoundation):
             )
 
         return mask.to(device=latents.device, dtype=torch.bool)
+
+    def _normalize_audio_visual_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        name: str,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            return raw_timesteps.expand(batch_size)
+        if raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"LTX-2 expected 1 {name} timestep or {batch_size} per-batch {name} timesteps, got {raw_timesteps.shape[0]}."
+            )
+        if raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"LTX-2 expected tokenwise {name} timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size, -1)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"LTX-2 expected tokenwise {name} timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+            )
+        raise ValueError(
+            f"LTX-2 expected a scalar, 1D batch tensor, or 2D tokenwise {name} tensor, got shape {tuple(raw_timesteps.shape)}."
+        )
 
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"]
@@ -1240,15 +1386,21 @@ class LTXVideo2(VideoModelFoundation):
             ref_seq_len = packed_ref.shape[1]
             packed_noisy = torch.cat([packed_ref, packed_target_noisy], dim=1)
 
-            base_timesteps = prepared_batch["timesteps"].to(device=packed_noisy.device)
-            if base_timesteps.ndim != 1:
-                base_timesteps = base_timesteps.view(base_timesteps.shape[0], -1)[:, 0]
-            target_timesteps = base_timesteps[:, None].expand(base_timesteps.shape[0], packed_target_noisy.shape[1])
+            target_timesteps = self._normalize_audio_visual_timesteps(
+                prepared_batch["timesteps"],
+                batch_size=packed_target_noisy.shape[0],
+                sequence_length=packed_target_noisy.shape[1],
+                device=packed_noisy.device,
+                dtype=packed_noisy.dtype,
+                name="video",
+            )
+            if target_timesteps.ndim == 1:
+                target_timesteps = target_timesteps[:, None].expand(target_timesteps.shape[0], packed_target_noisy.shape[1])
             ref_timesteps = torch.zeros(
-                base_timesteps.shape[0],
+                target_timesteps.shape[0],
                 ref_seq_len,
-                device=base_timesteps.device,
-                dtype=base_timesteps.dtype,
+                device=target_timesteps.device,
+                dtype=target_timesteps.dtype,
             )
             combined_timesteps = torch.cat([ref_timesteps, target_timesteps], dim=1)
 
@@ -1309,12 +1461,31 @@ class LTXVideo2(VideoModelFoundation):
         capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
         if capture_hidden and ref_seq_len:
             raise ValueError("CREPA hidden-state capture is not supported with IC-LoRA reference tokens enabled.")
+        audio_timestep = prepared_batch.get("audio_timesteps")
+        if audio_timestep is None:
+            audio_timestep = prepared_batch["timesteps"]
+            if (
+                torch.is_tensor(audio_timestep)
+                and audio_timestep.ndim == 2
+                and audio_timestep.shape[1] != packed_audio_noisy.shape[1]
+            ):
+                audio_timestep = audio_timestep[:, 0]
+        audio_timestep = self._normalize_audio_visual_timesteps(
+            audio_timestep,
+            batch_size=packed_audio_noisy.shape[0],
+            sequence_length=packed_audio_noisy.shape[1],
+            device=packed_audio_noisy.device,
+            dtype=packed_audio_noisy.dtype,
+            name="audio",
+        )
+
         transformer_kwargs = {
             "hidden_states": packed_noisy,
             "audio_hidden_states": packed_audio_noisy,
             "encoder_hidden_states": connector_video_embeds,
             "audio_encoder_hidden_states": connector_audio_embeds,
             "timestep": combined_timesteps if combined_timesteps is not None else prepared_batch["timesteps"],
+            "audio_timestep": audio_timestep,
             "timestep_sign": (
                 prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
             ),
@@ -1333,7 +1504,10 @@ class LTXVideo2(VideoModelFoundation):
             transformer_kwargs["force_keep_mask"] = force_keep_mask
         if capture_hidden:
             transformer_kwargs["output_hidden_states"] = True
-            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+            transformer_kwargs["hidden_state_layer"] = prepared_batch.get(
+                "crepa_capture_block_index",
+                self.crepa_regularizer.block_index,
+            )
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if is_audio_only:

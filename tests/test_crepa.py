@@ -4,7 +4,15 @@ from types import SimpleNamespace
 
 import torch
 
-from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, CrepaScheduler, UrepaRegularizer
+from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.training.crepa import (
+    CrepaFeatureSource,
+    CrepaMode,
+    CrepaRegularizer,
+    CrepaScheduler,
+    UrepaRegularizer,
+)
+from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
 
 
@@ -418,6 +426,58 @@ class CrepaModeTests(unittest.TestCase):
             self.assertEqual(projected.shape, (2, 5, 16, 4))
 
 
+class CrepaFeatureSourceTests(unittest.TestCase):
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": None,
+            "crepa_encoder_image_size": 8,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "crepa_use_backbone_features": False,
+            "crepa_use_tae": False,
+            "crepa_feature_source": None,
+            "crepa_self_flow": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_default_source_is_encoder(self):
+        source = CrepaFeatureSource.from_config(self._make_config())
+        self.assertEqual(source, CrepaFeatureSource.ENCODER)
+
+    def test_legacy_backbone_flag_maps_to_backbone(self):
+        source = CrepaFeatureSource.from_config(self._make_config(crepa_use_backbone_features=True))
+        self.assertEqual(source, CrepaFeatureSource.BACKBONE)
+
+    def test_self_flow_alias_maps_to_self_flow(self):
+        source = CrepaFeatureSource.from_config(self._make_config(crepa_self_flow=True))
+        self.assertEqual(source, CrepaFeatureSource.SELF_FLOW)
+
+    def test_explicit_source_conflicts_with_legacy_backbone_flag(self):
+        with self.assertRaises(ValueError):
+            CrepaFeatureSource.from_config(
+                self._make_config(
+                    crepa_feature_source="encoder",
+                    crepa_use_backbone_features=True,
+                )
+            )
+
+    def test_backbone_and_self_flow_flags_conflict(self):
+        with self.assertRaises(ValueError):
+            CrepaFeatureSource.from_config(
+                self._make_config(
+                    crepa_use_backbone_features=True,
+                    crepa_self_flow=True,
+                )
+            )
+
+
 class CrepaBackboneDetachTests(unittest.TestCase):
     """Tests for CREPA backbone feature handling."""
 
@@ -482,6 +542,215 @@ class CrepaBackboneDetachTests(unittest.TestCase):
 
         self.assertIn("crepa_alignment_score", logs)
         self.assertIn("crepa_similarity_self", logs)
+
+
+class _DummyCrepaFoundation(ModelFoundation):
+    NAME = "DummyCrepaFoundation"
+
+    def __init__(self, config, component=None, ema_model=None):
+        self.config = config
+        self._component = component
+        self.ema_model = ema_model
+
+    def get_trained_component(self, base_model: bool = False, unwrap_model: bool = True):
+        return self._component
+
+    def _encode_prompts(self, prompts, is_negative_prompt=False):
+        raise NotImplementedError
+
+    def convert_text_embed_for_pipeline(self, text_embedding):
+        raise NotImplementedError
+
+    def convert_negative_text_embed_for_pipeline(self, text_embedding):
+        raise NotImplementedError
+
+    def model_predict(self, prepared_batch):
+        raise NotImplementedError
+
+
+class _RecordingCrepaFoundation(_DummyCrepaFoundation):
+    def __init__(self, config, component=None, ema_model=None):
+        super().__init__(config, component=component, ema_model=ema_model)
+        self.predict_calls = []
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def model_predict(self, prepared_batch):
+        capture_block = prepared_batch.get("crepa_capture_block_index")
+        self.predict_calls.append(
+            {
+                "capture_block": capture_block,
+                "weight_snapshot": self._component.weight.detach().clone() if self._component is not None else None,
+            }
+        )
+        return {
+            "crepa_hidden_states": torch.full((1, 2, 3, 4), float(capture_block or 0)),
+            "hidden_states_buffer": None,
+        }
+
+
+class CrepaModelFoundationTests(unittest.TestCase):
+    def test_validate_crepa_self_flow_requires_supported_family(self):
+        foundation = _DummyCrepaFoundation(
+            SimpleNamespace(
+                crepa_enabled=True,
+                crepa_feature_source="self_flow",
+                crepa_teacher_block_index=8,
+                use_ema=True,
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            foundation._validate_crepa_configuration()
+
+    def test_validate_crepa_self_flow_requires_ema(self):
+        foundation = _RecordingCrepaFoundation(
+            SimpleNamespace(
+                crepa_enabled=True,
+                crepa_feature_source="self_flow",
+                crepa_teacher_block_index=8,
+                use_ema=False,
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            foundation._validate_crepa_configuration()
+
+    def test_validate_crepa_self_flow_requires_teacher_block(self):
+        foundation = _RecordingCrepaFoundation(
+            SimpleNamespace(
+                crepa_enabled=True,
+                crepa_feature_source="self_flow",
+                crepa_teacher_block_index=None,
+                use_ema=True,
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            foundation._validate_crepa_configuration()
+
+    def test_validate_crepa_self_flow_rejects_invalid_mask_ratio(self):
+        foundation = _RecordingCrepaFoundation(
+            SimpleNamespace(
+                crepa_enabled=True,
+                crepa_feature_source="self_flow",
+                crepa_teacher_block_index=8,
+                crepa_self_flow_mask_ratio=0.75,
+                use_ema=True,
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            foundation._validate_crepa_configuration()
+
+    def test_validate_crepa_self_flow_rejects_twinflow(self):
+        foundation = _RecordingCrepaFoundation(
+            SimpleNamespace(
+                crepa_enabled=True,
+                crepa_feature_source="self_flow",
+                crepa_teacher_block_index=8,
+                twinflow_enabled=True,
+                use_ema=True,
+            )
+        )
+
+        with self.assertRaises(ValueError):
+            foundation._validate_crepa_configuration()
+
+    def test_validate_crepa_self_flow_accepts_valid_config(self):
+        foundation = _RecordingCrepaFoundation(
+            SimpleNamespace(
+                crepa_enabled=True,
+                crepa_feature_source="self_flow",
+                crepa_teacher_block_index=12,
+                use_ema=True,
+            )
+        )
+
+        source = foundation._validate_crepa_configuration()
+        self.assertEqual(source, CrepaFeatureSource.SELF_FLOW)
+
+    def test_ema_teacher_context_swaps_and_restores_weights(self):
+        component = torch.nn.Linear(2, 2)
+        original_weight = component.weight.detach().clone()
+        original_bias = component.bias.detach().clone()
+        args = SimpleNamespace(ema_update_interval=None, ema_device="cpu", ema_cpu_only=True)
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=component.parameters(),
+            decay=0.999,
+            min_decay=0.999,
+            update_after_step=-1,
+            use_ema_warmup=False,
+            foreach=False,
+        )
+        for shadow_param in ema_model.shadow_params:
+            shadow_param.fill_(3.0)
+
+        foundation = _DummyCrepaFoundation(SimpleNamespace(use_ema=True), component=component, ema_model=ema_model)
+
+        with foundation._ema_teacher_weights_context():
+            self.assertTrue(torch.allclose(component.weight, torch.full_like(component.weight, 3.0)))
+            self.assertTrue(torch.allclose(component.bias, torch.full_like(component.bias, 3.0)))
+
+        torch.testing.assert_close(component.weight, original_weight)
+        torch.testing.assert_close(component.bias, original_bias)
+
+    def test_run_crepa_teacher_forward_uses_teacher_block_and_ema_weights(self):
+        component = torch.nn.Linear(2, 2)
+        original_weight = component.weight.detach().clone()
+        args = SimpleNamespace(ema_update_interval=None, ema_device="cpu", ema_cpu_only=True)
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=component.parameters(),
+            decay=0.999,
+            min_decay=0.999,
+            update_after_step=-1,
+            use_ema_warmup=False,
+            foreach=False,
+        )
+        for shadow_param in ema_model.shadow_params:
+            shadow_param.fill_(7.0)
+
+        foundation = _RecordingCrepaFoundation(SimpleNamespace(use_ema=True), component=component, ema_model=ema_model)
+        crepa = SimpleNamespace(teacher_block_index=20)
+
+        teacher_hidden = foundation._run_crepa_teacher_forward({"timesteps": torch.tensor([1.0])}, crepa)
+
+        self.assertEqual(len(foundation.predict_calls), 1)
+        self.assertEqual(foundation.predict_calls[0]["capture_block"], 20)
+        self.assertTrue(
+            torch.allclose(foundation.predict_calls[0]["weight_snapshot"], torch.full_like(original_weight, 7.0))
+        )
+        self.assertTrue(torch.allclose(teacher_hidden, torch.full_like(teacher_hidden, 20.0)))
+        torch.testing.assert_close(component.weight, original_weight)
+
+    def test_build_crepa_teacher_batch_overrides_audio_fields(self):
+        foundation = _DummyCrepaFoundation(SimpleNamespace(use_ema=True))
+        crepa = SimpleNamespace(teacher_block_index=9)
+
+        teacher_batch = foundation._build_crepa_teacher_batch(
+            {
+                "timesteps": torch.tensor([1.0]),
+                "audio_timesteps": torch.tensor([2.0]),
+                "audio_noisy_latents": torch.tensor([3.0]),
+                "audio_sigmas": torch.tensor([4.0]),
+                "crepa_teacher_timesteps": torch.tensor([10.0]),
+                "crepa_teacher_audio_timesteps": torch.tensor([20.0]),
+                "crepa_teacher_audio_noisy_latents": torch.tensor([30.0]),
+                "crepa_teacher_audio_sigmas": torch.tensor([40.0]),
+            },
+            crepa,
+        )
+
+        self.assertEqual(teacher_batch["crepa_capture_block_index"], 9)
+        self.assertTrue(torch.equal(teacher_batch["timesteps"], torch.tensor([10.0])))
+        self.assertTrue(torch.equal(teacher_batch["audio_timesteps"], torch.tensor([20.0])))
+        self.assertTrue(torch.equal(teacher_batch["audio_noisy_latents"], torch.tensor([30.0])))
+        self.assertTrue(torch.equal(teacher_batch["audio_sigmas"], torch.tensor([40.0])))
 
 
 class UrepaInitTests(unittest.TestCase):

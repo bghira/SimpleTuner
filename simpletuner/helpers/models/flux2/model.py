@@ -150,6 +150,57 @@ class Flux2(ImageModelFoundation):
         },
     }
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
+        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
+        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+
+        patch_size = 1
+        if latents.shape[1] != self.LATENT_CHANNEL_COUNT:
+            if latents.shape[1] * 4 == self.LATENT_CHANNEL_COUNT:
+                patch_size = 2
+            else:
+                raise ValueError(
+                    f"Flux2 Self-Flow expected latent channels {self.LATENT_CHANNEL_COUNT} or {self.LATENT_CHANNEL_COUNT // 4}, got {latents.shape[1]}."
+                )
+
+        _, _, height, width = latents.shape
+        token_height = max(height // patch_size, 1)
+        token_width = max(width // patch_size, 1)
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(latents.shape[0], token_height, token_width, device=latents.device, dtype=latents.dtype) < mask_ratio
+        )
+
+        base_sigma_view = base_sigmas.view(-1, 1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1, 1)
+        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = student_token_sigmas.repeat_interleave(patch_size, dim=1).repeat_interleave(patch_size, dim=2)
+        student_sigma_grid = student_sigma_grid[:, None, :height, :width]
+
+        base_timestep_view = base_timesteps.view(-1, 1, 1)
+        alt_timestep_view = alt_timesteps.view(-1, 1, 1)
+        student_token_timesteps = torch.where(token_mask, alt_timestep_view, base_timestep_view)
+
+        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1)
+        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
+
+        batch["sigmas"] = student_sigma_grid.to(dtype=latents.dtype)
+        batch["timesteps"] = student_token_timesteps.flatten(1)
+        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+        batch["crepa_self_flow_mask"] = token_mask
+        return batch
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # FLUX.2 block counts vary by flavour:
@@ -805,6 +856,7 @@ class Flux2(ImageModelFoundation):
         packed_latents, img_ids = pack_latents(prepared_batch["noisy_latents"])
         packed_latents = packed_latents.to(device=device, dtype=dtype)
         img_ids = img_ids.to(device=device)
+        image_sequence_length = packed_latents.shape[1]
 
         # Pack text embeddings with position IDs
         prompt_embeds = prepared_batch["prompt_embeds"].to(device=device, dtype=dtype)
@@ -812,12 +864,13 @@ class Flux2(ImageModelFoundation):
         txt_ids = txt_ids.to(device=device)
 
         # Prepare timesteps (normalized to [0, 1])
-        timesteps = prepared_batch["timesteps"]
-        if isinstance(timesteps, (int, float)):
-            timesteps = torch.tensor([timesteps], device=device, dtype=dtype)
-        else:
-            timesteps = torch.tensor(timesteps, device=device, dtype=dtype)
-        timesteps = timesteps.expand(batch_size) / SCHEDULER_CONFIG["num_train_timesteps"]
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=batch_size,
+            sequence_length=image_sequence_length,
+            device=device,
+            dtype=dtype,
+        )
 
         # Handle guidance
         if self.config.flux_guidance_mode == "constant":
@@ -863,6 +916,16 @@ class Flux2(ImageModelFoundation):
         use_cond = cond_seq is not None
         logger.debug(f"FLUX.2 using conditioning: {use_cond}")
 
+        if use_cond:
+            timesteps = self._extend_conditioning_timesteps(
+                timesteps,
+                batch_size=batch_size,
+                scene_sequence_length=packed_latents.shape[1],
+                conditioning_sequence_length=cond_seq.shape[1],
+                device=device,
+                dtype=dtype,
+            )
+
         # Concatenate conditioning with noisy latents if present
         if use_cond:
             lat_in = torch.cat([packed_latents, cond_seq], dim=1)
@@ -899,16 +962,86 @@ class Flux2(ImageModelFoundation):
         unpacked = unpack_latents(model_pred, img_ids)
 
         # Extract CREPA hidden states from buffer if requested
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
-
+        crepa_hidden = self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer)
+        if use_cond and crepa_hidden is not None:
+            crepa_hidden = crepa_hidden[:, : packed_latents.shape[1], ...]
         return {
             "model_prediction": unpacked,
             "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Flux2 expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Flux2 expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Flux2 expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Flux2 expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return timesteps / SCHEDULER_CONFIG["num_train_timesteps"]
+
+    def _extend_conditioning_timesteps(
+        self,
+        timesteps: torch.Tensor,
+        *,
+        batch_size: int,
+        scene_sequence_length: int,
+        conditioning_sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if conditioning_sequence_length <= 0:
+            return timesteps
+
+        cond_timesteps = torch.zeros(batch_size, conditioning_sequence_length, device=device, dtype=dtype)
+        if timesteps.ndim == 1:
+            timesteps = timesteps[:, None].expand(-1, scene_sequence_length)
+        return torch.cat([timesteps, cond_timesteps], dim=1)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
     @torch.no_grad()
     def encode_images(self, images: List[Tensor]) -> Tensor:

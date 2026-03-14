@@ -29,6 +29,57 @@ class CrepaMode(Enum):
     VIDEO = auto()
 
 
+class CrepaFeatureSource(Enum):
+    """Selects the teacher representation source used by CREPA."""
+
+    ENCODER = "encoder"
+    BACKBONE = "backbone"
+    SELF_FLOW = "self_flow"
+
+    @classmethod
+    def from_config(cls, config) -> "CrepaFeatureSource":
+        raw_source = getattr(config, "crepa_feature_source", None)
+        use_backbone = bool(getattr(config, "crepa_use_backbone_features", False))
+        use_self_flow = bool(getattr(config, "crepa_self_flow", False))
+
+        source = None
+        if raw_source is not None:
+            normalized = str(raw_source).strip().lower()
+            aliases = {
+                "encoder": cls.ENCODER,
+                "external": cls.ENCODER,
+                "backbone": cls.BACKBONE,
+                "internal": cls.BACKBONE,
+                "self_flow": cls.SELF_FLOW,
+                "selfflow": cls.SELF_FLOW,
+            }
+            source = aliases.get(normalized)
+            if source is None:
+                valid = ", ".join(option.value for option in cls)
+                raise ValueError(f"Unsupported crepa_feature_source={raw_source!r}. Expected one of: {valid}.")
+
+        if use_backbone and use_self_flow:
+            raise ValueError("crepa_use_backbone_features and crepa_self_flow cannot both be enabled.")
+        if source is not None and use_backbone and source is not cls.BACKBONE:
+            raise ValueError(
+                "crepa_use_backbone_features conflicts with crepa_feature_source. "
+                "Set crepa_feature_source=backbone or disable the legacy flag."
+            )
+        if source is not None and use_self_flow and source is not cls.SELF_FLOW:
+            raise ValueError(
+                "crepa_self_flow conflicts with crepa_feature_source. "
+                "Set crepa_feature_source=self_flow or disable the legacy flag."
+            )
+
+        if source is not None:
+            return source
+        if use_self_flow:
+            return cls.SELF_FLOW
+        if use_backbone:
+            return cls.BACKBONE
+        return cls.ENCODER
+
+
 class CrepaScheduler:
     """Schedules the CREPA coefficient (crepa_lambda) over training with warmup, decay, and cutoff support."""
 
@@ -183,7 +234,10 @@ class CrepaRegularizer:
         self.cumulative_neighbors = bool(getattr(config, "crepa_cumulative_neighbors", False))
         self.normalize_neighbour_sum = bool(getattr(config, "crepa_normalize_neighbour_sum", False))
 
-        self.use_backbone_features = bool(getattr(config, "crepa_use_backbone_features", False))
+        self.feature_source = CrepaFeatureSource.from_config(config)
+        self.use_backbone_features = self.feature_source is CrepaFeatureSource.BACKBONE
+        self.use_self_flow_features = self.feature_source is CrepaFeatureSource.SELF_FLOW
+        self.uses_internal_teacher_features = self.feature_source is not CrepaFeatureSource.ENCODER
         self.use_tae = bool(getattr(config, "crepa_use_tae", False))
         self.teacher_block_index = getattr(config, "crepa_teacher_block_index", None)
         self.encoder: Optional[torch.nn.Module] = None
@@ -198,7 +252,7 @@ class CrepaRegularizer:
         )
 
         # Validate TAE availability if requested
-        if self.use_tae and self.enabled and not self.use_backbone_features:
+        if self.use_tae and self.enabled and not self.uses_internal_teacher_features:
             if model_foundation is not None and not model_foundation.supports_validation_preview():
                 logger.warning(
                     f"crepa_use_tae=True but {model_foundation.NAME} does not support TAE. "
@@ -216,7 +270,7 @@ class CrepaRegularizer:
         if self.block_index is None:
             raise ValueError("crepa_block_index must be set when CREPA is enabled.")
 
-        if self.use_backbone_features:
+        if self.uses_internal_teacher_features:
             target_dim = self.hidden_size
             self.encoder_dim = target_dim
         else:
@@ -252,7 +306,7 @@ class CrepaRegularizer:
             return None, None
         if hidden_states is None:
             raise ValueError("CREPA is enabled but no intermediate hidden states were provided.")
-        if not self.use_backbone_features:
+        if not self.uses_internal_teacher_features:
             if latents is None:
                 raise ValueError("CREPA requires access to clean latents for decoding.")
             # Only require VAE if not using unified decode via model_foundation
@@ -260,13 +314,13 @@ class CrepaRegularizer:
                 raise ValueError("CREPA requires a VAE to decode latents back to pixel space.")
         else:
             if frame_features is None:
-                raise ValueError("CREPA backbone feature mode requires frame_features from the model.")
+                raise ValueError(f"CREPA {self.feature_source.value} feature mode requires teacher features from the model.")
         if self.projector is None:
             raise RuntimeError("CREPA projector was not initialised on the diffusion model.")
         if self.base_weight == 0:
             return None, None
 
-        if not self.use_backbone_features:
+        if not self.uses_internal_teacher_features:
             video_pixels = self._decode_latents_unified(latents, vae)
             frame_features = self._encode_frames(video_pixels)  # (B, T_pixel, N_enc, D_enc)
         else:

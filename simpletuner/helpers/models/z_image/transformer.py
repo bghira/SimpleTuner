@@ -100,19 +100,49 @@ class TimestepEmbedder(nn.Module):
             return embedding
 
     def forward(self, t, timestep_sign: Optional[torch.Tensor] = None):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        if t.ndim == 2:
+            t_freq = self.timestep_embedding(t.reshape(-1), self.frequency_embedding_size)
+        else:
+            t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         weight_dtype = self.mlp[0].weight.dtype
         if weight_dtype.is_floating_point:
             t_freq = t_freq.to(weight_dtype)
         t_emb = self.mlp(t_freq)
+        if t.ndim == 2:
+            t_emb = t_emb.view(t.shape[0], t.shape[1], -1)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
-            t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+            sign_tensor = timestep_sign.to(device=t_emb.device)
+            if t_emb.ndim == 3:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(t_emb.shape[0], t_emb.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(t_emb.shape[0])
+                    elif sign_tensor.shape[0] != t_emb.shape[0]:
+                        raise ValueError(
+                            f"Z-Image tokenwise timestep_sign expected 1 or {t_emb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, t_emb.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape != t_emb.shape[:2]:
+                        raise ValueError(
+                            f"Z-Image tokenwise timestep_sign expected shape {tuple(t_emb.shape[:2])}, got {tuple(sign_tensor.shape)}."
+                        )
+                else:
+                    raise ValueError(
+                        f"Z-Image timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=t_emb.device)
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+                t_emb = t_emb + sign_emb.view(t_emb.shape[0], t_emb.shape[1], -1)
+            else:
+                sign_idx = (sign_tensor.view(-1) < 0).long().to(device=t_emb.device)
+                t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
 
 
@@ -271,9 +301,15 @@ class ZImageTransformerBlock(nn.Module):
     ):
         if self.modulation:
             assert adaln_input is not None
-            scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(adaln_input).unsqueeze(1).chunk(4, dim=2)
-            gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
-            scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
+            modulation = self.adaLN_modulation(adaln_input)
+            if modulation.ndim == 3:
+                scale_msa, gate_msa, scale_mlp, gate_mlp = modulation.chunk(4, dim=2)
+                gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
+                scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
+            else:
+                scale_msa, gate_msa, scale_mlp, gate_mlp = modulation.unsqueeze(1).chunk(4, dim=2)
+                gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
+                scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
 
             # Attention block
             attn_out = clamp_fp16(
@@ -329,7 +365,10 @@ class FinalLayer(nn.Module):
 
     def forward(self, x, c):
         scale = 1.0 + self.adaLN_modulation(c)
-        x = self.norm_final(x) * scale.unsqueeze(1)
+        if scale.ndim == 3:
+            x = self.norm_final(x) * scale
+        else:
+            x = self.norm_final(x) * scale.unsqueeze(1)
         x = self.linear(x)
         return x
 
@@ -652,7 +691,6 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         bsz = len(x)
         device = x[0].device
         t = t * self.t_scale
-        t = self.t_embedder(t, timestep_sign=timestep_sign)
 
         (
             x,
@@ -668,12 +706,35 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         x_item_seqlens = [len(_) for _ in x]
         assert all(_ % SEQ_MULTI_OF == 0 for _ in x_item_seqlens)
         x_max_item_seqlen = max(x_item_seqlens)
+        x_image_seqlens = [(F // f_patch_size) * (H // patch_size) * (W // patch_size) for (F, H, W) in x_size]
+
+        if t.ndim == 2:
+            expected_lengths = set(x_image_seqlens)
+            if len(expected_lengths) != 1:
+                raise ValueError("Z-Image tokenwise timesteps require a uniform image token length across the batch.")
+            expected_length = expected_lengths.pop()
+            if t.shape != (bsz, expected_length):
+                raise ValueError(
+                    f"Z-Image tokenwise timesteps expected shape ({bsz}, {expected_length}), got {tuple(t.shape)}."
+                )
+            adaln_input = self.t_embedder(t, timestep_sign=timestep_sign)
+            padded_adaln = []
+            for batch_idx, padded_len in enumerate(x_item_seqlens):
+                pad_len = padded_len - x_image_seqlens[batch_idx]
+                if pad_len > 0:
+                    pad_tokens = adaln_input.new_zeros((pad_len, adaln_input.shape[-1]))
+                    padded_adaln.append(torch.cat([adaln_input[batch_idx], pad_tokens], dim=0))
+                else:
+                    padded_adaln.append(adaln_input[batch_idx])
+            adaln_input = torch.stack(padded_adaln, dim=0)
+        else:
+            adaln_input = self.t_embedder(t, timestep_sign=timestep_sign)
 
         x = torch.cat(x, dim=0)
         x = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](x)
 
         # Match t_embedder output dtype to x for layerwise casting compatibility
-        adaln_input = t.type_as(x)
+        adaln_input = adaln_input.type_as(x)
         x[torch.cat(x_inner_pad_mask)] = self.x_pad_token
         x = list(x.split(x_item_seqlens, dim=0))
         x_freqs_cis = list(self.rope_embedder(torch.cat(x_pos_ids, dim=0)).split(x_item_seqlens, dim=0))
@@ -732,17 +793,23 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         # unified
         unified = []
         unified_freqs_cis = []
+        unified_adaln_input = [] if adaln_input.ndim == 3 else None
         for i in range(bsz):
             x_len = x_item_seqlens[i]
             cap_len = cap_item_seqlens[i]
             unified.append(torch.cat([x[i][:x_len], cap_feats[i][:cap_len]]))
             unified_freqs_cis.append(torch.cat([x_freqs_cis[i][:x_len], cap_freqs_cis[i][:cap_len]]))
+            if unified_adaln_input is not None:
+                pooled_caption = adaln_input[i, : x_image_seqlens[i]].mean(dim=0, keepdim=True).expand(cap_len, -1)
+                unified_adaln_input.append(torch.cat([adaln_input[i, :x_len], pooled_caption], dim=0))
         unified_item_seqlens = [a + b for a, b in zip(cap_item_seqlens, x_item_seqlens)]
         assert unified_item_seqlens == [len(_) for _ in unified]
         unified_max_item_seqlen = max(unified_item_seqlens)
 
         unified = pad_sequence(unified, batch_first=True, padding_value=0.0)
         unified_freqs_cis = pad_sequence(unified_freqs_cis, batch_first=True, padding_value=0.0)
+        if unified_adaln_input is not None:
+            unified_adaln_input = pad_sequence(unified_adaln_input, batch_first=True, padding_value=0.0).type_as(unified)
         unified_attn_mask = torch.zeros((bsz, unified_max_item_seqlen), dtype=torch.bool, device=device)
         for i, seq_len in enumerate(unified_item_seqlens):
             unified_attn_mask[i, :seq_len] = 1
@@ -776,7 +843,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         saved_freqs = None
         saved_attn = None
 
-        def apply_layer(layer_module, h, attn_mask, freqs):
+        def apply_layer(layer_module, h, attn_mask, freqs, layer_adaln_input):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 if self.gradient_checkpointing_backend == "unsloth":
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
@@ -785,8 +852,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 else:
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-                return checkpoint_fn(layer_module, h, attn_mask, freqs, adaln_input, use_reentrant=False)
-            return layer_module(h, attn_mask, freqs, adaln_input)
+                return checkpoint_fn(layer_module, h, attn_mask, freqs, layer_adaln_input, use_reentrant=False)
+            return layer_module(h, attn_mask, freqs, layer_adaln_input)
 
         skip_set = set(skip_layers) if skip_layers is not None else set()
         capture_idx = 0
@@ -821,7 +888,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             if idx in skip_set:
                 layer_out = unified
             else:
-                layer_out = apply_layer(layer, unified, unified_attn_mask, unified_freqs_cis)
+                layer_out = apply_layer(
+                    layer,
+                    unified,
+                    unified_attn_mask,
+                    unified_freqs_cis,
+                    unified_adaln_input if unified_adaln_input is not None else adaln_input,
+                )
             unified = layer_out
             img_tokens = unified[:, :x_max_item_seqlen, ...]
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", img_tokens, image_tokens_start=0)
@@ -837,7 +910,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
                 musubi_manager.stream_out(layer)
 
-        unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, adaln_input)
+        final_adaln = unified_adaln_input if unified_adaln_input is not None else adaln_input
+        unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, final_adaln)
         unified = list(unified.unbind(dim=0))
         x = self.unpatchify(unified, x_size, patch_size, f_patch_size)
 

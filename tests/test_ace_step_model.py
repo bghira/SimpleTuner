@@ -140,6 +140,86 @@ class TestACEStepModel(unittest.TestCase):
 
         self.assertAlmostEqual(loss.item(), 0.625, places=4)
 
+    def test_model_supports_crepa_self_flow(self):
+        self.assertTrue(self.model.supports_crepa_self_flow())
+
+    def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
+        self.model.model = MagicMock(config=type("Cfg", (), {"patch_size": [16, 1]})())
+        self.model.get_trained_component = MagicMock(return_value=self.model.model)
+        self.model.sample_flow_sigmas = MagicMock(return_value=(torch.tensor([0.8]), torch.tensor([800.0])))
+        batch = {
+            "latents": torch.randn(1, 8, 16, 8),
+            "input_noise": torch.randn(1, 8, 16, 8),
+            "sigmas": torch.tensor([0.2]),
+            "timesteps": torch.tensor([200.0]),
+        }
+
+        result = self.model._prepare_crepa_self_flow_batch(batch, state={})
+
+        self.assertEqual(result["timesteps"].shape, (1, 8))
+        self.assertEqual(result["crepa_self_flow_mask"].shape, (1, 1, 8))
+        self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
+
+    def test_model_predict_uses_crepa_capture_block_override(self):
+        transformer = MagicMock()
+
+        def _forward(**kwargs):
+            kwargs["hidden_states_buffer"]["layer_2"] = torch.full((1, 8, 16), 2.0)
+            kwargs["hidden_states_buffer"]["layer_9"] = torch.full((1, 8, 16), 9.0)
+            return type("Out", (), {"sample": torch.randn(1, 8, 16, 8), "proj_losses": None})()
+
+        transformer.side_effect = _forward
+        self.model.get_trained_component = MagicMock(return_value=transformer)
+        self.model._new_hidden_state_buffer = MagicMock(return_value={})
+        self.model.crepa_regularizer = type("Crepa", (), {"block_index": 2})()
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 8, 16, 8),
+            "attention_mask": torch.ones(1, 8),
+            "encoder_hidden_states": torch.randn(1, 4, 32),
+            "encoder_attention_mask": torch.ones(1, 4),
+            "speaker_embeds": torch.randn(1, 512),
+            "lyric_token_ids": torch.zeros(1, 1, dtype=torch.long),
+            "lyric_mask": torch.zeros(1, 1, dtype=torch.long),
+            "timesteps": torch.tensor([200.0]),
+            "sigmas": torch.ones(1, 1, 1, 1),
+            "crepa_capture_block_index": 9,
+        }
+
+        result = self.model.model_predict(prepared_batch)
+
+        self.assertTrue(torch.equal(result["crepa_hidden_states"], torch.full((1, 8, 16), 9.0)))
+        transformer_kwargs = transformer.call_args.kwargs
+        self.assertTrue(torch.equal(transformer_kwargs["timestep"], torch.tensor([200.0], dtype=torch.float32)))
+
+    def test_model_predict_accepts_tokenwise_timesteps(self):
+        transformer = MagicMock()
+
+        def _forward(**kwargs):
+            kwargs["hidden_states_buffer"]["layer_2"] = torch.full((1, 8, 16), 2.0)
+            return type("Out", (), {"sample": torch.randn(1, 8, 16, 8), "proj_losses": None})()
+
+        transformer.side_effect = _forward
+        self.model.get_trained_component = MagicMock(return_value=transformer)
+        self.model._new_hidden_state_buffer = MagicMock(return_value={})
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 8, 16, 8),
+            "attention_mask": torch.ones(1, 8),
+            "encoder_hidden_states": torch.randn(1, 4, 32),
+            "encoder_attention_mask": torch.ones(1, 4),
+            "speaker_embeds": torch.randn(1, 512),
+            "lyric_token_ids": torch.zeros(1, 1, dtype=torch.long),
+            "lyric_mask": torch.zeros(1, 1, dtype=torch.long),
+            "timesteps": torch.tensor([[100.0, 900.0, 200.0, 800.0, 300.0, 700.0, 400.0, 600.0]]),
+            "sigmas": torch.ones(1, 1, 1, 1),
+        }
+
+        self.model.model_predict(prepared_batch)
+
+        transformer_kwargs = transformer.call_args.kwargs
+        self.assertTrue(torch.equal(transformer_kwargs["timestep"], prepared_batch["timesteps"].to(torch.float32)))
+
 
 if __name__ == "__main__":
     unittest.main()

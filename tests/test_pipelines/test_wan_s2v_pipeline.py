@@ -142,6 +142,74 @@ class TestWanS2VAudioInterpolation(unittest.TestCase):
         self.assertTrue(hasattr(WanS2V, "interpolate_audio_to_frames"))
 
 
+class TestWanS2VSelfFlow(unittest.TestCase):
+    def test_transformer_block_accepts_tokenwise_timestep_payload(self):
+        from simpletuner.helpers.models.wan_s2v.transformer import WanS2VTransformerBlock
+
+        block = WanS2VTransformerBlock(
+            dim=8,
+            ffn_dim=16,
+            num_heads=2,
+            cross_attn_norm=True,
+        )
+
+        hidden_states = torch.randn(1, 12, 8)
+        encoder_hidden_states = torch.randn(1, 6, 8)
+        video_timestep_proj = torch.randn(1, 8, 6, 8)
+        conditioning_timestep_proj = torch.randn(1, 6, 8)
+
+        output = block(
+            hidden_states,
+            encoder_hidden_states,
+            (video_timestep_proj, conditioning_timestep_proj, torch.tensor(8)),
+            None,
+        )
+
+        self.assertEqual(output.shape, hidden_states.shape)
+        self.assertFalse(torch.isnan(output).any())
+        self.assertFalse(torch.isinf(output).any())
+
+    def test_model_predict_preserves_tokenwise_timesteps_for_self_flow_capture(self):
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        model = WanS2V.__new__(WanS2V)
+        model.config = mock.MagicMock(weight_dtype=torch.float32)
+        model._new_hidden_state_buffer = mock.MagicMock(return_value=None)
+        model.crepa_regularizer = mock.MagicMock(block_index=4)
+        model.crepa_regularizer.wants_hidden_states.return_value = True
+        model.interpolate_audio_to_frames = mock.MagicMock(side_effect=lambda audio, _: audio)
+
+        predicted = torch.randn(1, 4, 2, 4, 4)
+        captured = torch.randn(1, 2, 4, 8)
+        model.model = mock.MagicMock(return_value=(predicted, captured))
+
+        tokenwise_timesteps = torch.tensor([[100.0, 900.0, 100.0, 900.0, 100.0, 900.0, 100.0, 900.0]])
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 4, 2, 4, 4),
+            "encoder_hidden_states": torch.randn(1, 6, 16),
+            "timesteps": tokenwise_timesteps,
+            "conditioning_latents": torch.randn(1, 4, 1, 4, 4),
+            "audio_embeds": torch.randn(1, 3, 8, 2),
+            "latents": torch.randn(1, 4, 2, 4, 4),
+            "crepa_capture_block_index": 9,
+        }
+
+        result = model.model_predict(prepared_batch)
+
+        self.assertIs(result["model_prediction"], predicted)
+        self.assertIs(result["crepa_hidden_states"], captured)
+        transformer_kwargs = model.model.call_args.kwargs
+        self.assertTrue(torch.equal(transformer_kwargs["timestep"], tokenwise_timesteps))
+        self.assertEqual(transformer_kwargs["hidden_state_layer"], 9)
+        self.assertTrue(transformer_kwargs["output_hidden_states"])
+
+    def test_model_supports_crepa_self_flow(self):
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        model = WanS2V.__new__(WanS2V)
+        self.assertTrue(model.supports_crepa_self_flow())
+
+
 class TestWanS2VValidationSupport(unittest.TestCase):
     """Test S2V validation support methods."""
 

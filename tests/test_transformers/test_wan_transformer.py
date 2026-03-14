@@ -1291,6 +1291,46 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)
         self.assert_tensor_shape(output_tensor, expected_shape)
 
+    def test_forward_with_tokenwise_timesteps(self):
+        """Default Wan forward should accept full token-length timestep sequences."""
+        model = WanTransformer3DModel(**self.model_config)
+
+        batch_size, in_channels, num_frames, height, width = 1, 16, 4, 8, 8
+        hidden_states = torch.randn(batch_size, in_channels, num_frames, height, width)
+        token_frames = num_frames // self.model_config["patch_size"][0]
+        token_height = height // self.model_config["patch_size"][1]
+        token_width = width // self.model_config["patch_size"][2]
+        timestep = torch.randint(0, 1000, (batch_size, token_frames * token_height * token_width))
+        encoder_hidden_states = torch.randn(batch_size, 77, self.model_config["text_dim"])
+
+        with torch.no_grad():
+            output = model.forward(
+                hidden_states=hidden_states,
+                timestep=timestep,
+                encoder_hidden_states=encoder_hidden_states,
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)
+        self.assert_tensor_shape(output_tensor, expected_shape)
+        self.assert_no_nan_or_inf(output_tensor)
+
+    def test_forward_rejects_mismatched_tokenwise_timesteps(self):
+        """Tokenwise timesteps must match the flattened latent token count."""
+        model = WanTransformer3DModel(**self.model_config)
+
+        batch_size, in_channels, num_frames, height, width = 1, 16, 4, 8, 8
+        hidden_states = torch.randn(batch_size, in_channels, num_frames, height, width)
+        encoder_hidden_states = torch.randn(batch_size, 77, self.model_config["text_dim"])
+        timestep = torch.randint(0, 1000, (batch_size, 3))
+
+        with self.assertRaisesRegex(ValueError, "tokenwise timesteps"):
+            model.forward(
+                hidden_states=hidden_states,
+                timestep=timestep,
+                encoder_hidden_states=encoder_hidden_states,
+            )
+
     def test_3d_patch_embedding(self):
         """Test 3D patch embedding processing."""
         model = WanTransformer3DModel(**self.model_config)

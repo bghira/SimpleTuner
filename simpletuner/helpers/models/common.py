@@ -41,7 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
-from simpletuner.helpers.training.crepa import CrepaMode, CrepaRegularizer, UrepaRegularizer
+from simpletuner.helpers.training.crepa import CrepaFeatureSource, CrepaMode, CrepaRegularizer, UrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -1162,6 +1162,12 @@ class ModelFoundation(ABC):
 
     def supports_audio_inputs(self) -> bool:
         return False
+
+    def supports_crepa_self_flow(self) -> bool:
+        return False
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        raise NotImplementedError(f"CREPA self_flow batch preparation is not implemented for {self.NAME}.")
 
     def uses_audio_latents(self) -> bool:
         return False
@@ -3758,8 +3764,95 @@ class ModelFoundation(ABC):
         crepa_buffer = bool(crepa and crepa.enabled and getattr(crepa, "use_backbone_features", False))
         return ls_needed or crepa_buffer
 
+    def _validate_crepa_configuration(self) -> CrepaFeatureSource:
+        feature_source = CrepaFeatureSource.from_config(self.config)
+        if feature_source is CrepaFeatureSource.SELF_FLOW:
+            if not self.supports_crepa_self_flow():
+                raise ValueError(f"CREPA self_flow mode is not implemented for {self.NAME}.")
+            if not getattr(self.config, "use_ema", False):
+                raise ValueError("CREPA self_flow mode requires an EMA teacher; enable use_ema.")
+            if getattr(self.config, "crepa_teacher_block_index", None) is None:
+                raise ValueError("CREPA self_flow mode requires crepa_teacher_block_index to be set.")
+            mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+            if not 0.0 <= mask_ratio <= 0.5:
+                raise ValueError("CREPA self_flow mode requires crepa_self_flow_mask_ratio to be within [0.0, 0.5].")
+            if getattr(self.config, "twinflow_enabled", False):
+                raise ValueError("CREPA self_flow mode is not yet compatible with TwinFlow.")
+        return feature_source
+
+    @contextlib.contextmanager
+    def _ema_teacher_weights_context(
+        self,
+        *,
+        require_ema: bool = True,
+        allow_student_fallback: bool = False,
+    ):
+        """Temporarily swap EMA weights into the active trained component."""
+
+        ema_model = getattr(self, "ema_model", None)
+        has_ema = ema_model is not None and getattr(self.config, "use_ema", False)
+        teacher_parameters = None
+
+        if require_ema and not has_ema and not allow_student_fallback:
+            raise ValueError("EMA teacher weights are required but unavailable; enable use_ema or allow fallback.")
+
+        if has_ema:
+            teacher_component = self.get_trained_component(unwrap_model=False)
+            if teacher_component is None:
+                raise ValueError("EMA teacher unavailable because no trainable component was found.")
+            teacher_parameters = list(teacher_component.parameters())
+            ema_model.store(teacher_parameters)
+            ema_model.copy_to(teacher_parameters)
+
+        try:
+            yield has_ema
+        finally:
+            if has_ema and teacher_parameters is not None:
+                try:
+                    ema_model.restore(teacher_parameters)
+                except Exception:
+                    logger.exception("Failed to restore student weights after EMA teacher swap.")
+
     def _new_hidden_state_buffer(self) -> Optional[HiddenStateBuffer]:
         return HiddenStateBuffer() if self._needs_hidden_state_buffer() else None
+
+    def _build_crepa_teacher_batch(self, prepared_batch: dict, crepa: CrepaRegularizer) -> dict:
+        teacher_batch = dict(prepared_batch)
+        teacher_batch["crepa_capture_block_index"] = crepa.teacher_block_index
+        if "crepa_teacher_noisy_latents" in prepared_batch:
+            teacher_batch["noisy_latents"] = prepared_batch["crepa_teacher_noisy_latents"]
+        if "crepa_teacher_timesteps" in prepared_batch:
+            teacher_batch["timesteps"] = prepared_batch["crepa_teacher_timesteps"]
+        if "crepa_teacher_sigmas" in prepared_batch:
+            teacher_batch["sigmas"] = prepared_batch["crepa_teacher_sigmas"]
+        if "crepa_teacher_audio_noisy_latents" in prepared_batch:
+            teacher_batch["audio_noisy_latents"] = prepared_batch["crepa_teacher_audio_noisy_latents"]
+        if "crepa_teacher_audio_timesteps" in prepared_batch:
+            teacher_batch["audio_timesteps"] = prepared_batch["crepa_teacher_audio_timesteps"]
+        if "crepa_teacher_audio_sigmas" in prepared_batch:
+            teacher_batch["audio_sigmas"] = prepared_batch["crepa_teacher_audio_sigmas"]
+        return teacher_batch
+
+    def _run_crepa_teacher_forward(self, prepared_batch: dict, crepa: CrepaRegularizer) -> torch.Tensor:
+        teacher_batch = self._build_crepa_teacher_batch(prepared_batch, crepa)
+        with self._ema_teacher_weights_context(require_ema=True):
+            with torch.no_grad():
+                teacher_output = self.model_predict(teacher_batch)
+
+        teacher_hidden = teacher_output.get("crepa_hidden_states")
+        if teacher_hidden is not None:
+            return teacher_hidden
+
+        teacher_buffer = teacher_output.get("hidden_states_buffer")
+        if teacher_buffer is not None and crepa.teacher_block_index is not None:
+            teacher_hidden = teacher_buffer.get(f"layer_{crepa.teacher_block_index}")
+            if teacher_hidden is not None:
+                return teacher_hidden
+
+        raise ValueError(
+            f"CREPA self_flow mode requested teacher layer {crepa.teacher_block_index} "
+            "but the teacher forward did not return hidden states."
+        )
 
     def _apply_layersync_regularizer(
         self, loss: torch.Tensor, aux_logs: Optional[dict], hidden_states_buffer: Optional[dict]
@@ -4029,23 +4122,11 @@ class ModelFoundation(ABC):
         """
         Swap EMA weights in for teacher predictions when available.
         """
-        ema_model = getattr(self, "ema_model", None)
-        has_ema = ema_model is not None and getattr(self.config, "use_ema", False)
         require_ema = bool(settings.get("require_ema", True))
-        teacher_parameters = None
-
-        if require_ema and not has_ema and not self._twinflow_allow_student_teacher:
-            raise ValueError("TwinFlow requires EMA teacher weights; enable use_ema or allow student fallback explicitly.")
-
-        if has_ema:
-            teacher_component = self.get_trained_component(unwrap_model=False)
-            if teacher_component is None:
-                raise ValueError("TwinFlow teacher unavailable because no trainable component was found.")
-            teacher_parameters = list(teacher_component.parameters())
-            ema_model.store(teacher_parameters)
-            ema_model.copy_to(teacher_parameters)
-
-        try:
+        with self._ema_teacher_weights_context(
+            require_ema=require_ema,
+            allow_student_fallback=self._twinflow_allow_student_teacher,
+        ):
 
             def _teacher_forward(
                 noisy_latents: torch.Tensor,
@@ -4067,12 +4148,6 @@ class ModelFoundation(ABC):
                 )
 
             yield _teacher_forward
-        finally:
-            if has_ema and teacher_parameters is not None:
-                try:
-                    ema_model.restore(teacher_parameters)
-                except Exception:
-                    logger.exception("Failed to restore student weights after TwinFlow teacher swap.")
 
     def _twinflow_cfg_batches(self, prepared_batch: dict) -> Optional[list[dict]]:
         """
@@ -4368,10 +4443,14 @@ class ModelFoundation(ABC):
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
-            self.expand_sigmas(batch)
-            batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
-            if self._twinflow_active():
-                self._prepare_twinflow_metadata(batch)
+            crepa = getattr(self, "crepa_regularizer", None)
+            if crepa and crepa.enabled and getattr(crepa, "use_self_flow_features", False):
+                batch = self._prepare_crepa_self_flow_batch(batch=batch, state=state)
+            else:
+                self.expand_sigmas(batch)
+                batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
+                if self._twinflow_active():
+                    self._prepare_twinflow_metadata(batch)
         else:
             weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(
                 self.accelerator.device
@@ -5039,6 +5118,8 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
             self.crepa_regularizer = None
             return
 
+        self._validate_crepa_configuration()
+
         # CREPA is only supported for transformer-based models (DiT-style backbones).
         if getattr(self, "MODEL_TYPE", None) != ModelTypes.TRANSFORMER:
             logger.warning("CREPA is only supported for transformer-based models. Use U-REPA for UNet models. Disabling.")
@@ -5168,6 +5249,8 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         if crepa and crepa.enabled:
             crepa_hidden = model_output.get("crepa_hidden_states")
             crepa_frame_features = model_output.get("crepa_frame_features")
+            if getattr(crepa, "use_self_flow_features", False):
+                crepa_frame_features = self._run_crepa_teacher_forward(prepared_batch, crepa)
             if getattr(crepa, "use_backbone_features", False):
                 if hidden_states_buffer is None:
                     raise ValueError("CREPA backbone feature mode requested but no hidden state buffer was provided.")
@@ -5235,6 +5318,59 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         """
         return None
 
+    def _prepare_image_crepa_self_flow_batch(
+        self,
+        batch: dict,
+        state: dict,
+        *,
+        patch_size: int | tuple[int, int],
+    ) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
+        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
+        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+
+        if isinstance(patch_size, int):
+            p_h = p_w = int(max(patch_size, 1))
+        elif isinstance(patch_size, (tuple, list)) and len(patch_size) == 2:
+            p_h = int(max(patch_size[0], 1))
+            p_w = int(max(patch_size[1], 1))
+        else:
+            raise ValueError(f"Unexpected image Self-Flow patch size for {self.NAME}: {patch_size!r}")
+
+        _, _, height, width = latents.shape
+        token_height = max(height // p_h, 1)
+        token_width = max(width // p_w, 1)
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(latents.shape[0], token_height, token_width, device=latents.device, dtype=latents.dtype) < mask_ratio
+        )
+
+        base_sigma_view = base_sigmas.view(-1, 1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1, 1)
+        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = student_token_sigmas.repeat_interleave(p_h, dim=1).repeat_interleave(p_w, dim=2)
+        student_sigma_grid = student_sigma_grid[:, None, :height, :width]
+
+        base_timestep_view = base_timesteps.view(-1, 1, 1)
+        alt_timestep_view = alt_timesteps.view(-1, 1, 1)
+        student_token_timesteps = torch.where(token_mask, alt_timestep_view, base_timestep_view)
+
+        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1)
+        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
+
+        batch["sigmas"] = student_sigma_grid.to(dtype=latents.dtype)
+        batch["timesteps"] = student_token_timesteps.flatten(1)
+        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+        batch["crepa_self_flow_mask"] = token_mask
+        return batch
+
 
 class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
     """
@@ -5261,6 +5397,91 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
                 f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
             )
             batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
+        return batch
+
+    def _crepa_self_flow_patch_size(self) -> tuple[int, int, int]:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is None or not hasattr(transformer, "config"):
+            raise ValueError(f"{self.NAME} Self-Flow requires a loaded transformer config to determine patch size.")
+        patch_size = getattr(transformer.config, "patch_size", (1, 2, 2))
+        patch_size_t_raw = getattr(transformer.config, "patch_size_t", 1)
+        if not isinstance(patch_size_t_raw, (int, float)):
+            patch_size_t_raw = 1
+        patch_size_t = int(max(patch_size_t_raw, 1))
+        if isinstance(patch_size, int):
+            spatial_patch = int(max(patch_size, 1))
+            return (patch_size_t, spatial_patch, spatial_patch)
+        if isinstance(patch_size, (tuple, list)):
+            if len(patch_size) == 3:
+                return tuple(int(max(value, 1)) for value in patch_size)
+            if len(patch_size) == 2:
+                return (
+                    patch_size_t,
+                    int(max(patch_size[0], 1)),
+                    int(max(patch_size[1], 1)),
+                )
+        raise ValueError(f"Unexpected patch size for {self.NAME} Self-Flow: {patch_size!r}")
+
+    @staticmethod
+    def _expand_crepa_self_flow_patch_values(
+        values: torch.Tensor, patch_size: tuple[int, int, int], target_shape: torch.Size
+    ) -> torch.Tensor:
+        p_t, p_h, p_w = patch_size
+        expanded = values.unsqueeze(1)
+        expanded = expanded.repeat_interleave(p_t, dim=2)
+        expanded = expanded.repeat_interleave(p_h, dim=3)
+        expanded = expanded.repeat_interleave(p_w, dim=4)
+        _, _, target_t, target_h, target_w = target_shape
+        return expanded[:, :, :target_t, :target_h, :target_w]
+
+    def _prepare_video_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
+        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
+        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+
+        _, _, num_frames, height, width = latents.shape
+        p_t, p_h, p_w = self._crepa_self_flow_patch_size()
+        token_frames = max(num_frames // p_t, 1)
+        token_height = max(height // p_h, 1)
+        token_width = max(width // p_w, 1)
+
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(
+                latents.shape[0],
+                token_frames,
+                token_height,
+                token_width,
+                device=latents.device,
+                dtype=latents.dtype,
+            )
+            < mask_ratio
+        )
+
+        base_sigma_view = base_sigmas.view(-1, 1, 1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1, 1, 1)
+        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = self._expand_crepa_self_flow_patch_values(student_token_sigmas, (p_t, p_h, p_w), latents.shape)
+        student_sigma_grid = student_sigma_grid.to(dtype=latents.dtype)
+
+        base_timestep_view = base_timesteps.view(-1, 1, 1, 1)
+        alt_timestep_view = alt_timesteps.view(-1, 1, 1, 1)
+        student_token_timesteps = torch.where(token_mask, alt_timestep_view, base_timestep_view)
+
+        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1, 1)
+        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
+
+        batch["sigmas"] = student_sigma_grid
+        batch["timesteps"] = student_token_timesteps.flatten(1)
+        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+        batch["crepa_self_flow_mask"] = token_mask
         return batch
 
     def get_transforms(self, dataset_type: str = "image"):

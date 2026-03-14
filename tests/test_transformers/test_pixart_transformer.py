@@ -848,6 +848,59 @@ class TestPixArtTransformer2DModel(TransformerBaseTest, AttentionProcessorTestMi
             del result, cuda_input, cuda_timestep, cuda_added_cond
             torch.cuda.empty_cache()
 
+    def test_forward_accepts_tokenwise_timesteps(self):
+        from simpletuner.helpers.models.pixart.transformer import PixArtTransformer2DModel
+
+        model = PixArtTransformer2DModel(
+            num_attention_heads=2,
+            attention_head_dim=8,
+            in_channels=4,
+            out_channels=8,
+            num_layers=1,
+            cross_attention_dim=16,
+            caption_channels=16,
+            sample_size=8,
+            patch_size=2,
+            num_embeds_ada_norm=1000,
+            use_additional_conditions=False,
+        )
+
+        output = model(
+            hidden_states=torch.randn(1, 4, 8, 8),
+            encoder_hidden_states=torch.randn(1, 3, 16),
+            timestep=torch.tensor([[100, 900, 250, 750, 100, 900, 250, 750, 100, 900, 250, 750, 100, 900, 250, 750]]),
+            encoder_attention_mask=torch.ones(1, 3),
+            return_dict=False,
+        )[0]
+
+        self.assertEqual(output.shape, (1, 8, 8, 8))
+
+    def test_forward_rejects_wrong_tokenwise_timestep_length(self):
+        from simpletuner.helpers.models.pixart.transformer import PixArtTransformer2DModel
+
+        model = PixArtTransformer2DModel(
+            num_attention_heads=2,
+            attention_head_dim=8,
+            in_channels=4,
+            out_channels=8,
+            num_layers=1,
+            cross_attention_dim=16,
+            caption_channels=16,
+            sample_size=8,
+            patch_size=2,
+            num_embeds_ada_norm=1000,
+            use_additional_conditions=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "expected shape"):
+            model(
+                hidden_states=torch.randn(1, 4, 8, 8),
+                encoder_hidden_states=torch.randn(1, 3, 16),
+                timestep=torch.tensor([[100, 900]]),
+                encoder_attention_mask=torch.ones(1, 3),
+                return_dict=False,
+            )
+
 
 class TestPixArtTransformerIntegration(TransformerBaseTest):
     """Integration tests for PixArtTransformer2DModel with real components."""

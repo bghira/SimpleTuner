@@ -270,6 +270,10 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t, dtype, timestep_sign: Optional[torch.Tensor] = None):
+        reshape = None
+        if t.ndim == 2:
+            reshape = t.shape
+            t = t.reshape(-1)
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         if t_freq.dtype != dtype:
             t_freq = t_freq.to(dtype)
@@ -280,8 +284,55 @@ class TimestepEmbedder(nn.Module):
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
+            sign_tensor = timestep_sign.to(device=t_emb.device)
+            if reshape is not None:
+                batch_size, sequence_length = reshape
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(batch_size, sequence_length)
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"LongCat-Video tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, sequence_length)
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != sequence_length:
+                        raise ValueError(
+                            f"LongCat-Video tokenwise timestep_sign expected sequence length {sequence_length}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size, -1)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"LongCat-Video tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        "LongCat-Video timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                        f"got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=t_emb.device)
+            else:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(t_emb.shape[0])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(t_emb.shape[0])
+                    elif sign_tensor.shape[0] != t_emb.shape[0]:
+                        raise ValueError(
+                            f"LongCat-Video timestep_sign expected 1 or {t_emb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        "LongCat-Video timestep_sign expected scalar or 1D batch tensor for batchwise timesteps, "
+                        f"got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=t_emb.device)
             t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+        if reshape is not None:
+            t_emb = t_emb.view(reshape[0], reshape[1], -1)
         return t_emb
 
 
@@ -1000,13 +1051,63 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         N_h = H // self.patch_size[1]
         N_w = W // self.patch_size[2]
 
-        if len(timestep.shape) == 1:
+        timestep = timestep.to(device=hidden_states.device)
+        if timestep.ndim == 0:
+            timestep = timestep.expand(B)
+        if timestep.ndim == 1:
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(B)
+            elif timestep.shape[0] != B:
+                raise ValueError(f"LongCat-Video expected 1 timestep or {B} per-batch timesteps, got {timestep.shape[0]}.")
             timestep = timestep.unsqueeze(1).expand(-1, N_t)
+        elif timestep.ndim == 2:
+            if timestep.shape[1] == 1:
+                timestep = timestep.expand(-1, N_t)
+            elif timestep.shape[1] != N_t:
+                raise ValueError(
+                    f"LongCat-Video expected framewise timesteps with sequence length {N_t}, got {timestep.shape[1]}."
+                )
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(B, -1)
+            elif timestep.shape[0] != B:
+                raise ValueError(f"LongCat-Video expected framewise timesteps for batch size {B}, got {timestep.shape[0]}.")
+        else:
+            raise ValueError(
+                "LongCat-Video expected a scalar, 1D batch tensor, or 2D framewise tensor, "
+                f"got shape {tuple(timestep.shape)}."
+            )
+
         sign = timestep_sign
         if sign is not None:
-            if sign.ndim == 1:
-                sign = sign.unsqueeze(1).expand(-1, N_t)
             sign = sign.to(device=timestep.device, dtype=timestep.dtype)
+            if sign.ndim == 0:
+                sign = sign.expand(B, N_t)
+            elif sign.ndim == 1:
+                if sign.shape[0] == 1:
+                    sign = sign.expand(B)
+                elif sign.shape[0] != B:
+                    raise ValueError(
+                        f"LongCat-Video expected 1 timestep_sign or {B} per-batch timestep_sign values, got {sign.shape[0]}."
+                    )
+                sign = sign.unsqueeze(1).expand(-1, N_t)
+            elif sign.ndim == 2:
+                if sign.shape[1] == 1:
+                    sign = sign.expand(-1, N_t)
+                elif sign.shape[1] != N_t:
+                    raise ValueError(
+                        f"LongCat-Video expected framewise timestep_sign with sequence length {N_t}, got {sign.shape[1]}."
+                    )
+                if sign.shape[0] == 1:
+                    sign = sign.expand(B, -1)
+                elif sign.shape[0] != B:
+                    raise ValueError(
+                        f"LongCat-Video expected framewise timestep_sign for batch size {B}, got {sign.shape[0]}."
+                    )
+            else:
+                raise ValueError(
+                    "LongCat-Video expected timestep_sign to be a scalar, 1D batch tensor, or 2D framewise tensor, "
+                    f"got shape {tuple(sign.shape)}."
+                )
 
         dtype = self.x_embedder.proj.weight.dtype
         hidden_states = hidden_states.to(dtype)
@@ -1016,8 +1117,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states = self.x_embedder(hidden_states)
 
         with torch.autocast(device_type=timestep.device.type, dtype=torch.float32, enabled=timestep.device.type == "cuda"):
-            sign_flat = sign.reshape(-1) if sign is not None else None
-            t = self.t_embedder(timestep.float().flatten(), dtype=torch.float32, timestep_sign=sign_flat).reshape(B, N_t, -1)
+            t = self.t_embedder(timestep.float(), dtype=torch.float32, timestep_sign=sign)
 
         encoder_hidden_states = self.y_embedder(encoder_hidden_states)
 

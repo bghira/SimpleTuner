@@ -28,6 +28,7 @@ from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTra
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -86,6 +87,51 @@ class LongCatVideo(VideoModelFoundation):
         # LongCat-Video has 48 transformer blocks
         # Leave at least 1 block on GPU
         return 47
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
+        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
+        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+
+        transformer = self.unwrap_model(model=self.model)
+        patch_size = getattr(getattr(transformer, "config", None), "patch_size", (1, 2, 2))
+        if not isinstance(patch_size, (tuple, list)) or len(patch_size) != 3:
+            raise ValueError(f"Unexpected LongCat patch size for Self-Flow: {patch_size!r}")
+        p_t = int(max(patch_size[0], 1))
+
+        _, _, num_frames, _, _ = latents.shape
+        token_frames = max(num_frames // p_t, 1)
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        frame_mask = torch.rand(latents.shape[0], token_frames, device=latents.device, dtype=latents.dtype) < mask_ratio
+
+        base_sigma_view = base_sigmas.view(-1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1)
+        student_frame_sigmas = torch.where(frame_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = student_frame_sigmas.repeat_interleave(p_t, dim=1)[:, :num_frames]
+        student_sigma_grid = student_sigma_grid[:, None, :, None, None]
+
+        base_timestep_view = base_timesteps.view(-1, 1)
+        alt_timestep_view = alt_timesteps.view(-1, 1)
+        student_frame_timesteps = torch.where(frame_mask, alt_timestep_view, base_timestep_view)
+
+        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1, 1)
+        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
+
+        batch["sigmas"] = student_sigma_grid.to(dtype=latents.dtype)
+        batch["timesteps"] = student_frame_timesteps
+        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+        batch["crepa_self_flow_mask"] = frame_mask
+        return batch
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
@@ -386,6 +432,17 @@ class LongCatVideo(VideoModelFoundation):
 
         cond_count = int(prepared_batch.get("conditioning_latent_count", 0) or 0)
         hidden_states_buffer = self._new_hidden_state_buffer()
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(getattr(self, "crepa_regularizer", None), "block_index", None),
+        )
+        created_capture_buffer = False
+        if capture_hidden and hidden_states_buffer is None:
+            hidden_states_buffer = HiddenStateBuffer()
+            created_capture_buffer = True
+        if created_capture_buffer and hidden_states_buffer is not None and capture_layer is not None:
+            hidden_states_buffer.capture_layers = {int(capture_layer)}
 
         model_pred = self.model(
             noisy_latents,
@@ -403,8 +460,25 @@ class LongCatVideo(VideoModelFoundation):
         if cond_count > 0 and model_pred.dim() == 5 and model_pred.shape[2] > cond_count:
             model_pred = model_pred[:, :, cond_count:, :, :]
 
+        crepa_hidden = None
+        if capture_hidden and capture_layer is not None and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+            if crepa_hidden is not None and cond_count > 0:
+                total_frames = noisy_latents.shape[2]
+                if total_frames > 0 and crepa_hidden.ndim >= 2:
+                    spatial_tokens = crepa_hidden.shape[1] // total_frames
+                    cond_tokens = cond_count * spatial_tokens
+                    if 0 < cond_tokens < crepa_hidden.shape[1]:
+                        crepa_hidden = crepa_hidden[:, cond_tokens:, ...]
+            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {capture_layer} but none were stored. "
+                    "Check that crepa_block_index is within the model's block count."
+                )
+
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

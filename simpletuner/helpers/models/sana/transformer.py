@@ -191,10 +191,18 @@ class SanaTransformerBlock(PatchableModule):
         batch_size = hidden_states.shape[0]
 
         # modulation
-        modulation = self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1).to(self.scale_shift_table.dtype)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
-            tensor.to(hidden_states.dtype) for tensor in modulation.chunk(6, dim=1)
-        ]
+        if timestep.ndim == 3 and timestep.shape[-1] != hidden_states.shape[-1]:
+            modulation = self.scale_shift_table[None, None] + timestep.reshape(batch_size, timestep.shape[1], 6, -1).to(
+                self.scale_shift_table.dtype
+            )
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
+                tensor.squeeze(2).to(hidden_states.dtype) for tensor in modulation.chunk(6, dim=2)
+            ]
+        else:
+            modulation = self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1).to(self.scale_shift_table.dtype)
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
+                tensor.to(hidden_states.dtype) for tensor in modulation.chunk(6, dim=1)
+            ]
 
         # self attention
         norm_hidden_states = self.norm1(hidden_states)
@@ -603,16 +611,48 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         hidden_states = self.patch_embed(hidden_states)
 
-        timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
+        timestep, embedded_timestep = self._prepare_timestep_embeddings(
+            timestep,
+            batch_size=batch_size,
+            hidden_dtype=hidden_states.dtype,
+            sequence_length=hidden_states.shape[1],
+        )
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
-            sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
-            embedded_timestep = embedded_timestep + sign_emb.view(batch_size, -1)
+            sign_tensor = timestep_sign.to(device=hidden_states.device)
+            if embedded_timestep.ndim == 3:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(embedded_timestep.shape[0], embedded_timestep.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(embedded_timestep.shape[0])
+                    elif sign_tensor.shape[0] != embedded_timestep.shape[0]:
+                        raise ValueError(
+                            f"Sana tokenwise timestep_sign expected 1 or {embedded_timestep.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, embedded_timestep.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape != embedded_timestep.shape[:2]:
+                        raise ValueError(
+                            f"Sana tokenwise timestep_sign expected shape {tuple(embedded_timestep.shape[:2])}, got {tuple(sign_tensor.shape)}."
+                        )
+                else:
+                    raise ValueError(
+                        f"Sana timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long()
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+                embedded_timestep = embedded_timestep + sign_emb.view(
+                    embedded_timestep.shape[0], embedded_timestep.shape[1], -1
+                )
+            else:
+                sign_idx = (sign_tensor.view(-1) < 0).long().to(device=hidden_states.device)
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+                embedded_timestep = embedded_timestep + sign_emb.view(batch_size, -1)
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
@@ -717,14 +757,21 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             post_patch_height, post_patch_width = self._infer_token_grid(tokens, post_patch_height, post_patch_width)
 
         # normalization
-        modulation_out = self.scale_shift_table[None].to(hidden_states.dtype) + embedded_timestep[:, None].to(
-            hidden_states.dtype
-        )
-        shift, scale = modulation_out.chunk(2, dim=1)
         hidden_states = self.norm_out(hidden_states)
 
         # modulation
-        hidden_states = hidden_states * (1 + scale) + shift
+        if embedded_timestep.ndim == 3:
+            modulation_out = self.scale_shift_table[None, None].to(hidden_states.dtype) + embedded_timestep[:, :, None].to(
+                hidden_states.dtype
+            )
+            shift, scale = [tensor.squeeze(2) for tensor in modulation_out.chunk(2, dim=2)]
+            hidden_states = hidden_states * (1 + scale) + shift
+        else:
+            modulation_out = self.scale_shift_table[None].to(hidden_states.dtype) + embedded_timestep[:, None].to(
+                hidden_states.dtype
+            )
+            shift, scale = modulation_out.chunk(2, dim=1)
+            hidden_states = hidden_states * (1 + scale) + shift
         hidden_states = self.proj_out(hidden_states)
 
         # unpatchify
@@ -746,6 +793,31 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         if not return_dict:
             return (output,)
         return Transformer2DModelOutput(sample=output)
+
+    def _prepare_timestep_embeddings(
+        self,
+        timestep: torch.Tensor,
+        *,
+        batch_size: int,
+        hidden_dtype: torch.dtype,
+        sequence_length: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if timestep.ndim != 2:
+            return self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_dtype)
+
+        if timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length:
+            raise ValueError(
+                f"Sana tokenwise timestep embedding expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
+            )
+
+        emb = self.time_embed.emb
+        timestep_flat = timestep.reshape(-1)
+        timesteps_proj = emb.time_proj(timestep_flat)
+        embedded_timestep = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype)).view(
+            batch_size, sequence_length, -1
+        )
+        modulation = self.time_embed.linear(self.time_embed.silu(embedded_timestep))
+        return modulation, embedded_timestep
 
     @staticmethod
     def _infer_token_grid(num_tokens: int, target_height: int, target_width: int) -> Tuple[int, int]:

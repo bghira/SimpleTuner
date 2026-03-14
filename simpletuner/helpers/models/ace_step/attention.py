@@ -262,13 +262,22 @@ class LinearTransformerBlock(nn.Module):
         temb: torch.FloatTensor = None,
     ):
 
-        N = hidden_states.shape[0]
-
         # step 1: AdaLN single
         if self.use_adaln_single:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-                self.scale_shift_table[None] + temb.reshape(N, 6, -1)
-            ).chunk(6, dim=1)
+            if temb.ndim == 2:
+                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                    self.scale_shift_table[None] + temb.reshape(hidden_states.shape[0], 6, -1)
+                ).chunk(6, dim=1)
+            else:
+                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                    self.scale_shift_table[None, None] + temb.reshape(hidden_states.shape[0], hidden_states.shape[1], 6, -1)
+                ).chunk(6, dim=2)
+                shift_msa = shift_msa.squeeze(2)
+                scale_msa = scale_msa.squeeze(2)
+                gate_msa = gate_msa.squeeze(2)
+                shift_mlp = shift_mlp.squeeze(2)
+                scale_mlp = scale_mlp.squeeze(2)
+                gate_mlp = gate_mlp.squeeze(2)
 
         norm_hidden_states = self.norm1(hidden_states)
         if self.use_adaln_single:

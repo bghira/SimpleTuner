@@ -983,9 +983,107 @@ class QwenImage(ImageModelFoundation):
             return self._model_predict_edit_plus(prepared_batch)
         return self._model_predict_standard(prepared_batch)
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is None or not hasattr(transformer, "config"):
+            raise ValueError("Qwen-Image Self-Flow requires a loaded transformer config to determine patch size.")
+        patch_size = int(max(getattr(transformer.config, "patch_size", 2), 1))
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=patch_size)
+
+    def _prepare_model_predict_timesteps(
+        self, raw_timesteps, batch_size: int, sequence_length: Optional[int] = None
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
+        else:
+            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Qwen-Image expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if sequence_length is None:
+                raise ValueError("Qwen-Image tokenwise timesteps require an explicit sequence_length.")
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Qwen-Image expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Qwen-Image expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Qwen-Image expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return timesteps / 1000.0
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        if latent_tensor.dim() == 5:
+            _, _, _, latent_height, latent_width = latent_tensor.shape
+        else:
+            _, _, latent_height, latent_width = latent_tensor.shape
+        patch_size = int(
+            max(
+                getattr(getattr(self.unwrap_model(self.model), "config", None), "patch_size", 2),
+                1,
+            )
+        )
+        return max((latent_height // patch_size) * (latent_width // patch_size), 1)
+
+    @staticmethod
+    def _trim_crepa_hidden_states(crepa_hidden: Optional[torch.Tensor], token_count: int) -> Optional[torch.Tensor]:
+        if crepa_hidden is None or crepa_hidden.ndim < 3 or token_count <= 0:
+            return crepa_hidden
+        return crepa_hidden[:, :token_count]
+
+    def _build_edit_tokenwise_timesteps(
+        self,
+        target_timesteps: torch.Tensor,
+        control_token_counts: List[int],
+    ) -> torch.Tensor:
+        if target_timesteps.ndim != 2:
+            return target_timesteps
+
+        if target_timesteps.shape[0] != len(control_token_counts):
+            raise ValueError(
+                f"Qwen-Image expected {target_timesteps.shape[0]} control token counts, got {len(control_token_counts)}."
+            )
+
+        full_timesteps = []
+        for batch_idx, control_token_count in enumerate(control_token_counts):
+            clean_control = target_timesteps.new_zeros((int(control_token_count),))
+            full_timesteps.append(torch.cat([target_timesteps[batch_idx], clean_control], dim=0))
+        return torch.stack(full_timesteps, dim=0)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
     def _model_predict_standard(self, prepared_batch):
         latent_model_input = prepared_batch["noisy_latents"]
-        timesteps = prepared_batch["timesteps"]
         target_latents = prepared_batch["latents"]
         hidden_states_buffer = self._new_hidden_state_buffer()
 
@@ -1038,12 +1136,11 @@ class QwenImage(ImageModelFoundation):
         img_shapes = [(1, latent_height_for_shape, latent_width_for_shape)] * batch_size
 
         # Prepare timesteps (normalize to 0-1 range)
-        raw_timesteps = prepared_batch["timesteps"]
-        if not torch.is_tensor(raw_timesteps):
-            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
-        else:
-            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
-        timesteps = raw_timesteps.expand(batch_size) / 1000.0  # Normalize to [0, 1]
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size,
+            sequence_length=latent_model_input.shape[1],
+        )
 
         # Use actual content length per sample from the mask (matching upstream diffusers)
         if prompt_embeds_mask is not None:
@@ -1096,10 +1193,7 @@ class QwenImage(ImageModelFoundation):
                 f"Noise prediction shape {tuple(noise_pred.shape)} does not match target latents shape {tuple(target_latents.shape)}"
             )
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+        crepa_hidden = self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer)
 
         return {
             "model_prediction": noise_pred,
@@ -1202,12 +1296,13 @@ class QwenImage(ImageModelFoundation):
         ]
 
         hidden_states_buffer = self._new_hidden_state_buffer()
-        raw_timesteps = prepared_batch["timesteps"]
-        if not torch.is_tensor(raw_timesteps):
-            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
-        else:
-            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
-        timesteps = raw_timesteps.expand(batch_size) / 1000.0
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size,
+            sequence_length=packed_latents.size(1),
+        )
+        if timesteps.ndim == 2:
+            timesteps = self._build_edit_tokenwise_timesteps(timesteps, [packed_control.size(1)] * batch_size)
 
         with self._force_packed_transformer_output(self.model):
             call_kwargs = {
@@ -1234,10 +1329,10 @@ class QwenImage(ImageModelFoundation):
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+        crepa_hidden = self._trim_crepa_hidden_states(
+            self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
+            packed_latents.size(1),
+        )
 
         return {
             "model_prediction": noise_pred,
@@ -1315,16 +1410,18 @@ class QwenImage(ImageModelFoundation):
             txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         hidden_states_buffer = self._new_hidden_state_buffer()
-        raw_timesteps = prepared_batch["timesteps"]
-        if not torch.is_tensor(raw_timesteps):
-            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
-        else:
-            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
-        timesteps = raw_timesteps.expand(batch_size) / 1000.0
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size,
+            sequence_length=packed_latents.size(1),
+        )
 
         # For zero_cond_t: double timesteps and compute modulate_index
         modulate_index = None
-        if self._uses_zero_cond_t():
+        if timesteps.ndim == 2:
+            control_token_counts = [tokens.shape[1] - packed_latents.size(1) for tokens in combined_tokens]
+            timesteps = self._build_edit_tokenwise_timesteps(timesteps, control_token_counts)
+        elif self._uses_zero_cond_t():
             # Double the timesteps: [actual_t, 0] for each batch item
             timesteps = torch.cat([timesteps, torch.zeros_like(timesteps)], dim=0)
 
@@ -1382,10 +1479,10 @@ class QwenImage(ImageModelFoundation):
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+        crepa_hidden = self._trim_crepa_hidden_states(
+            self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
+            packed_latents.size(1),
+        )
 
         return {
             "model_prediction": noise_pred,

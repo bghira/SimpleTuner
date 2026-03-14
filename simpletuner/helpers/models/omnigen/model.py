@@ -158,6 +158,9 @@ class OmniGen(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.processor = None
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
     def get_transforms(self, dataset_type: str = "image"):
         from torchvision import transforms
 
@@ -228,6 +231,92 @@ class OmniGen(ImageModelFoundation):
 
         return batch
 
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        bsz = batch["latents"].shape[0]
+        device = batch["latents"].device
+        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
+        t = 1.0 / (1.0 + torch.exp(-u))
+        return t, t
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["noise"].to(device=latents.device, dtype=latents.dtype)
+        base_t = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
+        _, alt_t = self.sample_flow_sigmas(batch=batch, state=state)
+        alt_t = alt_t.to(device=latents.device, dtype=latents.dtype)
+
+        patch_size = int(max(getattr(self.unwrap_model(model=self.model).config, "patch_size", 2), 1))
+        _, _, height, width = latents.shape
+        token_height = max(height // patch_size, 1)
+        token_width = max(width // patch_size, 1)
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(latents.shape[0], token_height, token_width, device=latents.device, dtype=latents.dtype) < mask_ratio
+        )
+
+        base_t_view = base_t.view(-1, 1, 1)
+        alt_t_view = alt_t.view(-1, 1, 1)
+        student_token_t = torch.where(token_mask, alt_t_view, base_t_view)
+        student_t_grid = student_token_t.repeat_interleave(patch_size, dim=1).repeat_interleave(patch_size, dim=2)
+        student_t_grid = student_t_grid[:, None, :height, :width]
+
+        teacher_t = torch.minimum(base_t, alt_t)
+        teacher_t_grid = teacher_t.view(-1, 1, 1, 1)
+
+        batch["sigmas"] = student_t_grid.to(dtype=latents.dtype)
+        batch["timesteps"] = student_token_t.flatten(1)
+        batch["noisy_latents"] = student_t_grid * latents.float() + (1.0 - student_t_grid) * input_noise.float()
+        batch["crepa_teacher_sigmas"] = teacher_t_grid.to(dtype=latents.dtype)
+        batch["crepa_teacher_timesteps"] = teacher_t.to(dtype=latents.dtype)
+        batch["crepa_teacher_noisy_latents"] = (
+            teacher_t_grid * latents.float() + (1.0 - teacher_t_grid) * input_noise.float()
+        )
+        batch["crepa_self_flow_mask"] = token_mask
+        return batch
+
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.max() > 1.0:
+            raw_timesteps = raw_timesteps / 1000.0
+
+        if raw_timesteps.ndim == 0:
+            return raw_timesteps.expand(batch_size)
+        if raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"OmniGen expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+            )
+        if raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"OmniGen expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size, -1)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"OmniGen expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+            )
+        raise ValueError(
+            f"OmniGen expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+        )
+
     def loss(self, prepared_batch, model_output, apply_conditioning_mask=True):
         """OmniGen-specific loss calculation"""
         # Get the model prediction
@@ -261,16 +350,21 @@ class OmniGen(ImageModelFoundation):
         # Run the custom collator to collect latent features into a batch with padding and masks
         processed_data = self.processor.collator(all_features)
 
-        # Ensure timesteps are in 0-1 range for OmniGen
-        timesteps = prepared_batch["timesteps"]
-        if timesteps.max() > 1.0:
-            # If timesteps were scaled to 0-1000, scale back to 0-1
-            timesteps = timesteps / 1000.0
-        # Then call the model
+        output_latents = processed_data["output_latents"].to(self.accelerator.device)
+        sequence_length = (output_latents.shape[-2] // self.model.config.patch_size) * (
+            output_latents.shape[-1] // self.model.config.patch_size
+        )
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=output_latents.shape[0],
+            sequence_length=sequence_length,
+            device=self.accelerator.device,
+            dtype=torch.float32,
+        )
 
         model_out = self.model(
-            hidden_states=processed_data["output_latents"].to(self.accelerator.device),
-            timestep=prepared_batch["timesteps"].to(self.accelerator.device),
+            hidden_states=output_latents,
+            timestep=timesteps,
             input_ids=processed_data["input_ids"].to(self.accelerator.device),
             attention_mask=processed_data["attention_mask"].to(self.accelerator.device),
             position_ids=processed_data["position_ids"].to(self.accelerator.device),
@@ -282,8 +376,12 @@ class OmniGen(ImageModelFoundation):
 
         crepa_hidden = None
         crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if crepa and crepa.enabled and hidden_states_buffer is not None and capture_layer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
         return {
             "model_prediction": model_out,

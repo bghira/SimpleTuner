@@ -113,6 +113,64 @@ class TestChromaTransformer2DModel(TransformerBaseTest):
         self.shape_validator.validate_transformer_output(sample, batch_size, expected_hidden, expected_channels)
         self.assert_no_nan_or_inf(sample)
 
+    @torch.no_grad()
+    def test_forward_accepts_tokenwise_timesteps(self):
+        transformer = self._build_transformer({"enable_time_sign_embed": True})
+
+        batch_size = 2
+        sequence_length = 8
+        hidden_states = self.tensor_gen.create_hidden_states(
+            batch_size=batch_size, seq_len=sequence_length, hidden_dim=transformer.config.in_channels
+        )
+        encoder_hidden_states = self.tensor_gen.create_encoder_hidden_states(
+            batch_size=batch_size, seq_len=3, hidden_dim=self.default_config["joint_attention_dim"]
+        )
+        timestep = torch.linspace(0.1, 0.8, steps=sequence_length, dtype=torch.float32).repeat(batch_size, 1)
+        timestep_sign = torch.ones_like(timestep)
+        timestep_sign[:, ::2] = -1
+        txt_ids = torch.zeros(encoder_hidden_states.shape[1], 3)
+        img_ids = torch.zeros(hidden_states.shape[1], 3)
+        hidden_states_buffer = {}
+
+        outputs = transformer(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=timestep,
+            timestep_sign=timestep_sign,
+            img_ids=img_ids,
+            txt_ids=txt_ids,
+            return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
+        )
+
+        sample = outputs[0]
+        self.assertEqual(sample.shape, (batch_size, sequence_length, transformer.config.out_channels))
+        self.assertIn("layer_0", hidden_states_buffer)
+        self.assertIn("layer_1", hidden_states_buffer)
+
+    @torch.no_grad()
+    def test_forward_rejects_wrong_tokenwise_length(self):
+        transformer = self._build_transformer()
+
+        hidden_states = self.tensor_gen.create_hidden_states(
+            batch_size=1, seq_len=8, hidden_dim=transformer.config.in_channels
+        )
+        encoder_hidden_states = self.tensor_gen.create_encoder_hidden_states(
+            batch_size=1, seq_len=3, hidden_dim=self.default_config["joint_attention_dim"]
+        )
+        txt_ids = torch.zeros(encoder_hidden_states.shape[1], 3)
+        img_ids = torch.zeros(hidden_states.shape[1], 3)
+
+        with self.assertRaisesRegex(ValueError, "sequence length 8"):
+            transformer(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep=torch.ones(1, 7),
+                img_ids=img_ids,
+                txt_ids=txt_ids,
+                return_dict=False,
+            )
+
     def test_typo_prevention_for_constructor(self):
         """Ensure common constructor typos raise helpful errors."""
         with self.assertRaises(TypeError):

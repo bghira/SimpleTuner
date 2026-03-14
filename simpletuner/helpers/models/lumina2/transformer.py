@@ -76,8 +76,12 @@ class Lumina2CombinedTimestepCaptionEmbedding(nn.Module):
     def forward(
         self, hidden_states: torch.Tensor, timestep: torch.Tensor, encoder_hidden_states: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        timestep_proj = self.time_proj(timestep).type_as(hidden_states)
-        time_embed = self.timestep_embedder(timestep_proj)
+        if timestep.ndim == 2:
+            timestep_proj = self.time_proj(timestep.reshape(-1)).type_as(hidden_states)
+            time_embed = self.timestep_embedder(timestep_proj).view(timestep.shape[0], timestep.shape[1], -1)
+        else:
+            timestep_proj = self.time_proj(timestep).type_as(hidden_states)
+            time_embed = self.timestep_embedder(timestep_proj)
         caption_embed = self.caption_embedder(encoder_hidden_states)
         return time_embed, caption_embed
 
@@ -220,16 +224,24 @@ class Lumina2TransformerBlock(nn.Module):
         temb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.modulation:
-            norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self.norm1(hidden_states, temb)
+            if temb.ndim == 3:
+                norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self._tokenwise_modulated_norm(hidden_states, temb)
+            else:
+                norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self.norm1(hidden_states, temb)
             attn_output = self.attn(
                 hidden_states=norm_hidden_states,
                 encoder_hidden_states=norm_hidden_states,
                 attention_mask=attention_mask,
                 image_rotary_emb=image_rotary_emb,
             )
-            hidden_states = hidden_states + gate_msa.unsqueeze(1).tanh() * self.norm2(attn_output)
-            mlp_output = self.feed_forward(self.ffn_norm1(hidden_states) * (1 + scale_mlp.unsqueeze(1)))
-            hidden_states = hidden_states + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(mlp_output)
+            if gate_msa.ndim == 2:
+                hidden_states = hidden_states + gate_msa.unsqueeze(1).tanh() * self.norm2(attn_output)
+                mlp_output = self.feed_forward(self.ffn_norm1(hidden_states) * (1 + scale_mlp.unsqueeze(1)))
+                hidden_states = hidden_states + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(mlp_output)
+            else:
+                hidden_states = hidden_states + gate_msa.tanh() * self.norm2(attn_output)
+                mlp_output = self.feed_forward(self.ffn_norm1(hidden_states) * (1 + scale_mlp))
+                hidden_states = hidden_states + gate_mlp.tanh() * self.ffn_norm2(mlp_output)
         else:
             norm_hidden_states = self.norm1(hidden_states)
             attn_output = self.attn(
@@ -243,6 +255,12 @@ class Lumina2TransformerBlock(nn.Module):
             hidden_states = hidden_states + self.ffn_norm2(mlp_output)
 
         return hidden_states
+
+    def _tokenwise_modulated_norm(self, hidden_states: torch.Tensor, temb: torch.Tensor):
+        emb = self.norm1.linear(self.norm1.silu(temb))
+        scale_msa, gate_msa, scale_mlp, gate_mlp = emb.chunk(4, dim=-1)
+        norm_hidden_states = self.norm1.norm(hidden_states) * (1 + scale_msa)
+        return norm_hidden_states, gate_msa, scale_mlp, gate_mlp
 
 
 class Lumina2RotaryPosEmbed(nn.Module):
@@ -507,6 +525,12 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         # 1. Condition, positional & patch embedding
         batch_size, _, height, width = hidden_states.shape
+        patch_size = int(max(self.config.patch_size, 1))
+        sequence_length = max((height // patch_size) * (width // patch_size), 1)
+        if timestep.ndim == 2 and timestep.shape != (batch_size, sequence_length):
+            raise ValueError(
+                f"Lumina2 tokenwise timesteps expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
+            )
 
         temb, encoder_hidden_states = self.time_caption_embed(hidden_states, timestep, encoder_hidden_states)
 
@@ -534,12 +558,21 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         attention_mask = hidden_states.new_zeros(batch_size, max_seq_len, dtype=torch.bool)
         joint_hidden_states = hidden_states.new_zeros(batch_size, max_seq_len, self.config.hidden_size)
+        joint_temb = None
+        if temb.ndim == 3:
+            joint_temb = hidden_states.new_zeros(batch_size, max_seq_len, temb.shape[-1])
         for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
             attention_mask[i, :seq_len] = True
             joint_hidden_states[i, :encoder_seq_len] = encoder_hidden_states[i, :encoder_seq_len]
             joint_hidden_states[i, encoder_seq_len:seq_len] = hidden_states[i]
+            if joint_temb is not None:
+                pooled_temb = temb[i].mean(dim=0)
+                joint_temb[i, :encoder_seq_len] = pooled_temb
+                joint_temb[i, encoder_seq_len:seq_len] = temb[i, : seq_len - encoder_seq_len]
 
         hidden_states = joint_hidden_states
+        if joint_temb is not None:
+            temb = joint_temb
 
         # Musubi block swap activation
         combined_blocks = list(self.layers)
@@ -567,7 +600,13 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             capture_idx += 1
 
         # 4. Output norm & projection
-        hidden_states = self.norm_out(hidden_states, temb)
+        if temb.ndim == 3:
+            emb = self.norm_out.linear_1(self.norm_out.silu(temb).to(hidden_states.dtype))
+            hidden_states = self.norm_out.norm(hidden_states) * (1 + emb)
+            if self.norm_out.linear_2 is not None:
+                hidden_states = self.norm_out.linear_2(hidden_states)
+        else:
+            hidden_states = self.norm_out(hidden_states, temb)
 
         # 5. Unpatchify
         p = self.config.patch_size

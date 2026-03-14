@@ -206,12 +206,10 @@ class Lumina2(ImageModelFoundation):
         )
 
         # Lumina2 uses reverse timestep normalization (1 - t/T)
-        timesteps = (
-            1.0
-            - torch.tensor(prepared_batch["timesteps"])
-            .expand(prepared_batch["noisy_latents"].shape[0])
-            .to(device=self.accelerator.device)
-            / self.noise_schedule.config.num_train_timesteps
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=prepared_batch["noisy_latents"].shape[0],
+            sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
         )
 
         # Get attention mask
@@ -248,16 +246,79 @@ class Lumina2(ImageModelFoundation):
         # This is the key difference mentioned in the prompt
         model_pred = -model_pred
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
-
         return {
             "model_prediction": model_pred,
-            "crepa_hidden_states": crepa_hidden,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is None or not hasattr(transformer, "config"):
+            raise ValueError("Lumina2 Self-Flow requires a loaded transformer config to determine patch size.")
+        patch_size = int(max(getattr(transformer.config, "patch_size", 2), 1))
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=patch_size)
+
+    def _prepare_model_predict_timesteps(
+        self, raw_timesteps, batch_size: int, sequence_length: int | None = None
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
+        else:
+            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Lumina2 expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if sequence_length is None:
+                raise ValueError("Lumina2 tokenwise timesteps require an explicit sequence_length.")
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Lumina2 expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Lumina2 expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Lumina2 expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return 1.0 - timesteps / self.noise_schedule.config.num_train_timesteps
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        patch_size_raw = getattr(getattr(self.unwrap_model(self.model), "config", None), "patch_size", 2)
+        if not isinstance(patch_size_raw, (int, float)):
+            patch_size_raw = 2
+        patch_size = int(max(patch_size_raw, 1))
+        return max((latent_tensor.shape[-2] // patch_size) * (latent_tensor.shape[-1] // patch_size), 1)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
     def check_user_config(self):
         """Check and validate user configuration for Lumina2"""

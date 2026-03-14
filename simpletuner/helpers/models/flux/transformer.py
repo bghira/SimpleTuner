@@ -208,6 +208,87 @@ def expand_flux_attention_mask(
     return expanded_mask
 
 
+def _flux_tokenwise_conditioning(
+    conditioning_module,
+    timestep: torch.Tensor,
+    pooled_projections: torch.Tensor,
+    guidance: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if timestep.ndim != 2:
+        if guidance is None:
+            return conditioning_module(timestep, pooled_projections)
+        return conditioning_module(timestep, guidance, pooled_projections)
+
+    batch_size, sequence_length = timestep.shape
+    flat_timestep = timestep.reshape(-1)
+    repeated_pooled = (
+        pooled_projections[:, None, :].expand(-1, sequence_length, -1).reshape(-1, pooled_projections.shape[-1])
+    )
+
+    if guidance is None:
+        conditioning = conditioning_module(flat_timestep, repeated_pooled)
+    else:
+        if not torch.is_tensor(guidance):
+            guidance = torch.tensor(guidance, device=timestep.device, dtype=timestep.dtype)
+        else:
+            guidance = guidance.to(device=timestep.device, dtype=timestep.dtype)
+        if guidance.ndim == 0:
+            guidance = guidance.expand(batch_size, sequence_length)
+        elif guidance.ndim == 1:
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(
+                    f"Flux tokenwise guidance expected 1 or {batch_size} batch values, got {guidance.shape[0]}."
+                )
+            guidance = guidance[:, None].expand(-1, sequence_length)
+        elif guidance.ndim == 2:
+            if guidance.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Flux tokenwise guidance expected sequence length {sequence_length}, got {guidance.shape[1]}."
+                )
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size, -1)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(f"Flux tokenwise guidance expected batch size {batch_size}, got {guidance.shape[0]}.")
+        else:
+            raise ValueError(
+                f"Flux guidance expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(guidance.shape)}."
+            )
+        conditioning = conditioning_module(flat_timestep, guidance.reshape(-1), repeated_pooled)
+
+    return conditioning.view(batch_size, sequence_length, -1)
+
+
+def _flux_apply_ada_layer_norm_zero_single(norm, hidden_states: torch.Tensor, emb: torch.Tensor):
+    if emb.ndim == 2:
+        return norm(hidden_states, emb=emb)
+
+    modulation = norm.linear(norm.silu(emb))
+    shift_msa, scale_msa, gate_msa = modulation.chunk(3, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return hidden_states, gate_msa
+
+
+def _flux_apply_ada_layer_norm_zero(norm, hidden_states: torch.Tensor, emb: torch.Tensor):
+    if emb.ndim == 2:
+        return norm(hidden_states, emb=emb)
+
+    modulation = norm.linear(norm.silu(emb))
+    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = modulation.chunk(6, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
+def _flux_apply_ada_layer_norm_continuous(norm, hidden_states: torch.Tensor, conditioning_embedding: torch.Tensor):
+    if conditioning_embedding.ndim == 2:
+        return norm(hidden_states, conditioning_embedding)
+
+    emb = norm.linear(norm.silu(conditioning_embedding).to(hidden_states.dtype))
+    scale, shift = torch.chunk(emb, 2, dim=-1)
+    return norm.norm(hidden_states) * (1 + scale) + shift
+
+
 @maybe_allow_in_graph
 class FluxSingleTransformerBlock(PatchableModule):
     r"""
@@ -254,7 +335,7 @@ class FluxSingleTransformerBlock(PatchableModule):
         attention_mask: Optional[torch.Tensor] = None,
     ):
         residual = hidden_states
-        norm_hidden_states, gate = self.norm(hidden_states, emb=temb)
+        norm_hidden_states, gate = _flux_apply_ada_layer_norm_zero_single(self.norm, hidden_states, temb)
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
 
         if attention_mask is not None:
@@ -270,7 +351,8 @@ class FluxSingleTransformerBlock(PatchableModule):
         )
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
-        gate = gate.unsqueeze(1)
+        if gate.ndim == 2:
+            gate = gate.unsqueeze(1)
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
 
@@ -336,13 +418,18 @@ class FluxTransformerBlock(PatchableModule):
         hidden_states: torch.FloatTensor,
         encoder_hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
+        context_temb: Optional[torch.FloatTensor] = None,
         image_rotary_emb=None,
         attention_mask: Optional[torch.Tensor] = None,
     ):
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
+        if context_temb is None:
+            context_temb = temb
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _flux_apply_ada_layer_norm_zero(
+            self.norm1, hidden_states, temb
+        )
 
-        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
-            encoder_hidden_states, emb=temb
+        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = _flux_apply_ada_layer_norm_zero(
+            self.norm1_context, encoder_hidden_states, context_temb
         )
 
         if attention_mask is not None:
@@ -364,28 +451,42 @@ class FluxTransformerBlock(PatchableModule):
             attn_output, context_attn_output, ip_attn_output = attention_outputs
 
         # Process attention outputs for the `hidden_states`.
-        attn_output = gate_msa.unsqueeze(1) * attn_output
+        if gate_msa.ndim == 2:
+            gate_msa = gate_msa.unsqueeze(1)
+        attn_output = gate_msa * attn_output
         hidden_states = hidden_states + attn_output
 
         norm_hidden_states = self.norm2(hidden_states)
-        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        if scale_mlp.ndim == 2:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        else:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
 
         ff_output = self.ff(norm_hidden_states)
-        ff_output = gate_mlp.unsqueeze(1) * ff_output
+        if gate_mlp.ndim == 2:
+            gate_mlp = gate_mlp.unsqueeze(1)
+        ff_output = gate_mlp * ff_output
 
         hidden_states = hidden_states + ff_output
         if len(attention_outputs) == 3:
             hidden_states = hidden_states + ip_attn_output
 
         # Process attention outputs for the `encoder_hidden_states`.
-        context_attn_output = c_gate_msa.unsqueeze(1) * context_attn_output
+        if c_gate_msa.ndim == 2:
+            c_gate_msa = c_gate_msa.unsqueeze(1)
+        context_attn_output = c_gate_msa * context_attn_output
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
         norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
-        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        if c_scale_mlp.ndim == 2:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        else:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
 
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
-        encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+        if c_gate_mlp.ndim == 2:
+            c_gate_mlp = c_gate_mlp.unsqueeze(1)
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
 
         encoder_hidden_states = torch.nan_to_num(encoder_hidden_states, nan=0.0, posinf=65504, neginf=-65504)
         if encoder_hidden_states.dtype == torch.float16:
@@ -688,18 +789,63 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_tensor = timestep_sign.to(device=hidden_states.device)
+            if timestep.ndim == 2:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(timestep.shape[0], timestep.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0])
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"Flux tokenwise timestep_sign expected 1 or {timestep.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, timestep.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != timestep.shape[1]:
+                        raise ValueError(
+                            f"Flux tokenwise timestep_sign expected sequence length {timestep.shape[1]}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0], -1)
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"Flux tokenwise timestep_sign expected batch size {timestep.shape[0]}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"Flux timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=hidden_states.device)
             sign_emb = self.time_sign_embed(sign_idx)
 
-        temb = (
-            self.time_text_embed(timestep, pooled_projections)
-            if guidance is None
-            else self.time_text_embed(timestep, guidance, pooled_projections)
-        )
+        temb = _flux_tokenwise_conditioning(self.time_text_embed, timestep, pooled_projections, guidance)
         if sign_emb is not None:
+            if temb.ndim == 3:
+                sign_emb = sign_emb.view(temb.shape[0], temb.shape[1], -1)
             temb = temb + sign_emb.to(device=hidden_states.device, dtype=temb.dtype)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         txt_len = encoder_hidden_states.shape[1]
+        num_img_tokens = hidden_states.shape[1]
+
+        if timestep.ndim == 2:
+            if timestep.shape[1] != num_img_tokens:
+                raise ValueError(
+                    f"Flux expected tokenwise timesteps with sequence length {num_img_tokens}, got {timestep.shape[1]}."
+                )
+            temb_img = temb
+            temb_txt = temb.mean(dim=1)
+            temb_single = torch.cat(
+                [
+                    temb_txt.unsqueeze(1).expand(-1, txt_len, -1),
+                    temb_img,
+                ],
+                dim=1,
+            )
+        else:
+            temb_img = temb
+            temb_txt = temb
+            temb_single = temb
 
         if txt_ids.ndim == 3:
             txt_ids = txt_ids[0]
@@ -807,7 +953,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
+                    temb_img,
+                    temb_txt,
                     current_rope,
                     attention_mask,
                     **ckpt_kwargs,
@@ -817,7 +964,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    temb=temb,
+                    temb=temb_img,
+                    context_temb=temb_txt,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                 )
@@ -921,7 +1069,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
-                    temb,
+                    temb_single,
                     current_rope,
                     attention_mask,
                     **ckpt_kwargs,
@@ -930,7 +1078,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             else:
                 hidden_states = block(
                     hidden_states=hidden_states,
-                    temb=temb,
+                    temb=temb_single,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                 )
@@ -978,7 +1126,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
 
-        hidden_states = self.norm_out(hidden_states, temb)
+        hidden_states = _flux_apply_ada_layer_norm_continuous(self.norm_out, hidden_states, temb_img)
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:

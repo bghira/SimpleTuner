@@ -95,6 +95,56 @@ class ZImageTransformerPaddingTests(unittest.TestCase):
         self.assertEqual(len(out["negative_prompt_embeds"]), 1)
         self.assertEqual(out["negative_prompt_embeds"][0].shape[0], 2)
 
+    def test_transformer_accepts_tokenwise_timesteps(self):
+        model = ZImageTransformer2DModel(
+            all_patch_size=(2,),
+            all_f_patch_size=(1,),
+            in_channels=1,
+            dim=8,
+            n_layers=1,
+            n_refiner_layers=1,
+            n_heads=1,
+            n_kv_heads=1,
+            norm_eps=1e-5,
+            qk_norm=False,
+            cap_feat_dim=4,
+            rope_theta=1.0,
+            t_scale=1.0,
+            axes_dims=[2, 2, 4],
+            axes_lens=[64, 64, 64],
+        )
+
+        x = [torch.zeros(1, 1, 8, 8)]
+        cap_feats = [torch.zeros(2, 4)]
+        t = torch.full((1, 16), 0.5)
+
+        output = model(x, t, cap_feats)[0]
+
+        self.assertEqual(len(output), 1)
+        self.assertEqual(output[0].shape, (1, 1, 8, 8))
+
+    def test_transformer_rejects_wrong_tokenwise_timestep_length(self):
+        model = ZImageTransformer2DModel(
+            all_patch_size=(2,),
+            all_f_patch_size=(1,),
+            in_channels=1,
+            dim=8,
+            n_layers=1,
+            n_refiner_layers=1,
+            n_heads=1,
+            n_kv_heads=1,
+            norm_eps=1e-5,
+            qk_norm=False,
+            cap_feat_dim=4,
+            rope_theta=1.0,
+            t_scale=1.0,
+            axes_dims=[2, 2, 4],
+            axes_lens=[64, 64, 64],
+        )
+
+        with self.assertRaisesRegex(ValueError, "tokenwise timesteps expected shape"):
+            model([torch.zeros(1, 1, 8, 8)], torch.full((1, 2), 0.5), [torch.zeros(2, 4)])[0]
+
 
 if __name__ == "__main__":
     unittest.main()

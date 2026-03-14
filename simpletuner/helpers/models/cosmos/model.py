@@ -22,6 +22,7 @@ from simpletuner.helpers.models.cosmos.pipeline import Cosmos2TextToImagePipelin
 from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
 from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.crepa import CrepaMode
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -78,6 +79,124 @@ class Cosmos2Image(VideoModelFoundation):
     sigma_data = 1.0
     final_sigmas_type = "sigma_min"
     sigma_schedule_order = 7.0
+
+    @property
+    def crepa_mode(self) -> CrepaMode:
+        return CrepaMode.IMAGE
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        if hidden_states_buffer is None:
+            return None
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        alt_sigmas = self.prepare_edm_sigmas(latents.shape[0], latents.device)["sigmas"].to(
+            device=latents.device, dtype=latents.dtype
+        )
+
+        _, _, num_frames, height, width = latents.shape
+        p_t, p_h, p_w = self._crepa_self_flow_patch_size()
+        token_frames = max(num_frames // p_t, 1)
+        token_height = max(height // p_h, 1)
+        token_width = max(width // p_w, 1)
+
+        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
+        token_mask = (
+            torch.rand(
+                latents.shape[0],
+                token_frames,
+                token_height,
+                token_width,
+                device=latents.device,
+                dtype=latents.dtype,
+            )
+            < mask_ratio
+        )
+
+        base_sigma_view = base_sigmas.view(-1, 1, 1, 1)
+        alt_sigma_view = alt_sigmas.view(-1, 1, 1, 1)
+        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
+        student_sigma_grid = self._expand_crepa_self_flow_patch_values(student_token_sigmas, (p_t, p_h, p_w), latents.shape)
+
+        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1, 1)
+
+        batch["sigmas"] = student_sigma_grid
+        batch["timesteps"] = student_token_sigmas.flatten(1)
+        batch["noisy_latents"] = latents + student_sigma_grid * input_noise
+        batch["crepa_teacher_sigmas"] = teacher_sigmas
+        batch["crepa_teacher_timesteps"] = teacher_sigmas.view(-1)
+        batch["crepa_teacher_noisy_latents"] = latents + teacher_sigmas * input_noise
+        batch["crepa_self_flow_mask"] = token_mask
+        return batch
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        config = getattr(transformer, "config", None)
+        patch_size = getattr(config, "patch_size", (1, 2, 2))
+        if isinstance(patch_size, int):
+            p_t = p_h = p_w = max(int(patch_size), 1)
+        else:
+            p_t, p_h, p_w = (max(int(value), 1) for value in patch_size)
+        return max(
+            (latent_tensor.shape[2] // p_t) * (latent_tensor.shape[3] // p_h) * (latent_tensor.shape[4] // p_w),
+            1,
+        )
+
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            sigmas = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                sigmas = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                sigmas = raw_timesteps
+            else:
+                raise ValueError(f"Cosmos expected 1 sigma or {batch_size} per-batch sigmas, got {raw_timesteps.shape[0]}.")
+        elif raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Cosmos expected tokenwise sigmas with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                sigmas = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                sigmas = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Cosmos expected tokenwise sigmas for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Cosmos expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return sigmas / (sigmas + 1.0)
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -323,12 +442,18 @@ class Cosmos2Image(VideoModelFoundation):
             sigmas = sigmas_info
         if sigmas is None:
             raise RuntimeError("prepare_edm_sigmas must return a tensor or a dict containing 'sigmas'.")
-        sigmas = sigmas.to(self.accelerator.device)
-        sigmas_exp = sigmas.view(-1, 1, 1, 1, 1)  # B×1×1×1×1
+        sigmas = sigmas.to(self.accelerator.device, dtype=latents.dtype)
 
-        batch["sigmas"] = sigmas_exp
-        batch["timesteps"] = sigmas  # unused but kept for API
-        batch["noisy_latents"] = latents + sigmas_exp * noise  # x_t
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled and getattr(crepa, "use_self_flow_features", False):
+            batch["sigmas"] = sigmas
+            batch["timesteps"] = sigmas
+            batch = self._prepare_crepa_self_flow_batch(batch=batch, state=state)
+        else:
+            sigmas_exp = sigmas.view(-1, 1, 1, 1, 1)  # B×1×1×1×1
+            batch["sigmas"] = sigmas_exp
+            batch["timesteps"] = sigmas
+            batch["noisy_latents"] = latents + sigmas_exp * noise  # x_t
 
         # ---------- any ControlNet / mask specific tweaks ---------------
         batch = self.prepare_batch_conditions(batch=batch, state=state)
@@ -346,7 +471,13 @@ class Cosmos2Image(VideoModelFoundation):
         cout = -sigmas * inv
 
         latent_in = xt * inv
-        timestep = (sigmas / (sigmas + 1)).view(B).to(device=device, dtype=torch.float32)  # == current_t
+        timestep = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=B,
+            sequence_length=self._latent_sequence_length(xt),
+            device=device,
+            dtype=torch.float32,
+        )
 
         pad_mask = torch.zeros(B, 1, H, W, device=device, dtype=latent_in.dtype)
         r_pred = self.model(
@@ -361,7 +492,11 @@ class Cosmos2Image(VideoModelFoundation):
         ]  # transformer output
 
         x0_pred = inv * xt + cout * r_pred.float()  # behaviour identical to NVIDIA loop
-        return {"model_prediction": x0_pred, "hidden_states_buffer": hidden_states_buffer}
+        return {
+            "model_prediction": x0_pred,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def loss(self, prepared_batch, model_output, apply_conditioning_mask=True):
         x0 = prepared_batch["latents"].float()

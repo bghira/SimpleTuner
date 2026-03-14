@@ -111,6 +111,13 @@ class CosmosEmbedding(PatchableModule):
         self.norm = RMSNorm(embedding_dim, eps=1e-6, elementwise_affine=True)
 
     def forward(self, hidden_states: torch.Tensor, timestep: torch.LongTensor) -> torch.Tensor:
+        if timestep.ndim == 2:
+            batch_size, sequence_length = timestep.shape
+            timesteps_proj = self.time_proj(timestep.reshape(-1)).type_as(hidden_states)
+            temb = self.t_embedder(timesteps_proj).view(batch_size, sequence_length, -1)
+            embedded_timestep = self.norm(timesteps_proj).view(batch_size, sequence_length, -1)
+            return temb, embedded_timestep
+
         timesteps_proj = self.time_proj(timestep).type_as(hidden_states)
         temb = self.t_embedder(timesteps_proj)
         embedded_timestep = self.norm(timesteps_proj)
@@ -748,6 +755,18 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
 
         # 4. Timestep embeddings
         if timestep.ndim == 1:
+            temb, embedded_timestep = self.time_embed(hidden_states, timestep)
+        elif timestep.ndim == 2:
+            if timestep.shape[1] != token_count:
+                raise ValueError(
+                    f"Cosmos expected tokenwise timesteps with sequence length {token_count}, got {timestep.shape[1]}."
+                )
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(batch_size, -1)
+            elif timestep.shape[0] != batch_size:
+                raise ValueError(
+                    f"Cosmos expected tokenwise timesteps for batch size {batch_size}, got {timestep.shape[0]}."
+                )
             temb, embedded_timestep = self.time_embed(hidden_states, timestep)
         elif timestep.ndim == 5:
             assert timestep.shape == (

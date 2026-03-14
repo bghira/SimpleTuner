@@ -1153,6 +1153,68 @@ class TestCosmosTransformer3DModel(TransformerBaseTest):
             sample = output.sample
             self.assertIsInstance(sample, torch.Tensor)
 
+    def test_transformer_3d_model_accepts_tokenwise_timesteps(self):
+        model = CosmosTransformer3DModel(
+            in_channels=2,
+            out_channels=2,
+            num_attention_heads=2,
+            attention_head_dim=4,
+            num_layers=1,
+            mlp_ratio=2.0,
+            text_embed_dim=8,
+            adaln_lora_dim=8,
+            max_size=(2, 4, 4),
+            patch_size=(1, 2, 2),
+            concat_padding_mask=False,
+            extra_pos_embed_type=None,
+        )
+
+        hidden_states = torch.randn(1, 2, 1, 4, 4)
+        encoder_hidden_states = torch.randn(1, 3, 8)
+        timestep = torch.tensor([[0.1, 0.9, 0.2, 0.8]], dtype=torch.float32)
+        hidden_states_buffer = {}
+
+        with torch.no_grad():
+            output = model(
+                hidden_states=hidden_states,
+                timestep=timestep,
+                encoder_hidden_states=encoder_hidden_states,
+                padding_mask=torch.zeros(1, 1, 1, 4, 4),
+                return_dict=True,
+                hidden_states_buffer=hidden_states_buffer,
+            )
+
+        self.assertEqual(output.sample.shape, hidden_states.shape)
+        self.assertIn("layer_0", hidden_states_buffer)
+
+    def test_transformer_3d_model_rejects_wrong_tokenwise_length(self):
+        model = CosmosTransformer3DModel(
+            in_channels=2,
+            out_channels=2,
+            num_attention_heads=2,
+            attention_head_dim=4,
+            num_layers=1,
+            mlp_ratio=2.0,
+            text_embed_dim=8,
+            adaln_lora_dim=8,
+            max_size=(2, 4, 4),
+            patch_size=(1, 2, 2),
+            concat_padding_mask=False,
+            extra_pos_embed_type=None,
+        )
+
+        hidden_states = torch.randn(1, 2, 1, 4, 4)
+        encoder_hidden_states = torch.randn(1, 3, 8)
+
+        with self.assertRaisesRegex(ValueError, "sequence length 4"):
+            model(
+                hidden_states=hidden_states,
+                timestep=torch.ones(1, 3),
+                encoder_hidden_states=encoder_hidden_states,
+                padding_mask=torch.zeros(1, 1, 1, 4, 4),
+                return_dict=True,
+            )
+
 
 class TestCosmosTransformerPerformance(TransformerBaseTest):
     """Performance and benchmarking tests for Cosmos transformer components."""

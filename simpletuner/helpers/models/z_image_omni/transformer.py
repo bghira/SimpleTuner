@@ -94,6 +94,11 @@ class TimestepEmbedder(nn.Module):
             return embedding
 
     def forward(self, t, timestep_sign: Optional[torch.Tensor] = None):
+        reshape = None
+        if t.ndim == 2:
+            reshape = t.shape
+            t = t.reshape(-1)
+
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         weight_dtype = self.mlp[0].weight.dtype
         compute_dtype = getattr(self.mlp[0], "compute_dtype", None)
@@ -108,8 +113,55 @@ class TimestepEmbedder(nn.Module):
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
+            sign_tensor = timestep_sign.to(device=t_emb.device)
+            if reshape is not None:
+                batch_size, sequence_length = reshape
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(batch_size, sequence_length)
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"Z-Image Omni tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, sequence_length)
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != sequence_length:
+                        raise ValueError(
+                            f"Z-Image Omni tokenwise timestep_sign expected sequence length {sequence_length}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size, -1)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"Z-Image Omni tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        "Z-Image Omni timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                        f"got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=t_emb.device)
+            else:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(t_emb.shape[0])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(t_emb.shape[0])
+                    elif sign_tensor.shape[0] != t_emb.shape[0]:
+                        raise ValueError(
+                            f"Z-Image Omni timestep_sign expected 1 or {t_emb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        "Z-Image Omni timestep_sign expected scalar or 1D batch tensor for batchwise timesteps, "
+                        f"got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.view(-1) < 0).long().to(device=t_emb.device)
             t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+        if reshape is not None:
+            t_emb = t_emb.view(reshape[0], reshape[1], -1)
         return t_emb
 
 
@@ -272,8 +324,8 @@ class ZImageTransformerBlock(nn.Module):
                 mod_noisy = self.adaLN_modulation(adaln_noisy)
                 mod_clean = self.adaLN_modulation(adaln_clean)
 
-                scale_msa_noisy, gate_msa_noisy, scale_mlp_noisy, gate_mlp_noisy = mod_noisy.chunk(4, dim=1)
-                scale_msa_clean, gate_msa_clean, scale_mlp_clean, gate_mlp_clean = mod_clean.chunk(4, dim=1)
+                scale_msa_noisy, gate_msa_noisy, scale_mlp_noisy, gate_mlp_noisy = mod_noisy.chunk(4, dim=-1)
+                scale_msa_clean, gate_msa_clean, scale_mlp_clean, gate_mlp_clean = mod_clean.chunk(4, dim=-1)
 
                 gate_msa_noisy, gate_mlp_noisy = gate_msa_noisy.tanh(), gate_mlp_noisy.tanh()
                 gate_msa_clean, gate_mlp_clean = gate_msa_clean.tanh(), gate_mlp_clean.tanh()
@@ -282,25 +334,35 @@ class ZImageTransformerBlock(nn.Module):
                 scale_msa_clean, scale_mlp_clean = 1.0 + scale_msa_clean, 1.0 + scale_mlp_clean
 
                 noise_mask_expanded = noise_mask.unsqueeze(-1)
+                if scale_msa_noisy.ndim == 2:
+                    scale_msa_noisy = scale_msa_noisy.unsqueeze(1).expand(-1, seq_len, -1)
+                    scale_mlp_noisy = scale_mlp_noisy.unsqueeze(1).expand(-1, seq_len, -1)
+                    gate_msa_noisy = gate_msa_noisy.unsqueeze(1).expand(-1, seq_len, -1)
+                    gate_mlp_noisy = gate_mlp_noisy.unsqueeze(1).expand(-1, seq_len, -1)
+                if scale_msa_clean.ndim == 2:
+                    scale_msa_clean = scale_msa_clean.unsqueeze(1).expand(-1, seq_len, -1)
+                    scale_mlp_clean = scale_mlp_clean.unsqueeze(1).expand(-1, seq_len, -1)
+                    gate_msa_clean = gate_msa_clean.unsqueeze(1).expand(-1, seq_len, -1)
+                    gate_mlp_clean = gate_mlp_clean.unsqueeze(1).expand(-1, seq_len, -1)
                 scale_msa = torch.where(
                     noise_mask_expanded == 1,
-                    scale_msa_noisy.unsqueeze(1).expand(-1, seq_len, -1),
-                    scale_msa_clean.unsqueeze(1).expand(-1, seq_len, -1),
+                    scale_msa_noisy,
+                    scale_msa_clean,
                 )
                 scale_mlp = torch.where(
                     noise_mask_expanded == 1,
-                    scale_mlp_noisy.unsqueeze(1).expand(-1, seq_len, -1),
-                    scale_mlp_clean.unsqueeze(1).expand(-1, seq_len, -1),
+                    scale_mlp_noisy,
+                    scale_mlp_clean,
                 )
                 gate_msa = torch.where(
                     noise_mask_expanded == 1,
-                    gate_msa_noisy.unsqueeze(1).expand(-1, seq_len, -1),
-                    gate_msa_clean.unsqueeze(1).expand(-1, seq_len, -1),
+                    gate_msa_noisy,
+                    gate_msa_clean,
                 )
                 gate_mlp = torch.where(
                     noise_mask_expanded == 1,
-                    gate_mlp_noisy.unsqueeze(1).expand(-1, seq_len, -1),
-                    gate_mlp_clean.unsqueeze(1).expand(-1, seq_len, -1),
+                    gate_mlp_noisy,
+                    gate_mlp_clean,
                 )
             else:
                 assert adaln_input is not None
@@ -360,11 +422,16 @@ class FinalLayer(nn.Module):
             scale_noisy = 1.0 + self.adaLN_modulation(c_noisy)
             scale_clean = 1.0 + self.adaLN_modulation(c_clean)
 
+            if scale_noisy.ndim == 2:
+                scale_noisy = scale_noisy.unsqueeze(1).expand(-1, seq_len, -1)
+            if scale_clean.ndim == 2:
+                scale_clean = scale_clean.unsqueeze(1).expand(-1, seq_len, -1)
+
             noise_mask_expanded = noise_mask.unsqueeze(-1)
             scale = torch.where(
                 noise_mask_expanded == 1,
-                scale_noisy.unsqueeze(1).expand(-1, seq_len, -1),
-                scale_clean.unsqueeze(1).expand(-1, seq_len, -1),
+                scale_noisy,
+                scale_clean,
             )
         else:
             assert c is not None, "Either c or (c_noisy, c_clean) must be provided"
@@ -906,6 +973,26 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
 
         bsz = len(x)
         device = x[0].device
+        if t.ndim == 2:
+            if t.shape[0] != bsz:
+                raise ValueError(f"Z-Image Omni expected tokenwise timesteps for batch size {bsz}, got {t.shape[0]}.")
+            output_token_counts = []
+            for sample in x:
+                sample_tensor = sample[-1] if isinstance(sample, list) else sample
+                frames = sample_tensor.shape[2] if sample_tensor.dim() == 5 else 1
+                token_count = (
+                    max(frames // f_patch_size, 1)
+                    * max(sample_tensor.shape[-2] // patch_size, 1)
+                    * max(sample_tensor.shape[-1] // patch_size, 1)
+                )
+                output_token_counts.append(token_count)
+            expected_token_count = output_token_counts[0]
+            if any(count != expected_token_count for count in output_token_counts):
+                raise ValueError("Z-Image Omni tokenwise timesteps require a uniform output token count across the batch.")
+            if t.shape[1] != expected_token_count:
+                raise ValueError(
+                    f"Z-Image Omni expected tokenwise timesteps with sequence length {expected_token_count}, got {t.shape[1]}."
+                )
         t = torch.cat([t, torch.ones_like(t, dtype=t.dtype, device=device)], dim=0)
         if timestep_sign is not None:
             timestep_sign = torch.cat(
@@ -962,6 +1049,27 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
 
         t_noisy_x = t_noisy.type_as(x)
         t_clean_x = t_clean.type_as(x)
+        if t_noisy_x.ndim == 3:
+            tokenwise_noisy_x = torch.zeros((bsz, x_max_item_seqlen, t_noisy_x.shape[-1]), dtype=x.dtype, device=device)
+            tokenwise_clean_x = torch.zeros((bsz, x_max_item_seqlen, t_clean_x.shape[-1]), dtype=x.dtype, device=device)
+            pooled_noisy_x = t_noisy_x.mean(dim=1)
+            pooled_clean_x = t_clean_x.mean(dim=1)
+            for i in range(bsz):
+                seq_len = x_item_seqlens[i]
+                noise_mask = x_noise_mask_tensor[i, :seq_len].bool()
+                clean_vals = pooled_clean_x[i].unsqueeze(0).expand(seq_len, -1)
+                noisy_vals = pooled_noisy_x[i].unsqueeze(0).expand(seq_len, -1)
+                target_count = int(noise_mask.sum().item())
+                if target_count != t_noisy_x.shape[1]:
+                    raise ValueError(
+                        f"Z-Image Omni tokenwise timesteps expected {t_noisy_x.shape[1]} noisy image tokens, got {target_count}."
+                    )
+                clean_vals[noise_mask] = t_clean_x[i]
+                noisy_vals[noise_mask] = t_noisy_x[i]
+                tokenwise_clean_x[i, :seq_len] = clean_vals
+                tokenwise_noisy_x[i, :seq_len] = noisy_vals
+            t_noisy_x = tokenwise_noisy_x
+            t_clean_x = tokenwise_clean_x
 
         x_attn_mask = torch.zeros((bsz, x_max_item_seqlen), dtype=torch.bool, device=device)
         for i, seq_len in enumerate(x_item_seqlens):
@@ -1076,6 +1184,25 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
 
         unified_noise_mask_tensor = pad_sequence(unified_noise_mask, batch_first=True, padding_value=0)
         unified_noise_mask_tensor = unified_noise_mask_tensor[:, : unified.shape[1]]
+        if t_noisy_x.ndim == 3:
+            pooled_noisy_x = t_noisy_x.mean(dim=1)
+            pooled_clean_x = t_clean_x.mean(dim=1)
+            unified_noisy = torch.zeros((bsz, unified.shape[1], t_noisy_x.shape[-1]), dtype=unified.dtype, device=device)
+            unified_clean = torch.zeros((bsz, unified.shape[1], t_clean_x.shape[-1]), dtype=unified.dtype, device=device)
+            for i in range(bsz):
+                seq_len = unified_item_seqlens[i]
+                noise_mask = unified_noise_mask_tensor[i, :seq_len].bool()
+                unified_clean[i, :seq_len] = pooled_clean_x[i]
+                unified_noisy[i, :seq_len] = pooled_clean_x[i]
+                cap_len = cap_item_seqlens[i]
+                x_len = x_item_seqlens[i]
+                unified_noisy[i, cap_len : cap_len + x_len] = t_noisy_x[i, :x_len]
+                unified_clean[i, cap_len : cap_len + x_len] = t_clean_x[i, :x_len]
+                remaining_noise = noise_mask.clone()
+                remaining_noise[cap_len : cap_len + x_len] = False
+                unified_noisy[i, :seq_len][remaining_noise] = pooled_noisy_x[i]
+            t_noisy_x = unified_noisy
+            t_clean_x = unified_clean
 
         routes = self._tread_routes or []
         router = self._tread_router

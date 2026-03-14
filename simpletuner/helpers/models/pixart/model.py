@@ -233,6 +233,16 @@ class PixartSigma(ImageModelFoundation):
 
         return prompt_embeds, prompt_attention_mask
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is None or not hasattr(transformer, "config"):
+            raise ValueError("PixArt Self-Flow requires a loaded transformer config to determine patch size.")
+        patch_size = int(max(getattr(transformer.config, "patch_size", 1), 1))
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=patch_size)
+
     def model_predict(self, prepared_batch):
         logger.debug(
             "Input shapes:"
@@ -247,6 +257,12 @@ class PixartSigma(ImageModelFoundation):
             )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=prepared_batch["noisy_latents"].shape[0],
+            sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
+        )
+        added_cond_kwargs = self._build_added_cond_kwargs(prepared_batch)
         model_pred = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -255,25 +271,91 @@ class PixartSigma(ImageModelFoundation):
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                 device=self.accelerator.device, dtype=self.config.base_weight_dtype
             ),
-            timestep=prepared_batch["timesteps"],
+            timestep=timesteps,
             encoder_attention_mask=prepared_batch["encoder_attention_mask"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
+            added_cond_kwargs=added_cond_kwargs,
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
         )[0].chunk(2, dim=1)[0]
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
-
         return {
             "model_prediction": model_pred,
-            "crepa_hidden_states": crepa_hidden,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def _prepare_model_predict_timesteps(self, raw_timesteps, batch_size: int, sequence_length: int) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device)
+        else:
+            raw_timesteps = raw_timesteps.to(device=self.accelerator.device)
+
+        if raw_timesteps.ndim == 0:
+            return raw_timesteps.expand(batch_size)
+        if raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"PixArt expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+            )
+
+        if raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"PixArt expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                return raw_timesteps.expand(batch_size, -1)
+            if raw_timesteps.shape[0] == batch_size:
+                return raw_timesteps
+            raise ValueError(
+                f"PixArt expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+            )
+
+        raise ValueError(
+            f"PixArt expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+        )
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        patch_size = int(max(getattr(getattr(transformer, "config", None), "patch_size", 1), 1))
+        return max((latent_tensor.shape[-2] // patch_size) * (latent_tensor.shape[-1] // patch_size), 1)
+
+    def _build_added_cond_kwargs(self, prepared_batch: dict) -> dict:
+        resolution = prepared_batch.get("resolution")
+        aspect_ratio = prepared_batch.get("aspect_ratio")
+        if resolution is None:
+            batch_size = prepared_batch["noisy_latents"].shape[0]
+            height = prepared_batch["noisy_latents"].shape[-2]
+            width = prepared_batch["noisy_latents"].shape[-1]
+            resolution = torch.tensor([[height, width]], device=self.accelerator.device).expand(batch_size, -1)
+        else:
+            resolution = resolution.to(device=self.accelerator.device, dtype=self.config.base_weight_dtype)
+
+        if aspect_ratio is None:
+            batch_size = prepared_batch["noisy_latents"].shape[0]
+            height = prepared_batch["noisy_latents"].shape[-2]
+            width = prepared_batch["noisy_latents"].shape[-1]
+            aspect_ratio = torch.tensor([[float(height / width)]], device=self.accelerator.device).expand(batch_size, -1)
+        else:
+            aspect_ratio = aspect_ratio.to(device=self.accelerator.device, dtype=self.config.base_weight_dtype)
+
+        return {"resolution": resolution, "aspect_ratio": aspect_ratio}
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
         """
@@ -301,6 +383,13 @@ class PixartSigma(ImageModelFoundation):
         if conditioning_scale != 1.0:
             controlnet_cond = controlnet_cond * conditioning_scale
 
+        added_cond_kwargs = self._build_added_cond_kwargs(prepared_batch)
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=prepared_batch["noisy_latents"].shape[0],
+            sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
+        )
+
         # Forward pass through the controlnet transformer wrapper
         model_output = self.controlnet(
             prepared_batch["noisy_latents"].to(
@@ -310,13 +399,13 @@ class PixartSigma(ImageModelFoundation):
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                 device=self.accelerator.device, dtype=self.config.base_weight_dtype
             ),
-            timestep=prepared_batch["timesteps"],
+            timestep=timesteps,
             encoder_attention_mask=prepared_batch["encoder_attention_mask"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
             controlnet_cond=controlnet_cond,
-            added_cond_kwargs=None,
+            added_cond_kwargs=added_cond_kwargs,
             return_dict=False,
         )
 
