@@ -92,46 +92,7 @@ class LongCatVideo(VideoModelFoundation):
         return True
 
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
-        latents = batch["latents"]
-        input_noise = batch["input_noise"]
-        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
-        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
-        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
-        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
-        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
-
-        transformer = self.unwrap_model(model=self.model)
-        patch_size = getattr(getattr(transformer, "config", None), "patch_size", (1, 2, 2))
-        if not isinstance(patch_size, (tuple, list)) or len(patch_size) != 3:
-            raise ValueError(f"Unexpected LongCat patch size for Self-Flow: {patch_size!r}")
-        p_t = int(max(patch_size[0], 1))
-
-        _, _, num_frames, _, _ = latents.shape
-        token_frames = max(num_frames // p_t, 1)
-        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
-        frame_mask = torch.rand(latents.shape[0], token_frames, device=latents.device, dtype=latents.dtype) < mask_ratio
-
-        base_sigma_view = base_sigmas.view(-1, 1)
-        alt_sigma_view = alt_sigmas.view(-1, 1)
-        student_frame_sigmas = torch.where(frame_mask, alt_sigma_view, base_sigma_view)
-        student_sigma_grid = student_frame_sigmas.repeat_interleave(p_t, dim=1)[:, :num_frames]
-        student_sigma_grid = student_sigma_grid[:, None, :, None, None]
-
-        base_timestep_view = base_timesteps.view(-1, 1)
-        alt_timestep_view = alt_timesteps.view(-1, 1)
-        student_frame_timesteps = torch.where(frame_mask, alt_timestep_view, base_timestep_view)
-
-        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1, 1)
-        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
-
-        batch["sigmas"] = student_sigma_grid.to(dtype=latents.dtype)
-        batch["timesteps"] = student_frame_timesteps
-        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
-        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
-        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
-        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
-        batch["crepa_self_flow_mask"] = frame_mask
-        return batch
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:

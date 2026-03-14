@@ -376,12 +376,45 @@ class FinalLayer_FP32(nn.Module):
         assert t.dtype == torch.float32
         B, N, C = x.shape
         T, _, _ = latent_shape
+        spatial_tokens = N // T
 
         with torch.autocast(device_type=t.device.type, dtype=torch.float32, enabled=t.device.type == "cuda"):
-            shift, scale = self.adaLN_modulation(t).unsqueeze(2).chunk(2, dim=-1)  # [B, T, 1, C]
+            shift, scale = _reshape_longcat_video_modulation(
+                self.adaLN_modulation(t),
+                batch_size=B,
+                temporal_tokens=T,
+                spatial_tokens=spatial_tokens,
+                label="LongCat-Video final-layer conditioning",
+            ).chunk(2, dim=-1)
             x = modulate_fp32(self.norm_final, x.view(B, T, -1, C), shift, scale).view(B, N, C)
             x = self.linear(x)
         return x
+
+
+def _reshape_longcat_video_modulation(
+    modulation: torch.Tensor,
+    *,
+    batch_size: int,
+    temporal_tokens: int,
+    spatial_tokens: int,
+    label: str,
+) -> torch.Tensor:
+    if modulation.ndim == 2:
+        if modulation.shape[0] != batch_size:
+            raise ValueError(f"{label} expected batch size {batch_size}, got {modulation.shape[0]}.")
+        return modulation[:, None, None, :]
+    if modulation.ndim != 3:
+        raise ValueError(
+            f"{label} expected batchwise, framewise, or tokenwise conditioning, got shape {tuple(modulation.shape)}."
+        )
+    if modulation.shape[0] != batch_size:
+        raise ValueError(f"{label} expected batch size {batch_size}, got {modulation.shape[0]}.")
+    if modulation.shape[1] == temporal_tokens:
+        return modulation.unsqueeze(2)
+    expected_tokens = temporal_tokens * spatial_tokens
+    if modulation.shape[1] == expected_tokens:
+        return modulation.view(batch_size, temporal_tokens, spatial_tokens, modulation.shape[-1])
+    raise ValueError(f"{label} expected sequence length {temporal_tokens} or {expected_tokens}, got {modulation.shape[1]}.")
 
 
 class RotaryPositionalEmbedding(nn.Module):
@@ -896,11 +929,16 @@ class LongCatSingleStreamBlock(nn.Module):
 
         B, N, C = x.shape
         T, _, _ = latent_shape
+        spatial_tokens = N // T
 
         with torch.autocast(device_type=t.device.type, dtype=torch.float32, enabled=t.device.type == "cuda"):
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-                self.adaLN_modulation(t).unsqueeze(2).chunk(6, dim=-1)
-            )
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = _reshape_longcat_video_modulation(
+                self.adaLN_modulation(t),
+                batch_size=B,
+                temporal_tokens=T,
+                spatial_tokens=spatial_tokens,
+                label="LongCat-Video block conditioning",
+            ).chunk(6, dim=-1)
 
         x_m = modulate_fp32(self.mod_norm_attn, x.view(B, T, -1, C), shift_msa, scale_msa).view(B, N, C)
 
@@ -917,7 +955,7 @@ class LongCatSingleStreamBlock(nn.Module):
             x_s = attn_outputs
 
         with torch.autocast(device_type=t.device.type, dtype=torch.float32, enabled=t.device.type == "cuda"):
-            x = x + (gate_msa * x_s.view(B, -1, N // T, C)).view(B, -1, C)
+            x = x + (gate_msa * x_s.view(B, T, spatial_tokens, C)).view(B, -1, C)
         x = x.to(x_dtype)
 
         if not skip_crs_attn:
@@ -930,7 +968,7 @@ class LongCatSingleStreamBlock(nn.Module):
         x = modulate_fp32(self.mod_norm_ffn, x.view(B, T, -1, C), shift_mlp, scale_mlp).view(B, N, C)
 
         with torch.autocast(device_type=t.device.type, dtype=torch.float32, enabled=t.device.type == "cuda"):
-            x = x + (gate_mlp * self.ffn(x.view(B, -1, N // T, C))).view(B, -1, C)
+            x = x + (gate_mlp * self.ffn(x.view(B, T, spatial_tokens, C))).view(B, -1, C)
         x = x.to(x_dtype)
 
         if return_kv:
@@ -1054,6 +1092,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         timestep = timestep.to(device=hidden_states.device)
         if timestep.ndim == 0:
             timestep = timestep.expand(B)
+        expected_token_count = N_t * N_h * N_w
         if timestep.ndim == 1:
             if timestep.shape[0] == 1:
                 timestep = timestep.expand(B)
@@ -1063,17 +1102,19 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         elif timestep.ndim == 2:
             if timestep.shape[1] == 1:
                 timestep = timestep.expand(-1, N_t)
-            elif timestep.shape[1] != N_t:
+            elif timestep.shape[1] not in (N_t, expected_token_count):
                 raise ValueError(
-                    f"LongCat-Video expected framewise timesteps with sequence length {N_t}, got {timestep.shape[1]}."
+                    f"LongCat-Video expected framewise or tokenwise timesteps with sequence length {N_t} or {expected_token_count}, got {timestep.shape[1]}."
                 )
             if timestep.shape[0] == 1:
                 timestep = timestep.expand(B, -1)
             elif timestep.shape[0] != B:
-                raise ValueError(f"LongCat-Video expected framewise timesteps for batch size {B}, got {timestep.shape[0]}.")
+                raise ValueError(
+                    f"LongCat-Video expected framewise or tokenwise timesteps for batch size {B}, got {timestep.shape[0]}."
+                )
         else:
             raise ValueError(
-                "LongCat-Video expected a scalar, 1D batch tensor, or 2D framewise tensor, "
+                "LongCat-Video expected a scalar, 1D batch tensor, or 2D framewise/tokenwise tensor, "
                 f"got shape {tuple(timestep.shape)}."
             )
 
@@ -1093,19 +1134,19 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             elif sign.ndim == 2:
                 if sign.shape[1] == 1:
                     sign = sign.expand(-1, N_t)
-                elif sign.shape[1] != N_t:
+                elif sign.shape[1] not in (N_t, expected_token_count):
                     raise ValueError(
-                        f"LongCat-Video expected framewise timestep_sign with sequence length {N_t}, got {sign.shape[1]}."
+                        f"LongCat-Video expected framewise or tokenwise timestep_sign with sequence length {N_t} or {expected_token_count}, got {sign.shape[1]}."
                     )
                 if sign.shape[0] == 1:
                     sign = sign.expand(B, -1)
                 elif sign.shape[0] != B:
                     raise ValueError(
-                        f"LongCat-Video expected framewise timestep_sign for batch size {B}, got {sign.shape[0]}."
+                        f"LongCat-Video expected framewise or tokenwise timestep_sign for batch size {B}, got {sign.shape[0]}."
                     )
             else:
                 raise ValueError(
-                    "LongCat-Video expected timestep_sign to be a scalar, 1D batch tensor, or 2D framewise tensor, "
+                    "LongCat-Video expected timestep_sign to be a scalar, 1D batch tensor, or 2D framewise/tokenwise tensor, "
                     f"got shape {tuple(sign.shape)}."
                 )
 

@@ -676,7 +676,7 @@ class TestLongCatVideoFrameAdjustment(unittest.TestCase):
         model = LongCatVideo.__new__(LongCatVideo)
         self.assertTrue(model.supports_crepa_self_flow())
 
-    def test_prepare_crepa_self_flow_batch_builds_framewise_student_and_teacher_views(self):
+    def test_prepare_crepa_self_flow_batch_builds_tokenwise_student_and_teacher_views(self):
         model = LongCatVideo.__new__(LongCatVideo)
         model.accelerator = MagicMock(device=torch.device("cpu"))
         model.config = MagicMock(weight_dtype=torch.float32, crepa_self_flow_mask_ratio=0.5)
@@ -687,18 +687,21 @@ class TestLongCatVideoFrameAdjustment(unittest.TestCase):
         model.sample_flow_sigmas = MagicMock(return_value=(alt_sigmas, alt_timesteps))
 
         batch = {
-            "latents": torch.zeros(1, 16, 4, 2, 2, dtype=torch.float32),
-            "input_noise": torch.ones(1, 16, 4, 2, 2, dtype=torch.float32),
+            "latents": torch.zeros(1, 16, 4, 4, 4, dtype=torch.float32),
+            "input_noise": torch.ones(1, 16, 4, 4, 4, dtype=torch.float32),
             "sigmas": torch.tensor([0.2], dtype=torch.float32),
             "timesteps": torch.tensor([200.0], dtype=torch.float32),
         }
-        fake_mask_rand = torch.tensor([[0.2, 0.7, 0.1, 0.9]], dtype=torch.float32)
+        fake_mask_rand = torch.tensor(
+            [[[[0.2, 0.7], [0.4, 0.6]], [[0.7, 0.2], [0.8, 0.3]], [[0.1, 0.9], [0.2, 0.8]], [[0.9, 0.1], [0.6, 0.4]]]],
+            dtype=torch.float32,
+        )
 
         with patch("torch.rand", return_value=fake_mask_rand):
             result = model._prepare_crepa_self_flow_batch(batch, state={})
 
-        self.assertEqual(result["timesteps"].shape, (1, 4))
-        self.assertEqual(result["sigmas"].shape, (1, 1, 4, 1, 1))
+        self.assertEqual(result["timesteps"].shape, (1, 16))
+        self.assertEqual(result["sigmas"].shape, (1, 1, 4, 4, 4))
         self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
         self.assertEqual(set(result["timesteps"].view(-1).tolist()), {200.0, 800.0})
         self.assertEqual(result["crepa_teacher_timesteps"].item(), 200.0)
