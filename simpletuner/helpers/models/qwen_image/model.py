@@ -734,6 +734,44 @@ class QwenImage(ImageModelFoundation):
                     mask = mask.unsqueeze(0)
                 masks.append(mask)
 
+        # Pad all embeds and masks to the maximum sequence length in the batch
+        # before torch.cat. Without this, samples with different prompt lengths
+        # produce tensors of mismatched shape and torch.cat raises a RuntimeError.
+        if len(embeds) > 1:
+            max_seq_len = max(e.shape[1] for e in embeds)
+            hidden_dim = embeds[0].shape[2]
+            padded_embeds = []
+            padded_masks = []
+            for i, embed in enumerate(embeds):
+                seq_len = embed.shape[1]
+                if seq_len < max_seq_len:
+                    pad_len = max_seq_len - seq_len
+                    # Zero-pad the hidden dimension tail
+                    pad = torch.zeros(
+                        embed.shape[0], pad_len, hidden_dim,
+                        dtype=embed.dtype, device=embed.device
+                    )
+                    embed = torch.cat([embed, pad], dim=1)
+                padded_embeds.append(embed)
+
+                if masks:
+                    mask = masks[i] if i < len(masks) else None
+                    if mask is not None:
+                        m_seq = mask.shape[1]
+                        if m_seq < max_seq_len:
+                            pad_len = max_seq_len - m_seq
+                            mask_pad = torch.zeros(
+                                mask.shape[0], pad_len,
+                                dtype=mask.dtype, device=mask.device
+                            )
+                            mask = torch.cat([mask, mask_pad], dim=1)
+                        padded_masks.append(mask)
+
+            return {
+                "prompt_embeds": torch.cat(padded_embeds, dim=0),
+                "attention_masks": torch.cat(padded_masks, dim=0) if padded_masks else None,
+            }
+
         return {
             "prompt_embeds": torch.cat(embeds, dim=0),
             "attention_masks": torch.cat(masks, dim=0) if masks else None,
