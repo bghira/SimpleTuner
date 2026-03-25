@@ -482,13 +482,22 @@ def _patched_qwen_prompt_embeds_from_processor(
             text_inputs = [self.prompt_template_encode.format(entry) for entry in prompt]
         else:
             img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
-            if isinstance(image, list):
-                base_img_prompt = "".join(img_prompt_template.format(i + 1) for i, _ in enumerate(image))
-            elif image is not None:
-                base_img_prompt = img_prompt_template.format(1)
+            if isinstance(image, list) and len(image) == len(prompt):
+                text_inputs = []
+                for sample_image, entry in zip(image, prompt):
+                    if sample_image is None:
+                        base_img_prompt = ""
+                    else:
+                        base_img_prompt = img_prompt_template.format(1)
+                    text_inputs.append(self.prompt_template_encode.format(base_img_prompt + entry))
             else:
-                base_img_prompt = ""
-            text_inputs = [self.prompt_template_encode.format(base_img_prompt + entry) for entry in prompt]
+                if isinstance(image, list):
+                    base_img_prompt = "".join(img_prompt_template.format(i + 1) for i, _ in enumerate(image))
+                elif image is not None:
+                    base_img_prompt = img_prompt_template.format(1)
+                else:
+                    base_img_prompt = ""
+                text_inputs = [self.prompt_template_encode.format(base_img_prompt + entry) for entry in prompt]
 
         model_inputs = self.processor(text=text_inputs, images=image, **processor_kwargs).to(device)
         outputs = self.text_encoder(

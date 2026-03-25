@@ -158,7 +158,7 @@ class QwenDiffusersOverrideTests(unittest.TestCase):
         prompt_embeds, prompt_mask = diffusers_overrides._patched_qwen_prompt_embeds_from_processor(
             pipeline,
             prompt=["alpha", "beta"],
-            image=[object()],
+            image=[object(), object()],
         )
 
         self.assertEqual(prompt_embeds.shape, torch.Size([2, 1024, 4]))
@@ -170,6 +170,32 @@ class QwenDiffusersOverrideTests(unittest.TestCase):
         self.assertEqual(pipeline.processor.calls[0]["padding"], "max_length")
         self.assertEqual(pipeline.processor.calls[0]["max_length"], 1026)
         self.assertTrue(pipeline.processor.calls[0]["truncation"])
+        self.assertEqual(
+            pipeline.processor.calls[0]["text"],
+            [
+                "EDIT:Picture 1: <|vision_start|><|image_pad|><|vision_end|>alpha",
+                "EDIT:Picture 1: <|vision_start|><|image_pad|><|vision_end|>beta",
+            ],
+        )
+
+    def test_processor_prompt_patch_preserves_single_prompt_multi_image_placeholders(self):
+        attention_mask = torch.tensor([[1, 1, 1, 1, 0]], dtype=torch.long)
+        hidden_states = torch.arange(1 * 5 * 4, dtype=torch.float32).view(1, 5, 4)
+        pipeline = FakeProcessorPipeline(attention_mask, hidden_states)
+
+        diffusers_overrides._patched_qwen_prompt_embeds_from_processor(
+            pipeline,
+            prompt=["alpha"],
+            image=[object(), object()],
+        )
+
+        self.assertEqual(
+            pipeline.processor.calls[0]["text"],
+            [
+                "EDIT:Picture 1: <|vision_start|><|image_pad|><|vision_end|>"
+                "Picture 2: <|vision_start|><|image_pad|><|vision_end|>alpha"
+            ],
+        )
 
     def test_patched_double_stream_attention_zeros_padded_text_positions(self):
         processor = QwenDoubleStreamAttnProcessor2_0()
