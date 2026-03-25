@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict
+from typing import Dict, Iterable, Optional
 
 import torch
 import torch.nn as nn
 from accelerate import Accelerator
 from accelerate.utils import fsdp_utils as accelerate_fsdp_utils
 from diffusers.models.attention import Attention
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,345 @@ def enable_reversible_fusion():
 
 
 patch_attention_flexible()
+
+
+def _pad_qwen_hidden_states_to_fixed_length(
+    hidden_states: Iterable[torch.Tensor],
+    *,
+    target_length: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    padded_hidden_states = []
+    padded_attention_masks = []
+
+    for sample_hidden_states in hidden_states:
+        sample_seq_len = min(sample_hidden_states.size(0), target_length)
+        sample_hidden_states = sample_hidden_states[:sample_seq_len]
+
+        pad_tokens = target_length - sample_seq_len
+        if pad_tokens > 0:
+            sample_hidden_states = torch.cat(
+                [
+                    sample_hidden_states,
+                    sample_hidden_states.new_zeros((pad_tokens, sample_hidden_states.size(1))),
+                ],
+                dim=0,
+            )
+
+        sample_attention_mask = torch.cat(
+            [
+                torch.ones(sample_seq_len, dtype=torch.long, device=sample_hidden_states.device),
+                torch.zeros(pad_tokens, dtype=torch.long, device=sample_hidden_states.device),
+            ]
+        )
+
+        padded_hidden_states.append(sample_hidden_states)
+        padded_attention_masks.append(sample_attention_mask)
+
+    return torch.stack(padded_hidden_states), torch.stack(padded_attention_masks)
+
+
+def _patched_qwen_prompt_embeds_from_tokenizer(
+    self,
+    prompt=None,
+    device: Optional[torch.device] = None,
+    dtype: Optional[torch.dtype] = None,
+):
+    device = device or self._execution_device
+    dtype = dtype or self.text_encoder.dtype
+
+    prompt = [prompt] if isinstance(prompt, str) else prompt
+
+    template = self.prompt_template_encode
+    drop_idx = self.prompt_template_encode_start_idx
+    txt = [template.format(entry) for entry in prompt]
+    txt_tokens = self.tokenizer(
+        txt,
+        max_length=self.tokenizer_max_length + drop_idx,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    ).to(device)
+    encoder_hidden_states = self.text_encoder(
+        input_ids=txt_tokens.input_ids,
+        attention_mask=txt_tokens.attention_mask,
+        output_hidden_states=True,
+    )
+    hidden_states = encoder_hidden_states.hidden_states[-1]
+    split_hidden_states = self._extract_masked_hidden(hidden_states, txt_tokens.attention_mask)
+    split_hidden_states = [entry[drop_idx:] for entry in split_hidden_states]
+    prompt_embeds, encoder_attention_mask = _pad_qwen_hidden_states_to_fixed_length(
+        split_hidden_states,
+        target_length=self.tokenizer_max_length,
+    )
+
+    prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+
+    return prompt_embeds, encoder_attention_mask
+
+
+def _patched_qwen_prompt_embeds_from_processor(
+    self,
+    prompt=None,
+    image=None,
+    device: Optional[torch.device] = None,
+    dtype: Optional[torch.dtype] = None,
+):
+    device = device or self._execution_device
+    dtype = dtype or self.text_encoder.dtype
+
+    prompt = [prompt] if isinstance(prompt, str) else prompt
+    drop_idx = self.prompt_template_encode_start_idx
+
+    if hasattr(self, "processor") and self.processor is not None:
+        processor_kwargs = {
+            "padding": "max_length",
+            "max_length": self.tokenizer_max_length + drop_idx,
+            "truncation": True,
+            "return_tensors": "pt",
+        }
+
+        if image is None and hasattr(self, "prompt_template_encode"):
+            text_inputs = [self.prompt_template_encode.format(entry) for entry in prompt]
+        else:
+            img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
+            if isinstance(image, list) and len(image) == len(prompt):
+                text_inputs = []
+                for sample_image, entry in zip(image, prompt):
+                    if sample_image is None:
+                        base_img_prompt = ""
+                    else:
+                        base_img_prompt = img_prompt_template.format(1)
+                    text_inputs.append(self.prompt_template_encode.format(base_img_prompt + entry))
+            else:
+                if isinstance(image, list):
+                    base_img_prompt = "".join(img_prompt_template.format(i + 1) for i, _ in enumerate(image))
+                elif image is not None:
+                    base_img_prompt = img_prompt_template.format(1)
+                else:
+                    base_img_prompt = ""
+                text_inputs = [self.prompt_template_encode.format(base_img_prompt + entry) for entry in prompt]
+
+        model_inputs = self.processor(text=text_inputs, images=image, **processor_kwargs).to(device)
+        outputs = self.text_encoder(
+            input_ids=model_inputs.input_ids,
+            attention_mask=model_inputs.attention_mask,
+            pixel_values=model_inputs.pixel_values,
+            image_grid_thw=model_inputs.image_grid_thw,
+            output_hidden_states=True,
+        )
+        hidden_states = outputs.hidden_states[-1]
+        split_hidden_states = self._extract_masked_hidden(hidden_states, model_inputs.attention_mask)
+        split_hidden_states = [entry[drop_idx:] for entry in split_hidden_states]
+        prompt_embeds, encoder_attention_mask = _pad_qwen_hidden_states_to_fixed_length(
+            split_hidden_states,
+            target_length=self.tokenizer_max_length,
+        )
+        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+        return prompt_embeds, encoder_attention_mask
+
+    raise AttributeError("Qwen processor-based prompt patch requires a pipeline with `processor` and `text_encoder`.")
+
+
+def _extract_qwen_text_mask(
+    attention_mask: Optional[torch.Tensor],
+    *,
+    batch_size: int,
+    seq_txt: int,
+) -> Optional[torch.Tensor]:
+    if attention_mask is None:
+        return None
+
+    raw_mask = attention_mask
+    if raw_mask.dim() == 4:
+        raw_mask = raw_mask[:, 0, 0, :]
+    elif raw_mask.dim() == 3:
+        raw_mask = raw_mask[:, 0, :]
+
+    if raw_mask.dim() != 2 or raw_mask.shape[0] != batch_size or raw_mask.shape[1] < seq_txt:
+        return None
+
+    raw_mask = raw_mask[:, :seq_txt]
+    if raw_mask.dtype != torch.bool:
+        raw_mask = raw_mask.to(torch.bool)
+
+    return raw_mask
+
+
+def _qwen_double_stream_split_attention(
+    self,
+    attn: Attention,
+    hidden_states: torch.FloatTensor,
+    encoder_hidden_states: torch.FloatTensor,
+    raw_text_mask: torch.Tensor,
+    image_rotary_emb: Optional[torch.Tensor],
+):
+    seq_txt = encoder_hidden_states.shape[1]
+
+    img_query = attn.to_q(hidden_states)
+    img_key = attn.to_k(hidden_states)
+    img_value = attn.to_v(hidden_states)
+
+    txt_query = attn.add_q_proj(encoder_hidden_states)
+    txt_key = attn.add_k_proj(encoder_hidden_states)
+    txt_value = attn.add_v_proj(encoder_hidden_states)
+
+    img_query = img_query.unflatten(-1, (attn.heads, -1))
+    img_key = img_key.unflatten(-1, (attn.heads, -1))
+    img_value = img_value.unflatten(-1, (attn.heads, -1))
+
+    txt_query = txt_query.unflatten(-1, (attn.heads, -1))
+    txt_key = txt_key.unflatten(-1, (attn.heads, -1))
+    txt_value = txt_value.unflatten(-1, (attn.heads, -1))
+
+    if attn.norm_q is not None:
+        img_query = attn.norm_q(img_query)
+    if attn.norm_k is not None:
+        img_key = attn.norm_k(img_key)
+    if attn.norm_added_q is not None:
+        txt_query = attn.norm_added_q(txt_query)
+    if attn.norm_added_k is not None:
+        txt_key = attn.norm_added_k(txt_key)
+
+    if image_rotary_emb is not None:
+        from diffusers.models.transformers.transformer_qwenimage import apply_rotary_emb_qwen
+
+        img_freqs, txt_freqs = image_rotary_emb
+        img_query = apply_rotary_emb_qwen(img_query, img_freqs, use_real=False)
+        img_key = apply_rotary_emb_qwen(img_key, img_freqs, use_real=False)
+        txt_query = apply_rotary_emb_qwen(txt_query, txt_freqs, use_real=False)
+        txt_key = apply_rotary_emb_qwen(txt_key, txt_freqs, use_real=False)
+
+    img_attn_outputs = []
+    txt_attn_outputs = []
+
+    for sample_idx in range(hidden_states.shape[0]):
+        true_txt_len = int(raw_text_mask[sample_idx].sum().item())
+        true_txt_len = max(true_txt_len, 1)
+
+        sample_txt_query = txt_query[sample_idx : sample_idx + 1, :true_txt_len]
+        sample_txt_key = txt_key[sample_idx : sample_idx + 1, :true_txt_len]
+        sample_txt_value = txt_value[sample_idx : sample_idx + 1, :true_txt_len]
+
+        sample_joint_query = torch.cat([sample_txt_query, img_query[sample_idx : sample_idx + 1]], dim=1)
+        sample_joint_key = torch.cat([sample_txt_key, img_key[sample_idx : sample_idx + 1]], dim=1)
+        sample_joint_value = torch.cat([sample_txt_value, img_value[sample_idx : sample_idx + 1]], dim=1)
+
+        sample_joint_hidden_states = dispatch_attention_fn(
+            sample_joint_query,
+            sample_joint_key,
+            sample_joint_value,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+            backend=getattr(self, "_attention_backend", None),
+            parallel_config=getattr(self, "_parallel_config", None),
+        )
+        sample_joint_hidden_states = sample_joint_hidden_states.flatten(2, 3).to(sample_joint_query.dtype)
+
+        sample_txt_attn_output = sample_joint_hidden_states[:, :true_txt_len]
+        sample_img_attn_output = sample_joint_hidden_states[:, true_txt_len:]
+
+        if true_txt_len < seq_txt:
+            sample_txt_attn_output = torch.cat(
+                [
+                    sample_txt_attn_output,
+                    sample_txt_attn_output.new_zeros((1, seq_txt - true_txt_len, sample_txt_attn_output.shape[-1])),
+                ],
+                dim=1,
+            )
+
+        img_attn_outputs.append(sample_img_attn_output)
+        txt_attn_outputs.append(sample_txt_attn_output)
+
+    img_attn_output = torch.cat(img_attn_outputs, dim=0)
+    txt_attn_output = torch.cat(txt_attn_outputs, dim=0)
+
+    img_attn_output = attn.to_out[0](img_attn_output.contiguous())
+    if len(attn.to_out) > 1:
+        img_attn_output = attn.to_out[1](img_attn_output)
+
+    txt_attn_output = attn.to_add_out(txt_attn_output.contiguous())
+
+    return img_attn_output, txt_attn_output
+
+
+def patch_qwen_image_batch_size_fixes() -> None:
+    from diffusers import QwenImagePipeline
+    from diffusers.models.transformers.transformer_qwenimage import QwenDoubleStreamAttnProcessor2_0
+
+    if not hasattr(QwenImagePipeline, "_simpletuner_original_get_qwen_prompt_embeds"):
+        QwenImagePipeline._simpletuner_original_get_qwen_prompt_embeds = QwenImagePipeline._get_qwen_prompt_embeds
+        QwenImagePipeline._get_qwen_prompt_embeds = _patched_qwen_prompt_embeds_from_tokenizer
+
+    if not hasattr(QwenDoubleStreamAttnProcessor2_0, "_simpletuner_original_call"):
+        QwenDoubleStreamAttnProcessor2_0._simpletuner_original_call = QwenDoubleStreamAttnProcessor2_0.__call__
+
+        def patched_double_stream_call(
+            self,
+            attn: Attention,
+            hidden_states: torch.FloatTensor,
+            encoder_hidden_states: torch.FloatTensor = None,
+            encoder_hidden_states_mask: torch.FloatTensor = None,
+            attention_mask: Optional[torch.FloatTensor] = None,
+            image_rotary_emb: Optional[torch.Tensor] = None,
+        ):
+            if encoder_hidden_states is None:
+                return QwenDoubleStreamAttnProcessor2_0._simpletuner_original_call(
+                    self,
+                    attn,
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,
+                    attention_mask=attention_mask,
+                    image_rotary_emb=image_rotary_emb,
+                )
+
+            raw_text_mask = encoder_hidden_states_mask
+            if raw_text_mask is None:
+                raw_text_mask = _extract_qwen_text_mask(
+                    attention_mask,
+                    batch_size=hidden_states.shape[0],
+                    seq_txt=encoder_hidden_states.shape[1],
+                )
+
+            if raw_text_mask is None or hidden_states.shape[0] <= 1:
+                return QwenDoubleStreamAttnProcessor2_0._simpletuner_original_call(
+                    self,
+                    attn,
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,
+                    attention_mask=attention_mask,
+                    image_rotary_emb=image_rotary_emb,
+                )
+
+            return _qwen_double_stream_split_attention(
+                self,
+                attn,
+                hidden_states,
+                encoder_hidden_states,
+                raw_text_mask,
+                image_rotary_emb,
+            )
+
+        QwenDoubleStreamAttnProcessor2_0.__call__ = patched_double_stream_call
+
+    try:
+        from simpletuner.helpers.models.qwen_image.pipeline import QwenImageEditPipeline
+        from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import QwenImageEditPlusPipeline
+    except ImportError as exc:
+        logger.debug(f"Skipping local Qwen pipeline prompt padding patches: {exc}")
+    else:
+        local_pipeline_classes = [QwenImageEditPipeline, QwenImageEditPlusPipeline]
+        for pipeline_cls in local_pipeline_classes:
+            if not hasattr(pipeline_cls, "_simpletuner_original_get_qwen_prompt_embeds"):
+                pipeline_cls._simpletuner_original_get_qwen_prompt_embeds = pipeline_cls._get_qwen_prompt_embeds
+                pipeline_cls._get_qwen_prompt_embeds = _patched_qwen_prompt_embeds_from_processor
+
+    logger.info("Patched Qwen Image prompt padding and attention mask handling for batch size > 1.")
+
+
+patch_qwen_image_batch_size_fixes()
 
 
 def patch_fsdp2_state_dict_loader() -> None:
