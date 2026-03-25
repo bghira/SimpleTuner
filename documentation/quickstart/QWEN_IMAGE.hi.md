@@ -87,8 +87,8 @@ cp config/config.json.example config/config.json
 - `model_family` - इसे `qwen_image` पर सेट करें।
 - `model_flavour` - इसे `v1.0` पर सेट करें।
 - `output_dir` - इसे उस डायरेक्टरी पर सेट करें जहाँ आप अपने checkpoints और validation images रखना चाहते हैं। यहाँ full path उपयोग करने की सलाह है।
-- `train_batch_size` - इसे 1 पर सेट करना अनिवार्य है (batch size > 1 अभी सही काम नहीं करता)।
-- `gradient_accumulation_steps` - बड़े batch का अनुकरण करने के लिए 2‑8 पर सेट करें।
+- `train_batch_size` - इसे उपलब्ध VRAM के अनुसार सेट करें। SimpleTuner के मौजूदा Qwen overrides में batch size > 1 समर्थित है।
+- `gradient_accumulation_steps` - यदि per-step VRAM बढ़ाए बिना effective batch बढ़ाना हो, तो इसे 2‑8 पर सेट करें।
 - `validation_resolution` - मेमोरी सीमाओं के लिए `1024x1024` या उससे कम रखें।
   - 24G अभी 1024x1024 validations संभाल नहीं सकता — आकार घटाएँ
   - अन्य resolutions को कॉमा से अलग कर सकते हैं: `1024x1024,768x768,512x512`
@@ -466,9 +466,9 @@ image.save("output.png", format="PNG")
 
 #### Batch size limitations
 
-वर्तमान में Qwen Image में टेक्स्ट एन्कोडर की sequence length handling के कारण batch size > 1 में समस्याएँ हैं। हमेशा उपयोग करें:
-- `train_batch_size: 1`
-- बड़े batch का अनुकरण करने के लिए `gradient_accumulation_steps: 2-8`
+पुराने diffusers Qwen builds में text embed padding और attention mask handling की वजह से batch size > 1 पर समस्याएँ थीं। SimpleTuner के मौजूदा Qwen overrides दोनों paths को patch करते हैं, इसलिए यदि VRAM अनुमति दे तो बड़े batches काम करते हैं।
+- `train_batch_size` केवल तभी बढ़ाएँ जब आपकी memory headroom पर्याप्त हो।
+- यदि किसी पुराने install पर artifacts दिखें, तो update करें और पुराने text embeds दोबारा generate करें।
 
 #### Quantization
 

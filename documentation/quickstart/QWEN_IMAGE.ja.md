@@ -87,8 +87,8 @@ cp config/config.json.example config/config.json
 - `model_family` - `qwen_image` に設定します。
 - `model_flavour` - `v1.0` に設定します。
 - `output_dir` - チェックポイントと検証画像を保存するディレクトリに設定します。フルパスの使用を推奨します。
-- `train_batch_size` - 1 に固定（バッチサイズ > 1 は現在動作しません）。
-- `gradient_accumulation_steps` - 2〜8 を設定して実効バッチを大きくします。
+- `train_batch_size` - 利用可能な VRAM に合わせて設定します。現在の SimpleTuner の Qwen override ではバッチサイズ 1 超も利用できます。
+- `gradient_accumulation_steps` - 1 ステップあたりの VRAM を増やさず実効バッチを大きくしたい場合は 2〜8 を設定します。
 - `validation_resolution` - `1024x1024` もしくはメモリ制約のためより低い値に設定します。
   - 24G は現状 1024x1024 検証に対応できません。サイズを下げてください。
   - 他の解像度はカンマ区切りで指定できます: `1024x1024,768x768,512x512`
@@ -466,9 +466,9 @@ image.save("output.png", format="PNG")
 
 #### バッチサイズの制限
 
-現在、Qwen Image はテキストエンコーダのシーケンス長処理の関係でバッチサイズ > 1 に問題があります。必ず以下を使用してください:
-- `train_batch_size: 1`
-- 実効バッチを稼ぐため `gradient_accumulation_steps: 2-8`
+以前の diffusers の Qwen 実装では、テキスト埋め込みのパディングと attention mask 処理の問題でバッチサイズ > 1 が壊れていました。現在の SimpleTuner の Qwen override はこの 2 点を修正するため、VRAM が足りればより大きいバッチも動作します。
+- `train_batch_size` はメモリ余裕を確認してから増やしてください。
+- 古い環境でまだアーティファクトが出る場合は、更新して古い text embed を再生成してください。
 
 #### 量子化
 
