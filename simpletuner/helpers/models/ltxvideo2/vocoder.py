@@ -148,7 +148,9 @@ class AntiAliasAct1d(nn.Module):
             if act_fn == "snakebeta":
                 act_fn = SnakeBeta(**kwargs)
             elif act_fn == "snake":
-                act_fn = SnakeBeta(**kwargs)
+                act_kwargs = dict(kwargs)
+                act_kwargs.setdefault("use_beta", False)
+                act_fn = SnakeBeta(**act_kwargs)
             else:
                 act_fn = nn.LeakyReLU(**kwargs)
         self.act = act_fn
@@ -300,8 +302,11 @@ class LTX2Vocoder(ModelMixin, ConfigMixin):
             input_channels = output_channels
 
         if act_fn == "snakebeta" or act_fn == "snake":
-            act_out = SnakeBeta(channels=output_channels, use_beta=True)
-            self.act_out = AntiAliasAct1d(act_out, ratio=antialias_ratio, kernel_size=antialias_kernel_size)
+            act_out = SnakeBeta(channels=output_channels, use_beta=act_fn == "snakebeta")
+            if antialias:
+                self.act_out = AntiAliasAct1d(act_out, ratio=antialias_ratio, kernel_size=antialias_kernel_size)
+            else:
+                self.act_out = act_out
         elif act_fn == "leaky_relu":
             self.act_out = nn.LeakyReLU()
         self.conv_out = nn.Conv1d(output_channels, out_channels, 7, stride=1, padding=3, bias=final_bias)

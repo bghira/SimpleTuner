@@ -145,7 +145,10 @@ def _convert_ltx2_audio_vae_per_channel_statistics(key: str, state_dict: Dict[st
 def _convert_ltx2_3_vocoder_upsamplers(key: str, state_dict: Dict[str, Any]) -> None:
     if ".weight" not in key and ".bias" not in key:
         return
-    if ".ups." in key:
+    if key.startswith("ups."):
+        new_key = key.replace("ups.", "upsamplers.", 1)
+        update_state_dict_inplace(state_dict, key, new_key)
+    elif ".ups." in key:
         new_key = key.replace(".ups.", ".upsamplers.")
         update_state_dict_inplace(state_dict, key, new_key)
 
@@ -742,7 +745,7 @@ def convert_ltx2_vocoder(original_state_dict: Dict[str, Any], version: str) -> L
         vocoder_cls = LTX2VocoderWithBWE if version == "2.3" else LTX2Vocoder
         vocoder = vocoder_cls.from_config(diffusers_config)
     rename_dict = LTX_2_3_VOCODER_RENAME_DICT if version == "2.3" else LTX_2_0_VOCODER_RENAME_DICT
-    special_keys = {".ups.": _convert_ltx2_3_vocoder_upsamplers} if version == "2.3" else LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
+    special_keys = {"ups.": _convert_ltx2_3_vocoder_upsamplers} if version == "2.3" else LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
     _apply_remap_rules(original_state_dict, rename_dict, special_keys)
     vocoder.load_state_dict(original_state_dict, strict=True, assign=True)
     return vocoder

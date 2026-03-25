@@ -7,6 +7,7 @@ import torch
 
 from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
     _apply_remap_rules,
+    _convert_ltx2_3_vocoder_upsamplers,
     _extract_audio_vae_config_from_metadata,
     _get_ltx2_connectors_config,
     _get_ltx2_transformer_config,
@@ -131,6 +132,19 @@ class TestLTX2CheckpointLoader(unittest.TestCase):
         self.assertTrue(connectors_config["video_gated_attn"])
         self.assertEqual(vocoder_config["output_sampling_rate"], 48000)
         self.assertEqual(vocoder_config["bwe_hidden_channels"], 512)
+
+    def test_vocoder_upsampler_remap_handles_root_level_keys(self):
+        state_dict = {
+            "ups.0.weight": torch.ones(1),
+            "ups.0.bias": torch.zeros(1),
+        }
+
+        _apply_remap_rules(state_dict, rename_dict={}, special_keys_remap={"ups.": _convert_ltx2_3_vocoder_upsamplers})
+
+        self.assertIn("upsamplers.0.weight", state_dict)
+        self.assertIn("upsamplers.0.bias", state_dict)
+        self.assertNotIn("ups.0.weight", state_dict)
+        self.assertNotIn("ups.0.bias", state_dict)
 
 
 if __name__ == "__main__":

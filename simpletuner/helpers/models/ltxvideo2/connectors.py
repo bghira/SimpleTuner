@@ -53,6 +53,16 @@ def per_token_rms_norm(text_encoder_hidden_states: torch.Tensor, eps: float = 1e
     return text_encoder_hidden_states * torch.rsqrt(variance + eps)
 
 
+def normalize_attention_mask(attention_mask: torch.Tensor, additive_mask: bool = False) -> torch.Tensor:
+    if additive_mask:
+        return (attention_mask >= 0).to(torch.int64)
+    if attention_mask.dtype == torch.bool:
+        return attention_mask.to(torch.int64)
+    if torch.is_floating_point(attention_mask):
+        return (attention_mask > 0).to(torch.int64)
+    return attention_mask.to(torch.int64)
+
+
 class LTX2RotaryPosEmbed1d(nn.Module):
     def __init__(
         self,
@@ -330,16 +340,18 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
         self,
         text_encoder_hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
+        additive_mask: bool = False,
         padding_side: str = "left",
         scale_factor: int = 8,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if text_encoder_hidden_states.ndim == 3:
             text_encoder_hidden_states = text_encoder_hidden_states.unflatten(2, (self.config.caption_channels, -1))
+        binary_attention_mask = normalize_attention_mask(attention_mask, additive_mask=additive_mask)
 
         if self.config.per_modality_projections:
             norm_text_encoder_hidden_states = per_token_rms_norm(text_encoder_hidden_states)
             norm_text_encoder_hidden_states = norm_text_encoder_hidden_states.flatten(2, 3)
-            bool_mask = attention_mask.bool().unsqueeze(-1)
+            bool_mask = binary_attention_mask.bool().unsqueeze(-1)
             norm_text_encoder_hidden_states = torch.where(
                 bool_mask, norm_text_encoder_hidden_states, torch.zeros_like(norm_text_encoder_hidden_states)
             )
@@ -349,7 +361,7 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
             video_text_emb_proj = self.video_text_proj_in(norm_text_encoder_hidden_states * video_scale_factor)
             audio_text_emb_proj = self.audio_text_proj_in(norm_text_encoder_hidden_states * audio_scale_factor)
         else:
-            sequence_lengths = attention_mask.sum(dim=-1)
+            sequence_lengths = binary_attention_mask.sum(dim=-1)
             norm_text_encoder_hidden_states = per_layer_masked_mean_norm(
                 text_hidden_states=text_encoder_hidden_states,
                 sequence_lengths=sequence_lengths,
@@ -362,12 +374,13 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
             audio_text_emb_proj = text_emb_proj
 
         text_dtype = video_text_emb_proj.dtype
-        attention_mask = (attention_mask.to(torch.int64) - 1).to(text_dtype)
-        attention_mask = attention_mask.reshape(attention_mask.shape[0], 1, -1, attention_mask.shape[-1])
-        add_attn_mask = attention_mask * torch.finfo(text_dtype).max
+        add_attn_mask = (binary_attention_mask.to(text_dtype) - 1).reshape(
+            binary_attention_mask.shape[0], 1, -1, binary_attention_mask.shape[-1]
+        )
+        add_attn_mask = add_attn_mask * torch.finfo(text_dtype).max
 
         video_text_embedding, video_attn_mask = self.video_connector(video_text_emb_proj, add_attn_mask)
-        binary_attn_mask = (video_attn_mask < 1e-6).to(torch.int64)
+        binary_attn_mask = (video_attn_mask >= 0).to(torch.int64)
         binary_attn_mask = binary_attn_mask.reshape(video_text_embedding.shape[0], video_text_embedding.shape[1], 1)
         video_text_embedding = video_text_embedding * binary_attn_mask
 
