@@ -80,7 +80,9 @@ def _webhook_worker_loop():
                             "Failed to forward structured log message to webhook.", exc_info=True
                         )
 
-                if hasattr(task.handler, "send"):
+                # Typed payloads should remain on raw backends. Discord delivery should
+                # come from explicit webhook sends, not mirrored structured events.
+                if task.structured_payload is None and hasattr(task.handler, "send"):
                     try:
                         task.handler.send(
                             message=task.text_message,
