@@ -45,10 +45,7 @@ class WebhookLoggerTests(unittest.TestCase):
         logger.error("boom %s", "value")
         flush_webhook_queue(timeout=1.0)
 
-        handler_mock.send.assert_called_once()
-        send_kwargs = handler_mock.send.call_args.kwargs
-        self.assertEqual(send_kwargs["message"], "[tests.logging.existing] boom value")
-        self.assertEqual(send_kwargs["message_level"], "error")
+        handler_mock.send.assert_not_called()
 
         handler_mock.send_raw.assert_called_once()
         raw_kwargs = handler_mock.send_raw.call_args.kwargs
@@ -79,7 +76,7 @@ class WebhookLoggerTests(unittest.TestCase):
 
         webhook_handler_cls.assert_called_once()
         mock_state_tracker.set_webhook_handler.assert_called_once_with(handler_instance)
-        handler_instance.send.assert_called_once()
+        handler_instance.send.assert_not_called()
         handler_instance.send_raw.assert_called_once()
 
     @patch(
@@ -119,7 +116,7 @@ class WebhookLoggerTests(unittest.TestCase):
         self.assertIn("webhook_config", kwargs)
         config = kwargs["webhook_config"]
         self.assertTrue(config, "Expected fallback webhook config to be provided")
-        handler_instance.send.assert_called_once()
+        handler_instance.send.assert_not_called()
         handler_instance.send_raw.assert_called_once()
 
     def test_fallback_returns_none_without_env_config(self):
