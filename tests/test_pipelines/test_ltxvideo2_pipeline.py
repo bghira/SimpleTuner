@@ -60,6 +60,17 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertTrue(torch.equal(result.cpu(), latents))
         self.assertEqual(result.dtype, torch.float32)
 
+    def test_resolve_ltx23_flavour(self):
+        self.model.config.model_flavour = "2.3-distilled"
+        self.assertEqual(self.model._resolve_ltx2_version(), "2.3")
+        self.assertEqual(self.model._resolve_ltx2_combined_filename(), "ltx-2.3-22b-distilled.safetensors")
+
+    def test_model_config_path_uses_ltx23_repo_for_single_file(self):
+        self.model.config.model_flavour = "2.3"
+        self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-dev.safetensors"
+
+        self.assertEqual(self.model._model_config_path(), "Lightricks/LTX-2.3")
+
 
 class TestLTXVideo2TransformerLoading(unittest.TestCase):
     """Test LTXVideo2 transformer can be imported and configured."""
@@ -97,6 +108,46 @@ class TestLTXVideo2TransformerLoading(unittest.TestCase):
         sig = inspect.signature(LTX2VideoTransformer3DModel.__init__)
         params = list(sig.parameters.keys())
         self.assertIn("enable_time_sign_embed", params)
+
+    def test_transformer_supports_ltx23_flags(self):
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        transformer = LTX2VideoTransformer3DModel(
+            in_channels=4,
+            out_channels=4,
+            patch_size=1,
+            patch_size_t=1,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            cross_attention_dim=16,
+            vae_scale_factors=(1, 1, 1),
+            pos_embed_max_pos=4,
+            base_height=32,
+            base_width=32,
+            gated_attn=True,
+            cross_attn_mod=True,
+            audio_in_channels=4,
+            audio_out_channels=4,
+            audio_patch_size=1,
+            audio_patch_size_t=1,
+            audio_num_attention_heads=2,
+            audio_attention_head_dim=4,
+            audio_cross_attention_dim=8,
+            audio_scale_factor=1,
+            audio_pos_embed_max_pos=4,
+            audio_gated_attn=True,
+            audio_cross_attn_mod=True,
+            num_layers=1,
+            caption_channels=16,
+            use_prompt_embeddings=False,
+            perturbed_attn=True,
+        )
+
+        self.assertFalse(hasattr(transformer, "caption_projection"))
+        self.assertTrue(transformer.prompt_modulation)
+        self.assertIsNotNone(transformer.prompt_adaln)
+        self.assertIsNotNone(transformer.audio_prompt_adaln)
+        self.assertIsNotNone(transformer.transformer_blocks[0].attn1.to_gate_logits)
 
 
 if __name__ == "__main__":

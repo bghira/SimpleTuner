@@ -97,8 +97,8 @@ cp config/config.json.example config/config.json
 Configurações-chave para LTX Video 2:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev` (padrão), `dev-fp4` ou `dev-fp8`.
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (repositório com o checkpoint combinado) ou um arquivo `.safetensors` local.
+- `model_flavour`: `dev` (padrão), `dev-fp4`, `dev-fp8`, `2.3` ou `2.3-distilled`.
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`, `Lightricks/LTX-2.3` ou um arquivo `.safetensors` local.
 - `train_batch_size`: `1`. Não aumente isso a menos que você tenha um A100/H100.
 - `validation_resolution`:
   - `512x768` é um padrão seguro para testes.
@@ -110,7 +110,8 @@ Configurações-chave para LTX Video 2:
 - `frame_rate`: O padrão é 25.
 
 O LTX-2 é distribuído como um único checkpoint `.safetensors` que inclui o transformer, o VAE de vídeo,
-o VAE de áudio e o vocoder. O SimpleTuner carrega desse arquivo combinado conforme o `model_flavour` (dev/dev-fp4/dev-fp8).
+o VAE de áudio e o vocoder. O SimpleTuner carrega desse arquivo combinado conforme o `model_flavour`,
+incluindo `2.3` e `2.3-distilled`.
 
 ### Opcional: otimizações de VRAM
 

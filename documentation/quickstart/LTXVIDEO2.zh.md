@@ -98,8 +98,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 的关键设置：
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev`（默认）、`dev-fp4` 或 `dev-fp8`。
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`（包含 combined checkpoint 的仓库）或本地 `.safetensors` 文件。
+- `model_flavour`: `dev`（默认）、`dev-fp4`、`dev-fp8`、`2.3` 或 `2.3-distilled`。
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`、`Lightricks/LTX-2.3` 或本地 `.safetensors` 文件。
 - `train_batch_size`: `1`。除非有 A100/H100，否则不要提高。
 - `validation_resolution`:
   - `512x768` 是安全的测试默认值。
@@ -111,7 +111,7 @@ LTX Video 2 的关键设置：
 - `frame_rate`: 默认 25。
 
 LTX-2 以单个 `.safetensors` checkpoint 形式发布，包含 transformer、视频 VAE、音频 VAE 和 vocoder。
-SimpleTuner 会根据 `model_flavour`（dev/dev-fp4/dev-fp8）从该 combined 文件加载。
+SimpleTuner 会根据 `model_flavour` 从该 combined 文件加载，也包括 `2.3` 和 `2.3-distilled`。
 
 ### 可选：VRAM 优化
 

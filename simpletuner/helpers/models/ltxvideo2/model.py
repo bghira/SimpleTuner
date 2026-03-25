@@ -31,7 +31,7 @@ from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
-from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder
+from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -49,6 +49,10 @@ LTX2_FLAVOUR_FILENAMES = {
     "dev-fp8": "ltx-2-19b-dev-fp8.safetensors",
     "2.0": "ltx-2-19b-dev.safetensors",
     "2": "ltx-2-19b-dev.safetensors",
+    "2.3": "ltx-2.3-22b-dev.safetensors",
+    "2.3-dev": "ltx-2.3-22b-dev.safetensors",
+    "2.3-distilled": "ltx-2.3-22b-distilled.safetensors",
+    "distilled": "ltx-2.3-22b-distilled.safetensors",
 }
 LTX2_TRANSFORMER_PREFIX = "model.diffusion_model."
 LTX2_VIDEO_VAE_PREFIX = "vae."
@@ -104,6 +108,10 @@ class LTXVideo2(VideoModelFoundation):
         "dev": "Lightricks/LTX-2",
         "dev-fp4": "Lightricks/LTX-2",
         "dev-fp8": "Lightricks/LTX-2",
+        "2.3": "Lightricks/LTX-2.3",
+        "2.3-dev": "Lightricks/LTX-2.3",
+        "2.3-distilled": "Lightricks/LTX-2.3",
+        "distilled": "Lightricks/LTX-2.3",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -231,6 +239,8 @@ class LTXVideo2(VideoModelFoundation):
             flavour_value = str(flavour).strip().lower()
             if flavour_value in {"2.0", "2"}:
                 self.config.model_flavour = "dev"
+            elif flavour_value == "2.3-dev":
+                self.config.model_flavour = "2.3"
         super().setup_model_flavour()
 
     @classmethod
@@ -294,6 +304,8 @@ class LTXVideo2(VideoModelFoundation):
         flavour_value = str(flavour).strip().lower()
         if flavour_value in {"2", "2.0", "dev", "dev-fp4", "dev-fp8"}:
             return "2.0"
+        if flavour_value in {"2.3", "2.3-dev", "2.3-distilled", "distilled"}:
+            return "2.3"
         if flavour_value == "test":
             return "test"
         raise ValueError(f"Unsupported LTX-2 model flavour '{flavour}'.")
@@ -343,6 +355,14 @@ class LTXVideo2(VideoModelFoundation):
         self._combined_checkpoint_path = hf_hub_download(repo_id=model_path, filename=filename)
         return self._combined_checkpoint_path
 
+    def _model_config_path(self):
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if isinstance(model_path, str) and model_path.endswith((".safetensors", ".sft", ".gguf")):
+            flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+            flavour_key = str(flavour).strip().lower()
+            return self.HUGGINGFACE_PATHS.get(flavour_key, self.HUGGINGFACE_PATHS.get("dev"))
+        return super()._model_config_path()
+
     def _build_transformer_config_overrides(self) -> dict:
         overrides = apply_musubi_pretrained_defaults(self.config, {})
         if getattr(self.config, "twinflow_enabled", False):
@@ -353,15 +373,17 @@ class LTXVideo2(VideoModelFoundation):
         shift = getattr(self.config, "flow_schedule_shift", None)
         if shift is None:
             shift = 1.0
+        flavour_value = str(getattr(self.config, "model_flavour", "") or "").strip().lower()
+        is_distilled = "distilled" in flavour_value
         return FlowMatchEulerDiscreteScheduler(
             num_train_timesteps=1000,
             shift=float(shift),
-            use_dynamic_shifting=True,
+            use_dynamic_shifting=not is_distilled,
             base_shift=0.95,
             max_shift=2.05,
             base_image_seq_len=1024,
             max_image_seq_len=4096,
-            shift_terminal=0.1,
+            shift_terminal=None if is_distilled else 0.1,
         )
 
     def _load_audio_vae(self, move_to_device: bool = True):
@@ -464,7 +486,8 @@ class LTXVideo2(VideoModelFoundation):
             else:
                 model_path = self._model_config_path()
                 logger.info("Loading LTX-2 vocoder from %s", model_path)
-                vocoder = LTX2Vocoder.from_pretrained(
+                vocoder_cls = LTX2VocoderWithBWE if self._resolve_ltx2_version() == "2.3" else LTX2Vocoder
+                vocoder = vocoder_cls.from_pretrained(
                     model_path,
                     subfolder="vocoder",
                     torch_dtype=self.config.weight_dtype,

@@ -8,6 +8,10 @@ import torch
 from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
     _apply_remap_rules,
     _extract_audio_vae_config_from_metadata,
+    _get_ltx2_connectors_config,
+    _get_ltx2_transformer_config,
+    _get_ltx2_vocoder_config,
+    get_model_state_dict_from_combined_ckpt,
     load_ltx2_state_dict_from_checkpoint,
 )
 
@@ -85,6 +89,8 @@ class TestLTX2CheckpointLoader(unittest.TestCase):
                 "model.diffusion_model.block.weight": torch.zeros(1),
                 "model.diffusion_model.block.bias": torch.ones(1),
                 "text_embedding_projection.aggregate_embed.weight": torch.full((1,), 2.0),
+                "text_embedding_projection.video_aggregate_embed.weight": torch.full((1,), 4.0),
+                "text_embedding_projection.audio_aggregate_embed.weight": torch.full((1,), 5.0),
                 "unrelated.weight": torch.full((1,), 3.0),
             }
             safetensors.torch.save_file(state_dict, ckpt_path)
@@ -94,7 +100,37 @@ class TestLTX2CheckpointLoader(unittest.TestCase):
         self.assertIn("block.weight", loaded)
         self.assertIn("block.bias", loaded)
         self.assertIn("text_embedding_projection.aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.video_aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.audio_aggregate_embed.weight", loaded)
         self.assertNotIn("unrelated.weight", loaded)
+
+    def test_get_model_state_dict_from_combined_ckpt_includes_all_text_projection_keys(self):
+        combined_ckpt = {
+            "model.diffusion_model.block.weight": torch.zeros(1),
+            "text_embedding_projection.aggregate_embed.weight": torch.ones(1),
+            "text_embedding_projection.video_aggregate_embed.weight": torch.full((1,), 2.0),
+            "text_embedding_projection.audio_aggregate_embed.weight": torch.full((1,), 3.0),
+        }
+
+        loaded = get_model_state_dict_from_combined_ckpt(combined_ckpt, "model.diffusion_model")
+
+        self.assertIn("block.weight", loaded)
+        self.assertIn("text_embedding_projection.aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.video_aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.audio_aggregate_embed.weight", loaded)
+
+    def test_ltx2_3_configs_expose_required_flags(self):
+        transformer_config = _get_ltx2_transformer_config("2.3")
+        connectors_config = _get_ltx2_connectors_config("2.3")
+        vocoder_config = _get_ltx2_vocoder_config("2.3")
+
+        self.assertTrue(transformer_config["gated_attn"])
+        self.assertTrue(transformer_config["cross_attn_mod"])
+        self.assertFalse(transformer_config["use_prompt_embeddings"])
+        self.assertTrue(connectors_config["per_modality_projections"])
+        self.assertTrue(connectors_config["video_gated_attn"])
+        self.assertEqual(vocoder_config["output_sampling_rate"], 48000)
+        self.assertEqual(vocoder_config["bwe_hidden_channels"], 512)
 
 
 if __name__ == "__main__":
