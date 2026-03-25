@@ -1731,11 +1731,9 @@ class ModelFoundation(ABC):
                 "flux",
                 "flux2",
                 "lumina2",
-                "z_image",
                 "sd3",
                 "auraflow",
                 "pixart_sigma",
-                "qwen_image",
                 "hidream",
             }
             preserve_component_prefixes = (

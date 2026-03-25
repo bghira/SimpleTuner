@@ -87,8 +87,8 @@ Lá, você provavelmente precisará modificar as seguintes variáveis:
 - `model_family` - Defina como `qwen_image`.
 - `model_flavour` - Defina como `v1.0`.
 - `output_dir` - Defina como o diretório onde você quer armazenar seus checkpoints e imagens de validação. É recomendado usar um caminho completo aqui.
-- `train_batch_size` - Deve ser 1 (batch size > 1 não funciona atualmente).
-- `gradient_accumulation_steps` - Defina entre 2-8 para simular batch sizes maiores.
+- `train_batch_size` - Ajuste de acordo com a VRAM disponível. Os overrides atuais de Qwen no SimpleTuner suportam batch sizes maiores que 1.
+- `gradient_accumulation_steps` - Configure em 2-8 se quiser um batch efetivo maior sem aumentar a VRAM por passo.
 - `validation_resolution` - Defina `1024x1024` ou menos por restrições de memória.
   - 24G não aguenta validações 1024x1024 atualmente - você precisará reduzir o tamanho
   - Outras resoluções podem ser especificadas usando vírgulas: `1024x1024,768x768,512x512`
@@ -466,9 +466,9 @@ image.save("output.png", format="PNG")
 
 #### Limitações de batch size
 
-Atualmente, o Qwen Image tem problemas com batch sizes > 1 devido ao tratamento de comprimento de sequência no encoder de texto. Sempre use:
-- `train_batch_size: 1`
-- `gradient_accumulation_steps: 2-8` para simular batches maiores
+Builds antigos do Qwen no diffusers tinham problemas com batch size > 1 por causa do padding dos embeddings de texto e do mascaramento de atenção. Os overrides atuais de Qwen no SimpleTuner corrigem os dois pontos, então batches maiores funcionam se a sua VRAM permitir.
+- Aumente `train_batch_size` somente depois de confirmar a folga de memória.
+- Se ainda aparecerem artefatos em uma instalação antiga, atualize e regenere quaisquer text embeds antigos.
 
 #### Quantização
 
