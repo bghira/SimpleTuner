@@ -87,8 +87,8 @@ cp config/config.json.example config/config.json
 - `model_family` - 设置为 `qwen_image`。
 - `model_flavour` - 设置为 `v1.0`。
 - `output_dir` - 设置为您想要存储检查点和验证图像的目录。建议使用完整路径。
-- `train_batch_size` - 必须为 1（批大小 > 1 目前无法正确工作）。
-- `gradient_accumulation_steps` - 设为 2-8 模拟更大 batch。
+- `train_batch_size` - 按可用 VRAM 设置。当前 SimpleTuner 的 Qwen override 已支持大于 1 的批大小。
+- `gradient_accumulation_steps` - 如果想在不增加单步 VRAM 的情况下提升有效 batch，可设为 2-8。
 - `validation_resolution` - 建议 `1024x1024` 或更低，以适应内存限制。
   - 24G 无法处理 1024x1024 验证，需要降低尺寸
   - 其他分辨率可用逗号分隔：`1024x1024,768x768,512x512`
@@ -468,9 +468,9 @@ image.save("output.png", format="PNG")
 
 #### 批大小限制
 
-由于文本编码器的序列长度处理问题，Qwen Image 当前无法使用批大小 > 1。请始终使用：
-- `train_batch_size: 1`
-- `gradient_accumulation_steps: 2-8` 模拟更大 batch
+较旧的 diffusers Qwen 实现曾因文本嵌入 padding 和 attention mask 处理问题而无法稳定使用批大小 > 1。当前 SimpleTuner 的 Qwen override 已同时修复这两条路径，因此在 VRAM 允许时可以使用更大的 batch。
+- 只有在确认显存余量足够后再提高 `train_batch_size`。
+- 如果旧环境里仍然出现伪影，请更新并重新生成旧的 text embeds。
 
 #### 量化
 
