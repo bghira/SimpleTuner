@@ -603,12 +603,12 @@ class QwenDoubleStreamAttnProcessor2_0:
                 true_txt_len = max(true_txt_len, 1)  # at least 1 to avoid empty attn
 
                 # Slice text QKV to actual length (no padding tokens)
-                s_txt_q = txt_query[s:s+1, :true_txt_len, :]
-                s_txt_k = txt_key[s:s+1, :true_txt_len, :]
-                s_txt_v = txt_value[s:s+1, :true_txt_len, :]
-                s_img_q = img_query[s:s+1]
-                s_img_k = img_key[s:s+1]
-                s_img_v = img_value[s:s+1]
+                s_txt_q = txt_query[s : s + 1, :true_txt_len, :]
+                s_txt_k = txt_key[s : s + 1, :true_txt_len, :]
+                s_txt_v = txt_value[s : s + 1, :true_txt_len, :]
+                s_img_q = img_query[s : s + 1]
+                s_img_k = img_key[s : s + 1]
+                s_img_v = img_value[s : s + 1]
 
                 # Joint concat for this sample only
                 s_joint_q = torch.cat([s_txt_q, s_img_q], dim=1)
@@ -634,8 +634,7 @@ class QwenDoubleStreamAttnProcessor2_0:
                 # Zero-pad text output back to seq_txt (the padded batch width)
                 if true_txt_len < seq_txt:
                     pad = torch.zeros(
-                        1, seq_txt - true_txt_len, s_txt_out.shape[-1],
-                        dtype=s_txt_out.dtype, device=s_txt_out.device
+                        1, seq_txt - true_txt_len, s_txt_out.shape[-1], dtype=s_txt_out.dtype, device=s_txt_out.device
                     )
                     s_txt_out = torch.cat([s_txt_out, pad], dim=1)
 
@@ -819,7 +818,11 @@ class QwenImageTransformerBlock(PatchableModule):
         # 2. Applies QK normalization and RoPE
         # 3. Concatenates and runs joint attention
         # 4. Splits results back to separate streams
-        joint_attention_kwargs = joint_attention_kwargs or {}
+        joint_attention_kwargs = dict(joint_attention_kwargs or {})
+        if encoder_hidden_states_mask is None:
+            encoder_hidden_states_mask = joint_attention_kwargs.pop("encoder_hidden_states_mask", None)
+        else:
+            joint_attention_kwargs.pop("encoder_hidden_states_mask", None)
         attn_output = self.attn(
             hidden_states=img_modulated,  # Image stream (will be processed as "sample")
             encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
@@ -1188,9 +1191,9 @@ class QwenImageTransformer2DModel(
         # Construct attention mask for blocks.
         # For batch_size==1: build a joint bool mask [text_mask, all_ones_for_image] once
         # to avoid reconstructing per-block (eliminates 60 GPU syncs, torch.compile safe).
-        # For batch_size>1 with variable text lengths: pass the raw encoder_hidden_states_mask
-        # so the processor can run per-sample attention, slicing each sample to its true
-        # text length and avoiding contamination from padding tokens.
+        # For batch_size>1 with variable text lengths: the block forwards
+        # encoder_hidden_states_mask explicitly to Attention.forward, so only
+        # the single-sample joint attention_mask belongs in joint_attention_kwargs.
         block_attention_kwargs = attention_kwargs.copy() if attention_kwargs is not None else {}
         if encoder_hidden_states_mask is not None:
             batch_size, image_seq_len = hidden_states.shape[:2]
@@ -1199,9 +1202,6 @@ class QwenImageTransformer2DModel(
                 image_mask = torch.ones((batch_size, image_seq_len), dtype=torch.bool, device=hidden_states.device)
                 joint_attention_mask = torch.cat([encoder_hidden_states_mask, image_mask], dim=1)
                 block_attention_kwargs["attention_mask"] = joint_attention_mask
-            else:
-                # Multi-sample: pass raw mask; processor handles per-sample split attention
-                block_attention_kwargs["encoder_hidden_states_mask"] = encoder_hidden_states_mask
 
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
