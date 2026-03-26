@@ -941,6 +941,30 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         # Verify kwargs were passed to attention
         self.assertIn("scale", patched_attn.last_kwargs)
 
+    def test_joint_attention_kwargs_do_not_duplicate_encoder_mask(self):
+        """Duplicate encoder_hidden_states_mask must be stripped before calling attention."""
+        block = QwenImageTransformerBlock(512, 8, 64)
+
+        hidden_states = torch.randn(2, 128, 512)
+        encoder_hidden_states = torch.randn(2, 77, 512)
+        encoder_hidden_states_mask = torch.ones(2, 77)
+        temb = torch.randn(2, 512)
+
+        patched_attn = MockAttention(return_tuple=True, hidden_dim=512)
+        with patch.object(block, "attn", patched_attn):
+            with torch.no_grad():
+                block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,
+                    temb=temb,
+                    joint_attention_kwargs={"encoder_hidden_states_mask": encoder_hidden_states_mask, "scale": 1.0},
+                )
+
+        self.assertIn("encoder_hidden_states_mask", patched_attn.last_kwargs)
+        self.assertIn("scale", patched_attn.last_kwargs)
+        self.assertIs(patched_attn.last_kwargs["encoder_hidden_states_mask"], encoder_hidden_states_mask)
+
     def test_different_qk_norm_options(self):
         """Test different QK normalization options."""
         qk_norm_options = ["rms_norm", "layer_norm", None]
@@ -1197,6 +1221,32 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         )
 
         self.assertIsNotNone(output)
+
+    def test_batch_size_gt_one_does_not_forward_encoder_mask_twice(self):
+        """Batch>1 should keep encoder_hidden_states_mask out of joint_attention_kwargs."""
+        model = self._create_model_or_skip(**self.config)
+
+        for i, _block in enumerate(model.transformer_blocks):
+            model.transformer_blocks[i] = Mock(return_value=(torch.randn(2, 77, 512), torch.randn(2, 256, 512)))
+
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
+        encoder_hidden_states = torch.randn(2, 77, 512)
+        encoder_hidden_states_mask = torch.ones(2, 77)
+        timestep = torch.randint(0, 1000, (2,))
+
+        model(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            timestep=timestep,
+            img_shapes=img_shapes,
+        )
+
+        first_block_kwargs = model.transformer_blocks[0].call_args.kwargs
+        self.assertTrue(
+            torch.equal(first_block_kwargs["encoder_hidden_states_mask"], encoder_hidden_states_mask.to(torch.bool))
+        )
+        self.assertNotIn("encoder_hidden_states_mask", first_block_kwargs["joint_attention_kwargs"])
 
     def test_controlnet_integration(self):
         """Test ControlNet residual integration."""
