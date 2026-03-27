@@ -352,7 +352,7 @@ class LTXVideoDownsampler3d(nn.Module):
 
 
 # Like LTX 1.0 LTXVideoUpsampler3d, but uses new causal Conv3d
-class LTXVideoUpsampler3d(nn.Module):
+class LTX2VideoUpsampler3d(nn.Module):
     def __init__(
         self,
         in_channels: int,
@@ -647,6 +647,7 @@ class LTX2VideoUpBlock3d(nn.Module):
         resnet_eps: float = 1e-6,
         resnet_act_fn: str = "swish",
         spatio_temporal_scale: bool = True,
+        upsample_type: str = "spatiotemporal",
         inject_noise: bool = False,
         timestep_conditioning: bool = False,
         upsample_residual: bool = False,
@@ -676,11 +677,19 @@ class LTX2VideoUpBlock3d(nn.Module):
 
         self.upsamplers = None
         if spatio_temporal_scale:
+            if upsample_type == "spatial":
+                stride = (1, 2, 2)
+            elif upsample_type == "temporal":
+                stride = (2, 1, 1)
+            elif upsample_type == "spatiotemporal":
+                stride = (2, 2, 2)
+            else:
+                raise ValueError(f"Unsupported upsample_type: {upsample_type}")
             self.upsamplers = nn.ModuleList(
                 [
-                    LTXVideoUpsampler3d(
+                    LTX2VideoUpsampler3d(
                         out_channels * upscale_factor,
-                        stride=(2, 2, 2),
+                        stride=stride,
                         residual=upsample_residual,
                         upscale_factor=upscale_factor,
                         spatial_padding_mode=spatial_padding_mode,
@@ -935,6 +944,7 @@ class LTX2VideoDecoder3d(nn.Module):
         is_causal: bool = False,
         inject_noise: Tuple[bool, ...] = (False, False, False),
         timestep_conditioning: bool = False,
+        upsample_type: Tuple[str, ...] = ("spatiotemporal", "spatiotemporal", "spatiotemporal"),
         upsample_residual: Tuple[bool, ...] = (True, True, True),
         upsample_factor: Tuple[bool, ...] = (2, 2, 2),
         spatial_padding_mode: str = "reflect",
@@ -950,6 +960,7 @@ class LTX2VideoDecoder3d(nn.Module):
         spatio_temporal_scaling = tuple(reversed(spatio_temporal_scaling))
         layers_per_block = tuple(reversed(layers_per_block))
         inject_noise = tuple(reversed(inject_noise))
+        upsample_type = tuple(reversed(upsample_type))
         upsample_residual = tuple(reversed(upsample_residual))
         upsample_factor = tuple(reversed(upsample_factor))
         output_channel = block_out_channels[0]
@@ -984,6 +995,7 @@ class LTX2VideoDecoder3d(nn.Module):
                 num_layers=layers_per_block[i + 1],
                 resnet_eps=resnet_norm_eps,
                 spatio_temporal_scale=spatio_temporal_scaling[i],
+                upsample_type=upsample_type[i],
                 inject_noise=inject_noise[i + 1],
                 timestep_conditioning=timestep_conditioning,
                 upsample_residual=upsample_residual[i],
@@ -1067,6 +1079,9 @@ class LTX2VideoDecoder3d(nn.Module):
         return hidden_states
 
 
+LTXVideoUpsampler3d = LTX2VideoUpsampler3d
+
+
 class AutoencoderKLLTX2Video(ModelMixin, AutoencoderMixin, ConfigMixin, FromOriginalModelMixin):
     r"""
     A VAE model with KL loss for encoding images into latents and decoding latent representations into images. Used in
@@ -1129,6 +1144,7 @@ class AutoencoderKLLTX2Video(ModelMixin, AutoencoderMixin, ConfigMixin, FromOrig
         decoder_spatio_temporal_scaling: Tuple[bool, ...] = (True, True, True),
         decoder_inject_noise: Tuple[bool, ...] = (False, False, False, False),
         downsample_type: Tuple[str, ...] = ("spatial", "temporal", "spatiotemporal", "spatiotemporal"),
+        upsample_type: Tuple[str, ...] = ("spatiotemporal", "spatiotemporal", "spatiotemporal"),
         upsample_residual: Tuple[bool, ...] = (True, True, True),
         upsample_factor: Tuple[int, ...] = (2, 2, 2),
         timestep_conditioning: bool = False,
@@ -1171,6 +1187,7 @@ class AutoencoderKLLTX2Video(ModelMixin, AutoencoderMixin, ConfigMixin, FromOrig
             is_causal=decoder_causal,
             timestep_conditioning=timestep_conditioning,
             inject_noise=decoder_inject_noise,
+            upsample_type=upsample_type,
             upsample_residual=upsample_residual,
             upsample_factor=upsample_factor,
             spatial_padding_mode=decoder_spatial_padding_mode,

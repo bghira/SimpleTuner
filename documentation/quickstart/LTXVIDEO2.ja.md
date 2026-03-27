@@ -98,8 +98,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 の主要設定:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev` (デフォルト)、`dev-fp4`、`dev-fp8`。
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`（combined checkpoint の repo）またはローカル `.safetensors` ファイル。
+- `model_flavour`: `dev` (デフォルト)、`dev-fp4`、`dev-fp8`、`2.3`、`2.3-distilled`。
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`、`Lightricks/LTX-2.3`、またはローカル `.safetensors` ファイル。
 - `train_batch_size`: `1`。A100/H100 以外では増やさないでください。
 - `validation_resolution`:
   - `512x768` がテスト向けの安全なデフォルト。
@@ -111,7 +111,8 @@ LTX Video 2 の主要設定:
 - `frame_rate`: デフォルトは 25。
 
 LTX-2 は transformer / video VAE / audio VAE / vocoder を含む `.safetensors` 単体チェックポイントで配布されます。
-SimpleTuner は `model_flavour` (dev/dev-fp4/dev-fp8) に合わせてこの combined ファイルから読み込みます。
+SimpleTuner は `model_flavour` に合わせてこの combined ファイルから読み込み、`2.3` と
+`2.3-distilled` にも対応します。
 
 ### 任意: VRAM 最適化
 

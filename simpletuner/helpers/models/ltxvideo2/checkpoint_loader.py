@@ -13,7 +13,7 @@ from simpletuner.helpers.models.ltxvideo2.audio_autoencoder import AutoencoderKL
 from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
 from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
-from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder
+from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,12 @@ LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT = {
     "scale_shift_table_a2v_ca_audio": "audio_a2v_cross_attn_scale_shift_table",
     "q_norm": "norm_q",
     "k_norm": "norm_k",
+}
+
+LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT = {
+    **LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT,
+    "audio_prompt_adaln_single": "audio_prompt_adaln",
+    "prompt_adaln_single": "prompt_adaln",
 }
 
 LTX_2_0_VIDEO_VAE_RENAME_DICT = {
@@ -52,6 +58,12 @@ LTX_2_0_VIDEO_VAE_RENAME_DICT = {
     "per_channel_statistics.std-of-means": "latents_std",
 }
 
+LTX_2_3_VIDEO_VAE_RENAME_DICT = {
+    **LTX_2_0_VIDEO_VAE_RENAME_DICT,
+    "up_blocks.7": "up_blocks.3.upsamplers.0",
+    "up_blocks.8": "up_blocks.3",
+}
+
 LTX_2_0_AUDIO_VAE_RENAME_DICT: Dict[str, str] = {}
 
 LTX_2_0_VOCODER_RENAME_DICT = {
@@ -59,6 +71,14 @@ LTX_2_0_VOCODER_RENAME_DICT = {
     "resblocks": "resnets",
     "conv_pre": "conv_in",
     "conv_post": "conv_out",
+}
+
+LTX_2_3_VOCODER_RENAME_DICT = {
+    "resblocks": "resnets",
+    "conv_pre": "conv_in",
+    "conv_post": "conv_out",
+    "act_post": "act_out",
+    "downsample.lowpass": "downsample",
 }
 
 LTX_2_0_VAE_SPECIAL_KEYS_REMAP = {
@@ -74,6 +94,17 @@ LTX_2_0_CONNECTORS_KEYS_RENAME_DICT = {
     "audio_embeddings_connector": "audio_connector",
     "transformer_1d_blocks": "transformer_blocks",
     "text_embedding_projection.aggregate_embed": "text_proj_in",
+    "q_norm": "norm_q",
+    "k_norm": "norm_k",
+}
+
+LTX_2_3_CONNECTORS_KEYS_RENAME_DICT = {
+    "connectors.": "",
+    "video_embeddings_connector": "video_connector",
+    "audio_embeddings_connector": "audio_connector",
+    "transformer_1d_blocks": "transformer_blocks",
+    "text_embedding_projection.audio_aggregate_embed": "audio_text_proj_in",
+    "text_embedding_projection.video_aggregate_embed": "video_text_proj_in",
     "q_norm": "norm_q",
     "k_norm": "norm_k",
 }
@@ -111,6 +142,17 @@ def _convert_ltx2_audio_vae_per_channel_statistics(key: str, state_dict: Dict[st
         update_state_dict_inplace(state_dict, key, new_key)
 
 
+def _convert_ltx2_3_vocoder_upsamplers(key: str, state_dict: Dict[str, Any]) -> None:
+    if ".weight" not in key and ".bias" not in key:
+        return
+    if key.startswith("ups."):
+        new_key = key.replace("ups.", "upsamplers.", 1)
+        update_state_dict_inplace(state_dict, key, new_key)
+    elif ".ups." in key:
+        new_key = key.replace(".ups.", ".upsamplers.")
+        update_state_dict_inplace(state_dict, key, new_key)
+
+
 def _split_transformer_and_connector_state_dict(
     state_dict: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -118,11 +160,13 @@ def _split_transformer_and_connector_state_dict(
         "video_embeddings_connector",
         "audio_embeddings_connector",
         "transformer_1d_blocks",
-        "text_embedding_projection.aggregate_embed",
+        "text_embedding_projection",
         "connectors.",
         "video_connector",
         "audio_connector",
         "text_proj_in",
+        "video_text_proj_in",
+        "audio_text_proj_in",
     )
     transformer_state_dict, connector_state_dict = {}, {}
     for key, value in state_dict.items():
@@ -140,9 +184,9 @@ def get_model_state_dict_from_combined_ckpt(combined_ckpt: Dict[str, Any], prefi
         if param_name.startswith(prefix):
             model_state_dict[param_name.replace(prefix, "")] = param
     if prefix == "model.diffusion_model.":
-        connector_key = "text_embedding_projection.aggregate_embed.weight"
-        if connector_key in combined_ckpt and connector_key not in model_state_dict:
-            model_state_dict[connector_key] = combined_ckpt[connector_key]
+        for param_name, param in combined_ckpt.items():
+            if param_name.startswith("text_embedding_projection") and param_name not in model_state_dict:
+                model_state_dict[param_name] = param
     return model_state_dict
 
 
@@ -160,9 +204,9 @@ def load_ltx2_state_dict_from_checkpoint(checkpoint_path: str, prefix: str) -> D
                 if key.startswith(prefix):
                     state_dict[key.replace(prefix, "")] = handle.get_tensor(key)
             if prefix == "model.diffusion_model.":
-                connector_key = "text_embedding_projection.aggregate_embed.weight"
-                if connector_key in keys and connector_key not in state_dict:
-                    state_dict[connector_key] = handle.get_tensor(connector_key)
+                for key in keys:
+                    if key.startswith("text_embedding_projection") and key not in state_dict:
+                        state_dict[key] = handle.get_tensor(key)
         return state_dict
 
     combined_ckpt = torch.load(checkpoint_path, map_location="cpu")
@@ -307,6 +351,8 @@ def _get_ltx2_transformer_config(version: str, overrides: Dict[str, Any] | None 
             "pos_embed_max_pos": 20,
             "base_height": 2048,
             "base_width": 2048,
+            "gated_attn": False,
+            "cross_attn_mod": False,
             "audio_in_channels": 128,
             "audio_out_channels": 128,
             "audio_patch_size": 1,
@@ -318,6 +364,8 @@ def _get_ltx2_transformer_config(version: str, overrides: Dict[str, Any] | None 
             "audio_pos_embed_max_pos": 20,
             "audio_sampling_rate": 16000,
             "audio_hop_length": 160,
+            "audio_gated_attn": False,
+            "audio_cross_attn_mod": False,
             "num_layers": 48,
             "activation_fn": "gelu-approximate",
             "qk_norm": "rms_norm_across_heads",
@@ -332,6 +380,53 @@ def _get_ltx2_transformer_config(version: str, overrides: Dict[str, Any] | None 
             "timestep_scale_multiplier": 1000,
             "cross_attn_timestep_scale_multiplier": 1000,
             "rope_type": "split",
+            "use_prompt_embeddings": True,
+            "perturbed_attn": False,
+        }
+    elif version == "2.3":
+        diffusers_config = {
+            "in_channels": 128,
+            "out_channels": 128,
+            "patch_size": 1,
+            "patch_size_t": 1,
+            "num_attention_heads": 32,
+            "attention_head_dim": 128,
+            "cross_attention_dim": 4096,
+            "vae_scale_factors": (8, 32, 32),
+            "pos_embed_max_pos": 20,
+            "base_height": 2048,
+            "base_width": 2048,
+            "gated_attn": True,
+            "cross_attn_mod": True,
+            "audio_in_channels": 128,
+            "audio_out_channels": 128,
+            "audio_patch_size": 1,
+            "audio_patch_size_t": 1,
+            "audio_num_attention_heads": 32,
+            "audio_attention_head_dim": 64,
+            "audio_cross_attention_dim": 2048,
+            "audio_scale_factor": 4,
+            "audio_pos_embed_max_pos": 20,
+            "audio_sampling_rate": 16000,
+            "audio_hop_length": 160,
+            "audio_gated_attn": True,
+            "audio_cross_attn_mod": True,
+            "num_layers": 48,
+            "activation_fn": "gelu-approximate",
+            "qk_norm": "rms_norm_across_heads",
+            "norm_elementwise_affine": False,
+            "norm_eps": 1e-6,
+            "caption_channels": 3840,
+            "attention_bias": True,
+            "attention_out_bias": True,
+            "rope_theta": 10000.0,
+            "rope_double_precision": True,
+            "causal_offset": 1,
+            "timestep_scale_multiplier": 1000,
+            "cross_attn_timestep_scale_multiplier": 1000,
+            "rope_type": "split",
+            "use_prompt_embeddings": False,
+            "perturbed_attn": True,
         }
     else:
         raise ValueError(f"Unsupported LTX-2 transformer version: {version}")
@@ -367,15 +462,43 @@ def _get_ltx2_connectors_config(version: str) -> Dict[str, Any]:
             "video_connector_attention_head_dim": 128,
             "video_connector_num_layers": 2,
             "video_connector_num_learnable_registers": 128,
+            "video_gated_attn": False,
             "audio_connector_num_attention_heads": 30,
             "audio_connector_attention_head_dim": 128,
             "audio_connector_num_layers": 2,
             "audio_connector_num_learnable_registers": 128,
+            "audio_gated_attn": False,
             "connector_rope_base_seq_len": 4096,
             "rope_theta": 10000.0,
             "rope_double_precision": True,
             "causal_temporal_positioning": False,
             "rope_type": "split",
+            "per_modality_projections": False,
+            "proj_bias": False,
+        }
+    if version == "2.3":
+        return {
+            "caption_channels": 3840,
+            "text_proj_in_factor": 49,
+            "video_connector_num_attention_heads": 32,
+            "video_connector_attention_head_dim": 128,
+            "video_connector_num_layers": 8,
+            "video_connector_num_learnable_registers": 128,
+            "video_gated_attn": True,
+            "audio_connector_num_attention_heads": 32,
+            "audio_connector_attention_head_dim": 64,
+            "audio_connector_num_layers": 8,
+            "audio_connector_num_learnable_registers": 128,
+            "audio_gated_attn": True,
+            "connector_rope_base_seq_len": 4096,
+            "rope_theta": 10000.0,
+            "rope_double_precision": True,
+            "causal_temporal_positioning": False,
+            "rope_type": "split",
+            "per_modality_projections": True,
+            "video_hidden_dim": 4096,
+            "audio_hidden_dim": 2048,
+            "proj_bias": True,
         }
     raise ValueError(f"Unsupported LTX-2 connectors version: {version}")
 
@@ -400,6 +523,7 @@ def _get_ltx2_video_vae_config(version: str) -> Dict[str, Any]:
             "decoder_spatio_temporal_scaling": (True, True, True),
             "decoder_inject_noise": (False, False, False, False),
             "downsample_type": ("spatial", "temporal", "spatiotemporal", "spatiotemporal"),
+            "upsample_type": ("spatiotemporal", "spatiotemporal", "spatiotemporal"),
             "upsample_residual": (True, True, True),
             "upsample_factor": (2, 2, 2),
             "timestep_conditioning": False,
@@ -413,13 +537,46 @@ def _get_ltx2_video_vae_config(version: str) -> Dict[str, Any]:
             "spatial_compression_ratio": 32,
             "temporal_compression_ratio": 8,
         }
+    if version == "2.3":
+        return {
+            "in_channels": 3,
+            "out_channels": 3,
+            "latent_channels": 128,
+            "block_out_channels": (256, 512, 1024, 1024),
+            "down_block_types": (
+                "LTX2VideoDownBlock3D",
+                "LTX2VideoDownBlock3D",
+                "LTX2VideoDownBlock3D",
+                "LTX2VideoDownBlock3D",
+            ),
+            "decoder_block_out_channels": (256, 512, 512, 1024),
+            "layers_per_block": (4, 6, 4, 2, 2),
+            "decoder_layers_per_block": (4, 6, 4, 2, 2),
+            "spatio_temporal_scaling": (True, True, True, True),
+            "decoder_spatio_temporal_scaling": (True, True, True, True),
+            "decoder_inject_noise": (False, False, False, False, False),
+            "downsample_type": ("spatial", "temporal", "spatiotemporal", "spatiotemporal"),
+            "upsample_type": ("spatiotemporal", "spatiotemporal", "temporal", "spatial"),
+            "upsample_residual": (False, False, False, False),
+            "upsample_factor": (2, 2, 1, 2),
+            "timestep_conditioning": False,
+            "patch_size": 4,
+            "patch_size_t": 1,
+            "resnet_norm_eps": 1e-6,
+            "encoder_causal": True,
+            "decoder_causal": False,
+            "encoder_spatial_padding_mode": "zeros",
+            "decoder_spatial_padding_mode": "zeros",
+            "spatial_compression_ratio": 32,
+            "temporal_compression_ratio": 8,
+        }
     raise ValueError(f"Unsupported LTX-2 video VAE version: {version}")
 
 
 def _get_ltx2_audio_vae_config(version: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
     if overrides:
         return overrides
-    if version == "2.0":
+    if version in {"2.0", "2.3"}:
         return {
             "base_channels": 128,
             "output_channels": 2,
@@ -451,8 +608,49 @@ def _get_ltx2_vocoder_config(version: str) -> Dict[str, Any]:
             "upsample_factors": [6, 5, 2, 2, 2],
             "resnet_kernel_sizes": [3, 7, 11],
             "resnet_dilations": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+            "act_fn": "leaky_relu",
             "leaky_relu_negative_slope": 0.1,
+            "antialias": False,
+            "final_act_fn": "tanh",
+            "final_bias": True,
             "output_sampling_rate": 24000,
+        }
+    if version == "2.3":
+        return {
+            "in_channels": 128,
+            "hidden_channels": 1536,
+            "out_channels": 2,
+            "upsample_kernel_sizes": [11, 4, 4, 4, 4, 4],
+            "upsample_factors": [5, 2, 2, 2, 2, 2],
+            "resnet_kernel_sizes": [3, 7, 11],
+            "resnet_dilations": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+            "act_fn": "snakebeta",
+            "leaky_relu_negative_slope": 0.1,
+            "antialias": True,
+            "antialias_ratio": 2,
+            "antialias_kernel_size": 12,
+            "final_act_fn": None,
+            "final_bias": False,
+            "bwe_in_channels": 128,
+            "bwe_hidden_channels": 512,
+            "bwe_out_channels": 2,
+            "bwe_upsample_kernel_sizes": [12, 11, 4, 4, 4],
+            "bwe_upsample_factors": [6, 5, 2, 2, 2],
+            "bwe_resnet_kernel_sizes": [3, 7, 11],
+            "bwe_resnet_dilations": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+            "bwe_act_fn": "snakebeta",
+            "bwe_leaky_relu_negative_slope": 0.1,
+            "bwe_antialias": True,
+            "bwe_antialias_ratio": 2,
+            "bwe_antialias_kernel_size": 12,
+            "bwe_final_act_fn": None,
+            "bwe_final_bias": False,
+            "filter_length": 512,
+            "hop_length": 80,
+            "window_length": 512,
+            "num_mel_channels": 64,
+            "input_sampling_rate": 16000,
+            "output_sampling_rate": 48000,
         }
     raise ValueError(f"Unsupported LTX-2 vocoder version: {version}")
 
@@ -473,7 +671,8 @@ def convert_ltx2_transformer(
     with init_empty_weights():
         transformer = LTX2VideoTransformer3DModel.from_config(diffusers_config)
 
-    _apply_remap_rules(transformer_state_dict, LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT, special_keys_remap)
+    rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT if version == "2.3" else LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
+    _apply_remap_rules(transformer_state_dict, rename_dict, special_keys_remap)
     transformer.load_state_dict(transformer_state_dict, strict=True, assign=True)
     return transformer
 
@@ -487,7 +686,8 @@ def convert_ltx2_connectors(original_state_dict: Dict[str, Any], version: str) -
     with init_empty_weights():
         connectors = LTX2TextConnectors.from_config(diffusers_config)
 
-    _apply_remap_rules(connector_state_dict, LTX_2_0_CONNECTORS_KEYS_RENAME_DICT, {})
+    rename_dict = LTX_2_3_CONNECTORS_KEYS_RENAME_DICT if version == "2.3" else LTX_2_0_CONNECTORS_KEYS_RENAME_DICT
+    _apply_remap_rules(connector_state_dict, rename_dict, {})
     connectors.load_state_dict(connector_state_dict, strict=True, assign=True)
     return connectors
 
@@ -496,7 +696,8 @@ def convert_ltx2_video_vae(original_state_dict: Dict[str, Any], version: str) ->
     diffusers_config = _get_ltx2_video_vae_config(version)
     with init_empty_weights():
         vae = AutoencoderKLLTX2Video.from_config(diffusers_config)
-    _apply_remap_rules(original_state_dict, LTX_2_0_VIDEO_VAE_RENAME_DICT, LTX_2_0_VAE_SPECIAL_KEYS_REMAP)
+    rename_dict = LTX_2_3_VIDEO_VAE_RENAME_DICT if version == "2.3" else LTX_2_0_VIDEO_VAE_RENAME_DICT
+    _apply_remap_rules(original_state_dict, rename_dict, LTX_2_0_VAE_SPECIAL_KEYS_REMAP)
     vae.load_state_dict(original_state_dict, strict=True, assign=True)
     return vae
 
@@ -538,10 +739,13 @@ def convert_ltx2_audio_vae(
     return vae
 
 
-def convert_ltx2_vocoder(original_state_dict: Dict[str, Any], version: str) -> LTX2Vocoder:
+def convert_ltx2_vocoder(original_state_dict: Dict[str, Any], version: str) -> LTX2Vocoder | LTX2VocoderWithBWE:
     diffusers_config = _get_ltx2_vocoder_config(version)
     with init_empty_weights():
-        vocoder = LTX2Vocoder.from_config(diffusers_config)
-    _apply_remap_rules(original_state_dict, LTX_2_0_VOCODER_RENAME_DICT, LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP)
+        vocoder_cls = LTX2VocoderWithBWE if version == "2.3" else LTX2Vocoder
+        vocoder = vocoder_cls.from_config(diffusers_config)
+    rename_dict = LTX_2_3_VOCODER_RENAME_DICT if version == "2.3" else LTX_2_0_VOCODER_RENAME_DICT
+    special_keys = {"ups.": _convert_ltx2_3_vocoder_upsamplers} if version == "2.3" else LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
+    _apply_remap_rules(original_state_dict, rename_dict, special_keys)
     vocoder.load_state_dict(original_state_dict, strict=True, assign=True)
     return vocoder
