@@ -5706,6 +5706,12 @@ class Trainer:
                         if "prodigy" in self.config.optimizer:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.optimizer.param_groups[0]["d"]
+                            # Log Prodigy's adaptive step-size for diagnostics
+                            _pg = self.optimizer.param_groups[0]
+                            _prodigy_d = float(_pg.get("d", 0.0))
+                            _prodigy_elr = float(_prodigy_d * _pg.get("lr", 1.0))
+                            wandb_logs["prodigy_d"] = _prodigy_d
+                            wandb_logs["prodigy_effective_lr"] = _prodigy_elr
                         elif self.config.is_lr_scheduler_disabled:
                             # Alternative method for retrieving LR from accelerated optimizers
                             self.lr = StateTracker.get_last_lr()
@@ -5941,6 +5947,14 @@ class Trainer:
                     "lr": float(self.lr),
                 }
                 progress_logs = dict(logs)
+                if "prodigy" in self.config.optimizer:
+                    _pg = self.optimizer.param_groups[0]
+                    _d_val = float(_pg.get("d", 0.0))
+                    _elr_val = round(float(_d_val * _pg.get("lr", 1.0)), 8)
+                    logs["prodigy_d"] = round(_d_val, 6)
+                    logs["prodigy_effective_lr"] = _elr_val
+                    progress_logs["prodigy_d"] = round(_d_val, 6)
+                    progress_logs["prodigy_effective_lr"] = _elr_val
                 if loss_logs is not None:
                     logs.update(loss_logs)
                     if "video_loss" in loss_logs:
