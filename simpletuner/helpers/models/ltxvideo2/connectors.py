@@ -54,6 +54,17 @@ def per_token_rms_norm(text_encoder_hidden_states: torch.Tensor, eps: float = 1e
 
 
 def normalize_attention_mask(attention_mask: torch.Tensor, additive_mask: bool = False) -> torch.Tensor:
+    if attention_mask.ndim == 1:
+        attention_mask = attention_mask.unsqueeze(0)
+    elif attention_mask.ndim > 2:
+        for dim in range(attention_mask.ndim - 2, 0, -1):
+            if attention_mask.shape[dim] == 1:
+                attention_mask = attention_mask.squeeze(dim)
+        if attention_mask.ndim != 2:
+            raise ValueError(
+                f"Expected attention mask to reduce to shape [batch, seq_len], got {tuple(attention_mask.shape)}"
+            )
+
     if additive_mask:
         return (attention_mask >= 0).to(torch.int64)
     if attention_mask.dtype == torch.bool:

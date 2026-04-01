@@ -3,7 +3,9 @@ import os
 import threading
 from typing import Optional, Sequence
 
+import safetensors.torch
 import torch
+from accelerate import init_empty_weights
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
@@ -19,6 +21,7 @@ from simpletuner.helpers.models.ltxvideo2 import (
 from simpletuner.helpers.models.ltxvideo2.audio_autoencoder import AutoencoderKLLTX2Audio
 from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
 from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
+    _get_ltx2_video_vae_config,
     convert_ltx2_audio_vae,
     convert_ltx2_connectors,
     convert_ltx2_transformer,
@@ -49,10 +52,8 @@ LTX2_FLAVOUR_FILENAMES = {
     "dev-fp8": "ltx-2-19b-dev-fp8.safetensors",
     "2.0": "ltx-2-19b-dev.safetensors",
     "2": "ltx-2-19b-dev.safetensors",
-    "2.3": "ltx-2.3-22b-dev.safetensors",
     "2.3-dev": "ltx-2.3-22b-dev.safetensors",
     "2.3-distilled": "ltx-2.3-22b-distilled.safetensors",
-    "distilled": "ltx-2.3-22b-distilled.safetensors",
 }
 LTX2_TRANSFORMER_PREFIX = "model.diffusion_model."
 LTX2_VIDEO_VAE_PREFIX = "vae."
@@ -108,10 +109,8 @@ class LTXVideo2(VideoModelFoundation):
         "dev": "Lightricks/LTX-2",
         "dev-fp4": "Lightricks/LTX-2",
         "dev-fp8": "Lightricks/LTX-2",
-        "2.3": "Lightricks/LTX-2.3",
-        "2.3-dev": "Lightricks/LTX-2.3",
-        "2.3-distilled": "Lightricks/LTX-2.3",
-        "distilled": "Lightricks/LTX-2.3",
+        "2.3-dev": "dg845/LTX-2.3-Diffusers",
+        "2.3-distilled": "dg845/LTX-2.3-Distilled-Diffusers",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -239,8 +238,6 @@ class LTXVideo2(VideoModelFoundation):
             flavour_value = str(flavour).strip().lower()
             if flavour_value in {"2.0", "2"}:
                 self.config.model_flavour = "dev"
-            elif flavour_value == "2.3-dev":
-                self.config.model_flavour = "2.3"
         super().setup_model_flavour()
 
     @classmethod
@@ -304,7 +301,7 @@ class LTXVideo2(VideoModelFoundation):
         flavour_value = str(flavour).strip().lower()
         if flavour_value in {"2", "2.0", "dev", "dev-fp4", "dev-fp8"}:
             return "2.0"
-        if flavour_value in {"2.3", "2.3-dev", "2.3-distilled", "distilled"}:
+        if flavour_value in {"2.3-dev", "2.3-distilled"}:
             return "2.3"
         if flavour_value == "test":
             return "test"
@@ -512,6 +509,66 @@ class LTXVideo2(VideoModelFoundation):
         self.vae = convert_ltx2_video_vae(state_dict, version=self._resolve_ltx2_version())
         del state_dict
 
+    def _resolve_diffusers_component_file(self, base_path: str, component_subfolder: str, filename: str) -> str:
+        if os.path.isdir(base_path):
+            candidates = (
+                os.path.join(base_path, component_subfolder, filename),
+                os.path.join(base_path, filename),
+            )
+            for candidate in candidates:
+                if os.path.isfile(candidate):
+                    return candidate
+            raise ValueError(f"Could not find {component_subfolder}/{filename} under {base_path}.")
+
+        return hf_hub_download(
+            repo_id=base_path,
+            filename=f"{component_subfolder}/{filename}",
+            revision=self.config.revision,
+        )
+
+    def _resolve_diffusers_component_weight_file(self, base_path: str, component_subfolder: str) -> str:
+        variant = getattr(self.config, "variant", None)
+        filenames = []
+        if variant:
+            filenames.append(f"diffusion_pytorch_model.{variant}.safetensors")
+        filenames.append("diffusion_pytorch_model.safetensors")
+
+        last_error = None
+        for filename in filenames:
+            try:
+                return self._resolve_diffusers_component_file(base_path, component_subfolder, filename)
+            except (EntryNotFoundError, ValueError) as exc:
+                last_error = exc
+
+        raise ValueError(f"Could not resolve {component_subfolder} weights for {base_path}.") from last_error
+
+    def _load_video_vae_from_diffusers_repo(self):
+        if self.vae is not None:
+            return
+
+        vae_path = (
+            getattr(self.config, "pretrained_vae_model_name_or_path", None) or self.config.pretrained_model_name_or_path
+        )
+        if vae_path is None:
+            raise ValueError("Unable to resolve video VAE path for LTX-2.")
+
+        logger.info("Loading LTX-2 video VAE from Diffusers source %s with corrected 2.3 config", vae_path)
+        weight_path = self._resolve_diffusers_component_weight_file(vae_path, "vae")
+        state_dict = safetensors.torch.load_file(weight_path, device="cpu")
+        diffusers_config = _get_ltx2_video_vae_config("2.3")
+        with init_empty_weights():
+            vae = self.AUTOENCODER_CLASS.from_config(diffusers_config)
+        vae.load_state_dict(state_dict, strict=True, assign=True)
+        vae.register_to_config(_name_or_path=vae_path)
+        self.vae = vae
+        self.config.vae_kwargs = {
+            "pretrained_model_name_or_path": vae_path,
+            "subfolder": "vae",
+            "revision": self.config.revision,
+            "force_upcast": False,
+            "variant": self.config.variant,
+        }
+
     def _configure_video_vae_settings(self, move_to_device: bool = True):
         if self.vae is None:
             raise ValueError("Video VAE must be loaded before applying configuration.")
@@ -554,6 +611,10 @@ class LTXVideo2(VideoModelFoundation):
     def load_vae(self, move_to_device: bool = True):
         if self._uses_combined_checkpoint():
             self._load_video_vae_from_combined()
+            self._configure_video_vae_settings(move_to_device=move_to_device)
+            self.post_vae_load_setup()
+        elif self._resolve_ltx2_version() == "2.3":
+            self._load_video_vae_from_diffusers_repo()
             self._configure_video_vae_settings(move_to_device=move_to_device)
             self.post_vae_load_setup()
         else:

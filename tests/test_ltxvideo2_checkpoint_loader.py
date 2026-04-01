@@ -5,12 +5,14 @@ import unittest
 import safetensors.torch
 import torch
 
+from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
 from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
     _apply_remap_rules,
     _convert_ltx2_3_vocoder_upsamplers,
     _extract_audio_vae_config_from_metadata,
     _get_ltx2_connectors_config,
     _get_ltx2_transformer_config,
+    _get_ltx2_video_vae_config,
     _get_ltx2_vocoder_config,
     get_model_state_dict_from_combined_ckpt,
     load_ltx2_state_dict_from_checkpoint,
@@ -132,6 +134,31 @@ class TestLTX2CheckpointLoader(unittest.TestCase):
         self.assertTrue(connectors_config["video_gated_attn"])
         self.assertEqual(vocoder_config["output_sampling_rate"], 48000)
         self.assertEqual(vocoder_config["bwe_hidden_channels"], 512)
+
+    def test_ltx2_3_video_vae_config_matches_decoder_checkpoint_layout(self):
+        config = _get_ltx2_video_vae_config("2.3")
+        vae = AutoencoderKLLTX2Video.from_config(config)
+
+        self.assertEqual(config["upsample_type"], ("spatial", "temporal", "spatiotemporal", "spatiotemporal"))
+        self.assertEqual(config["upsample_residual"], (True, True, True, True))
+        self.assertEqual(config["decoder_spatial_padding_mode"], "reflect")
+        self.assertEqual(
+            [block.upsamplers[0].stride for block in vae.decoder.up_blocks],
+            [(2, 2, 2), (2, 2, 2), (2, 1, 1), (1, 2, 2)],
+        )
+        self.assertEqual(
+            [block.upsamplers[0].residual for block in vae.decoder.up_blocks],
+            [True, True, True, True],
+        )
+        self.assertEqual(
+            [tuple(block.upsamplers[0].conv.conv.weight.shape) for block in vae.decoder.up_blocks],
+            [
+                (4096, 1024, 3, 3, 3),
+                (4096, 512, 3, 3, 3),
+                (512, 512, 3, 3, 3),
+                (512, 256, 3, 3, 3),
+            ],
+        )
 
     def test_vocoder_upsampler_remap_handles_root_level_keys(self):
         state_dict = {
