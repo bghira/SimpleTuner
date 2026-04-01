@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -65,11 +67,66 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertEqual(self.model._resolve_ltx2_version(), "2.3")
         self.assertEqual(self.model._resolve_ltx2_combined_filename(), "ltx-2.3-22b-distilled.safetensors")
 
-    def test_model_config_path_uses_ltx23_repo_for_single_file(self):
-        self.model.config.model_flavour = "2.3"
+    def test_model_config_path_uses_ltx23_dev_repo_for_single_file(self):
+        self.model.config.model_flavour = "2.3-dev"
         self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-dev.safetensors"
 
-        self.assertEqual(self.model._model_config_path(), "Lightricks/LTX-2.3")
+        self.assertEqual(self.model._model_config_path(), "dg845/LTX-2.3-Diffusers")
+
+    def test_model_config_path_uses_ltx23_distilled_repo_for_single_file(self):
+        self.model.config.model_flavour = "2.3-distilled"
+        self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-distilled.safetensors"
+
+        self.assertEqual(self.model._model_config_path(), "dg845/LTX-2.3-Distilled-Diffusers")
+
+    def test_legacy_ltx23_aliases_are_rejected(self):
+        for flavour in ("2.3", "distilled"):
+            with self.subTest(flavour=flavour):
+                self.model.config.model_flavour = flavour
+                with self.assertRaisesRegex(ValueError, "Unsupported LTX-2 model flavour"):
+                    self.model._resolve_ltx2_version()
+
+    def test_load_video_vae_from_diffusers_repo_uses_corrected_ltx23_config(self):
+        self.model.config.model_flavour = "2.3-dev"
+        self.model.config.pretrained_model_name_or_path = "dg845/LTX-2.3-Diffusers"
+        self.model.config.pretrained_vae_model_name_or_path = "dg845/LTX-2.3-Diffusers"
+        state_dict = {"dummy": torch.zeros(1)}
+        fake_vae = MagicMock()
+
+        with (
+            patch("simpletuner.helpers.models.ltxvideo2.model.hf_hub_download", return_value="/tmp/vae.safetensors"),
+            patch("simpletuner.helpers.models.ltxvideo2.model.safetensors.torch.load_file", return_value=state_dict),
+            patch.object(self.model.AUTOENCODER_CLASS, "from_config", return_value=fake_vae) as mock_from_config,
+        ):
+            self.model._load_video_vae_from_diffusers_repo()
+
+        self.assertEqual(
+            mock_from_config.call_args.args[0]["upsample_type"],
+            ("spatial", "temporal", "spatiotemporal", "spatiotemporal"),
+        )
+        self.assertEqual(
+            mock_from_config.call_args.args[0]["upsample_residual"],
+            (True, True, True, True),
+        )
+        self.assertEqual(
+            mock_from_config.call_args.args[0]["decoder_spatial_padding_mode"],
+            "reflect",
+        )
+        fake_vae.load_state_dict.assert_called_once_with(state_dict, strict=True, assign=True)
+        fake_vae.register_to_config.assert_called_once_with(_name_or_path="dg845/LTX-2.3-Diffusers")
+        self.assertIs(self.model.vae, fake_vae)
+
+
+class TestLTXVideo2Metadata(unittest.TestCase):
+    def test_model_metadata_exposes_only_named_ltx23_flavours(self):
+        metadata_path = Path(__file__).parent.parent.parent / "simpletuner/helpers/models/model_metadata.json"
+        with open(metadata_path) as handle:
+            metadata = json.load(handle)
+
+        self.assertEqual(
+            metadata["ltxvideo2"]["flavour_choices"],
+            ["dev", "dev-fp4", "dev-fp8", "2.3-dev", "2.3-distilled"],
+        )
 
 
 class TestLTXVideo2TransformerLoading(unittest.TestCase):

@@ -18,7 +18,9 @@
         "flavour_choices": [
             "dev",
             "dev-fp4",
-            "dev-fp8"
+            "dev-fp8",
+            "2.3-dev",
+            "2.3-distilled"
         ]
     },
     "sana": {

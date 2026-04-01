@@ -27,34 +27,43 @@
                 </select>
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('downsample', 'target')">
-                <label class="form-label small">Downsample Target <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_image_size-and-target_downsample_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Downsample Target <span class="text-muted">(optional)</span> <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_image_size-and-target_downsample_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        x-model.number.lazy="editingDataset.target_downsample_size"
                        min="0"
                        step="1"
                        @input="markAsUnsaved()"
-                       placeholder="Auto">
+                       placeholder="Leave empty to keep original size">
+                <div class="form-text small text-muted">
+                    Optional. Only used when a max size is also set.
+                </div>
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('min', 'size', 'minimum')">
-                <label class="form-label small">Min Size <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#minimum_image_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Min Size <span class="text-muted">(optional)</span> <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#minimum_image_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        x-model.number.lazy="editingDataset.minimum_image_size"
                        min="0"
                        step="1"
                        @input="markAsUnsaved()"
-                       placeholder="0 (no minimum)">
+                       placeholder="Leave empty for no minimum">
+                <div class="form-text small text-muted">
+                    Optional. Skip this unless you want to reject undersized images.
+                </div>
             </div>
             <div class="col-md-4" x-show="matchesParamFilter('max', 'size', 'maximum')">
-                <label class="form-label small">Max Size <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_image_size-and-target_downsample_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <label class="form-label small">Max Size <span class="text-muted">(optional)</span> <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#maximum_image_size-and-target_downsample_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        x-model.number.lazy="editingDataset.maximum_image_size"
                        min="0"
                        step="1"
                        @input="markAsUnsaved()"
-                       placeholder="0 (no maximum)">
+                       placeholder="Leave empty for no maximum">
+                <div class="form-text small text-muted">
+                    Optional. Set this only if you want to clamp oversized images before cropping.
+                </div>
             </div>
         </div>
     </div>
