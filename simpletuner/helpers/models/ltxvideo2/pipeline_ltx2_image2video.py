@@ -1301,6 +1301,8 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
                             audio_encoder_hidden_states=connector_audio_prompt_embeds,
                             timestep=video_timestep,
                             audio_timestep=timestep,
+                            sigma=video_timestep,
+                            audio_sigma=timestep,
                             encoder_attention_mask=connector_attention_mask,
                             audio_encoder_attention_mask=connector_attention_mask,
                             num_frames=latent_num_frames,
@@ -1311,6 +1313,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
                             video_coords=video_coords,
                             audio_coords=audio_coords,
                             audio_only=audio_only,
+                            use_cross_timestep=False,
                             attention_kwargs=attention_kwargs,
                             return_dict=False,
                         )

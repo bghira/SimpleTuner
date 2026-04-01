@@ -97,8 +97,8 @@ cp config/config.json.example config/config.json
 Ajustes clave para LTX Video 2:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev` (predeterminado), `dev-fp4` o `dev-fp8`.
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2` (repositorio con el checkpoint combinado) o un archivo `.safetensors` local.
+- `model_flavour`: `dev` (predeterminado), `dev-fp4`, `dev-fp8`, `2.3-dev` o `2.3-distilled`.
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`, `dg845/LTX-2.3-Diffusers`, `dg845/LTX-2.3-Distilled-Diffusers` o un archivo `.safetensors` local.
 - `train_batch_size`: `1`. No aumentes esto a menos que tengas una A100/H100.
 - `validation_resolution`:
   - `512x768` es un valor seguro para pruebas.
@@ -109,8 +109,9 @@ Ajustes clave para LTX Video 2:
 - `validation_guidance`: `5.0`.
 - `frame_rate`: Por defecto es 25.
 
-LTX-2 se distribuye como un único checkpoint `.safetensors` que incluye el transformer, el VAE de video,
-el VAE de audio y el vocoder. SimpleTuner carga directamente desde ese archivo combinado según `model_flavour` (dev/dev-fp4/dev-fp8).
+Las variantes LTX-2 2.0 se distribuyen como un único checkpoint `.safetensors` que incluye el transformer, el VAE de video,
+el VAE de audio y el vocoder. Para LTX-2.3, SimpleTuner carga el repositorio Diffusers correspondiente según `model_flavour`
+(`2.3-dev` o `2.3-distilled`).
 
 ### Opcional: optimizaciones de VRAM
 
