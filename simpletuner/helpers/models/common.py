@@ -114,8 +114,12 @@ upstream_config_sources = {
 }
 
 
+def _path_has_suffix(model_path: Any, suffixes: tuple[str, ...]) -> bool:
+    return isinstance(model_path, str) and model_path.lower().endswith(suffixes)
+
+
 def get_model_config_path(model_family: str, model_path: str):
-    if model_path is not None and model_path.endswith((".safetensors", ".gguf")):
+    if _path_has_suffix(model_path, (".safetensors", ".gguf")):
         if model_family in upstream_config_sources:
             return upstream_config_sources[model_family]
         else:
@@ -141,7 +145,7 @@ def get_hf_cache_repo_path(model_path: str) -> Optional[str]:
         return None
 
     # Skip single-file checkpoints
-    if isinstance(model_path, str) and model_path.endswith((".safetensors", ".gguf")):
+    if _path_has_suffix(model_path, (".safetensors", ".gguf")):
         return None
 
     # Skip local paths
@@ -1616,7 +1620,7 @@ class ModelFoundation(ABC):
 
     def _single_file_checkpoint_path(self) -> Optional[str]:
         model_path = getattr(self.config, "pretrained_model_name_or_path", None)
-        if isinstance(model_path, str) and model_path.endswith(".safetensors"):
+        if _path_has_suffix(model_path, (".safetensors",)):
             return model_path
         return None
 
@@ -2185,8 +2189,12 @@ class ModelFoundation(ABC):
                             self.accelerator.device,
                             dtype=self.config.weight_dtype,
                         )
+                if hasattr(text_encoder, "eval"):
+                    text_encoder.eval()
+                text_encoder.requires_grad_(False)
                 self.text_encoders.append(text_encoder)
                 setattr(self, attr_name, text_encoder)
+                setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
             return
 
         # Track if we should store cache paths for text encoder deletion
@@ -2607,11 +2615,9 @@ class ModelFoundation(ABC):
                 StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
                 logger.info(f"load_model: registered {component_key} cache path: {cache_repo_path}")
 
-        is_safetensors = isinstance(model_path, str) and model_path.endswith(".safetensors")
-        is_gguf = isinstance(model_path, str) and model_path.endswith(".gguf")
-        if isinstance(self.config.pretrained_model_name_or_path, str) and self.config.pretrained_model_name_or_path.endswith(
-            (".safetensors", ".gguf")
-        ):
+        is_safetensors = _path_has_suffix(model_path, (".safetensors",))
+        is_gguf = _path_has_suffix(model_path, (".gguf",))
+        if _path_has_suffix(self.config.pretrained_model_name_or_path, (".safetensors", ".gguf")):
             self.config.pretrained_model_name_or_path = get_model_config_path(self.config.model_family, model_path)
         if is_safetensors or is_gguf:
             loader_fn = self.MODEL_CLASS.from_single_file
