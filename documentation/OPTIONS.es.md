@@ -450,6 +450,8 @@ Esto es útil para herramientas de monitoreo que reciben webhooks de múltiples 
   - Visible en visualizadores de modelos externos (ComfyUI, herramientas de info de modelos)
   - Acepta una cadena o un array de cadenas (unidas con saltos de línea)
   - Soporta marcadores `{env:VAR_NAME}` para sustitución de variables de entorno
+  - Soporta `{current_step}`, `{current_epoch}` y `{timestamp}` cuando se escribe el metadata
+  - `{timestamp}` usa un valor UTC en formato ISO 8601
   - Cada checkpoint usa el valor de configuración actual en el momento del guardado
 
 **Ejemplo (cadena)**:
@@ -476,6 +478,9 @@ Esto es útil para herramientas de monitoreo que reciben webhooks de múltiples 
 
 - **Qué**: Ruta a tu configuración de dataset de SimpleTuner.
 - **Por qué**: Se pueden combinar múltiples datasets en distintos medios de almacenamiento en una sola sesión de entrenamiento.
+- **Notas**:
+  - Los valores de texto cargados desde `config.json` y `config.toml` soportan `{env:VAR_NAME}`
+  - Los valores de texto dentro del `multidatabackend.json` referenciado también soportan `{env:VAR_NAME}`
 - **Ejemplo**: Consulta [multidatabackend.json.example](/multidatabackend.json.example) para un ejemplo de configuración y [este documento](DATALOADER.md) para más información sobre la configuración del data loader.
 
 ### `--override_dataset_config`
