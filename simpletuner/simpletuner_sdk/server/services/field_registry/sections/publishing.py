@@ -203,7 +203,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             allow_empty=True,
             placeholder='["Line 1", "Line 2"] or "Single string"',
-            help_text="JSON value embedded in safetensors metadata. Can be a string or array of strings. Supports {env:VAR_NAME} placeholders.",
+            help_text="JSON value embedded in safetensors metadata. Can be a string or array of strings. Supports {env:VAR_NAME}, {current_step}, {current_epoch}, and {timestamp} placeholders.",
             tooltip="Use this to add notes, version info, or training context visible in tools like ComfyUI model info.",
             importance=ImportanceLevel.ADVANCED,
             order=3,

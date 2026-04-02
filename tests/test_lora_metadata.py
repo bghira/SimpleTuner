@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -196,6 +197,33 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertEqual(metadata.get("modelspec.architecture"), "sdxl-base-1.0/lora")
         self.assertEqual(metadata.get("modelspec.title"), "run-name")
         self.assertEqual(metadata.get("modelspec.resolution"), "1024x1024")
+
+    def test_models_spec_comment_runtime_templates_resolve_on_save(self):
+        manager, _, _ = self._make_manager(
+            args_overrides={
+                "tracker_run_name": "run-name",
+                "model_family": "sdxl",
+                "model_flavour": "base-1.0",
+                "resolution": 1024,
+                "modelspec_comment": "step={current_step} epoch={current_epoch} ts={timestamp}",
+            }
+        )
+
+        with (
+            patch("simpletuner.helpers.training.save_hooks.StateTracker.get_global_step", return_value=456),
+            patch("simpletuner.helpers.training.save_hooks.StateTracker.get_epoch", return_value=9),
+            patch(
+                "simpletuner.helpers.configuration.template_vars.datetime",
+                wraps=datetime,
+            ) as mock_datetime,
+        ):
+            mock_datetime.now.return_value = datetime(2026, 4, 2, 12, 34, 56, tzinfo=timezone.utc)
+            metadata = manager._build_modelspec_metadata()
+
+        self.assertEqual(
+            metadata.get("modelspec.comment"),
+            "step=456 epoch=9 ts=2026-04-02T12:34:56+00:00",
+        )
 
 
 class FluxPipelineMetadataTests(unittest.TestCase):

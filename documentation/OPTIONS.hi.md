@@ -450,6 +450,8 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
   - बाहरी model viewers (ComfyUI, model info tools) में दिखाई देता है
   - string या strings की array (newlines से जुड़ी) स्वीकार करता है
   - environment variable substitution के लिए `{env:VAR_NAME}` placeholders support करता है
+  - metadata लिखते समय `{current_step}`, `{current_epoch}`, और `{timestamp}` support करता है
+  - `{timestamp}` UTC ISO 8601 value का उपयोग करता है
   - प्रत्येक checkpoint save के समय current config value उपयोग करता है
 
 **Example (string)**:
@@ -476,6 +478,9 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 
 - **What**: आपके SimpleTuner dataset कॉन्फ़िगरेशन का path.
 - **Why**: अलग‑अलग storage माध्यमों पर कई datasets को एक training session में जोड़ा जा सकता है।
+- **Notes**:
+  - `config.json` और `config.toml` से load की गई string values `{env:VAR_NAME}` support करती हैं
+  - referenced `multidatabackend.json` के अंदर की string values भी `{env:VAR_NAME}` support करती हैं
 - **Example**: उदाहरण कॉन्फ़िगरेशन के लिए [multidatabackend.json.example](/multidatabackend.json.example) देखें, और data loader कॉन्फ़िगर करने के लिए [यह दस्तावेज़](DATALOADER.md) देखें।
 
 ### `--override_dataset_config`

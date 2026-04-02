@@ -453,6 +453,8 @@ TRAINING_DYNAMO_BACKEND=inductor
   - 在外部模型查看器（ComfyUI、模型信息工具）中可见
   - 接受字符串或字符串数组（用换行符连接）
   - 支持 `{env:VAR_NAME}` 占位符用于环境变量替换
+  - 在写入元数据时支持 `{current_step}`、`{current_epoch}` 和 `{timestamp}`
+  - `{timestamp}` 使用 UTC ISO 8601 值
   - 每个检查点使用保存时的当前配置值
 
 **示例（字符串）**：
@@ -479,6 +481,9 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 - **内容**：SimpleTuner 数据集配置路径。
 - **原因**：可将不同存储介质上的多个数据集组合到同一训练会话中。
+- **说明**：
+  - 从 `config.json` 和 `config.toml` 读取的字符串值支持 `{env:VAR_NAME}`
+  - 被引用的 `multidatabackend.json` 内部字符串值也支持 `{env:VAR_NAME}`
 - **示例**：配置示例见 [multidatabackend.json.example](/multidatabackend.json.example)，更多信息见 [此文档](DATALOADER.md)。
 
 ### `--override_dataset_config`
