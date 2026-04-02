@@ -76,6 +76,7 @@ from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.configuration.template_vars import resolve_value_placeholders
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.bucket_report import BucketReport
@@ -1071,17 +1072,6 @@ def fill_variables_in_config_paths(args: dict, config: list[dict]) -> dict:
     if not output_dir:
         output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
 
-    def _fill(value, mapping):
-        if isinstance(value, str):
-            for var_name, var_value in mapping.items():
-                value = value.replace(var_name, str(var_value))
-            return value
-        if isinstance(value, dict):
-            return {key: _fill(val, mapping) for key, val in value.items()}
-        if isinstance(value, list):
-            return [_fill(item, mapping) for item in value]
-        return value
-
     filled_config: list[dict] = []
     for backend in config:
         dataset_id = ""
@@ -1090,11 +1080,11 @@ def fill_variables_in_config_paths(args: dict, config: list[dict]) -> dict:
         except Exception:
             dataset_id = ""
         mapping = {
-            "{model_family}": model_family,
-            "{output_dir}": output_dir,
-            "{id}": dataset_id,
+            "model_family": model_family,
+            "output_dir": output_dir,
+            "id": dataset_id,
         }
-        filled_config.append(_fill(backend, mapping))
+        filled_config.append(resolve_value_placeholders(backend, variables=mapping))
 
     return filled_config
 

@@ -114,8 +114,12 @@ upstream_config_sources = {
 }
 
 
+def _path_has_suffix(model_path: Any, suffixes: tuple[str, ...]) -> bool:
+    return isinstance(model_path, str) and model_path.lower().endswith(suffixes)
+
+
 def get_model_config_path(model_family: str, model_path: str):
-    if model_path is not None and model_path.endswith((".safetensors", ".gguf")):
+    if _path_has_suffix(model_path, (".safetensors", ".gguf")):
         if model_family in upstream_config_sources:
             return upstream_config_sources[model_family]
         else:
@@ -141,7 +145,7 @@ def get_hf_cache_repo_path(model_path: str) -> Optional[str]:
         return None
 
     # Skip single-file checkpoints
-    if isinstance(model_path, str) and model_path.endswith((".safetensors", ".gguf")):
+    if _path_has_suffix(model_path, (".safetensors", ".gguf")):
         return None
 
     # Skip local paths
@@ -485,6 +489,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self._single_file_component_cache = None
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
         self._validation_preview_decoder_failed = False
@@ -1613,6 +1618,59 @@ class ModelFoundation(ABC):
             model_path=self.config.pretrained_model_name_or_path,
         )
 
+    def _single_file_checkpoint_path(self) -> Optional[str]:
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if _path_has_suffix(model_path, (".safetensors",)):
+            return model_path
+        return None
+
+    def _load_single_file_pipeline_component_cache(self) -> Optional[dict]:
+        if self._single_file_component_cache is not None:
+            return self._single_file_component_cache
+
+        checkpoint_path = self._single_file_checkpoint_path()
+        if checkpoint_path is None:
+            return None
+
+        pipeline_class = getattr(self, "PIPELINE_CLASSES", {}).get(PipelineTypes.TEXT2IMG)
+        if pipeline_class is None or not hasattr(pipeline_class, "from_single_file"):
+            return None
+
+        logger.info(
+            "Loading preprocessing components from single-file checkpoint %s using %s.",
+            checkpoint_path,
+            pipeline_class.__name__,
+        )
+        pipeline_kwargs = {
+            "config": self._model_config_path(),
+            "torch_dtype": self.config.weight_dtype,
+        }
+        pipeline_init_signature = inspect.signature(pipeline_class.__init__)
+        if "add_watermarker" in pipeline_init_signature.parameters:
+            pipeline_kwargs["add_watermarker"] = False
+        if getattr(self.config, "revision", None) is not None:
+            pipeline_kwargs["revision"] = self.config.revision
+        if getattr(self.config, "local_files_only", None) is not None:
+            pipeline_kwargs["local_files_only"] = self.config.local_files_only
+
+        pipeline = pipeline_class.from_single_file(checkpoint_path, **pipeline_kwargs)
+
+        text_encoders = []
+        tokenizers = []
+        text_encoder_configuration = getattr(self, "TEXT_ENCODER_CONFIGURATION", {}) or {}
+        for text_encoder_attr in text_encoder_configuration.keys():
+            text_encoders.append(getattr(pipeline, text_encoder_attr, None))
+            tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
+            tokenizers.append(getattr(pipeline, tokenizer_attr, None))
+
+        self._single_file_component_cache = {
+            "vae": getattr(pipeline, "vae", None),
+            "text_encoders": text_encoders,
+            "tokenizers": tokenizers,
+        }
+
+        return self._single_file_component_cache
+
     def unwrap_model(self, model=None):
         if self.config.controlnet and model is None:
             if self.controlnet is None:
@@ -1922,19 +1980,25 @@ class ModelFoundation(ABC):
                 logger.info(f"load_vae: registered VAE cache path: {cache_repo_path}")
 
         self.vae = None
-        self.config.vae_kwargs = {
-            "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
-            "subfolder": "vae",
-            "revision": self.config.revision,
-            "force_upcast": False,
-            "variant": self.config.variant,
-        }
-        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            try:
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
-            except Exception as e:
-                self.config.vae_kwargs["subfolder"] = None
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+        checkpoint_path = self._single_file_checkpoint_path()
+        use_single_file_vae = checkpoint_path is not None and self.config.vae_path == checkpoint_path
+        if use_single_file_vae:
+            cached_components = self._load_single_file_pipeline_component_cache() or {}
+            self.vae = cached_components.get("vae")
+        else:
+            self.config.vae_kwargs = {
+                "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
+                "subfolder": "vae",
+                "revision": self.config.revision,
+                "force_upcast": False,
+                "variant": self.config.variant,
+            }
+            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+                try:
+                    self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+                except Exception as e:
+                    self.config.vae_kwargs["subfolder"] = None
+                    self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
         if self.vae is None:
             raise ValueError("Could not load VAE. Please check the model path and ensure the VAE is compatible.")
         if self.config.vae_enable_tiling:
@@ -2068,6 +2132,17 @@ class ModelFoundation(ABC):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
         self.tokenizers = []
+        cached_components = self._load_single_file_pipeline_component_cache()
+        expected_count = len(self.TEXT_ENCODER_CONFIGURATION)
+        cached_tokenizers = (cached_components or {}).get("tokenizers", [])
+        if len(cached_tokenizers) >= expected_count and all(
+            tokenizer is not None for tokenizer in cached_tokenizers[:expected_count]
+        ):
+            for tokenizer_idx, tokenizer in enumerate(cached_tokenizers[:expected_count], start=1):
+                self.tokenizers.append(tokenizer)
+                setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
+            return
+
         tokenizer_kwargs = {
             "subfolder": "tokenizer",
             "revision": self.config.revision,
@@ -2092,6 +2167,35 @@ class ModelFoundation(ABC):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
         self.load_text_tokenizer()
+
+        cached_components = self._load_single_file_pipeline_component_cache()
+        expected_count = len(self.TEXT_ENCODER_CONFIGURATION)
+        cached_text_encoders = (cached_components or {}).get("text_encoders", [])
+        if len(cached_text_encoders) >= expected_count and all(
+            text_encoder is not None for text_encoder in cached_text_encoders[:expected_count]
+        ):
+            for text_encoder_idx, (attr_name, _text_encoder_config) in enumerate(
+                self.TEXT_ENCODER_CONFIGURATION.items(),
+                start=1,
+            ):
+                text_encoder = cached_text_encoders[text_encoder_idx - 1]
+                if move_to_device and not self._ramtorch_text_encoders_requested():
+                    precision_attr = f"text_encoder_{text_encoder_idx}_precision"
+                    text_encoder_precision = getattr(
+                        self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
+                    )
+                    if text_encoder_precision in ["no_change", None]:
+                        text_encoder.to(
+                            self.accelerator.device,
+                            dtype=self.config.weight_dtype,
+                        )
+                if hasattr(text_encoder, "eval"):
+                    text_encoder.eval()
+                text_encoder.requires_grad_(False)
+                self.text_encoders.append(text_encoder)
+                setattr(self, attr_name, text_encoder)
+                setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
+            return
 
         # Track if we should store cache paths for text encoder deletion
         should_track_for_deletion = getattr(self.config, "delete_model_after_load", False)
@@ -2511,11 +2615,9 @@ class ModelFoundation(ABC):
                 StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
                 logger.info(f"load_model: registered {component_key} cache path: {cache_repo_path}")
 
-        is_safetensors = isinstance(model_path, str) and model_path.endswith(".safetensors")
-        is_gguf = isinstance(model_path, str) and model_path.endswith(".gguf")
-        if isinstance(self.config.pretrained_model_name_or_path, str) and self.config.pretrained_model_name_or_path.endswith(
-            (".safetensors", ".gguf")
-        ):
+        is_safetensors = _path_has_suffix(model_path, (".safetensors",))
+        is_gguf = _path_has_suffix(model_path, (".gguf",))
+        if _path_has_suffix(self.config.pretrained_model_name_or_path, (".safetensors", ".gguf")):
             self.config.pretrained_model_name_or_path = get_model_config_path(self.config.model_family, model_path)
         if is_safetensors or is_gguf:
             loader_fn = self.MODEL_CLASS.from_single_file

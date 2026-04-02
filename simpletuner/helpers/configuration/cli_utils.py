@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Callable, Optional
 
+from simpletuner.helpers.configuration.template_vars import resolve_value_placeholders
+
 TransformFunc = Optional[Callable[[str, object], object]]
 
 
@@ -198,7 +200,8 @@ def mapping_to_cli_args(
             if field is not None and getattr(field, "arg_name", "NOT_NONE") is None:
                 continue
 
-        value = transform(key, raw_value) if transform else raw_value
+        resolved_value = resolve_value_placeholders(raw_value)
+        value = transform(key, resolved_value) if transform else resolved_value
 
         canonical_key = key.lstrip("-") if isinstance(key, str) else key
         handler = _LEGACY_ARG_HANDLERS.get(canonical_key)

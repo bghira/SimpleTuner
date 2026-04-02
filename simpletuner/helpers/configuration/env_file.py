@@ -88,6 +88,7 @@ import logging
 import os
 import subprocess
 
+from simpletuner.helpers.configuration.template_vars import resolve_string_placeholders
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("SimpleTuner")
@@ -199,6 +200,8 @@ def load_env_config():
             value = value[1:-1]
         if value is not None and value.startswith('"') and value.endswith('"'):
             value = value[1:-1]
+        if isinstance(value, str):
+            value = resolve_string_placeholders(value)
         try:
             float(value)
             is_numeric = True
