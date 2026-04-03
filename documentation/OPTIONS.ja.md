@@ -80,6 +80,13 @@ simpletuner configure config/foo/config.json
   - マルチノード構成では、各ノードの local-rank 0 のみが削除を実行します。共有ストレージでの競合を避けるため、削除失敗は無視されます。
   - 学習チェックポイントには影響せず、事前学習済みベースモデルのキャッシュのみが対象です。
 
+### `--trust_remote_code`
+
+- **内容**: チェックポイントが upstream の独自クラスに依存している場合に、Transformers と tokenizer がモデルリポジトリ内のカスタム Python コードを実行できるようにします。
+- **既定値**: `False`
+- **理由**: upstream リポジトリに独自の `AutoModel` / tokenizer コードを含む ACE-Step v1.5 チェックポイントで必要です。
+- **警告**: 信頼できるモデルリポジトリに対してのみ有効にしてください。
+
 ### `--enable_group_offload`
 
 - **内容**: diffusers の grouped module offloading を有効化し、forward 間でモデルブロックを CPU（またはディスク）に退避します。
@@ -1688,8 +1695,9 @@ options:
   --model_flavour MODEL_FLAVOUR
                         Specific variant of the selected model family.
                         ACE-Step の flavour は `base`、`v15-turbo`、
-                        `v15-base`、`v15-sft` です。v1.5 flavour は現在の
-                        SimpleTuner パイプラインでは学習専用です。
+                        `v15-base`、`v15-sft` です。v1.5 flavour は学習と
+                        内蔵バリデーション音声生成をサポートし、upstream
+                        リポジトリでは `--trust_remote_code` が必要です。
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

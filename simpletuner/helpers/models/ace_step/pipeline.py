@@ -16,6 +16,7 @@ import os
 import random
 import re
 import time
+from dataclasses import dataclass
 from typing import List, Optional, Union
 
 import torch
@@ -30,6 +31,14 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, UMT5EncoderModel
 
 from .apg_guidance import MomentumBuffer, apg_forward, cfg_double_condition_forward, cfg_forward, cfg_zero_star
+from .constants import (
+    V15_AUDIO_SAMPLES_PER_LATENT,
+    V15_DEFAULT_DIT_INSTRUCTION,
+    V15_LYRIC_MAX_LENGTH,
+    V15_SAMPLE_RATE,
+    V15_SFT_GEN_PROMPT,
+    V15_TEXT_MAX_LENGTH,
+)
 from .cpu_offload import cpu_offload
 from .language_segmentation import LangSegment, language_filters
 from .lyrics_utils.lyric_tokenizer import VoiceBpeTokenizer
@@ -75,20 +84,13 @@ def ensure_directory_exists(directory):
 
 REPO_ID = "ACE-Step/ACE-Step-v1-3.5B"
 REPO_ID_QUANT = REPO_ID + "-q4-K-M"
-V15_DEFAULT_DIT_INSTRUCTION = "Fill the audio semantic mask based on the given conditions:"
-V15_SFT_GEN_PROMPT = """# Instruction
-{}
 
-# Caption
-{}
 
-# Metas
-{}<|endoftext|>
-"""
-V15_TEXT_MAX_LENGTH = 256
-V15_LYRIC_MAX_LENGTH = 2048
-V15_SAMPLE_RATE = 48000
-V15_AUDIO_SAMPLES_PER_LATENT = 1920
+@dataclass
+class ACEStepPipelineOutput:
+    audios: list
+    paths: list
+    params: dict
 
 
 # class ACEStepPipeline(DiffusionPipeline):
@@ -561,14 +563,6 @@ class ACEStepPipeline(LoraLoaderMixin):
                 output_paths.append(
                     self.save_wav_file(audio, i, save_path=save_path, sample_rate=V15_SAMPLE_RATE, format=format)
                 )
-
-        from dataclasses import dataclass
-
-        @dataclass
-        class ACEStepPipelineOutput:
-            audios: list
-            paths: list
-            params: dict
 
         return ACEStepPipelineOutput(
             audios=pred_wavs,
@@ -1969,13 +1963,5 @@ class ACEStepPipeline(LoraLoaderMixin):
             input_params_json["audio_path"] = output_audio_path
             with open(input_params_json_save_path, "w", encoding="utf-8") as f:
                 json.dump(input_params_json, f, indent=4, ensure_ascii=False)
-
-        from dataclasses import dataclass
-
-        @dataclass
-        class ACEStepPipelineOutput:
-            audios: list
-            paths: list
-            params: dict
 
         return ACEStepPipelineOutput(audios=pred_wavs, paths=output_paths, params=input_params_json)

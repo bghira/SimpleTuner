@@ -80,6 +80,13 @@ simpletuner configure config/foo/config.json
   - Multi‑node setups में, हर node पर केवल local‑rank 0 deletion करता है। Shared network storage पर race conditions संभालने के लिए deletion failures silently ignore की जाती हैं।
   - यह saved training checkpoints पर **प्रभाव नहीं** डालता — केवल pre‑trained base model cache पर लागू होता है।
 
+### `--trust_remote_code`
+
+- **What**: जब checkpoint upstream custom classes पर निर्भर हो, तब Transformers और tokenizer को model repository से custom Python code चलाने की अनुमति देता है।
+- **Default**: `False`
+- **Why**: ACE-Step v1.5 checkpoints के लिए आवश्यक है, क्योंकि upstream repository में custom `AutoModel` और tokenizer code शामिल है।
+- **Warning**: इसे केवल उन्हीं model repositories के लिए सक्षम करें जिन पर आप भरोसा करते हैं।
+
 ### `--enable_group_offload`
 
 - **What**: diffusers की grouped module offloading सक्षम करता है ताकि forward passes के बीच model blocks को CPU (या disk) पर stage किया जा सके।
@@ -1684,8 +1691,10 @@ options:
   --model_flavour MODEL_FLAVOUR
                         Specific variant of the selected model family.
                         ACE-Step flavours `base`, `v15-turbo`, `v15-base`,
-                        और `v15-sft` हैं। वर्तमान SimpleTuner pipeline में
-                        v1.5 flavours केवल training के लिए हैं।
+                        और `v15-sft` हैं। v1.5 flavours अब training और
+                        built-in validation audio generation को support करते
+                        हैं, और upstream repository के लिए
+                        `--trust_remote_code` आवश्यक है।
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

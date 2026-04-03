@@ -21,6 +21,7 @@
   "seed": 42,
   "tracker_project_name": "lora-training",
   "tracker_run_name": "example-training-run",
+  "trust_remote_code": true,
   "train_batch_size": 1,
   "vae_batch_size": 1,
   "vae_enable_tiling": true,

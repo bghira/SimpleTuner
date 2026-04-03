@@ -54,6 +54,9 @@ from simpletuner.helpers.models.common import (
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.state_tracker import StateTracker
 
+from .constants import V15_DEFAULT_DIT_INSTRUCTION as ACE_STEP_V15_DEFAULT_DIT_INSTRUCTION
+from .constants import V15_SFT_GEN_PROMPT as ACE_STEP_V15_SFT_GEN_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,16 +114,8 @@ class ACEStep(AudioModelFoundation):
     V15_SHARED_VAE_SUBFOLDER = "vae"
     V15_SHARED_TEXT_ENCODER_SUBFOLDER = "Qwen3-Embedding-0.6B"
     V15_SILENCE_LATENT_FILENAME = "silence_latent.pt"
-    V15_DEFAULT_DIT_INSTRUCTION = "Fill the audio semantic mask based on the given conditions:"
-    V15_SFT_GEN_PROMPT = """# Instruction
-{}
-
-# Caption
-{}
-
-# Metas
-{}<|endoftext|>
-"""
+    V15_DEFAULT_DIT_INSTRUCTION = ACE_STEP_V15_DEFAULT_DIT_INSTRUCTION
+    V15_SFT_GEN_PROMPT = ACE_STEP_V15_SFT_GEN_PROMPT
     SUPPORTS_LYRICS_EMBEDDER_TRAINING = True
 
     @classmethod
@@ -406,6 +401,42 @@ class ACEStep(AudioModelFoundation):
     def _is_v15_layout_active(self) -> bool:
         return getattr(self, "_v15_layout", None) is not None
 
+    def _get_config_bool(self, name: str, default: bool = False) -> bool:
+        config_vars = vars(self.config) if hasattr(self.config, "__dict__") else {}
+        if name in config_vars:
+            value = config_vars[name]
+        else:
+            value = getattr(self.config, name, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    def _trust_remote_code_enabled(self) -> bool:
+        return self._get_config_bool("trust_remote_code", default=False)
+
+    def _load_v15_hf_component(self, loader_cls, *, component_name: str, pretrained_model_name_or_path: str, **kwargs):
+        trust_remote_code = self._trust_remote_code_enabled()
+        try:
+            return loader_cls.from_pretrained(
+                pretrained_model_name_or_path=pretrained_model_name_or_path,
+                trust_remote_code=trust_remote_code,
+                **kwargs,
+            )
+        except ValueError as exc:
+            if not trust_remote_code and "trust_remote_code=True" in str(exc):
+                raise ValueError(
+                    f"Loading the ACE-Step v1.5 {component_name} requires executing custom code from the model "
+                    "repository. For safety, this is disabled by default. If you trust this model source, set "
+                    "`trust_remote_code=true` in the SimpleTuner configuration and retry."
+                ) from exc
+            raise
+
     def _build_v15_text_prompt(self, prompt: str, prompt_context: Optional[dict]) -> str:
         metadata = prompt_context or {}
         if isinstance(metadata.get("metadata"), dict):
@@ -466,6 +497,19 @@ class ACEStep(AudioModelFoundation):
         attention_mask = tokenized.attention_mask.to(self.accelerator.device)
         lyric_hidden_states = embedding_layer(input_ids).to(dtype=self.config.weight_dtype)
         return lyric_hidden_states, attention_mask
+
+    def _normalize_v15_lyrics_inputs(self, lyrics, batch_size: int) -> List[str]:
+        if not lyrics:
+            return [""] * batch_size
+        if isinstance(lyrics, str):
+            return [lyrics] * batch_size
+
+        lyric_list = [(entry or "") for entry in lyrics]
+        if len(lyric_list) == 1:
+            return lyric_list * batch_size
+        if len(lyric_list) != batch_size:
+            raise ValueError(f"Expected `lyrics` to have length {batch_size}, but got {len(lyric_list)}.")
+        return lyric_list
 
     def _run_v15_encoder(
         self,
@@ -602,10 +646,11 @@ class ACEStep(AudioModelFoundation):
         v15_layout = self._resolve_v15_layout(base_path)
         if v15_layout is not None:
             logger.info("Loading ACE-Step v1.5 tokenizer from %s", v15_layout["tokenizer_path"])
-            tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer = self._load_v15_hf_component(
+                AutoTokenizer,
+                component_name="tokenizer",
                 pretrained_model_name_or_path=v15_layout["tokenizer_path"],
                 use_fast=True,
-                trust_remote_code=True,
             )
             self.tokenizers = [tokenizer]
             self.tokenizer_1 = tokenizer
@@ -626,10 +671,11 @@ class ACEStep(AudioModelFoundation):
         v15_layout = self._resolve_v15_layout(base_path)
         if v15_layout is not None:
             logger.info("Loading ACE-Step v1.5 text encoder from %s", v15_layout["tokenizer_path"])
-            text_encoder = AutoModel.from_pretrained(
+            text_encoder = self._load_v15_hf_component(
+                AutoModel,
+                component_name="text encoder",
                 pretrained_model_name_or_path=v15_layout["tokenizer_path"],
                 torch_dtype=self.config.weight_dtype,
-                trust_remote_code=True,
             )
             if move_to_device and not self._ramtorch_text_encoders_requested():
                 text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
@@ -703,10 +749,11 @@ class ACEStep(AudioModelFoundation):
             self.config.pretrained_transformer_model_name_or_path = v15_layout["variant_path"]
             self.config.pretrained_transformer_subfolder = None
             self.config.pretrained_model_name_or_path = v15_layout["root_path"]
-            self.model = AutoModel.from_pretrained(
+            self.model = self._load_v15_hf_component(
+                AutoModel,
+                component_name="condition model",
                 pretrained_model_name_or_path=v15_layout["variant_path"],
                 torch_dtype=self.config.weight_dtype,
-                trust_remote_code=True,
             )
             if move_to_device:
                 self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
@@ -1421,15 +1468,17 @@ class ACEStep(AudioModelFoundation):
             if batch.get("encoder_attention_mask") is None:
                 pe = batch["prompt_embeds"]
                 mask_shape = pe.shape[:2] if pe.dim() >= 2 else (pe.shape[0], 1)
-                batch["encoder_attention_mask"] = torch.ones(mask_shape, dtype=torch.float32)
+                batch["encoder_attention_mask"] = torch.ones(mask_shape, dtype=torch.long)
 
             device = self.accelerator.device
             dtype = getattr(self.config, "weight_dtype", torch.float32)
             latents = latent_batch.to(device=device, dtype=dtype)
+            batch_size = latents.shape[0]
+            normalized_lyrics = self._normalize_v15_lyrics_inputs(lyrics, batch_size=batch_size)
             attention_mask = batch["latent_attention_mask"].to(device=device, dtype=dtype)
             text_hidden_states = batch["prompt_embeds"].to(device=device, dtype=dtype)
-            text_attention_mask = batch["encoder_attention_mask"].to(device=device, dtype=dtype)
-            lyric_hidden_states, lyric_attention_mask = self._embed_v15_lyrics_batch(lyrics or [""] * latents.shape[0])
+            text_attention_mask = batch["encoder_attention_mask"].to(device=device, dtype=torch.long)
+            lyric_hidden_states, lyric_attention_mask = self._embed_v15_lyrics_batch(normalized_lyrics)
             encoder_hidden_states, encoder_attention_mask = self._run_v15_encoder(
                 text_hidden_states=text_hidden_states,
                 text_attention_mask=text_attention_mask,
@@ -1437,7 +1486,7 @@ class ACEStep(AudioModelFoundation):
                 lyric_attention_mask=lyric_attention_mask,
             )
             encoder_hidden_states = encoder_hidden_states.to(device=device, dtype=dtype)
-            encoder_attention_mask = encoder_attention_mask.to(device=device, dtype=dtype)
+            encoder_attention_mask = encoder_attention_mask.to(device=device, dtype=torch.long)
 
             timesteps = self._sample_v15_timesteps(latents.shape[0], device=device, dtype=dtype)
             timestep_view = timesteps.view(latents.shape[0], *([1] * (latents.ndim - 1)))

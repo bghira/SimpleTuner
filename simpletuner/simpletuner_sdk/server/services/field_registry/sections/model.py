@@ -77,7 +77,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             choices=[],  # Dynamic based on model_family
             dependencies=[FieldDependency(field="model_family", operator="not_equals", value="")],
-            help_text="Specific variant of the selected model family",
+            help_text="Specific variant of the selected model family. ACE-Step flavours are `base`, `v15-turbo`, `v15-base`, and `v15-sft`; the v1.5 flavours support training and built-in validation audio generation, and require --trust_remote_code for the upstream repository.",
             tooltip="Some models have multiple variants with different sizes or capabilities",
             importance=ImportanceLevel.IMPORTANT,
             order=3,
@@ -517,6 +517,24 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=18,
             documentation="OPTIONS.md#--delete_model_after_load",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="trust_remote_code",
+            arg_name="--trust_remote_code",
+            ui_label="Trust Remote Code",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_config",
+            subsection="advanced_paths",
+            default_value=False,
+            help_text="Allow model and tokenizer loaders to execute custom code from the model repository when required",
+            tooltip="Required for ACE-Step v1.5 upstream checkpoints because they ship custom Transformers classes. Enable this only for model repositories you trust.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            documentation="OPTIONS.md#--trust_remote_code",
         )
     )
 

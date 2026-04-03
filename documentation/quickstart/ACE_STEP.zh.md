@@ -91,6 +91,7 @@ SimpleTuner 当前支持以下 ACE-Step flavour：
   "model_type": "lora",
   "model_flavour": "v15-base",
   "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "trust_remote_code": true,
   "resolution": 0,
   "mixed_precision": "bf16",
   "base_model_precision": "int8-quanto",
@@ -109,7 +110,7 @@ SimpleTuner 当前支持以下 ACE-Step flavour：
 - **`validation_guidance`**：引导尺度（默认约 3.0 - 5.0）。
 - **`validation_step_interval`**：生成样本的频率（如每 100 步）。
 
-> ⚠️ **ACE-Step v1.5 当前限制：** 目前的 SimpleTuner 集成支持 v1.5 训练，但内置 ACE-Step 验证/推理 pipeline 仍然只支持 v1.0。进行 v1.5 训练时，请关闭训练内验证，或使用上游/外部推理工具完成验证。
+> ℹ️ **ACE-Step v1.5 说明：** SimpleTuner 现在支持使用 prompt 和可选歌词条件进行内置 v1.5 验证生成。加载上游 v1.5 仓库仍然需要 `trust_remote_code: true`，而更高级的上游编辑/推理工作流暂时还没有暴露到 SimpleTuner 的验证 pipeline 中。
 
 ### 高级实验功能
 

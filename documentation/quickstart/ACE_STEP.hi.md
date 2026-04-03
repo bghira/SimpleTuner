@@ -91,6 +91,7 @@ ACE-Step v1.5 के लिए `model_family: "ace_step"` को वैसा �
   "model_type": "lora",
   "model_flavour": "v15-base",
   "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "trust_remote_code": true,
   "resolution": 0,
   "mixed_precision": "bf16",
   "base_model_precision": "int8-quanto",
@@ -109,7 +110,7 @@ ACE-Step v1.5 के लिए `model_family: "ace_step"` को वैसा �
 - **`validation_guidance`**: गाइडेंस स्केल (डिफ़ॉल्ट: ~3.0 - 5.0)।
 - **`validation_step_interval`**: सैंपल कितनी बार जनरेट करना है (जैसे, हर 100 स्टेप पर)।
 
-> ⚠️ **ACE-Step v1.5 सीमा:** वर्तमान SimpleTuner integration v1.5 प्रशिक्षण को सपोर्ट करता है, लेकिन बिल्ट‑इन ACE-Step validation/inference pipeline अभी भी केवल v1.0 के लिए है। v1.5 runs के लिए in-loop validation बंद करें या upstream/external inference tooling से validation करें।
+> ℹ️ **ACE-Step v1.5 नोट:** SimpleTuner अब prompt और वैकल्पिक lyrics conditioning के साथ built-in v1.5 validation renders को सपोर्ट करता है। upstream v1.5 repository को लोड करने के लिए अभी भी `trust_remote_code: true` आवश्यक है, और अधिक advanced upstream editing/inference workflows अभी SimpleTuner validation pipeline में exposed नहीं हैं।
 
 ### उन्नत प्रयोगात्मक विशेषताएँ
 

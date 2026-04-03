@@ -91,6 +91,7 @@ Para ACE-Step v1.5, mantén `model_family: "ace_step"`, selecciona un flavour v1
   "model_type": "lora",
   "model_flavour": "v15-base",
   "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "trust_remote_code": true,
   "resolution": 0,
   "mixed_precision": "bf16",
   "base_model_precision": "int8-quanto",
@@ -109,7 +110,7 @@ Añade estos valores a tu `config.json` para monitorear el progreso:
 - **`validation_guidance`**: Escala de guidance (predeterminado: ~3.0 - 5.0).
 - **`validation_step_interval`**: Con qué frecuencia generar muestras (p. ej., cada 100 pasos).
 
-> ⚠️ **Limitación de ACE-Step v1.5:** la integración actual de SimpleTuner soporta entrenamiento v1.5, pero la pipeline integrada de validación/inferencia de ACE-Step sigue siendo solo para v1.0. Para ejecuciones v1.5, desactiva la validación en el bucle o valida con tooling upstream/externo.
+> ℹ️ **Nota sobre ACE-Step v1.5:** SimpleTuner ahora soporta renders de validación integrados para v1.5 con prompt y letras opcionales. Cargar el repositorio upstream v1.5 todavía requiere `trust_remote_code: true`, y los workflows avanzados de edición/inferencia upstream aún no están expuestos en la pipeline de validación de SimpleTuner.
 
 ### Funciones experimentales avanzadas
 

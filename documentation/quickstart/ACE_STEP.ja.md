@@ -91,6 +91,7 @@ ACE-Step v1.5 では `model_family: "ace_step"` を維持したまま、v1.5 fla
   "model_type": "lora",
   "model_flavour": "v15-base",
   "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "trust_remote_code": true,
   "resolution": 0,
   "mixed_precision": "bf16",
   "base_model_precision": "int8-quanto",
@@ -109,7 +110,7 @@ ACE-Step v1.5 では `model_family: "ace_step"` を維持したまま、v1.5 fla
 - **`validation_guidance`**: ガイダンススケール（デフォルト: 約 3.0〜5.0）。
 - **`validation_step_interval`**: サンプル生成の間隔（例: 100 ステップごと）。
 
-> ⚠️ **ACE-Step v1.5 の制限:** 現在の SimpleTuner 統合は v1.5 の学習をサポートしていますが、組み込みの ACE-Step 検証/推論パイプラインはまだ v1.0 専用です。v1.5 実行では学習中の検証を無効化するか、上流/外部の推論ツールで検証してください。
+> ℹ️ **ACE-Step v1.5 メモ:** SimpleTuner は prompt と任意の歌詞条件による v1.5 の内蔵バリデーション生成をサポートするようになりました。upstream の v1.5 リポジトリを読み込むには引き続き `trust_remote_code: true` が必要で、より高度な upstream の編集/推論ワークフローはまだ SimpleTuner のバリデーションパイプラインには公開されていません。
 
 ### 高度な実験的機能
 

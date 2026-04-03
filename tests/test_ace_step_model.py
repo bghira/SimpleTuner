@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from transformers import AutoModel
 
 from simpletuner.helpers.models.ace_step.model import ACEStep
 
@@ -238,6 +239,51 @@ class TestACEStepModel(unittest.TestCase):
         self.assertEqual(prepared["noisy_latents"].shape, (2, 12, 64))
         self.assertEqual(prepared["context_latents"].shape, (2, 12, 128))
         self.assertTrue(torch.allclose(prepared["flow_target"], prepared["noise"] - prepared["latents"]))
+
+    def test_prepare_batch_v15_repeats_single_lyric_string_and_keeps_text_mask_integer(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.model._embed_v15_lyrics_batch = MagicMock(
+            return_value=(torch.randn(2, 512, 32), torch.ones(2, 512, dtype=torch.long))
+        )
+        self.model._run_v15_encoder = MagicMock(return_value=(torch.randn(2, 20, 32), torch.ones(2, 20, dtype=torch.long)))
+        self.model._sample_v15_timesteps = MagicMock(return_value=torch.tensor([0.25, 0.75], dtype=torch.float32))
+        self.model._build_v15_context_latents = MagicMock(return_value=torch.ones(2, 12, 128, dtype=torch.float32))
+
+        batch = {
+            "latent_batch": torch.randn(2, 12, 64),
+            "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
+            "prompt_embeds": torch.randn(2, 10, 32),
+            "lyrics": "chorus line",
+        }
+
+        prepared = self.model.prepare_batch(batch, state={"is_validation": True})
+
+        self.model._embed_v15_lyrics_batch.assert_called_once_with(["chorus line", "chorus line"])
+        run_kwargs = self.model._run_v15_encoder.call_args.kwargs
+        self.assertEqual(run_kwargs["text_attention_mask"].dtype, torch.long)
+        self.assertEqual(prepared["encoder_attention_mask"].dtype, torch.long)
+
+    def test_prepare_batch_v15_rejects_mismatched_lyric_batch(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+
+        batch = {
+            "latent_batch": torch.randn(2, 12, 64),
+            "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
+            "prompt_embeds": torch.randn(2, 10, 32),
+            "lyrics": ["one", "two", "three"],
+        }
+
+        with self.assertRaisesRegex(ValueError, "Expected `lyrics` to have length 2, but got 3."):
+            self.model.prepare_batch(batch, state={"is_validation": True})
+
+    def test_load_v15_hf_component_requires_explicit_trust_remote_code_opt_in(self):
+        with patch.object(AutoModel, "from_pretrained", side_effect=ValueError("Set trust_remote_code=True to proceed")):
+            with self.assertRaisesRegex(ValueError, "trust_remote_code=true"):
+                self.model._load_v15_hf_component(
+                    AutoModel,
+                    component_name="condition model",
+                    pretrained_model_name_or_path="ACE-Step/Ace-Step1.5",
+                )
 
     def test_get_pipeline_v15_wires_loaded_components(self):
         self.model._v15_layout = {"variant_path": "dummy"}
