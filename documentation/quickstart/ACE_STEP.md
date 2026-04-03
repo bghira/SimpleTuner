@@ -1,10 +1,13 @@
 # ACE-Step Quickstart
 
-In this example, we'll be training the ACE-Step v1 3.5B audio generation model.
+In this example, we'll be training the ACE-Step audio generation model. SimpleTuner currently supports the original ACE-Step v1 3.5B path plus forward-compatible LoRA training for the ACE-Step v1.5 bundle.
 
 ## Overview
 
-ACE-Step is a 3.5B parameter transformer-based flow-matching model designed for high-quality audio synthesis. It supports text-to-audio generation and can be conditioned on lyrics.
+ACE-Step is a transformer-based flow-matching audio model designed for high-quality synthesis. In SimpleTuner:
+
+- `base` targets the original ACE-Step v1 3.5B training path.
+- `v15-turbo`, `v15-base`, and `v15-sft` target the ACE-Step v1.5 bundle variants loaded from `ACE-Step/Ace-Step1.5`.
 
 ## Hardware Requirements
 
@@ -40,6 +43,22 @@ mkdir -p config/acestep-training-demo
 
 ### Critical Settings
 
+SimpleTuner currently supports these ACE-Step flavours:
+
+- `base`: original ACE-Step v1 3.5B
+- `v15-turbo`, `v15-base`, `v15-sft`: ACE-Step v1.5 bundle variants
+
+Use the matching config for your target variant.
+
+Ready-made example presets are available at:
+
+- `simpletuner/examples/ace_step-v1-0.peft-lora`
+- `simpletuner/examples/ace_step-v1-5.peft-lora`
+
+You can launch them directly with `simpletuner train example=ace_step-v1-0.peft-lora` or `simpletuner train example=ace_step-v1-5.peft-lora`.
+
+#### ACE-Step v1 example
+
 Create `config/acestep-training-demo/config.json` with these values:
 
 <details>
@@ -59,6 +78,27 @@ Create `config/acestep-training-demo/config.json` with these values:
 ```
 </details>
 
+#### ACE-Step v1.5 example
+
+For ACE-Step v1.5, keep `model_family: "ace_step"` but select a v1.5 flavour and point the checkpoint root at the shared v1.5 bundle:
+
+<details>
+<summary>View example config</summary>
+
+```json
+{
+  "model_family": "ace_step",
+  "model_type": "lora",
+  "model_flavour": "v15-base",
+  "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "resolution": 0,
+  "mixed_precision": "bf16",
+  "base_model_precision": "int8-quanto",
+  "data_backend_config": "config/acestep-training-demo/multidatabackend.json"
+}
+```
+</details>
+
 ### Validation Settings
 
 Add these to your `config.json` to monitor progress:
@@ -68,6 +108,8 @@ Add these to your `config.json` to monitor progress:
 - **`validation_audio_duration`**: Duration in seconds for validation clips (default: 30.0).
 - **`validation_guidance`**: Guidance scale (default: ~3.0 - 5.0).
 - **`validation_step_interval`**: How often to generate samples (e.g., every 100 steps).
+
+> ⚠️ **ACE-Step v1.5 limitation:** the current SimpleTuner integration supports v1.5 training, but the built-in ACE-Step validation/inference pipeline is still v1.0-only. For v1.5 runs, disable in-loop validation or validate with upstream/external inference tooling.
 
 ### Advanced Experimental Features
 
@@ -205,6 +247,8 @@ This command tells SimpleTuner to look for `config.json` inside `config/acestep-
 > ```
 
 ### Training the Lyrics Embedder (upstream-style)
+
+> ℹ️ **Version note:** `lyrics_embedder_train` currently applies to the ACE-Step v1 training path. The v1.5 forward-compatible LoRA path in SimpleTuner is decoder-only.
 
 The upstream ACE-Step trainer fine-tunes the lyrics embedder alongside the denoiser. To mirror that behaviour in SimpleTuner (full or standard LoRA only):
 

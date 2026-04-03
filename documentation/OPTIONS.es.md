@@ -1681,10 +1681,14 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        Los flavours de ACE-Step son `base`, `v15-turbo`,
+                        `v15-base` y `v15-sft`. Los flavours v1.5 son solo
+                        para entrenamiento en la pipeline actual de
+                        SimpleTuner.
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

@@ -18,7 +18,14 @@ class TestACEStepLoraTargets(unittest.TestCase):
         self.config.flow_schedule_shift = 3.0
         # Avoid downloading model in init
         self.config.pretrained_model_name_or_path = "dummy_path"
+        self.config.pretrained_transformer_model_name_or_path = None
+        self.config.pretrained_transformer_subfolder = None
         self.config.model_family = "ace_step"
+        self.config.model_flavour = "base"
+        self.config.peft_lora_target_modules = None
+        self.config.slider_lora_target = False
+        self.config.lora_type = "standard"
+        self.config.controlnet = False
 
     def test_default_target(self):
         self.config.acestep_lora_target = "attn_qkv+linear_qkv"
@@ -91,6 +98,18 @@ class TestACEStepLoraTargets(unittest.TestCase):
             "to_out.0",
         ]
         self.assertEqual(set(targets), set(expected))
+
+    def test_v15_targets_are_decoder_attention_projections(self):
+        class MockACEStep(ACEStep):
+            def __init__(self, config, accelerator):
+                self.config = config
+                self.accelerator = accelerator
+                self._v15_layout = {"variant_path": "dummy"}
+
+        self.config.model_flavour = "v15-base"
+        model = MockACEStep(self.config, self.accelerator)
+        targets = model.get_lora_target_layers()
+        self.assertEqual(set(targets), {"q_proj", "k_proj", "v_proj", "o_proj"})
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -77,6 +77,9 @@ class ACEStep(AudioModelFoundation):
     DEFAULT_MODEL_FLAVOUR = "base"
     HUGGINGFACE_PATHS = {
         "base": "ACE-Step/ACE-Step-v1-3.5B",
+        "v15-turbo": "ACE-Step/Ace-Step1.5",
+        "v15-base": "ACE-Step/Ace-Step1.5",
+        "v15-sft": "ACE-Step/Ace-Step1.5",
     }
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -99,6 +102,25 @@ class ACEStep(AudioModelFoundation):
         "to_v",
         "to_out.0",
     ]
+    DEFAULT_V15_LORA_TARGET = ["q_proj", "k_proj", "v_proj", "o_proj"]
+    V15_VARIANT_SUBFOLDERS = {
+        "v15-turbo": "acestep-v15-turbo",
+        "v15-base": "acestep-v15-base",
+        "v15-sft": "acestep-v15-sft",
+    }
+    V15_SHARED_VAE_SUBFOLDER = "vae"
+    V15_SHARED_TEXT_ENCODER_SUBFOLDER = "Qwen3-Embedding-0.6B"
+    V15_SILENCE_LATENT_FILENAME = "silence_latent.pt"
+    V15_DEFAULT_DIT_INSTRUCTION = "Fill the audio semantic mask based on the given conditions:"
+    V15_SFT_GEN_PROMPT = """# Instruction
+{}
+
+# Caption
+{}
+
+# Metas
+{}<|endoftext|>
+"""
     SUPPORTS_LYRICS_EMBEDDER_TRAINING = True
 
     @classmethod
@@ -229,11 +251,15 @@ class ACEStep(AudioModelFoundation):
         self.tokenizers = []
         self.text_encoders = []
         self._checkpoint_base: Optional[str] = None
+        self._v15_layout: Optional[Dict[str, str]] = None
+        self.silence_latent: Optional[torch.Tensor] = None
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
         if manual_targets:
             return manual_targets
+        if self._is_v15_layout_active():
+            return list(self.DEFAULT_V15_LORA_TARGET)
         if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
             return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if getattr(self.config, "controlnet", False):
@@ -266,6 +292,234 @@ class ACEStep(AudioModelFoundation):
             ]
 
         return self.DEFAULT_LORA_TARGET
+
+    def _normalize_model_flavour(self) -> str:
+        return str(getattr(self.config, "model_flavour", "") or "").strip().lower()
+
+    def _preferred_v15_variant_subdir(self) -> Optional[str]:
+        configured_subfolder = getattr(self.config, "pretrained_transformer_subfolder", None)
+        if isinstance(configured_subfolder, str):
+            candidate = configured_subfolder.strip()
+            if candidate.lower().startswith("acestep-v15-"):
+                return candidate
+
+        flavour = self._normalize_model_flavour()
+        if flavour in self.V15_VARIANT_SUBFOLDERS:
+            return self.V15_VARIANT_SUBFOLDERS[flavour]
+
+        candidate_paths = [
+            getattr(self.config, "pretrained_transformer_model_name_or_path", None),
+            getattr(self.config, "pretrained_model_name_or_path", None),
+        ]
+        for candidate in candidate_paths:
+            if not isinstance(candidate, str):
+                continue
+            candidate_name = Path(candidate).name.strip()
+            if candidate_name.lower().startswith("acestep-v15-"):
+                return candidate_name
+
+        if self._looks_like_v15_source():
+            return self.V15_VARIANT_SUBFOLDERS["v15-turbo"]
+        return None
+
+    def _looks_like_v15_source(self, base_path: Optional[str] = None) -> bool:
+        candidates = [
+            base_path,
+            getattr(self.config, "pretrained_model_name_or_path", None),
+            getattr(self.config, "pretrained_transformer_model_name_or_path", None),
+            getattr(self.config, "pretrained_transformer_subfolder", None),
+            getattr(self.config, "model_flavour", None),
+        ]
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            lowered = candidate.strip().lower()
+            if lowered.startswith("acestep-v15-") or "ace-step1.5" in lowered or lowered in self.V15_VARIANT_SUBFOLDERS:
+                return True
+        return False
+
+    def _resolve_v15_layout(self, base_path: Optional[str] = None) -> Optional[Dict[str, str]]:
+        cached_layout = getattr(self, "_v15_layout", None)
+        if cached_layout is not None:
+            return cached_layout
+
+        if base_path is None:
+            return None
+
+        base_dir = Path(base_path)
+        variant_subdir = self._preferred_v15_variant_subdir()
+        shared_root = base_dir
+        variant_dir: Optional[Path] = None
+
+        if base_dir.name.lower().startswith("acestep-v15-"):
+            variant_dir = base_dir
+            shared_root = base_dir.parent
+        elif variant_subdir is not None:
+            candidate = base_dir / variant_subdir
+            if candidate.is_dir():
+                variant_dir = candidate
+
+        if variant_dir is None and base_dir.is_dir():
+            available_variants = sorted(
+                child for child in base_dir.iterdir() if child.is_dir() and child.name.lower().startswith("acestep-v15-")
+            )
+            if available_variants:
+                variant_dir = available_variants[0]
+
+        tokenizer_dir = shared_root / self.V15_SHARED_TEXT_ENCODER_SUBFOLDER
+        vae_dir = shared_root / self.V15_SHARED_VAE_SUBFOLDER
+        if variant_dir is None or not tokenizer_dir.is_dir() or not vae_dir.is_dir():
+            return None
+
+        silence_candidates = [
+            shared_root / self.V15_SILENCE_LATENT_FILENAME,
+            variant_dir / self.V15_SILENCE_LATENT_FILENAME,
+        ]
+        silence_path = next((candidate for candidate in silence_candidates if candidate.is_file()), None)
+        if silence_path is None:
+            for child in shared_root.iterdir():
+                if not child.is_dir() or not child.name.lower().startswith("acestep-v15-"):
+                    continue
+                candidate = child / self.V15_SILENCE_LATENT_FILENAME
+                if candidate.is_file():
+                    silence_path = candidate
+                    break
+        if silence_path is None:
+            return None
+
+        self._v15_layout = {
+            "root_path": str(shared_root),
+            "variant_path": str(variant_dir),
+            "tokenizer_path": str(tokenizer_dir),
+            "vae_path": str(vae_dir),
+            "silence_latent_path": str(silence_path),
+        }
+        return self._v15_layout
+
+    def _is_v15_layout_active(self) -> bool:
+        return getattr(self, "_v15_layout", None) is not None
+
+    def _build_v15_text_prompt(self, prompt: str, prompt_context: Optional[dict]) -> str:
+        metadata = prompt_context or {}
+        if isinstance(metadata.get("metadata"), dict):
+            metadata = metadata["metadata"]
+        bpm = metadata.get("bpm") or "N/A"
+        timesignature = metadata.get("timesignature") or "N/A"
+        keyscale = metadata.get("keyscale") or "N/A"
+        duration = metadata.get("duration") or "N/A"
+        metas_str = (
+            f"- bpm: {bpm}\n"
+            f"- timesignature: {timesignature}\n"
+            f"- keyscale: {keyscale}\n"
+            f"- duration: {duration} seconds\n"
+        )
+        return self.V15_SFT_GEN_PROMPT.format(self.V15_DEFAULT_DIT_INSTRUCTION, prompt or "", metas_str)
+
+    def _get_v15_text_embedding_layer(self):
+        text_encoder = self.text_encoders[0]
+        embedding_layer = getattr(text_encoder, "embed_tokens", None)
+        if embedding_layer is None and hasattr(text_encoder, "model"):
+            embedding_layer = getattr(text_encoder.model, "embed_tokens", None)
+        if embedding_layer is None and hasattr(text_encoder, "get_input_embeddings"):
+            embedding_layer = text_encoder.get_input_embeddings()
+        if embedding_layer is None:
+            raise AttributeError("ACE-Step v1.5 text encoder does not expose an input embedding layer.")
+        return embedding_layer
+
+    def _get_v15_silence_latent_slice(self, length: int, device, dtype) -> torch.Tensor:
+        if self.silence_latent is None:
+            raise ValueError("ACE-Step v1.5 requires silence_latent.pt to be loaded before preparing batches.")
+        silence_latent = self.silence_latent.to(device=device, dtype=dtype)
+        available = silence_latent.shape[1]
+        if available >= length:
+            return silence_latent[:, :length, :]
+        repeats = (length + available - 1) // available
+        return silence_latent.repeat(1, repeats, 1)[:, :length, :]
+
+    def _build_v15_context_latents(self, latent_length: int, batch_size: int, device, dtype) -> torch.Tensor:
+        src_latents = self._get_v15_silence_latent_slice(latent_length, device=device, dtype=dtype).expand(
+            batch_size, -1, -1
+        )
+        chunk_masks = torch.ones(batch_size, latent_length, 64, device=device, dtype=dtype)
+        return torch.cat([src_latents, chunk_masks], dim=-1)
+
+    def _embed_v15_lyrics_batch(self, lyrics_list: List[Optional[str]]) -> tuple[torch.Tensor, torch.Tensor]:
+        if not lyrics_list:
+            lyrics_list = [""]
+        tokenizer = self.tokenizers[0]
+        embedding_layer = self._get_v15_text_embedding_layer()
+        tokenized = tokenizer(
+            [lyrics or "" for lyrics in lyrics_list],
+            padding="max_length",
+            max_length=512,
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = tokenized.input_ids.to(self.accelerator.device)
+        attention_mask = tokenized.attention_mask.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        lyric_hidden_states = embedding_layer(input_ids).to(dtype=self.config.weight_dtype)
+        return lyric_hidden_states, attention_mask
+
+    def _run_v15_encoder(
+        self,
+        text_hidden_states: torch.Tensor,
+        text_attention_mask: Optional[torch.Tensor],
+        lyric_hidden_states: torch.Tensor,
+        lyric_attention_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        full_model = self.unwrap_model(model=self.model)
+        refer_audio_hidden = torch.zeros(
+            text_hidden_states.shape[0],
+            1,
+            64,
+            device=text_hidden_states.device,
+            dtype=text_hidden_states.dtype,
+        )
+        refer_audio_order_mask = torch.zeros(text_hidden_states.shape[0], device=text_hidden_states.device, dtype=torch.long)
+        full_model.encoder.eval()
+        with torch.no_grad():
+            return full_model.encoder(
+                text_hidden_states=text_hidden_states,
+                text_attention_mask=text_attention_mask,
+                lyric_hidden_states=lyric_hidden_states,
+                lyric_attention_mask=lyric_attention_mask,
+                refer_audio_acoustic_hidden_states_packed=refer_audio_hidden,
+                refer_audio_order_mask=refer_audio_order_mask,
+            )
+
+    def _sample_v15_timesteps(self, batch_size: int, device, dtype) -> torch.Tensor:
+        full_model = self.unwrap_model(model=self.model)
+        model_config = getattr(full_model, "config", None)
+        timestep_mu = getattr(model_config, "timestep_mu", -0.4)
+        timestep_sigma = getattr(model_config, "timestep_sigma", 1.0)
+        return torch.sigmoid(
+            torch.randn((batch_size,), device=device, dtype=dtype) * float(timestep_sigma) + float(timestep_mu)
+        )
+
+    def _infer_v15_latent_lengths(
+        self,
+        audio_batch: torch.Tensor,
+        metadata_entries: List[Dict],
+        latent_seq_len: int,
+    ) -> Optional[torch.Tensor]:
+        if not metadata_entries:
+            return None
+        if audio_batch.shape[-1] <= 0 or latent_seq_len <= 0:
+            return None
+        downsample_ratio = float(audio_batch.shape[-1]) / float(latent_seq_len)
+        lengths = []
+        has_value = False
+        for entry in metadata_entries:
+            sample_count = entry.get("num_samples") if isinstance(entry, dict) else None
+            if sample_count is None:
+                lengths.append(latent_seq_len)
+                continue
+            has_value = True
+            latent_length = int(round(float(sample_count) / downsample_ratio))
+            lengths.append(max(1, min(latent_seq_len, latent_length)))
+        if not has_value:
+            return None
+        return torch.tensor(lengths, dtype=torch.long)
 
     def setup_training_noise_schedule(self):
         """
@@ -309,20 +563,46 @@ class ACEStep(AudioModelFoundation):
             self._checkpoint_base = base
             return self._checkpoint_base
         logger.info("Downloading ACE-Step assets for %s", base)
+        allow_patterns = [
+            "music_dcae_f8c8/*",
+            "music_vocoder/*",
+            "ace_step_transformer/*",
+            "umt5-base/*",
+        ]
+        v15_variant_subdir = self._preferred_v15_variant_subdir()
+        if self._looks_like_v15_source(base) or v15_variant_subdir is not None:
+            allow_patterns = [
+                f"{self.V15_SHARED_VAE_SUBFOLDER}/*",
+                f"{self.V15_SHARED_TEXT_ENCODER_SUBFOLDER}/*",
+            ]
+            if v15_variant_subdir is not None:
+                allow_patterns.extend(
+                    [
+                        f"{v15_variant_subdir}/*",
+                        f"{v15_variant_subdir}/{self.V15_SILENCE_LATENT_FILENAME}",
+                    ]
+                )
+            else:
+                allow_patterns.extend(["acestep-v15-*/*", "acestep-v15-*/silence_latent.pt"])
         self._checkpoint_base = snapshot_download(
             repo_id=base,
-            allow_patterns=[
-                "music_dcae_f8c8/*",
-                "music_vocoder/*",
-                "ace_step_transformer/*",
-                "umt5-base/*",
-                "ace_step_transformer/*",
-            ],
+            allow_patterns=allow_patterns,
         )
         return self._checkpoint_base
 
     def load_text_tokenizer(self):
         base_path = self._resolve_checkpoint_base()
+        v15_layout = self._resolve_v15_layout(base_path)
+        if v15_layout is not None:
+            logger.info("Loading ACE-Step v1.5 tokenizer from %s", v15_layout["tokenizer_path"])
+            tokenizer = AutoTokenizer.from_pretrained(
+                pretrained_model_name_or_path=v15_layout["tokenizer_path"],
+                use_fast=True,
+                trust_remote_code=True,
+            )
+            self.tokenizers = [tokenizer]
+            self.tokenizer_1 = tokenizer
+            return
         logger.info("Loading ACE-Step tokenizer from %s (subfolder=umt5-base)", base_path)
         tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path=base_path,
@@ -336,6 +616,23 @@ class ACEStep(AudioModelFoundation):
         if not self.tokenizers:
             self.load_text_tokenizer()
         base_path = self._resolve_checkpoint_base()
+        v15_layout = self._resolve_v15_layout(base_path)
+        if v15_layout is not None:
+            logger.info("Loading ACE-Step v1.5 text encoder from %s", v15_layout["tokenizer_path"])
+            text_encoder = AutoModel.from_pretrained(
+                pretrained_model_name_or_path=v15_layout["tokenizer_path"],
+                torch_dtype=self.config.weight_dtype,
+                trust_remote_code=True,
+            )
+            if move_to_device and not self._ramtorch_text_encoders_requested():
+                text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+            if self._ramtorch_text_encoders_requested():
+                self._apply_ramtorch_layers(text_encoder, "text_encoder_1", percent=self._ramtorch_text_encoder_percent())
+            text_encoder.eval()
+            text_encoder.requires_grad_(False)
+            self.text_encoders = [text_encoder]
+            self.text_encoder_1 = text_encoder
+            return
         logger.info("Loading ACE-Step text encoder from %s (subfolder=umt5-base)", base_path)
         text_encoder = UMT5EncoderModel.from_pretrained(
             pretrained_model_name_or_path=base_path,
@@ -358,6 +655,23 @@ class ACEStep(AudioModelFoundation):
         """
         # Always resolve to the cached snapshot location; the repo root lacks a top-level config.json.
         base_path = self._resolve_checkpoint_base()
+        v15_layout = self._resolve_v15_layout(base_path)
+        if v15_layout is not None:
+            from diffusers.models import AutoencoderOobleck
+
+            logger.info("Loading ACE-Step v1.5 AutoencoderOobleck from %s", v15_layout["vae_path"])
+            self.vae = AutoencoderOobleck.from_pretrained(
+                pretrained_model_name_or_path=v15_layout["vae_path"],
+                torch_dtype=self.config.weight_dtype,
+            )
+            if move_to_device:
+                self.vae.to(self.accelerator.device, dtype=self.config.weight_dtype)
+            silence_latent = torch.load(v15_layout["silence_latent_path"], map_location="cpu", weights_only=True)
+            if silence_latent.ndim == 3 and silence_latent.shape[1] == 64:
+                silence_latent = silence_latent.transpose(1, 2)
+            self.silence_latent = silence_latent.to(dtype=self.config.weight_dtype)
+            self.config.vae_path = v15_layout["vae_path"]
+            return
         self.config.vae_path = base_path
         self.config.pretrained_model_name_or_path = base_path
         logger.info("Loading ACE-Step MusicDCAE from %s (subfolders music_dcae_f8c8/music_vocoder)", base_path)
@@ -376,6 +690,28 @@ class ACEStep(AudioModelFoundation):
         not the repo root (which lacks a top-level config.json).
         """
         base_path = self._resolve_checkpoint_base()
+        v15_layout = self._resolve_v15_layout(base_path)
+        if v15_layout is not None:
+            logger.info("Loading ACE-Step v1.5 condition model from %s", v15_layout["variant_path"])
+            self.config.pretrained_transformer_model_name_or_path = v15_layout["variant_path"]
+            self.config.pretrained_transformer_subfolder = None
+            self.config.pretrained_model_name_or_path = v15_layout["root_path"]
+            self.model = AutoModel.from_pretrained(
+                pretrained_model_name_or_path=v15_layout["variant_path"],
+                torch_dtype=self.config.weight_dtype,
+                trust_remote_code=True,
+            )
+            if move_to_device:
+                self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+            for module_name in ("encoder", "tokenizer", "detokenizer"):
+                module = getattr(self.model, module_name, None)
+                if module is None:
+                    continue
+                if hasattr(module, "requires_grad_"):
+                    module.requires_grad_(False)
+                if hasattr(module, "eval"):
+                    module.eval()
+            return self.model
 
         # If the user hasn't specified a specific transformer model path, or if they have specified the
         # upstream repo ID, we should default to the resolved snapshot path.
@@ -410,6 +746,8 @@ class ACEStep(AudioModelFoundation):
         """
         Return the ACE-Step inference pipeline wired to the already-loaded components when available.
         """
+        if self._is_v15_layout_active():
+            raise NotImplementedError("ACE-Step v1.5 validation and inference pipeline support is not implemented yet.")
         checkpoint_dir = getattr(self.config, "pretrained_model_name_or_path", None) or self._resolve_checkpoint_base()
         pipeline = ACEStepPipeline(checkpoint_dir=checkpoint_dir)
         # Wire in already loaded components to avoid reloading.
@@ -504,17 +842,22 @@ class ACEStep(AudioModelFoundation):
         """
         if not isinstance(prompts, (list, tuple)):
             prompts = [prompts]
+        if self._is_v15_layout_active():
+            prompt_contexts = getattr(self, "_current_prompt_contexts", None)
+            if prompt_contexts and len(prompt_contexts) == len(prompts):
+                prompts = [self._build_v15_text_prompt(prompt, prompt_contexts[idx]) for idx, prompt in enumerate(prompts)]
         tokenizer = self.tokenizers[0]
         text_encoder = self.text_encoders[0]
         tokenizer_kwargs = {
-            "padding": True,
+            "padding": True if not self._is_v15_layout_active() else "max_length",
             "truncation": True,
             "return_tensors": "pt",
             "max_length": self.text_tokenizer_max_length,
         }
         text_inputs = tokenizer(prompts, **tokenizer_kwargs)
         text_inputs = {k: v.to(self.accelerator.device) for k, v in text_inputs.items()}
-        if text_encoder.device != self.accelerator.device:
+        text_encoder_device = getattr(text_encoder, "device", None)
+        if text_encoder_device is not None and text_encoder_device != self.accelerator.device:
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
         text_encoder.eval()
         with torch.no_grad():
@@ -586,7 +929,7 @@ class ACEStep(AudioModelFoundation):
         Create a per-token mask so the denoiser can ignore padded latent regions.
         """
         batch_size = latents.shape[0]
-        seq_len = latents.shape[-1]
+        seq_len = latents.shape[1] if self._is_v15_layout_active() and latents.ndim >= 2 else latents.shape[-1]
         mask = torch.ones(
             batch_size,
             seq_len,
@@ -647,12 +990,21 @@ class ACEStep(AudioModelFoundation):
         cache entries can ship all ACE-Step specific conditioning data.
         """
         resolved_metadata = self._resolve_cache_metadata_entries(metadata_entries)
-        result = super().encode_cache_batch(vae, samples, metadata_entries)
-        payload = result
-        ssl_payload = self._compute_ssl_embeddings_for_cache(samples, resolved_metadata)
+        if self._resolve_v15_layout(self._resolve_checkpoint_base()) is not None:
+            with torch.no_grad():
+                latents = vae.encode(samples).latent_dist.sample().transpose(1, 2).to(dtype=self.config.weight_dtype)
+            payload: Any = {"latents": latents}
+            latent_lengths = self._infer_v15_latent_lengths(samples, resolved_metadata, latents.shape[1])
+            if latent_lengths is not None:
+                payload["latent_lengths"] = latent_lengths
+        else:
+            payload = super().encode_cache_batch(vae, samples, metadata_entries)
+        ssl_payload = None
+        if not self._is_v15_layout_active():
+            ssl_payload = self._compute_ssl_embeddings_for_cache(samples, resolved_metadata)
         lyrics_payload = self._extract_lyrics_from_metadata(resolved_metadata)
         if ssl_payload is None and lyrics_payload is None:
-            return result
+            return payload
         if not isinstance(payload, dict):
             payload = {"latents": payload}
         if ssl_payload is not None:
@@ -964,6 +1316,66 @@ class ACEStep(AudioModelFoundation):
             lyric_mask = torch.tensor(lyric_mask, dtype=torch.long)
         batch["lyric_mask"] = lyric_mask
 
+    def get_trained_component(self, base_model: bool = False, unwrap_model: bool = True):
+        if not self._is_v15_layout_active():
+            return super().get_trained_component(base_model=base_model, unwrap_model=unwrap_model)
+        component = self.model if base_model else getattr(self.model, "decoder", None)
+        if unwrap_model:
+            return self.unwrap_model(model=component)
+        return component
+
+    def add_lora_adapter(self):
+        if not self._is_v15_layout_active():
+            return super().add_lora_adapter()
+
+        from peft import LoraConfig, get_peft_model
+
+        from simpletuner.helpers.training.adapter import load_lora_weights
+        from simpletuner.helpers.utils import ramtorch as ramtorch_utils
+
+        target_modules = self.get_lora_target_layers()
+        save_modules = self.get_lora_save_layers()
+        addkeys, misskeys = [], []
+
+        lora_config_cls = LoraConfig
+        lora_config_kwargs = {}
+        if getattr(self.config, "peft_lora_mode", None) is not None:
+            if self.config.peft_lora_mode.lower() == "singlora":
+                from peft_singlora import SingLoRAConfig, setup_singlora
+
+                lora_config_cls = SingLoRAConfig
+                lora_config_kwargs = {
+                    "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
+                }
+                logger.info("Enabling SingLoRA for ACE-Step v1.5 decoder LoRA training.")
+                setup_singlora()
+
+        self.lora_config = lora_config_cls(
+            r=self.config.lora_rank,
+            lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+            lora_dropout=self.config.lora_dropout,
+            init_lora_weights=self.config.lora_initialisation_style,
+            target_modules=target_modules,
+            modules_to_save=save_modules,
+            exclude_modules=self.DEFAULT_LORA_EXCLUDE_TARGETS,
+            use_dora=getattr(self.config, "use_dora", False),
+            **lora_config_kwargs,
+        )
+
+        if self._ramtorch_enabled():
+            ramtorch_utils.register_lora_custom_module(self.lora_config)
+
+        self.model.decoder = get_peft_model(self.model.decoder, self.lora_config)
+
+        if getattr(self.config, "init_lora", None):
+            addkeys, misskeys = load_lora_weights(
+                {self.MODEL_TYPE.value: self.model.decoder},
+                self.config.init_lora,
+                use_dora=getattr(self.config, "use_dora", False),
+            )
+
+        return addkeys, misskeys
+
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
         Mirror the upstream ACE-Step training preprocess: build masks from cached latent lengths,
@@ -980,6 +1392,67 @@ class ACEStep(AudioModelFoundation):
             raise ValueError(
                 "ACE-Step requires cached UMT5 embeddings, but none were provided. Rebuild the text embed cache."
             )
+
+        if self._is_v15_layout_active():
+            latent_metadata = batch.get("latent_metadata")
+            batch["latent_attention_mask"] = self._build_audio_attention_mask(latent_batch, latent_metadata)
+
+            lyrics = batch.get("lyrics")
+            if not lyrics:
+                lyrics = self._extract_lyrics_from_metadata(latent_metadata)
+                if lyrics:
+                    batch["lyrics"] = lyrics
+
+            if batch.get("encoder_attention_mask") is None:
+                pe = batch["prompt_embeds"]
+                mask_shape = pe.shape[:2] if pe.dim() >= 2 else (pe.shape[0], 1)
+                batch["encoder_attention_mask"] = torch.ones(mask_shape, dtype=torch.float32)
+
+            device = self.accelerator.device
+            dtype = getattr(self.config, "weight_dtype", torch.float32)
+            latents = latent_batch.to(device=device, dtype=dtype)
+            attention_mask = batch["latent_attention_mask"].to(device=device, dtype=dtype)
+            text_hidden_states = batch["prompt_embeds"].to(device=device, dtype=dtype)
+            text_attention_mask = batch["encoder_attention_mask"].to(device=device, dtype=dtype)
+            lyric_hidden_states, lyric_attention_mask = self._embed_v15_lyrics_batch(lyrics or [""] * latents.shape[0])
+            encoder_hidden_states, encoder_attention_mask = self._run_v15_encoder(
+                text_hidden_states=text_hidden_states,
+                text_attention_mask=text_attention_mask,
+                lyric_hidden_states=lyric_hidden_states,
+                lyric_attention_mask=lyric_attention_mask,
+            )
+            encoder_hidden_states = encoder_hidden_states.to(device=device, dtype=dtype)
+            encoder_attention_mask = encoder_attention_mask.to(device=device, dtype=dtype)
+
+            timesteps = self._sample_v15_timesteps(latents.shape[0], device=device, dtype=dtype)
+            timestep_view = timesteps.view(latents.shape[0], *([1] * (latents.ndim - 1)))
+            noise = torch.randn_like(latents, device=device, dtype=dtype)
+            noisy_latents = timestep_view * noise + (1.0 - timestep_view) * latents
+            if not torch.isfinite(noisy_latents).all():
+                raise ValueError(
+                    f"Non-finite noisy_latents detected (min={noisy_latents.min().item()}, max={noisy_latents.max().item()})"
+                )
+
+            is_training = not state.get("is_validation", False) if isinstance(state, dict) else True
+            if is_training:
+                full_model = self.unwrap_model(model=self.model)
+                null_condition_emb = getattr(full_model, "null_condition_emb", None)
+                if null_condition_emb is not None:
+                    keep_mask = (torch.rand(size=(latents.shape[0],), device=device, dtype=dtype) >= 0.15).view(-1, 1, 1)
+                    null_condition_emb = null_condition_emb.to(device=device, dtype=dtype).expand_as(encoder_hidden_states)
+                    encoder_hidden_states = torch.where(keep_mask > 0, encoder_hidden_states, null_condition_emb)
+
+            return {
+                "latents": latents,
+                "noise": noise,
+                "noisy_latents": noisy_latents,
+                "timesteps": timesteps,
+                "attention_mask": attention_mask,
+                "encoder_hidden_states": encoder_hidden_states,
+                "encoder_attention_mask": encoder_attention_mask,
+                "context_latents": self._build_v15_context_latents(latents.shape[1], latents.shape[0], device, dtype),
+                "flow_target": noise - latents,
+            }
 
         latent_metadata = batch.get("latent_metadata")
         batch["latent_attention_mask"] = self._build_audio_attention_mask(latent_batch, latent_metadata)
@@ -1092,6 +1565,31 @@ class ACEStep(AudioModelFoundation):
         if transformer is None:
             raise ValueError("ACE-Step transformer has not been loaded before model_predict was invoked.")
 
+        if self._is_v15_layout_active():
+            output = transformer(
+                hidden_states=prepared_batch["noisy_latents"],
+                timestep=prepared_batch["timesteps"],
+                timestep_r=prepared_batch["timesteps"],
+                attention_mask=prepared_batch["attention_mask"],
+                encoder_hidden_states=prepared_batch["encoder_hidden_states"],
+                encoder_attention_mask=prepared_batch.get("encoder_attention_mask"),
+                context_latents=prepared_batch["context_latents"],
+            )
+            flow_pred = output[0] if isinstance(output, (tuple, list)) else getattr(output, "sample", None)
+            if flow_pred is None and hasattr(output, "__getitem__"):
+                flow_pred = output[0]
+            if flow_pred is None:
+                raise ValueError("ACE-Step v1.5 decoder did not return a flow prediction tensor.")
+            if not torch.isfinite(flow_pred).all():
+                raise ValueError(
+                    f"Non-finite model_prediction detected (min={flow_pred.min().item()}, max={flow_pred.max().item()})"
+                )
+            return {
+                "model_prediction": flow_pred,
+                "proj_losses": None,
+                "hidden_states_buffer": None,
+            }
+
         hidden_states_buffer = self._new_hidden_state_buffer()
         noise_latents = prepared_batch["noisy_latents"]
         attention_mask = prepared_batch["attention_mask"]
@@ -1145,17 +1643,22 @@ class ACEStep(AudioModelFoundation):
         model_pred = model_output.get("model_prediction")
         if model_pred is None:
             model_pred = model_output.get("sample")
-        target = prepared_batch.get("latents")
+        target = prepared_batch.get("flow_target") if self._is_v15_layout_active() else prepared_batch.get("latents")
+        if target is None:
+            target = prepared_batch.get("latents")
         attention_mask = prepared_batch.get("attention_mask")
 
         # If no attention mask, fall back to base implementation
         if attention_mask is None:
+            if self._is_v15_layout_active():
+                return F.mse_loss(model_pred.float(), target.float())
             return super().loss(prepared_batch, model_output, apply_conditioning_mask)
 
-        # Expand mask to match model_pred shape: [N, C, W, T]
-        # attention_mask is [N, T], we need [N, C, W, T]
         bsz = model_pred.shape[0]
-        mask = attention_mask.unsqueeze(1).unsqueeze(1).expand(-1, model_pred.shape[1], model_pred.shape[2], -1)
+        if model_pred.ndim == 3:
+            mask = attention_mask.unsqueeze(-1).expand_as(model_pred)
+        else:
+            mask = attention_mask.unsqueeze(1).unsqueeze(1).expand(-1, model_pred.shape[1], model_pred.shape[2], -1)
 
         # Mask predictions and targets to zero out padding regions
         selected_model_pred = (model_pred * mask).reshape(bsz, -1).contiguous()
@@ -1204,6 +1707,13 @@ class ACEStep(AudioModelFoundation):
         """
         Provide scheduler details for the model card, matching ACE-Step's flow-matching setup.
         """
+        if self._is_v15_layout_active():
+            return (
+                "\n"
+                "    - Scheduler: native ACE-Step v1.5 continuous flow matching\n"
+                "    - Timestep sampling: sigmoid-normal using model config (`timestep_mu`, `timestep_sigma`)\n"
+                "    - Objective: decoder predicts flow target `noise - x0` on 1D Oobleck latents\n"
+            )
         return (
             "\n"
             "    - Scheduler: FlowMatchEulerDiscreteScheduler (shift=3.0 by default)\n"

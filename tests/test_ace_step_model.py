@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -18,6 +20,12 @@ class TestACEStepModel(unittest.TestCase):
         self.config.flow_schedule_shift = 3.0
         self.config.model_family = "ace_step"
         self.config.pretrained_model_name_or_path = "dummy_path"
+        self.config.pretrained_transformer_model_name_or_path = None
+        self.config.pretrained_transformer_subfolder = None
+        self.config.model_flavour = "base"
+        self.config.controlnet = False
+        self.config.peft_lora_target_modules = None
+        self.config.lora_type = "standard"
 
         # Mock init to avoid side effects like loading tokenizers
         with (
@@ -139,6 +147,69 @@ class TestACEStepModel(unittest.TestCase):
         # Final Loss = (1 + 0.25) / 2 = 0.625.
 
         self.assertAlmostEqual(loss.item(), 0.625, places=4)
+
+    def test_build_v15_text_prompt_includes_metadata_template(self):
+        prompt = self.model._build_v15_text_prompt(
+            "warm analog synthwave",
+            {
+                "bpm": 120,
+                "timesignature": "4/4",
+                "keyscale": "C major",
+                "duration": 12,
+            },
+        )
+        self.assertIn("# Instruction", prompt)
+        self.assertIn("# Caption", prompt)
+        self.assertIn("# Metas", prompt)
+        self.assertIn("warm analog synthwave", prompt)
+        self.assertIn("- bpm: 120", prompt)
+        self.assertIn("- timesignature: 4/4", prompt)
+        self.assertIn("- keyscale: C major", prompt)
+        self.assertIn("- duration: 12 seconds", prompt)
+
+    def test_resolve_v15_layout_uses_requested_variant(self):
+        self.config.model_flavour = "v15-base"
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "vae").mkdir()
+            (root / "Qwen3-Embedding-0.6B").mkdir()
+            (root / "acestep-v15-base").mkdir()
+            torch.save(torch.zeros(1, 64, 4), root / "acestep-v15-base" / "silence_latent.pt")
+
+            layout = self.model._resolve_v15_layout(str(root))
+
+        self.assertIsNotNone(layout)
+        self.assertEqual(layout["variant_path"], str(root / "acestep-v15-base"))
+        self.assertEqual(layout["tokenizer_path"], str(root / "Qwen3-Embedding-0.6B"))
+        self.assertEqual(layout["vae_path"], str(root / "vae"))
+
+    def test_prepare_batch_v15_uses_latent_time_axis(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.model._embed_v15_lyrics_batch = MagicMock(
+            return_value=(torch.randn(2, 512, 32), torch.ones(2, 512, dtype=torch.float32))
+        )
+        self.model._run_v15_encoder = MagicMock(
+            return_value=(torch.randn(2, 20, 32), torch.ones(2, 20, dtype=torch.float32))
+        )
+        self.model._sample_v15_timesteps = MagicMock(return_value=torch.tensor([0.25, 0.75], dtype=torch.float32))
+        self.model._build_v15_context_latents = MagicMock(return_value=torch.ones(2, 12, 128, dtype=torch.float32))
+
+        batch = {
+            "latent_batch": torch.randn(2, 12, 64),
+            "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
+            "prompt_embeds": torch.randn(2, 10, 32),
+            "lyrics": ["one", "two"],
+        }
+
+        prepared = self.model.prepare_batch(batch, state={"is_validation": True})
+
+        self.assertEqual(prepared["attention_mask"].shape, (2, 12))
+        self.assertTrue(torch.all(prepared["attention_mask"][0] == 1.0))
+        self.assertTrue(torch.all(prepared["attention_mask"][1, :5] == 1.0))
+        self.assertTrue(torch.all(prepared["attention_mask"][1, 5:] == 0.0))
+        self.assertEqual(prepared["noisy_latents"].shape, (2, 12, 64))
+        self.assertEqual(prepared["context_latents"].shape, (2, 12, 128))
+        self.assertTrue(torch.allclose(prepared["flow_target"], prepared["noise"] - prepared["latents"]))
 
 
 if __name__ == "__main__":

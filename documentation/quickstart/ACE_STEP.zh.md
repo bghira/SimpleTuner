@@ -1,10 +1,13 @@
 # ACE-Step 快速入门
 
-本示例将训练 ACE-Step v1 3.5B 音频生成模型。
+本示例将训练 ACE-Step 音频生成模型。SimpleTuner 当前同时支持原始 ACE-Step v1 3.5B 训练路径，以及面向 ACE-Step v1.5 bundle 的前向兼容 LoRA 训练路径。
 
 ## 概览
 
-ACE-Step 是一个 3.5B 参数的 transformer 流匹配模型，用于高质量音频合成。支持文生音频，并可基于歌词进行条件控制。
+ACE-Step 是一个面向高质量音频合成的 transformer 流匹配音频模型。在 SimpleTuner 中：
+
+- `base` 对应原始 ACE-Step v1 3.5B 训练路径。
+- `v15-turbo`、`v15-base`、`v15-sft` 对应从 `ACE-Step/Ace-Step1.5` 加载的 ACE-Step v1.5 bundle 变体。
 
 ## 硬件要求
 
@@ -40,6 +43,22 @@ mkdir -p config/acestep-training-demo
 
 ### 关键设置
 
+SimpleTuner 当前支持以下 ACE-Step flavour：
+
+- `base`：原始 ACE-Step v1 3.5B
+- `v15-turbo`、`v15-base`、`v15-sft`：ACE-Step v1.5 bundle 变体
+
+请根据目标变体选择对应配置。
+
+现成可用的示例 preset 位于：
+
+- `simpletuner/examples/ace_step-v1-0.peft-lora`
+- `simpletuner/examples/ace_step-v1-5.peft-lora`
+
+你可以直接使用 `simpletuner train example=ace_step-v1-0.peft-lora` 或 `simpletuner train example=ace_step-v1-5.peft-lora` 启动。
+
+#### ACE-Step v1 示例
+
 创建 `config/acestep-training-demo/config.json`，填写以下内容：
 
 <details>
@@ -59,6 +78,27 @@ mkdir -p config/acestep-training-demo
 ```
 </details>
 
+#### ACE-Step v1.5 示例
+
+对于 ACE-Step v1.5，请保持 `model_family: "ace_step"`，选择一个 v1.5 flavour，并将 checkpoint 根路径指向共享的 v1.5 bundle：
+
+<details>
+<summary>查看示例配置</summary>
+
+```json
+{
+  "model_family": "ace_step",
+  "model_type": "lora",
+  "model_flavour": "v15-base",
+  "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "resolution": 0,
+  "mixed_precision": "bf16",
+  "base_model_precision": "int8-quanto",
+  "data_backend_config": "config/acestep-training-demo/multidatabackend.json"
+}
+```
+</details>
+
 ### 验证设置
 
 在 `config.json` 中添加以下内容以监控训练进度：
@@ -68,6 +108,8 @@ mkdir -p config/acestep-training-demo
 - **`validation_audio_duration`**：验证音频时长（秒），默认 30.0。
 - **`validation_guidance`**：引导尺度（默认约 3.0 - 5.0）。
 - **`validation_step_interval`**：生成样本的频率（如每 100 步）。
+
+> ⚠️ **ACE-Step v1.5 当前限制：** 目前的 SimpleTuner 集成支持 v1.5 训练，但内置 ACE-Step 验证/推理 pipeline 仍然只支持 v1.0。进行 v1.5 训练时，请关闭训练内验证，或使用上游/外部推理工具完成验证。
 
 ### 高级实验功能
 
@@ -205,6 +247,8 @@ simpletuner train env=acestep-training-demo
 > ```
 
 ### 训练歌词嵌入器（上游方式）
+
+> ℹ️ **版本说明：** `lyrics_embedder_train` 当前仅适用于 ACE-Step v1 训练路径。SimpleTuner 中的 v1.5 前向兼容 LoRA 路径是 decoder-only。
 
 上游 ACE-Step 训练器会同时微调歌词嵌入器与去噪器。若要在 SimpleTuner 中复现（仅适用于 full 或 standard LoRA）：
 
