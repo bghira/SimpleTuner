@@ -753,10 +753,13 @@ class ACEStep(AudioModelFoundation):
         """
         Return the ACE-Step inference pipeline wired to the already-loaded components when available.
         """
-        if self._is_v15_layout_active():
-            raise NotImplementedError("ACE-Step v1.5 validation and inference pipeline support is not implemented yet.")
         checkpoint_dir = getattr(self.config, "pretrained_model_name_or_path", None) or self._resolve_checkpoint_base()
         pipeline = ACEStepPipeline(checkpoint_dir=checkpoint_dir)
+        if self._is_v15_layout_active():
+            pipeline.is_v15_pipeline = True
+            pipeline.v15_model = getattr(self, "model", None)
+            pipeline.silence_latent = getattr(self, "silence_latent", None)
+            pipeline.sample_rate = 48000
         # Wire in already loaded components to avoid reloading.
         pipeline.transformer = getattr(self, "model", None)
         pipeline.ace_step_transformer = getattr(self, "model", None)
@@ -772,6 +775,11 @@ class ACEStep(AudioModelFoundation):
         # Mark pipeline as loaded so it doesn't try to reload weights from disk
         pipeline.loaded = True
         return pipeline
+
+    def validation_audio_sample_rate(self) -> Optional[int]:
+        if self._is_v15_layout_active():
+            return 48000
+        return 44100
 
     def get_lyrics_embedder_modules(self, unwrap: bool = True) -> list[tuple[str, torch.nn.Module]]:
         """

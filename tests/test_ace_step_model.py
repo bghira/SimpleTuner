@@ -239,6 +239,28 @@ class TestACEStepModel(unittest.TestCase):
         self.assertEqual(prepared["context_latents"].shape, (2, 12, 128))
         self.assertTrue(torch.allclose(prepared["flow_target"], prepared["noise"] - prepared["latents"]))
 
+    def test_get_pipeline_v15_wires_loaded_components(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.model.model = MagicMock()
+        self.model.vae = MagicMock()
+        self.model.text_encoder_1 = MagicMock()
+        self.model.tokenizer_1 = MagicMock()
+        self.model.silence_latent = torch.zeros(1, 8, 64)
+
+        pipeline = self.model.get_pipeline()
+
+        self.assertTrue(pipeline.is_v15_pipeline)
+        self.assertIs(pipeline.v15_model, self.model.model)
+        self.assertIs(pipeline.music_dcae, self.model.vae)
+        self.assertIs(pipeline.text_encoder_model, self.model.text_encoder_1)
+        self.assertIs(pipeline.text_tokenizer, self.model.tokenizer_1)
+        self.assertTrue(pipeline.loaded)
+
+    def test_validation_audio_sample_rate_uses_v15_rate(self):
+        self.assertEqual(self.model.validation_audio_sample_rate(), 44100)
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.assertEqual(self.model.validation_audio_sample_rate(), 48000)
+
 
 if __name__ == "__main__":
     unittest.main()
