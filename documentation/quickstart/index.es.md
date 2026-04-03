@@ -60,8 +60,8 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 
 ## Modelos de audio
 
-| Modelo | Parámetros | Guía |
-|-------|------------|-------|
+| Modelo | Tamaño / Versión | Guía |
+|-------|-------------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [Guía de ACE-Step](ACE_STEP.md) |
 | **HeartMuLa** | 3B | [Guía de HeartMuLa](HEARTMULA.md) |
 

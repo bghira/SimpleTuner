@@ -60,8 +60,8 @@ Step-by-step guides for training each supported model architecture.
 
 ## Audio Models
 
-| Model | Parameters | Guide |
-|-------|------------|-------|
+| Model | Size / Version | Guide |
+|-------|----------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [ACE-Step Guide](ACE_STEP.md) |
 | **HeartMuLa** | 3B | [HeartMuLa Guide](HEARTMULA.md) |
 

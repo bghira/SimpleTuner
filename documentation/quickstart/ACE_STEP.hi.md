@@ -240,7 +240,3 @@ simpletuner train env=acestep-training-demo
 ```
 
 यह कमांड SimpleTuner को `config/acestep-training-demo/` के अंदर `config.json` देखने के लिए बताता है।
-
-> ⚠️ **ACE-Step v1.5 सीमा:** वर्तमान SimpleTuner integration v1.5 प्रशिक्षण को सपोर्ट करता है, लेकिन बिल्ट‑इन ACE-Step validation/inference pipeline अभी भी केवल v1.0 के लिए है। v1.5 runs के लिए in-loop validation बंद करें या upstream/external inference tooling से validation करें।
-
-> ℹ️ **वर्ज़न नोट:** `lyrics_embedder_train` अभी केवल ACE-Step v1 प्रशिक्षण पाथ पर लागू होता है। SimpleTuner में v1.5 forward-compatible LoRA पाथ decoder-only है।

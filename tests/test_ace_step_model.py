@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -182,6 +183,33 @@ class TestACEStepModel(unittest.TestCase):
         self.assertEqual(layout["variant_path"], str(root / "acestep-v15-base"))
         self.assertEqual(layout["tokenizer_path"], str(root / "Qwen3-Embedding-0.6B"))
         self.assertEqual(layout["vae_path"], str(root / "vae"))
+
+    def test_resolve_v15_layout_caches_negative_result_for_same_base_path(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            self.assertIsNone(self.model._resolve_v15_layout(str(root)))
+
+            with patch("simpletuner.helpers.models.ace_step.model.Path.is_dir", side_effect=AssertionError("re-scanned")):
+                self.assertIsNone(self.model._resolve_v15_layout(str(root)))
+
+    def test_embed_v15_lyrics_batch_preserves_integer_attention_mask(self):
+        embedding_layer = torch.nn.Embedding(8, 4)
+        self.model.text_encoders = [SimpleNamespace(embed_tokens=embedding_layer)]
+        self.model.tokenizers = [
+            MagicMock(
+                return_value=SimpleNamespace(
+                    input_ids=torch.tensor([[1, 2, 0]], dtype=torch.long),
+                    attention_mask=torch.tensor([[1, 1, 0]], dtype=torch.long),
+                )
+            )
+        ]
+
+        lyric_hidden_states, attention_mask = self.model._embed_v15_lyrics_batch(["verse"])
+
+        self.assertEqual(lyric_hidden_states.dtype, torch.float32)
+        self.assertEqual(attention_mask.dtype, torch.long)
+        self.assertTrue(torch.equal(attention_mask, torch.tensor([[1, 1, 0]], dtype=torch.long)))
 
     def test_prepare_batch_v15_uses_latent_time_axis(self):
         self.model._v15_layout = {"variant_path": "dummy"}

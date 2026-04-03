@@ -252,6 +252,7 @@ class ACEStep(AudioModelFoundation):
         self.text_encoders = []
         self._checkpoint_base: Optional[str] = None
         self._v15_layout: Optional[Dict[str, str]] = None
+        self._v15_layout_probe_base: Optional[str] = None
         self.silence_latent: Optional[torch.Tensor] = None
 
     def get_lora_target_layers(self):
@@ -340,13 +341,17 @@ class ACEStep(AudioModelFoundation):
 
     def _resolve_v15_layout(self, base_path: Optional[str] = None) -> Optional[Dict[str, str]]:
         cached_layout = getattr(self, "_v15_layout", None)
-        if cached_layout is not None:
+        cached_probe_base = getattr(self, "_v15_layout_probe_base", None)
+        if cached_layout is not None and (base_path is None or cached_probe_base == str(base_path)):
             return cached_layout
 
         if base_path is None:
             return None
+        if cached_probe_base == str(base_path):
+            return None
 
         base_dir = Path(base_path)
+        self._v15_layout_probe_base = str(base_path)
         variant_subdir = self._preferred_v15_variant_subdir()
         shared_root = base_dir
         variant_dir: Optional[Path] = None
@@ -369,6 +374,7 @@ class ACEStep(AudioModelFoundation):
         tokenizer_dir = shared_root / self.V15_SHARED_TEXT_ENCODER_SUBFOLDER
         vae_dir = shared_root / self.V15_SHARED_VAE_SUBFOLDER
         if variant_dir is None or not tokenizer_dir.is_dir() or not vae_dir.is_dir():
+            self._v15_layout = None
             return None
 
         silence_candidates = [
@@ -385,6 +391,7 @@ class ACEStep(AudioModelFoundation):
                     silence_path = candidate
                     break
         if silence_path is None:
+            self._v15_layout = None
             return None
 
         self._v15_layout = {
@@ -456,7 +463,7 @@ class ACEStep(AudioModelFoundation):
             return_tensors="pt",
         )
         input_ids = tokenized.input_ids.to(self.accelerator.device)
-        attention_mask = tokenized.attention_mask.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        attention_mask = tokenized.attention_mask.to(self.accelerator.device)
         lyric_hidden_states = embedding_layer(input_ids).to(dtype=self.config.weight_dtype)
         return lyric_hidden_states, attention_mask
 
