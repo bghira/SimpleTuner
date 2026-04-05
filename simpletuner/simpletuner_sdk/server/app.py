@@ -708,6 +708,7 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.checkpoints import router as checkpoints_router
     from .routes.cloud import router as cloud_router
     from .routes.configs import router as configs_router
+    from .routes.dataset_viewer import router as dataset_viewer_router
     from .routes.datasets import router as datasets_router
     from .routes.fields import router as fields_router
     from .routes.git import router as git_router
@@ -728,6 +729,7 @@ def _add_trainer_routes(app: FastAPI):
         global_router,
         models_router,
         datasets_router,
+        dataset_viewer_router,
         caption_filters_router,
         checkpoints_router,
         cloud_router,

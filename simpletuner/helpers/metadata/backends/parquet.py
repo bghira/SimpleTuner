@@ -316,7 +316,7 @@ class ParquetMetadataBackend(MetadataBackend):
     def save_image_metadata(self):
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
-    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
+    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         # build buckets from parquet metadata without loading actual files
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
@@ -360,14 +360,20 @@ class ParquetMetadataBackend(MetadataBackend):
         last_write_time = time.time()
         aspect_ratio_bucket_updates = {}
 
-        for file in tqdm(
-            new_files,
-            desc="Generating aspect bucket cache",
-            total=len(new_files),
-            leave=False,
-            ncols=100,
-            miniters=max(1, len(new_files) // 100),
+        total_files = len(new_files)
+        for file_idx, file in enumerate(
+            tqdm(
+                new_files,
+                desc="Generating aspect bucket cache",
+                total=total_files,
+                leave=False,
+                ncols=100,
+                miniters=max(1, total_files // 100),
+            )
         ):
+            if progress_callback is not None:
+                progress_callback(file_idx, total_files)
+
             current_time = time.time()
             if file not in existing_files_set:
                 metadata_updates = {}

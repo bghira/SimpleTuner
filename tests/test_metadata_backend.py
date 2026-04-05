@@ -1,5 +1,8 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 try:
@@ -548,6 +551,22 @@ class TestFilteringStatistics(unittest.TestCase):
             self.metadata_backend.reload_cache()
 
         self.assertIsNone(self.metadata_backend.filtering_statistics)
+
+
+class TestStateTrackerDiskCache(unittest.TestCase):
+    def test_set_image_files_creates_missing_output_dir(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "output" / "scan"
+            StateTracker.set_args(SimpleNamespace(output_dir=str(output_dir)))
+            StateTracker.all_image_files = {}
+
+            result = StateTracker.set_image_files(
+                [("subdir", [], ["image_a.png", "image_b.png"])],
+                data_backend_id="subject-1024",
+            )
+
+            self.assertEqual(result, {"image_a.png": False, "image_b.png": False})
+            self.assertTrue((output_dir / "all_image_files_subject-1024.json").exists())
 
 
 if __name__ == "__main__":

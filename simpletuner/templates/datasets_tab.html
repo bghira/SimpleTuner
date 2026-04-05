@@ -4,6 +4,7 @@
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-datasets">
 <link rel="stylesheet" href="/static/css/dataset-wizard.css" id="css-dataset-wizard">
 <link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-datasets">
+<link rel="stylesheet" href="/static/css/dataset-viewer.css" id="css-dataset-viewer">
 
 <style>
 /* Dataset dropdown styling for datasets page - matches basic tab */
@@ -93,8 +94,27 @@
 </style>
 
 <div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
-     x-data="datasetWizardComponent()"
+     x-data="{...datasetWizardComponent(), activeSubTab: 'configuration'}"
      x-init="loadHints(); init()">
+
+    <!-- Sub-tab navigation: Configuration | Viewer -->
+    <div class="dataset-subtab-nav mb-3">
+        <button type="button"
+                class="dataset-subtab-btn"
+                :class="{ 'active': activeSubTab === 'configuration' }"
+                @click="activeSubTab = 'configuration'">
+            <i class="fas fa-cog me-1"></i> Configuration
+        </button>
+        <button type="button"
+                class="dataset-subtab-btn"
+                :class="{ 'active': activeSubTab === 'viewer' }"
+                @click="activeSubTab = 'viewer'; $dispatch('viewer-tab-activated')"
+            <i class="fas fa-eye me-1"></i> Viewer
+        </button>
+    </div>
+
+    <!-- Configuration Sub-tab -->
+    <div x-show="activeSubTab === 'configuration'" x-cloak>
 
     <!-- Hero CTA - Introduction to datasets -->
     {% call hero_cta(
@@ -643,4 +663,13 @@
 
     </div>
     <!-- End datasets hero content wrapper -->
+
+    </div>
+    <!-- End Configuration Sub-tab -->
+
+    <!-- Viewer Sub-tab -->
+    <div x-show="activeSubTab === 'viewer'" x-cloak>
+        {% include 'dataset_viewer_tab.html' %}
+    </div>
+
 </div>

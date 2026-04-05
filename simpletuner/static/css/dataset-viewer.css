@@ -1,0 +1,309 @@
+/* Dataset Viewer styles */
+
+/* Sub-tab navigation */
+.dataset-subtab-nav {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    padding-bottom: 0;
+}
+
+.dataset-subtab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: rgba(148, 163, 184, 0.8);
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.dataset-subtab-btn:hover {
+    color: #e2e8f0;
+}
+
+.dataset-subtab-btn.active {
+    color: #38bdf8;
+    border-bottom-color: #38bdf8;
+}
+
+/* Dataset cards */
+.viewer-dataset-card {
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    background-color: rgba(15, 23, 42, 0.5);
+}
+
+.viewer-card-header {
+    background-color: rgba(15, 23, 42, 0.65);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    transition: background-color 0.15s;
+}
+
+.viewer-card-header:hover {
+    background-color: rgba(30, 41, 59, 0.65);
+}
+
+.viewer-expand-icon {
+    transition: transform 0.2s;
+    font-size: 0.75rem;
+    opacity: 0.6;
+}
+
+.viewer-expand-icon.rotated {
+    transform: rotate(90deg);
+}
+
+/* Filter stats badges */
+.viewer-filter-stats {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    padding-bottom: 0.75rem;
+}
+
+.viewer-stat-badge {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.35rem 0.65rem;
+    border-radius: 0.375rem;
+    background-color: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.15);
+    min-width: 60px;
+}
+
+.viewer-stat-badge.viewer-stat-skipped {
+    background-color: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.15);
+}
+
+.viewer-stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(148, 163, 184, 0.8);
+}
+
+.viewer-stat-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+/* Config summary */
+.viewer-config-summary {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    padding-bottom: 0.75rem;
+}
+
+/* Bucket buttons */
+.viewer-bucket-btn {
+    background-color: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: #e2e8f0;
+    font-size: 0.8rem;
+}
+
+.viewer-bucket-btn:hover {
+    background-color: rgba(30, 41, 59, 0.85);
+    border-color: rgba(148, 163, 184, 0.4);
+    color: #f8fafc;
+}
+
+.viewer-bucket-btn.active {
+    background-color: rgba(56, 189, 248, 0.2);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: #38bdf8;
+}
+
+/* Thumbnail grid */
+.viewer-thumbnail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 0.5rem;
+}
+
+.viewer-thumbnail-item {
+    position: relative;
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background-color: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.viewer-thumbnail-item:hover {
+    border-color: rgba(56, 189, 248, 0.4);
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.15);
+}
+
+.viewer-thumbnail-item img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+}
+
+.viewer-thumbnail-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(148, 163, 184, 0.4);
+    font-size: 1.5rem;
+}
+
+.viewer-thumbnail-label {
+    padding: 0.2rem 0.4rem;
+    font-size: 0.65rem;
+    color: rgba(148, 163, 184, 0.8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+}
+
+/* Empty state */
+.viewer-empty-state {
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    border-radius: 0.5rem;
+    background-color: rgba(15, 23, 42, 0.3);
+}
+
+/* Caption health */
+.viewer-caption-health {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    padding-bottom: 0.75rem;
+}
+
+/* Filter report */
+.viewer-filter-report {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    padding-bottom: 0.75rem;
+}
+
+/* Dataset relationship graph */
+.viewer-graph-panel {
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    background-color: rgba(15, 23, 42, 0.5);
+}
+
+.viewer-graph-edge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    background-color: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+/* Scan progress */
+.viewer-scan-progress {
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+    background-color: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(56, 189, 248, 0.15);
+}
+
+.viewer-scan-progress .progress {
+    background-color: rgba(15, 23, 42, 0.65);
+}
+
+/* Preview image in detail modal */
+.viewer-preview-container {
+    background-color: rgba(15, 23, 42, 0.65);
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    text-align: center;
+}
+
+.viewer-preview-wrapper {
+    position: relative;
+    display: inline-block;
+    overflow: hidden;
+    line-height: 0;
+    border-radius: 0.25rem;
+}
+
+.viewer-preview-image {
+    max-width: 100%;
+    max-height: 60vh;
+    display: block;
+}
+
+/* Pipeline step layout */
+.viewer-preview-step {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+.viewer-preview-step-label {
+    margin-bottom: 0.35rem;
+    line-height: 1.4;
+}
+
+.viewer-preview-arrow {
+    display: flex;
+    align-items: center;
+    padding-top: 1.5rem;
+    color: rgba(148, 163, 184, 0.5);
+    font-size: 1.2rem;
+}
+
+/* Crop bounding box with shadow dimming everything outside */
+.viewer-crop-overlay {
+    position: absolute;
+    border: 2px solid #38bdf8;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+    z-index: 2;
+}
+
+.viewer-crop-draggable {
+    pointer-events: auto;
+    cursor: grab;
+}
+
+.viewer-crop-dragging {
+    cursor: grabbing;
+}
+
+.viewer-crop-draggable:hover {
+    border-color: #7dd3fc;
+}
+
+/* Conditioning pair viewer */
+.viewer-conditioning-pairs {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.viewer-pair-row {
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.375rem;
+    background-color: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.viewer-pair-thumb {
+    cursor: pointer;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.15s;
+    min-width: 0;
+    flex: 1;
+}
+
+.viewer-pair-thumb:hover {
+    background-color: rgba(56, 189, 248, 0.1);
+}
+
+.viewer-pair-filename {
+    font-size: 0.75rem;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

@@ -465,8 +465,13 @@ class MetadataBackend:
         time.sleep(0.001)
         logger.debug("Bucket worker completed processing. Returning to main thread.")
 
-    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
-        """compute aspect ratio buckets - main processing function"""
+    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
+        """compute aspect ratio buckets - main processing function
+
+        Args:
+            ignore_existing_cache: If True, recompute all files even if cache exists.
+            progress_callback: Optional callable(current, total) invoked as files are processed.
+        """
         logger.info("Discovering new files...")
         if not self.image_metadata_loaded:
             try:
@@ -624,6 +629,8 @@ class MetadataBackend:
                 current_time = time.time()
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
+                    if progress_callback is not None:
+                        progress_callback(pbar.n, pbar.total)
                 while not aspect_ratio_bucket_indices_queue.empty():
                     aspect_ratio_bucket_indices_update = aspect_ratio_bucket_indices_queue.get()
                     for key, value in aspect_ratio_bucket_indices_update.items():
