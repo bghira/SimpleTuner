@@ -212,6 +212,41 @@ class TestACEStepModel(unittest.TestCase):
         self.assertEqual(attention_mask.dtype, torch.long)
         self.assertTrue(torch.equal(attention_mask, torch.tensor([[1, 1, 0]], dtype=torch.long)))
 
+    def test_encode_prompts_moves_text_encoder_when_only_parameter_device_is_available(self):
+        class DummyTextEncoder:
+            def __init__(self):
+                self.to_calls = []
+
+            def parameters(self):
+                return iter([SimpleNamespace(device=torch.device("meta"))])
+
+            def to(self, device, dtype=None):
+                self.to_calls.append((device, dtype))
+                return self
+
+            def eval(self):
+                return self
+
+            def __call__(self, **kwargs):
+                return SimpleNamespace(last_hidden_state=torch.ones(1, 2, 3, dtype=torch.float32))
+
+        self.model.tokenizers = [
+            MagicMock(
+                return_value={
+                    "input_ids": torch.tensor([[1, 2]], dtype=torch.long),
+                    "attention_mask": torch.tensor([[1, 1]], dtype=torch.long),
+                }
+            )
+        ]
+        text_encoder = DummyTextEncoder()
+        self.model.text_encoders = [text_encoder]
+
+        encoded = self.model._encode_prompts(["hello world"])
+
+        self.assertEqual(text_encoder.to_calls, [(self.mock_accelerator.device, self.config.weight_dtype)])
+        self.assertEqual(encoded["prompt_embeds"].dtype, self.config.weight_dtype)
+        self.assertTrue(torch.equal(encoded["attention_masks"], torch.tensor([[1, 1]], dtype=torch.long)))
+
     def test_prepare_batch_v15_uses_latent_time_axis(self):
         self.model._v15_layout = {"variant_path": "dummy"}
         self.model._embed_v15_lyrics_batch = MagicMock(

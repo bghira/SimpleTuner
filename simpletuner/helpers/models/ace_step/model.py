@@ -919,6 +919,11 @@ class ACEStep(AudioModelFoundation):
         text_inputs = tokenizer(prompts, **tokenizer_kwargs)
         text_inputs = {k: v.to(self.accelerator.device) for k, v in text_inputs.items()}
         text_encoder_device = getattr(text_encoder, "device", None)
+        if text_encoder_device is None:
+            try:
+                text_encoder_device = next(text_encoder.parameters()).device
+            except (AttributeError, StopIteration, TypeError):
+                text_encoder_device = None
         if text_encoder_device is not None and text_encoder_device != self.accelerator.device:
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
         text_encoder.eval()
