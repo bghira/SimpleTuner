@@ -15,7 +15,7 @@
   "model_type": "lora",
   "num_train_epochs": 0,
   "optimizer": "adamw_bf16",
-  "output_dir": "output/examples/acestep.peft-lora",
+  "output_dir": "output/examples/acestep-v1.0.peft-lora",
   "report_to": "none",
   "resolution": 512,
   "seed": 42,

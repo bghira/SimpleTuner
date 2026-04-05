@@ -80,6 +80,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - Em setups multi-node, apenas local-rank 0 em cada node executa a delecao. Falhas sao ignoradas silenciosamente para lidar com race conditions em storage compartilhado.
   - Isso **nao** afeta checkpoints salvos — apenas o cache do modelo base pre-treinado.
 
+### `--trust_remote_code`
+
+- **O que**: Permite que Transformers e tokenizers executem codigo Python personalizado do repositorio do modelo quando o checkpoint depende de classes customizadas upstream.
+- **Padrao**: `False`
+- **Por que**: Necessario para checkpoints ACE-Step v1.5, que trazem codigo personalizado de `AutoModel` e tokenizer no repositorio upstream.
+- **Aviso**: Ative isso apenas para repositorios de modelo em que voce confia.
+
 ### `--enable_group_offload`
 
 - **O que**: Habilita offload de modulos em grupo do diffusers para que blocos do modelo possam ser estagiados na CPU (ou disco) entre forward passes.
@@ -1677,10 +1684,14 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        Os flavours de ACE-Step são `base`, `v15-turbo`,
+                        `v15-base` e `v15-sft`. Os flavours v1.5 suportam
+                        treinamento e validacao de audio integrada, e exigem
+                        `--trust_remote_code` para o repositorio upstream.
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

@@ -60,9 +60,9 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 
 ## Modelos de audio
 
-| Modelo | Parámetros | Guía |
-|-------|------------|-------|
-| **ACE-Step** | 3.5B | [Guía de ACE-Step](ACE_STEP.md) |
+| Modelo | Tamaño / Versión | Guía |
+|-------|-------------------|-------|
+| **ACE-Step** | 3.5B / 1.5 | [Guía de ACE-Step](ACE_STEP.md) |
 | **HeartMuLa** | 3B | [Guía de HeartMuLa](HEARTMULA.md) |
 
 ## Elegir un modelo
@@ -85,5 +85,5 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 **Para casos de uso específicos:**
 
 - **Flux Kontext** para edición/condicionamiento de imágenes
-- **ACE-Step** para texto a música
+- **ACE-Step** para entrenamiento LoRA de texto a música (v1 y v1.5)
 - **HeartMuLa** para texto-a-audio autoregresivo

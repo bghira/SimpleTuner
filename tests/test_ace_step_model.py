@@ -1,7 +1,11 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from transformers import AutoModel
 
 from simpletuner.helpers.models.ace_step.model import ACEStep
 
@@ -18,6 +22,12 @@ class TestACEStepModel(unittest.TestCase):
         self.config.flow_schedule_shift = 3.0
         self.config.model_family = "ace_step"
         self.config.pretrained_model_name_or_path = "dummy_path"
+        self.config.pretrained_transformer_model_name_or_path = None
+        self.config.pretrained_transformer_subfolder = None
+        self.config.model_flavour = "base"
+        self.config.controlnet = False
+        self.config.peft_lora_target_modules = None
+        self.config.lora_type = "standard"
 
         # Mock init to avoid side effects like loading tokenizers
         with (
@@ -139,6 +149,198 @@ class TestACEStepModel(unittest.TestCase):
         # Final Loss = (1 + 0.25) / 2 = 0.625.
 
         self.assertAlmostEqual(loss.item(), 0.625, places=4)
+
+    def test_build_v15_text_prompt_includes_metadata_template(self):
+        prompt = self.model._build_v15_text_prompt(
+            "warm analog synthwave",
+            {
+                "bpm": 120,
+                "timesignature": "4/4",
+                "keyscale": "C major",
+                "duration": 12,
+            },
+        )
+        self.assertIn("# Instruction", prompt)
+        self.assertIn("# Caption", prompt)
+        self.assertIn("# Metas", prompt)
+        self.assertIn("warm analog synthwave", prompt)
+        self.assertIn("- bpm: 120", prompt)
+        self.assertIn("- timesignature: 4/4", prompt)
+        self.assertIn("- keyscale: C major", prompt)
+        self.assertIn("- duration: 12 seconds", prompt)
+
+    def test_resolve_v15_layout_uses_requested_variant(self):
+        self.config.model_flavour = "v15-base"
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "vae").mkdir()
+            (root / "Qwen3-Embedding-0.6B").mkdir()
+            (root / "acestep-v15-base").mkdir()
+            torch.save(torch.zeros(1, 64, 4), root / "acestep-v15-base" / "silence_latent.pt")
+
+            layout = self.model._resolve_v15_layout(str(root))
+
+        self.assertIsNotNone(layout)
+        self.assertEqual(layout["variant_path"], str(root / "acestep-v15-base"))
+        self.assertEqual(layout["tokenizer_path"], str(root / "Qwen3-Embedding-0.6B"))
+        self.assertEqual(layout["vae_path"], str(root / "vae"))
+
+    def test_resolve_v15_layout_caches_negative_result_for_same_base_path(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            self.assertIsNone(self.model._resolve_v15_layout(str(root)))
+
+            with patch("simpletuner.helpers.models.ace_step.model.Path.is_dir", side_effect=AssertionError("re-scanned")):
+                self.assertIsNone(self.model._resolve_v15_layout(str(root)))
+
+    def test_embed_v15_lyrics_batch_preserves_integer_attention_mask(self):
+        embedding_layer = torch.nn.Embedding(8, 4)
+        self.model.text_encoders = [SimpleNamespace(embed_tokens=embedding_layer)]
+        self.model.tokenizers = [
+            MagicMock(
+                return_value=SimpleNamespace(
+                    input_ids=torch.tensor([[1, 2, 0]], dtype=torch.long),
+                    attention_mask=torch.tensor([[1, 1, 0]], dtype=torch.long),
+                )
+            )
+        ]
+
+        lyric_hidden_states, attention_mask = self.model._embed_v15_lyrics_batch(["verse"])
+
+        self.assertEqual(lyric_hidden_states.dtype, torch.float32)
+        self.assertEqual(attention_mask.dtype, torch.long)
+        self.assertTrue(torch.equal(attention_mask, torch.tensor([[1, 1, 0]], dtype=torch.long)))
+
+    def test_encode_prompts_moves_text_encoder_when_only_parameter_device_is_available(self):
+        class DummyTextEncoder:
+            def __init__(self):
+                self.to_calls = []
+
+            def parameters(self):
+                return iter([SimpleNamespace(device=torch.device("meta"))])
+
+            def to(self, device, dtype=None):
+                self.to_calls.append((device, dtype))
+                return self
+
+            def eval(self):
+                return self
+
+            def __call__(self, **kwargs):
+                return SimpleNamespace(last_hidden_state=torch.ones(1, 2, 3, dtype=torch.float32))
+
+        self.model.tokenizers = [
+            MagicMock(
+                return_value={
+                    "input_ids": torch.tensor([[1, 2]], dtype=torch.long),
+                    "attention_mask": torch.tensor([[1, 1]], dtype=torch.long),
+                }
+            )
+        ]
+        text_encoder = DummyTextEncoder()
+        self.model.text_encoders = [text_encoder]
+
+        encoded = self.model._encode_prompts(["hello world"])
+
+        self.assertEqual(text_encoder.to_calls, [(self.mock_accelerator.device, self.config.weight_dtype)])
+        self.assertEqual(encoded["prompt_embeds"].dtype, self.config.weight_dtype)
+        self.assertTrue(torch.equal(encoded["attention_masks"], torch.tensor([[1, 1]], dtype=torch.long)))
+
+    def test_prepare_batch_v15_uses_latent_time_axis(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.model._embed_v15_lyrics_batch = MagicMock(
+            return_value=(torch.randn(2, 512, 32), torch.ones(2, 512, dtype=torch.float32))
+        )
+        self.model._run_v15_encoder = MagicMock(
+            return_value=(torch.randn(2, 20, 32), torch.ones(2, 20, dtype=torch.float32))
+        )
+        self.model._sample_v15_timesteps = MagicMock(return_value=torch.tensor([0.25, 0.75], dtype=torch.float32))
+        self.model._build_v15_context_latents = MagicMock(return_value=torch.ones(2, 12, 128, dtype=torch.float32))
+
+        batch = {
+            "latent_batch": torch.randn(2, 12, 64),
+            "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
+            "prompt_embeds": torch.randn(2, 10, 32),
+            "lyrics": ["one", "two"],
+        }
+
+        prepared = self.model.prepare_batch(batch, state={"is_validation": True})
+
+        self.assertEqual(prepared["attention_mask"].shape, (2, 12))
+        self.assertTrue(torch.all(prepared["attention_mask"][0] == 1.0))
+        self.assertTrue(torch.all(prepared["attention_mask"][1, :5] == 1.0))
+        self.assertTrue(torch.all(prepared["attention_mask"][1, 5:] == 0.0))
+        self.assertEqual(prepared["noisy_latents"].shape, (2, 12, 64))
+        self.assertEqual(prepared["context_latents"].shape, (2, 12, 128))
+        self.assertTrue(torch.allclose(prepared["flow_target"], prepared["noise"] - prepared["latents"]))
+
+    def test_prepare_batch_v15_repeats_single_lyric_string_and_keeps_text_mask_integer(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.model._embed_v15_lyrics_batch = MagicMock(
+            return_value=(torch.randn(2, 512, 32), torch.ones(2, 512, dtype=torch.long))
+        )
+        self.model._run_v15_encoder = MagicMock(return_value=(torch.randn(2, 20, 32), torch.ones(2, 20, dtype=torch.long)))
+        self.model._sample_v15_timesteps = MagicMock(return_value=torch.tensor([0.25, 0.75], dtype=torch.float32))
+        self.model._build_v15_context_latents = MagicMock(return_value=torch.ones(2, 12, 128, dtype=torch.float32))
+
+        batch = {
+            "latent_batch": torch.randn(2, 12, 64),
+            "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
+            "prompt_embeds": torch.randn(2, 10, 32),
+            "lyrics": "chorus line",
+        }
+
+        prepared = self.model.prepare_batch(batch, state={"is_validation": True})
+
+        self.model._embed_v15_lyrics_batch.assert_called_once_with(["chorus line", "chorus line"])
+        run_kwargs = self.model._run_v15_encoder.call_args.kwargs
+        self.assertEqual(run_kwargs["text_attention_mask"].dtype, torch.long)
+        self.assertEqual(prepared["encoder_attention_mask"].dtype, torch.long)
+
+    def test_prepare_batch_v15_rejects_mismatched_lyric_batch(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+
+        batch = {
+            "latent_batch": torch.randn(2, 12, 64),
+            "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
+            "prompt_embeds": torch.randn(2, 10, 32),
+            "lyrics": ["one", "two", "three"],
+        }
+
+        with self.assertRaisesRegex(ValueError, "Expected `lyrics` to have length 2, but got 3."):
+            self.model.prepare_batch(batch, state={"is_validation": True})
+
+    def test_load_v15_hf_component_requires_explicit_trust_remote_code_opt_in(self):
+        with patch.object(AutoModel, "from_pretrained", side_effect=ValueError("Set trust_remote_code=True to proceed")):
+            with self.assertRaisesRegex(ValueError, "trust_remote_code=true"):
+                self.model._load_v15_hf_component(
+                    AutoModel,
+                    component_name="condition model",
+                    pretrained_model_name_or_path="ACE-Step/Ace-Step1.5",
+                )
+
+    def test_get_pipeline_v15_wires_loaded_components(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.model.model = MagicMock()
+        self.model.vae = MagicMock()
+        self.model.text_encoder_1 = MagicMock()
+        self.model.tokenizer_1 = MagicMock()
+        self.model.silence_latent = torch.zeros(1, 8, 64)
+
+        pipeline = self.model.get_pipeline()
+
+        self.assertTrue(pipeline.is_v15_pipeline)
+        self.assertIs(pipeline.v15_model, self.model.model)
+        self.assertIs(pipeline.music_dcae, self.model.vae)
+        self.assertIs(pipeline.text_encoder_model, self.model.text_encoder_1)
+        self.assertIs(pipeline.text_tokenizer, self.model.tokenizer_1)
+        self.assertTrue(pipeline.loaded)
+
+    def test_validation_audio_sample_rate_uses_v15_rate(self):
+        self.assertEqual(self.model.validation_audio_sample_rate(), 44100)
+        self.model._v15_layout = {"variant_path": "dummy"}
+        self.assertEqual(self.model.validation_audio_sample_rate(), 48000)
 
 
 if __name__ == "__main__":

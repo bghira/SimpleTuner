@@ -43,6 +43,11 @@ ENV=examples/kontext.peft-lora ./train.sh
 
 This will automatically download an example reference dataset, pre-cache embeds, and run 100 steps of training on a standard PEFT LoRA.
 
+ACE-Step examples are split by model generation:
+
+- `ace_step-v1-0.peft-lora` for the original ACE-Step v1 3.5B path
+- `ace_step-v1-5.peft-lora` for the forward-compatible ACE-Step v1.5 LoRA path
+
 ### Modifying and extending an example
 
 You'll want to copy the folder from `simpletuner/examples` to `config` before modifying anything, otherwise your changes will conflict with newer example config updates.
