@@ -596,6 +596,22 @@ class ParquetMetadataBackend(MetadataBackend):
                     fps_val = self._get_first_value(fps_val)
                     image_metadata["fps"] = fps_val
 
+            # Bounding box annotations from parquet column
+            bbox_column = self.parquet_config.get("bbox_column")
+            if bbox_column:
+                bbox_raw = database_row.get(bbox_column)
+                if bbox_raw is not None:
+                    from dataclasses import asdict
+
+                    from simpletuner.helpers.training.grounding.metadata import BboxMetadata
+
+                    try:
+                        bbox_entities = BboxMetadata.from_string(str(bbox_raw))
+                        if bbox_entities:
+                            image_metadata["bbox_entities"] = [asdict(e) for e in bbox_entities]
+                    except Exception as exc:
+                        logger.debug(f"(id={self.id}) Failed parsing bbox column for {image_path_str}: {exc}")
+
             # Insert into bucket
             aspect_ratio_key = str(aspect_ratio)
             if aspect_ratio_key not in aspect_ratio_bucket_indices:

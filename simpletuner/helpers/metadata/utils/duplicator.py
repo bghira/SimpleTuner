@@ -104,7 +104,7 @@ class DatasetDuplicator:
             if field in source_config:
                 target_config[field] = source_config[field]
 
-        if conditioning_type == "reference_strict":
+        if conditioning_type in ("reference_strict", "grounding"):
             alignment_fields = ["crop", "crop_aspect", "crop_style", "crop_aspect_buckets"]
             for field in alignment_fields:
                 if field in source_config:

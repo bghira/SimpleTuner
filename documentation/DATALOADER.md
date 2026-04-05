@@ -778,6 +778,117 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 
 - VAE cache entries' filenames are always hashed. This is not user-configurable and ensures datasets with very long filenames can be easily used without path length issues. Any `hash_filenames` setting in your configuration will be ignored.
 
+## Grounding (Spatial Annotations)
+
+The grounding pipeline enables per-entity bounding box and mask annotations for training-time spatial grounding. This is useful for preventing subject bleeding during multi-subject fine-tuning.
+
+### Enabling grounding
+
+Add a `grounding` block to any image or video dataset:
+
+```json
+{
+    "id": "my-images",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/images",
+    "grounding": {
+        "enabled": true
+    }
+}
+```
+
+You must also set `--max_grounding_entities` to a value greater than 0 (e.g., 8) to enable the grounding pipeline.
+
+### Auto-detecting bounding boxes
+
+If you don't have pre-existing `.bbox` annotations you can let SimpleTuner generate them automatically using [Florence-2](https://huggingface.co/florence-community/Florence-2-large). Add an `auto_detect` block inside the `grounding` config:
+
+```json
+{
+    "id": "my-images",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/images",
+    "grounding": {
+        "enabled": true,
+        "auto_detect": {
+            "enabled": true,
+            "model": "florence-community/Florence-2-large",
+            "labels": ["person", "dog", "cat"],
+            "batch_size": 4
+        }
+    }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable auto-detection. |
+| `model` | `florence-community/Florence-2-large` | HuggingFace Florence-2 model ID. |
+| `labels` | `[]` | Optional list of entity labels for guided detection (uses `<OPEN_VOCABULARY_DETECTION>`). When empty, Florence-2 automatically captions each image and grounds the phrases it finds (uses `<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>`). |
+| `batch_size` | `4` | Number of images per inference batch. |
+
+Auto-detection runs once during dataset setup. Images that already have a `.bbox` sidecar file are skipped, so you can safely resume after an interruption. The model is loaded on the accelerator device and freed immediately after detection completes.
+
+> **Note:** Auto-detection only supports `type: "local"` backends.
+
+### `.bbox` sidecar files
+
+Place a `.bbox` file alongside each image with the same base name:
+
+```
+/data/images/photo001.jpg
+/data/images/photo001.bbox
+```
+
+The `.bbox` file supports three formats:
+
+**JSON array:**
+```json
+[
+    {"label": "woman in red dress", "bbox": [0.1, 0.2, 0.5, 0.8], "mask": "masks/woman.png"},
+    {"label": "man in blue suit", "bbox": [0.5, 0.1, 0.9, 0.9]}
+]
+```
+
+**JSON lines (one object per line):**
+```json
+{"label": "woman in red dress", "bbox": [0.1, 0.2, 0.5, 0.8]}
+{"label": "man in blue suit", "bbox": [0.5, 0.1, 0.9, 0.9]}
+```
+
+**YOLO txt format:**
+```
+0 0.3 0.5 0.4 0.6
+1 0.7 0.5 0.4 0.8
+```
+
+Bounding box coordinates are normalised to [0, 1] in XYXY format (x1, y1, x2, y2). YOLO format uses centre-based XYWH and is converted automatically. The `mask` field is optional and points to a per-entity mask image.
+
+### Parquet / HuggingFace bbox column
+
+For parquet or HuggingFace datasets, specify a `bbox_column` in the backend config:
+
+```json
+{
+    "id": "my-parquet-data",
+    "type": "local",
+    "dataset_type": "image",
+    "caption_strategy": "parquet",
+    "parquet": {
+        "bbox_column": "bounding_boxes"
+    },
+    "grounding": {
+        "enabled": true
+    }
+}
+```
+
+The column value is parsed using the same formats as `.bbox` files (JSON array or JSON lines).
+
+---
+
 ## Filtering captions
 
 ### `caption_filter_list`

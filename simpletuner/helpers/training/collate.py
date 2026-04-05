@@ -1195,6 +1195,29 @@ def collate_fn(batch):
         batch_size = len(examples)
         video_latent_mask = torch.zeros(batch_size, dtype=torch.float32)
 
+    # Grounding annotations
+    grounding_batch = None
+    max_grounding_entities = getattr(StateTracker.get_args(), "max_grounding_entities", None)
+    if max_grounding_entities and max_grounding_entities > 0:
+        from simpletuner.helpers.training.grounding.collate import GroundingCollate
+
+        grounding_image_cache = StateTracker.get_grounding_image_embed_cache(data_backend_id)
+        grounding_collate = GroundingCollate(
+            max_entities=max_grounding_entities,
+            vae_scale_factor=model.vae_output_scaling_factor if hasattr(model, "vae_output_scaling_factor") else 8,
+        )
+        # Detect video batches: latent_batch has 5 dims (B, C, T, H, W)
+        grounding_num_frames = 1
+        if latent_batch is not None and latent_batch.dim() == 5:
+            grounding_num_frames = latent_batch.shape[2]
+        grounding_batch = grounding_collate.build_batch(
+            examples=examples,
+            data_backend_id=data_backend_id,
+            text_embed_cache=text_embed_cache,
+            grounding_image_cache=grounding_image_cache,
+            num_frames=grounding_num_frames,
+        )
+
     return {
         "latent_batch": latent_batch,
         "latent_metadata": latent_metadata,
@@ -1219,7 +1242,6 @@ def collate_fn(batch):
         "is_audio_only": is_audio_only,
         "s2v_audio_paths": s2v_audio_paths if any(s2v_audio_paths) else None,
         "s2v_audio_backend_ids": s2v_audio_backend_ids if any(s2v_audio_backend_ids) else None,
-
-
-        "slider_strength": batch.get("slider_strength")
+        "grounding_batch": grounding_batch,
+        "slider_strength": batch.get("slider_strength"),
     }

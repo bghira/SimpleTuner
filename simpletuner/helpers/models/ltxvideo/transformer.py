@@ -33,6 +33,7 @@ from diffusers.utils import USE_PEFT_BACKEND, deprecate, is_torch_version, loggi
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -560,6 +561,7 @@ class LTXVideoTransformer3DModel(
         hidden_state_layer: Optional[int] = None,
         timestep_sign: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
+        grounding_kwargs: Optional[Dict[str, Any]] = None,
     ) -> torch.Tensor:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -620,6 +622,13 @@ class LTXVideoTransformer3DModel(
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (attention_kwargs or {}).get("_grounding_kwargs")
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         captured_frame_hidden: Optional[torch.Tensor] = None
 
         grad_enabled = torch.is_grad_enabled()
@@ -666,6 +675,15 @@ class LTXVideoTransformer3DModel(
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     encoder_attention_mask=encoder_attention_mask,
+                )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(
+                    block.fuser,
+                    hidden_states,
+                    grounding_objs,
+                    tokens_per_frame=post_patch_height * post_patch_width,
+                    num_frames=post_patch_num_frames,
                 )
 
             # TREAD end routing for this layer

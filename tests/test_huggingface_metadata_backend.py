@@ -31,6 +31,7 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
         self.aspect_ratio_bucket_indices = {}
         self.quality_filter = None
         self.quality_column = "quality_assessment"
+        self.bbox_column = None
         self.id = data_backend.id
 
     def _get_video_metadata_from_item(self, item):

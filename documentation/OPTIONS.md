@@ -80,6 +80,13 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - On multi-node setups, only local-rank 0 on each node performs the deletion. Deletion failures are silently ignored to handle race conditions on shared network storage.
   - This does **not** affect saved training checkpoints — only the pre-trained base model cache.
 
+### `--trust_remote_code`
+
+- **What**: Allows Transformers and tokenizers to execute custom Python code from the model repository when a checkpoint depends on upstream custom classes.
+- **Default**: `False`
+- **Why**: Required for ACE-Step v1.5 checkpoints, which ship custom `AutoModel` and tokenizer code in the upstream repository.
+- **Warning**: Enable this only for model repositories you trust.
+
 ### `--enable_group_offload`
 
 - **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.
@@ -201,6 +208,19 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Path to the pretrained Gemma model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training Gemma-based models (for example LTX-2, Sana, or Lumina2), you can point at a shared Gemma checkpoint without changing the base diffusion model path.
+
+### `--max_grounding_entities`
+
+- **What**: Maximum number of grounding entities per image for GLIGEN-style spatial annotations.
+- **Default**: `0` (disabled)
+- **Why**: When set to a value greater than 0, the grounding pipeline is enabled. Each sample is padded to this number of entity slots. Typical values are 4-16.
+- **Notes**: Requires `.bbox` sidecar files alongside images or a `bbox_column` in parquet/HuggingFace datasets. See [DATALOADER.md](DATALOADER.md#grounding-spatial-annotations) for details.
+
+### `--pretrained_grounding_model_name_or_path`
+
+- **What**: Optional pretrained model for per-entity image feature extraction (e.g., `facebook/dinov2-large`).
+- **Default**: None (disabled)
+- **Why**: When set, entity crops are encoded through the specified vision model to produce per-entity image features alongside text embeddings and bounding box coordinates.
 
 ### `--custom_text_encoder_intermediary_layers`
 
@@ -1679,10 +1699,15 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        ACE-Step flavours are `base`, `v15-turbo`,
+                        `v15-base`, and `v15-sft`. The v1.5 flavours support
+                        training and built-in validation audio generation, and
+                        require `--trust_remote_code` for the upstream
+                        repository.
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

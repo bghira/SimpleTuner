@@ -80,6 +80,13 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - En configuraciones multinodo, solo el rank local 0 en cada nodo realiza la eliminación. Los fallos de eliminación se ignoran silenciosamente para manejar condiciones de carrera en almacenamiento de red compartido.
   - Esto **no** afecta a los checkpoints de entrenamiento guardados; solo al caché del modelo base preentrenado.
 
+### `--trust_remote_code`
+
+- **Qué**: Permite que Transformers y los tokenizers ejecuten código Python personalizado del repositorio del modelo cuando el checkpoint depende de clases personalizadas upstream.
+- **Predeterminado**: `False`
+- **Por qué**: Es necesario para los checkpoints ACE-Step v1.5, que incluyen código personalizado de `AutoModel` y tokenizer en el repositorio upstream.
+- **Advertencia**: Actívalo solo para repositorios de modelos en los que confíes.
+
 ### `--enable_group_offload`
 
 - **Qué**: Habilita el offload de módulos agrupados de diffusers para que los bloques del modelo se puedan preparar en CPU (o disco) entre pasadas hacia delante.
@@ -201,6 +208,12 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 - **Qué**: Ruta al modelo Gemma preentrenado o su identificador en <https://huggingface.co/models>.
 - **Por qué**: Al entrenar modelos basados en Gemma (por ejemplo LTX-2, Sana o Lumina2), puedes apuntar a un checkpoint Gemma compartido sin cambiar la ruta del modelo base de difusión.
+
+### `--max_grounding_entities`
+- Numero maximo de entidades de grounding por imagen para anotaciones espaciales estilo GLIGEN. Por defecto: 0 (deshabilitado). Valores tipicos: 4-16.
+
+### `--pretrained_grounding_model_name_or_path`
+- Modelo preentrenado opcional para la extraccion de features de imagen por entidad. Por defecto: None.
 
 ### `--custom_text_encoder_intermediary_layers`
 
@@ -1681,10 +1694,15 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        Los flavours de ACE-Step son `base`, `v15-turbo`,
+                        `v15-base` y `v15-sft`. Los flavours v1.5 soportan
+                        entrenamiento y validación de audio integrada, y
+                        requieren `--trust_remote_code` para el repositorio
+                        upstream.
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

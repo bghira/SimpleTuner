@@ -40,6 +40,7 @@ class PixartSigma(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "cross_attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")
@@ -247,6 +248,7 @@ class PixartSigma(ImageModelFoundation):
             )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
+        cross_attention_kwargs = self._build_gligen_cross_attention_kwargs(prepared_batch.get("grounding_batch"))
         model_pred = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -260,6 +262,7 @@ class PixartSigma(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
+            cross_attention_kwargs=cross_attention_kwargs,
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
         )[0].chunk(2, dim=1)[0]
