@@ -209,6 +209,19 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Path to the pretrained Gemma model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training Gemma-based models (for example LTX-2, Sana, or Lumina2), you can point at a shared Gemma checkpoint without changing the base diffusion model path.
 
+### `--max_grounding_entities`
+
+- **What**: Maximum number of grounding entities per image for GLIGEN-style spatial annotations.
+- **Default**: `0` (disabled)
+- **Why**: When set to a value greater than 0, the grounding pipeline is enabled. Each sample is padded to this number of entity slots. Typical values are 4-16.
+- **Notes**: Requires `.bbox` sidecar files alongside images or a `bbox_column` in parquet/HuggingFace datasets. See [DATALOADER.md](DATALOADER.md#grounding-spatial-annotations) for details.
+
+### `--pretrained_grounding_model_name_or_path`
+
+- **What**: Optional pretrained model for per-entity image feature extraction (e.g., `facebook/dinov2-large`).
+- **Default**: None (disabled)
+- **Why**: When set, entity crops are encoded through the specified vision model to produce per-entity image features alongside text embeddings and bounding box coordinates.
+
 ### `--custom_text_encoder_intermediary_layers`
 
 - **What**: Override which hidden state layers to extract from the text encoder for FLUX.2 models.

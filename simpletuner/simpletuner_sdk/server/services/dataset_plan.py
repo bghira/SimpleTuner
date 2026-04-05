@@ -172,6 +172,18 @@ def compute_validations(
                 )
             )
 
+        grounding = dataset.get("grounding")
+        if isinstance(grounding, dict) and grounding.get("enabled"):
+            auto_detect = grounding.get("auto_detect")
+            if isinstance(auto_detect, dict) and auto_detect.get("enabled") and backend_type.lower() != "local":
+                validations.append(
+                    ValidationMessage(
+                        field=f"{_normalise_identifier(dataset)}.grounding",
+                        message="Grounding auto-detect requires a local backend.",
+                        level="error",
+                    )
+                )
+
     for dataset_id, count in id_counts.items():
         if count > 1:
             validations.append(
@@ -291,7 +303,11 @@ def compute_validations(
     # Check for orphaned text_embeds and image_embeds references
     text_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS}
     image_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE_EMBEDS}
-    conditioning_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.CONDITIONING}
+    conditioning_ids = {
+        dataset.get("id")
+        for dataset in datasets
+        if _dataset_type(dataset) in {DatasetType.CONDITIONING, DatasetType.GROUNDING}
+    }
     image_video_datasets = [
         dataset for dataset in datasets if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO}
     ]

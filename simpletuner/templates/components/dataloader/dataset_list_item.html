@@ -188,6 +188,13 @@
             <span>Conditioning</span>
         </button>
         <button type="button"
+                :class="{'active': getListTab(dataset) === 'grounding'}"
+                x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video'"
+                @click="setListTab(dataset, 'grounding')">
+            <i class="fas fa-vector-square"></i>
+            <span>Grounding</span>
+        </button>
+        <button type="button"
                 :class="{'active': getListTab(dataset) === 'advanced'}"
                 @click="setListTab(dataset, 'advanced')"
                 x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
@@ -233,6 +240,11 @@
         <!-- Conditioning Tab -->
         <div x-show="getListTab(dataset) === 'conditioning'" x-cloak>
             {% include 'components/dataloader/sections/conditioning_body.html' %}
+        </div>
+
+        <!-- Grounding Tab -->
+        <div x-show="getListTab(dataset) === 'grounding'" x-cloak>
+            {% include 'components/dataloader/sections/grounding_body.html' %}
         </div>
 
         <!-- Caching Tab -->

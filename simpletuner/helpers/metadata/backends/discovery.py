@@ -511,6 +511,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             }
             if image is not None:
                 cur_image_metadata["luminance"] = calculate_luminance(image)
+            bbox_entities = self._discover_bbox_metadata(image_path_str)
+            if bbox_entities:
+                cur_image_metadata["bbox_entities"] = bbox_entities
             image_metadata.update(cur_image_metadata)
             logger.debug(f"Image {image_path_str} has metadata: {cur_image_metadata}")
 

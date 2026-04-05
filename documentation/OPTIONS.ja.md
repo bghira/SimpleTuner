@@ -210,6 +210,12 @@ simpletuner configure config/foo/config.json
 - **内容**: 事前学習済み Gemma モデルのパス、または <https://huggingface.co/models> の識別子。
 - **理由**: Gemma 系モデル（例: LTX-2、Sana、Lumina2）を学習する際、ベース拡散モデルのパスを変えずに Gemma 重みの参照先を指定できます。
 
+### `--max_grounding_entities`
+- GLIGEN スタイルの空間アノテーション用に、画像あたりのグラウンディングエンティティの最大数を指定します。デフォルト: 0（無効）。一般的な値: 4-16。
+
+### `--pretrained_grounding_model_name_or_path`
+- エンティティごとの画像特徴抽出に使用するオプションの事前学習済みモデル。デフォルト: None。
+
 ### `--custom_text_encoder_intermediary_layers`
 
 - **内容**: FLUX.2 モデルでテキストエンコーダーから抽出する隠れ状態レイヤーを上書き指定します。

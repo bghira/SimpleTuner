@@ -34,6 +34,7 @@ class Kolors(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.UNET
+    ATTENTION_KWARG_NAME = "cross_attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")
@@ -192,6 +193,8 @@ class Kolors(ImageModelFoundation):
         urepa = getattr(self, "urepa_regularizer", None)
         capture_mid_block = urepa is not None and urepa.enabled
 
+        cross_attention_kwargs = self._build_gligen_cross_attention_kwargs(prepared_batch.get("grounding_batch"))
+
         urepa_hidden = None
         if capture_mid_block:
             from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
@@ -213,6 +216,7 @@ class Kolors(ImageModelFoundation):
                         dtype=self.config.weight_dtype,
                     ),
                     added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+                    cross_attention_kwargs=cross_attention_kwargs,
                     return_dict=False,
                 )[0]
                 urepa_hidden = capture.get_captured()
@@ -232,6 +236,7 @@ class Kolors(ImageModelFoundation):
                     dtype=self.config.weight_dtype,
                 ),
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+                cross_attention_kwargs=cross_attention_kwargs,
                 return_dict=False,
             )[0]
 

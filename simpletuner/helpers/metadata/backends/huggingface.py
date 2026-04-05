@@ -86,6 +86,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.height_column = hf_config.get("height_column", None)
         self.quality_column = hf_config.get("quality_column", "quality_assessment")
         self.description_column = hf_config.get("description_column", "description")
+        self.bbox_column = hf_config.get("bbox_column", None)
         self.lyrics_column = hf_config.get("lyrics_column", "lyrics")
         self.audio_caption_fields = hf_config.get("audio_caption_fields", ["prompt", "tags"])
         try:
@@ -682,6 +683,21 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     "target_size": prepared_sample.target_size,
                 }
             )
+
+            # Bounding box annotations from HF dataset column
+            if self.bbox_column:
+                bbox_raw = self._get_nested_value(item, self.bbox_column)
+                if bbox_raw is not None:
+                    from dataclasses import asdict
+
+                    from simpletuner.helpers.training.grounding.metadata import BboxMetadata
+
+                    try:
+                        bbox_entities = BboxMetadata.from_string(str(bbox_raw))
+                        if bbox_entities:
+                            sample_metadata["bbox_entities"] = [asdict(e) for e in bbox_entities]
+                    except Exception as exc:
+                        logger.debug(f"(id={self.id}) Failed parsing bbox column for {image_path_str}: {exc}")
 
             aspect_ratio_key = str(round(aspect_ratio, aspect_ratio_rounding))
             if aspect_ratio_key not in aspect_ratio_bucket_indices:

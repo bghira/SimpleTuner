@@ -80,12 +80,16 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.lora_type = "standard"
         self.args.model_type = "lora"
         expected_output = "import torch\nfrom diffusers import DiffusionPipeline"
-        output = _model_imports(self.args)
-        self.assertEqual(output.strip(), expected_output.strip())
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=None,
+        ):
+            output = _model_imports(self.args)
+            self.assertEqual(output.strip(), expected_output.strip())
 
-        self.args.lora_type = "lycoris"
-        output = _model_imports(self.args)
-        self.assertIn("from lycoris import create_lycoris_from_weights", output)
+            self.args.lora_type = "lycoris"
+            output = _model_imports(self.args)
+            self.assertIn("from lycoris import create_lycoris_from_weights", output)
 
     def test_model_load(self):
         self.args.pretrained_model_name_or_path = "pretrained-model"
@@ -93,17 +97,27 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.lora_type = "standard"
         self.args.model_type = "lora"
 
-        with patch(
-            "simpletuner.helpers.publishing.metadata.StateTracker.get_hf_username",
-            return_value="testuser",
+        with (
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_hf_username",
+                return_value="testuser",
+            ),
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+                return_value=None,
+            ),
         ):
             output = _model_load(self.args, repo_id="repo-id", model=self.mock_model)
             self.assertIn("pipeline.load_lora_weights", output)
             self.assertIn("adapter_id = 'testuser/repo-id'", output)
 
-        self.args.lora_type = "lycoris"
-        output = _model_load(self.args, model=self.mock_model)
-        self.assertIn("pytorch_lora_weights.safetensors", output)
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=None,
+        ):
+            self.args.lora_type = "lycoris"
+            output = _model_load(self.args, model=self.mock_model)
+            self.assertIn("pytorch_lora_weights.safetensors", output)
 
     def test_torch_device(self):
         output = _torch_device()
@@ -147,16 +161,20 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.lora_type = "standard"
         self.args.controlnet = False
         self.args.control = False
-        output = model_type(self.args)
-        self.assertEqual(output, "PEFT LoRA")
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=None,
+        ):
+            output = model_type(self.args)
+            self.assertEqual(output, "PEFT LoRA")
 
-        self.args.lora_type = "lycoris"
-        output = model_type(self.args)
-        self.assertEqual(output, "LyCORIS adapter")
+            self.args.lora_type = "lycoris"
+            output = model_type(self.args)
+            self.assertEqual(output, "LyCORIS adapter")
 
-        self.args.model_type = "full"
-        output = model_type(self.args)
-        self.assertEqual(output, "full rank finetune")
+            self.args.model_type = "full"
+            output = model_type(self.args)
+            self.assertEqual(output, "full rank finetune")
 
     def test_lora_info(self):
         self.args.model_type = "lora"
@@ -292,6 +310,163 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertIn("quantize", output)
         self.assertIn("optimum.quanto", output)
         self.assertIn("pipeline.transformer", output)
+
+
+class TestGligenModelCard(unittest.TestCase):
+    def setUp(self):
+        self.args = MagicMock()
+        self.args.lora_type = "standard"
+        self.args.model_type = "lora"
+        self.args.model_family = "sdxl"
+        self.args.controlnet = False
+        self.args.control = False
+        self.args.peft_lora_mode = "standard"
+
+    def test_model_type_gligen_prefix(self):
+        mock_model = MagicMock()
+        mock_model.gligen = True
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=mock_model,
+        ):
+            result = model_type(self.args)
+            self.assertEqual(result, "GLIGEN PEFT LoRA")
+
+    def test_model_type_no_gligen_prefix(self):
+        mock_model = MagicMock()
+        mock_model.gligen = False
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=mock_model,
+        ):
+            result = model_type(self.args)
+            self.assertEqual(result, "PEFT LoRA")
+
+    def test_model_type_controlnet_and_gligen(self):
+        self.args.controlnet = True
+        mock_model = MagicMock()
+        mock_model.gligen = True
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=mock_model,
+        ):
+            result = model_type(self.args)
+            self.assertTrue(result.startswith("ControlNet GLIGEN "))
+
+    def test_model_imports_gligen(self):
+        mock_model = MagicMock()
+        mock_model.gligen = True
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=mock_model,
+        ):
+            result = _model_imports(self.args)
+            self.assertIn("inject_gligen_layers", result)
+
+    def test_model_imports_no_gligen(self):
+        mock_model = MagicMock()
+        mock_model.gligen = False
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=mock_model,
+        ):
+            result = _model_imports(self.args)
+            self.assertNotIn("inject_gligen_layers", result)
+
+    def test_gligen_injection_code_in_model_load(self):
+        from simpletuner.helpers.publishing.metadata import _gligen_injection_code
+
+        mock_model = MagicMock()
+        mock_model.gligen = True
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        mock_component = MagicMock()
+        mock_component.config.cross_attention_dim = 768
+        mock_model.get_trained_component.return_value = mock_component
+        with (
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_args",
+                return_value=MagicMock(pretrained_grounding_model_name_or_path=None),
+            ),
+        ):
+            result = _gligen_injection_code(mock_model)
+            self.assertIn("inject_gligen_layers", result)
+            self.assertIn("positive_len=768", result)
+            self.assertIn('feature_type="text-only"', result)
+
+    def test_gligen_injection_code_text_image(self):
+        from simpletuner.helpers.publishing.metadata import _gligen_injection_code
+
+        mock_model = MagicMock()
+        mock_model.gligen = True
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        mock_component = MagicMock()
+        mock_component.config.cross_attention_dim = 768
+        mock_model.get_trained_component.return_value = mock_component
+        with (
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_args",
+                return_value=MagicMock(pretrained_grounding_model_name_or_path="/some/path"),
+            ),
+        ):
+            result = _gligen_injection_code(mock_model)
+            self.assertIn('feature_type="text-image"', result)
+
+    def test_gligen_injection_code_no_gligen(self):
+        from simpletuner.helpers.publishing.metadata import _gligen_injection_code
+
+        mock_model = MagicMock()
+        mock_model.gligen = False
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+            return_value=mock_model,
+        ):
+            result = _gligen_injection_code(mock_model)
+            self.assertEqual(result, "")
+
+    def test_model_load_includes_gligen_injection(self):
+        self.args.pretrained_model_name_or_path = "pretrained-model"
+        self.args.output_dir = "output-dir"
+        mock_model = MagicMock()
+        mock_model.gligen = True
+        mock_model.MODEL_TYPE = MagicMock(value="unet")
+        mock_component = MagicMock()
+        mock_component.config.cross_attention_dim = 768
+        mock_model.get_trained_component.return_value = mock_component
+        with (
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_hf_username",
+                return_value="testuser",
+            ),
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype",
+                return_value="torch.bfloat16",
+            ),
+            patch(
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_args",
+                return_value=MagicMock(pretrained_grounding_model_name_or_path=None),
+            ),
+        ):
+            output = _model_load(self.args, repo_id="repo-id", model=mock_model)
+            self.assertIn("inject_gligen_layers", output)
+            inject_pos = output.index("inject_gligen_layers")
+            load_pos = output.index("pipeline.load_lora_weights")
+            self.assertLess(inject_pos, load_pos)
 
 
 if __name__ == "__main__":

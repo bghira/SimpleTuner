@@ -68,6 +68,7 @@ class LTXVideo2(VideoModelFoundation):
     DEFAULT_AUDIO_CHANNELS = 2
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLLTX2Video
     LATENT_CHANNEL_COUNT = 128
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
@@ -1422,6 +1423,10 @@ class LTXVideo2(VideoModelFoundation):
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if is_audio_only:
             transformer_kwargs["audio_only"] = True
+
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            transformer_kwargs["grounding_kwargs"] = grounding_kwargs
 
         model_output = self.model(**transformer_kwargs)
         if capture_hidden:

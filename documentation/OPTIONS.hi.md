@@ -209,6 +209,12 @@ simpletuner configure config/foo/config.json
 - **What**: pretrained Gemma model का path या <https://huggingface.co/models> से उसका identifier.
 - **Why**: Gemma‑based models (जैसे LTX-2, Sana, Lumina2) ट्रेन करते समय आप base diffusion model path बदले बिना Gemma weights का source specify कर सकते हैं।
 
+### `--max_grounding_entities`
+- GLIGEN-style spatial annotations के लिए प्रति image grounding entities की अधिकतम संख्या। Default: 0 (disabled)। सामान्य मान: 4-16।
+
+### `--pretrained_grounding_model_name_or_path`
+- प्रति entity image feature extraction के लिए वैकल्पिक pretrained model। Default: None।
+
 ### `--custom_text_encoder_intermediary_layers`
 
 - **What**: FLUX.2 models के लिए text encoder से extract होने वाली hidden state layers को override करें।

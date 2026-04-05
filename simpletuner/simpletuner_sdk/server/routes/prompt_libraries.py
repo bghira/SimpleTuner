@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/prompt-libraries", tags=["prompt_libraries"])
 class PromptLibraryEntryModel(BaseModel):
     prompt: str
     adapter_strength: Optional[float] = None
+    bbox_entities: Optional[List[Dict[str, Any]]] = None
+    bbox_keyframes: Optional[List[Dict[str, Any]]] = None
 
 
 class PromptLibraryPayload(BaseModel):

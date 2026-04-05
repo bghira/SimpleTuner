@@ -1618,3 +1618,28 @@ class MetadataBackend:
         if overrides:
             payload.update(overrides)
         return payload
+
+    def _discover_bbox_metadata(self, sample_path: str) -> Optional[list]:
+        """Look for a ``.bbox`` sidecar file alongside *sample_path*.
+
+        Returns a list of entity dicts (serialisation-safe) or ``None``.
+        """
+        from dataclasses import asdict
+
+        from simpletuner.helpers.training.grounding.metadata import BboxMetadata
+
+        try:
+            path = Path(sample_path)
+        except Exception:
+            return None
+        bbox_path = path.with_suffix(".bbox")
+        if not bbox_path.exists():
+            return None
+        try:
+            entities = BboxMetadata.from_file(str(bbox_path))
+        except Exception as exc:
+            logger.debug(f"(id={self.id}) Failed reading bbox sidecar for {sample_path}: {exc}")
+            return None
+        if not entities:
+            return None
+        return [asdict(e) for e in entities]

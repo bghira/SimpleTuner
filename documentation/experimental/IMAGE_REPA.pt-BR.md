@@ -182,6 +182,6 @@ Para U-REPA, use o prefixo `urepa_`:
 
 ## Referências
 
-- [Artigo REPA](https://arxiv.org/abs/2402.17750) - Alinhamento de Representação para Geração
-- [Artigo U-REPA](https://arxiv.org/abs/2410.xxxxx) - REPA Universal para arquiteturas UNet (NeurIPS 2025)
-- [DINOv2](https://github.com/facebookresearch/dinov2) - Codificador de visão auto-supervisionado
+- [Artigo REPA](https://github.com/sihyun-yu/REPA) - Alinhamento de Representação para Geração
+- [Artigo U-REPA](https://github.com/YuchuanTian/U-REPA) - REPA Universal para arquiteturas UNet (NeurIPS 2025)
+- [DINOv2](https://github.com/facebookresearch/dinov3) - Codificador de visão auto-supervisionado

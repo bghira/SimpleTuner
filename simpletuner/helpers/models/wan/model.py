@@ -213,6 +213,7 @@ class Wan(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
     _TAE_SPEC_21 = VideoTAESpec(filename="taew2_1.pth", description="Wan 2.1 / 2.2 14B VAE")
@@ -1195,6 +1196,10 @@ class Wan(VideoModelFoundation):
             wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch["conditioning_image_embeds"].to(
                 self.config.weight_dtype
             )
+
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            wan_transformer_kwargs["grounding_kwargs"] = grounding_kwargs
 
         self._apply_i2v_conditioning_to_kwargs(prepared_batch, wan_transformer_kwargs)
 

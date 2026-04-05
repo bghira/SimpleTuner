@@ -210,6 +210,12 @@ simpletuner configure config/foo/config.json
 - **内容**：预训练 Gemma 模型路径或 <https://huggingface.co/models> 上的标识符。
 - **原因**：训练 Gemma 系模型（例如 LTX-2、Sana、Lumina2）时，可单独指定 Gemma 权重来源，而无需更换基础扩散模型路径。
 
+### `--max_grounding_entities`
+- 每张图像用于 GLIGEN 风格空间标注的最大 grounding 实体数。默认值：0（禁用）。典型值：4-16。
+
+### `--pretrained_grounding_model_name_or_path`
+- 用于按实体提取图像特征的可选预训练模型。默认值：None。
+
 ### `--custom_text_encoder_intermediary_layers`
 
 - **内容**：覆盖 FLUX.2 模型中从文本编码器提取的隐藏状态层。

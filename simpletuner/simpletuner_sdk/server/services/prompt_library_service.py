@@ -42,6 +42,8 @@ class PromptLibraryRecord:
 class PromptLibraryEntry:
     prompt: str
     adapter_strength: Optional[float] = None
+    bbox_entities: Optional[List[Dict[str, Any]]] = None
+    bbox_keyframes: Optional[List[Dict[str, Any]]] = None
 
     @classmethod
     def from_payload(cls, payload: Union[str, Dict[str, Any]]) -> "PromptLibraryEntry":
@@ -57,12 +59,74 @@ class PromptLibraryEntry:
             strength_value = None if strength is None else float(strength)
         except (TypeError, ValueError):
             raise PromptLibraryError("adapter_strength must be numeric when provided.")
-        return cls(prompt=str(prompt_value), adapter_strength=strength_value)
+        bbox_entities = cls._parse_bbox_entities(payload.get("bbox_entities"))
+        bbox_keyframes = cls._parse_bbox_keyframes(payload.get("bbox_keyframes"))
+        return cls(
+            prompt=str(prompt_value),
+            adapter_strength=strength_value,
+            bbox_entities=bbox_entities,
+            bbox_keyframes=bbox_keyframes,
+        )
+
+    @staticmethod
+    def _parse_bbox_entities(raw: Any) -> Optional[List[Dict[str, Any]]]:
+        if raw is None:
+            return None
+        if not isinstance(raw, list):
+            raise PromptLibraryError("bbox_entities must be a list.")
+        entities: List[Dict[str, Any]] = []
+        for i, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise PromptLibraryError(f"bbox_entities[{i}] must be an object.")
+            label = item.get("label")
+            if not isinstance(label, str) or not label:
+                raise PromptLibraryError(f"bbox_entities[{i}] must have a non-empty 'label' string.")
+            bbox = item.get("bbox")
+            if not isinstance(bbox, list) or len(bbox) != 4:
+                raise PromptLibraryError(f"bbox_entities[{i}] must have a 'bbox' list of 4 floats.")
+            try:
+                coords = [float(v) for v in bbox]
+            except (TypeError, ValueError):
+                raise PromptLibraryError(f"bbox_entities[{i}].bbox values must be numeric.")
+            x1, y1, x2, y2 = [max(0.0, min(1.0, c)) for c in coords]
+            if x1 >= x2 or y1 >= y2:
+                raise PromptLibraryError(
+                    f"bbox_entities[{i}] has invalid bbox after clamping: "
+                    f"({x1}, {y1}, {x2}, {y2}). Must satisfy x1 < x2 and y1 < y2 in [0, 1]."
+                )
+            entities.append({"label": label, "bbox": [x1, y1, x2, y2]})
+        return entities if entities else None
+
+    @classmethod
+    def _parse_bbox_keyframes(cls, raw: Any) -> Optional[List[Dict[str, Any]]]:
+        if raw is None:
+            return None
+        if not isinstance(raw, list):
+            raise PromptLibraryError("bbox_keyframes must be a list.")
+        keyframes: List[Dict[str, Any]] = []
+        for i, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise PromptLibraryError(f"bbox_keyframes[{i}] must be an object.")
+            frame = item.get("frame")
+            if not isinstance(frame, (int, float)) or int(frame) < 0:
+                raise PromptLibraryError(f"bbox_keyframes[{i}].frame must be a non-negative integer.")
+            entities = cls._parse_bbox_entities(item.get("entities"))
+            if entities is None:
+                raise PromptLibraryError(f"bbox_keyframes[{i}].entities must be a non-empty list of bbox entities.")
+            keyframes.append({"frame": int(frame), "entities": entities})
+        if not keyframes:
+            return None
+        keyframes.sort(key=lambda kf: kf["frame"])
+        return keyframes
 
     def serialise(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {"prompt": self.prompt}
         if self.adapter_strength is not None:
             data["adapter_strength"] = self.adapter_strength
+        if self.bbox_entities is not None:
+            data["bbox_entities"] = self.bbox_entities
+        if self.bbox_keyframes is not None:
+            data["bbox_keyframes"] = self.bbox_keyframes
         return data
 
 
@@ -130,7 +194,7 @@ class PromptLibraryService:
     def serialise_entries(entries: Dict[str, PromptLibraryEntry]) -> Dict[str, Any]:
         serialised: Dict[str, Any] = {}
         for key, entry in entries.items():
-            if entry.adapter_strength is None:
+            if entry.adapter_strength is None and entry.bbox_entities is None and entry.bbox_keyframes is None:
                 serialised[key] = entry.prompt
             else:
                 serialised[key] = entry.serialise()

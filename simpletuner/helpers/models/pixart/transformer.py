@@ -471,6 +471,11 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 for r in routes
             ]
 
+        # GLIGEN position_net: resolve grounding tokens before the block loop
+        if cross_attention_kwargs is not None and cross_attention_kwargs.get("gligen") is not None:
+            cross_attention_kwargs = cross_attention_kwargs.copy()
+            cross_attention_kwargs["gligen"]["objs"] = self.position_net(**cross_attention_kwargs["gligen"])
+
         # 2. Blocks
         # Musubi block swap activation
         combined_blocks = list(self.transformer_blocks)

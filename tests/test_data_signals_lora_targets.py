@@ -25,6 +25,7 @@ class MockModelFoundation(ModelFoundation):
         self._data_has_images = False
         self._data_has_video = False
         self._data_has_audio = False
+        self._data_has_grounding = False
 
     # Abstract method stubs
     def _encode_prompts(self, *args, **kwargs):
@@ -49,6 +50,7 @@ class MockLTXVideo2(LTXVideo2):
         self._data_has_images = False
         self._data_has_video = False
         self._data_has_audio = False
+        self._data_has_grounding = False
         # Copy class attributes needed for LoRA target tests
         self.DEFAULT_LORA_TARGET = LTXVideo2.DEFAULT_LORA_TARGET
         self.DEFAULT_LYCORIS_TARGET = LTXVideo2.DEFAULT_LYCORIS_TARGET
@@ -294,7 +296,9 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=True, has_video=False, has_audio=False)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=True, has_video=False, has_audio=False, has_grounding=False
+        )
 
     def test_factory_detects_video_dataset(self):
         """Factory should detect video datasets and signal the model."""
@@ -311,7 +315,9 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=False, has_video=True, has_audio=False)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=False, has_video=True, has_audio=False, has_grounding=False
+        )
 
     def test_factory_detects_audio_dataset(self):
         """Factory should detect audio datasets and signal the model."""
@@ -328,7 +334,9 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=False, has_video=False, has_audio=True)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=False, has_video=False, has_audio=True, has_grounding=False
+        )
 
     def test_factory_detects_mixed_datasets(self):
         """Factory should detect multiple dataset types."""
@@ -347,7 +355,9 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=True, has_video=True, has_audio=True)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=True, has_video=True, has_audio=True, has_grounding=False
+        )
 
     def test_factory_ignores_disabled_datasets(self):
         """Factory should ignore disabled datasets."""
@@ -365,7 +375,9 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=False, has_video=False, has_audio=True)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=False, has_video=False, has_audio=True, has_grounding=False
+        )
 
     def test_factory_ignores_disable_flag(self):
         """Factory should also check 'disable' flag (alternative spelling)."""
@@ -383,7 +395,9 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=False, has_video=False, has_audio=True)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=False, has_video=False, has_audio=True, has_grounding=False
+        )
 
     def test_factory_handles_no_model(self):
         """Factory should handle None model gracefully."""
@@ -416,7 +430,118 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
         factory._configure_model_data_signals(config)
 
-        model.configure_data_signals.assert_called_once_with(has_images=False, has_video=False, has_audio=False)
+        model.configure_data_signals.assert_called_once_with(
+            has_images=False, has_video=False, has_audio=False, has_grounding=False
+        )
+
+
+class TestGroundingDataSignal(unittest.TestCase):
+    """Test grounding data signal detection."""
+
+    def setUp(self):
+        self.config = MagicMock()
+        self.config.lora_type = "standard"
+        self.config.slider_lora_target = False
+        self.config.controlnet = False
+        self.config.peft_lora_target_modules = None
+        self.config.max_grounding_entities = 10
+        self.accelerator = MagicMock()
+
+    def test_grounding_signal_stored(self):
+        """configure_data_signals should store the grounding flag."""
+        model = MockModelFoundation(self.config, self.accelerator)
+        model.configure_data_signals(has_grounding=True)
+        self.assertTrue(model._data_has_grounding)
+
+    def test_grounding_overrides_standard_lora_targets(self):
+        """Standard LoRA should only target GLIGEN modules when grounding is active."""
+        model = MockModelFoundation(self.config, self.accelerator)
+        model.configure_data_signals(has_grounding=True)
+
+        targets = model.get_lora_target_layers()
+
+        self.assertEqual(targets, ["position_net", "fuser"])
+        self.assertNotIn("to_k", targets)
+        self.assertNotIn("to_q", targets)
+
+    def test_grounding_overrides_lycoris_targets(self):
+        """LyCORIS should only target GLIGEN classes when grounding is active."""
+        self.config.lora_type = "lycoris"
+        model = MockModelFoundation(self.config, self.accelerator)
+        model.configure_data_signals(has_grounding=True)
+
+        targets = model.get_lora_target_layers()
+
+        self.assertEqual(targets, ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"])
+        self.assertNotIn("Attention", targets)
+        self.assertNotIn("FeedForward", targets)
+
+    def test_no_grounding_uses_default_targets(self):
+        """Without grounding, default targets should be used."""
+        model = MockModelFoundation(self.config, self.accelerator)
+        model.configure_data_signals(has_grounding=False)
+
+        targets = model.get_lora_target_layers()
+
+        self.assertEqual(targets, ["to_k", "to_q", "to_v", "to_out.0"])
+
+    def test_manual_targets_override_grounding(self):
+        """Manual peft_lora_target_modules should still override GLIGEN defaults."""
+        self.config.peft_lora_target_modules = ["custom_module"]
+        model = MockModelFoundation(self.config, self.accelerator)
+        model.configure_data_signals(has_grounding=True)
+
+        targets = model.get_lora_target_layers()
+
+        self.assertEqual(targets, ["custom_module"])
+
+    def test_factory_detects_grounding(self):
+        """Factory should detect grounding config and signal the model."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        model = MagicMock()
+        args = MagicMock()
+        accelerator = MagicMock()
+
+        factory = FactoryRegistry(args, accelerator, None, None, model)
+
+        config = [
+            {
+                "id": "images",
+                "dataset_type": "image",
+                "disabled": False,
+                "grounding": {"enabled": True},
+            },
+        ]
+        factory._configure_model_data_signals(config)
+
+        model.configure_data_signals.assert_called_once_with(
+            has_images=True, has_video=False, has_audio=False, has_grounding=True
+        )
+
+    def test_factory_grounding_disabled_not_signaled(self):
+        """Factory should not signal grounding when grounding.enabled is False."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        model = MagicMock()
+        args = MagicMock()
+        accelerator = MagicMock()
+
+        factory = FactoryRegistry(args, accelerator, None, None, model)
+
+        config = [
+            {
+                "id": "images",
+                "dataset_type": "image",
+                "disabled": False,
+                "grounding": {"enabled": False},
+            },
+        ]
+        factory._configure_model_data_signals(config)
+
+        model.configure_data_signals.assert_called_once_with(
+            has_images=True, has_video=False, has_audio=False, has_grounding=False
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,22 @@
+<template x-if="dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
+    <div class="dataset-section grounding-settings"
+         x-data="{ editingDataset: dataset }">
+        <div class="dataset-section-header d-flex align-items-center">
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                    @click="toggleSectionCollapsed(dataset, 'grounding')"
+                    :aria-expanded="sectionIsCollapsed(dataset, 'grounding') ? 'false' : 'true'"
+                    :aria-controls="`dataset-grounding-${datasetSafeId(dataset)}`">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+            <span>Grounding</span>
+        </div>
+        <div class="dataset-section-body"
+             :id="`dataset-grounding-${datasetSafeId(dataset)}`"
+             x-show="sectionIsExpanded(dataset, 'grounding')"
+             x-transition
+             x-cloak>
+            {% include 'components/dataloader/sections/grounding_body.html' %}
+        </div>
+    </div>
+</template>
