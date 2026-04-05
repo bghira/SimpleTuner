@@ -77,6 +77,7 @@ class FileMetadata(BaseModel):
     luminance: Optional[float] = None
     bucket_key: Optional[str] = None
     caption: Optional[str] = None
+    bbox_entities: Optional[List[Dict[str, Any]]] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -503,6 +504,7 @@ class DatasetViewerService:
             "crop_coordinates",
             "luminance",
             "bucket_key",
+            "bbox_entities",
         }
         extra = {k: v for k, v in meta.items() if k not in known_keys}
 
@@ -516,6 +518,7 @@ class DatasetViewerService:
             crop_coordinates=meta.get("crop_coordinates"),
             luminance=meta.get("luminance"),
             bucket_key=meta.get("bucket_key"),
+            bbox_entities=meta.get("bbox_entities"),
             extra=extra,
         )
         result.caption = self._get_file_caption(dataset_config, file_path)
@@ -544,6 +547,37 @@ class DatasetViewerService:
             return False
 
         data[file_path]["crop_coordinates"] = crop_coordinates
+        with open(cache_path, "w") as f:
+            json.dump(data, f)
+        return True
+
+    def update_bbox_entities(
+        self,
+        dataset_config: Dict[str, Any],
+        file_path: str,
+        bbox_entities: Optional[List[Dict[str, Any]]],
+    ) -> bool:
+        """Update bbox_entities for a file in the metadata cache.
+
+        Returns True if the update succeeded.
+        """
+        cache_path = self._find_cache_file(dataset_config, "metadata")
+        if cache_path is None:
+            return False
+
+        try:
+            data = self._load_cache(cache_path)
+        except (json.JSONDecodeError, OSError):
+            return False
+
+        if file_path not in data:
+            return False
+
+        if bbox_entities:
+            data[file_path]["bbox_entities"] = bbox_entities
+        else:
+            data[file_path].pop("bbox_entities", None)
+
         with open(cache_path, "w") as f:
             json.dump(data, f)
         return True

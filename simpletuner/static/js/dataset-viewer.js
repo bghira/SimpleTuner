@@ -53,6 +53,11 @@ window.datasetViewerComponent = function () {
         forceScanDatasetId: null,
         forceScanClearVae: false,
 
+        // Bbox editor state
+        bboxCanvas: null,
+        bboxModified: false,
+        savingBbox: false,
+
         init() {
             this.loadAllSummaries();
             this._checkActiveScan();
@@ -416,6 +421,7 @@ window.datasetViewerComponent = function () {
         },
 
         async showFileDetail(datasetId, filePath) {
+            this._destroyBboxCanvas();
             this.loadingFileDetail = true;
             this.loadingPreview = true;
             this.selectedFile = { path: filePath };
@@ -449,6 +455,11 @@ window.datasetViewerComponent = function () {
                 this.previewCropped = pv.cropped || null;
             }
             this.loadingPreview = false;
+
+            // Initialize bbox canvas if entities exist
+            if (this.selectedFile?.bbox_entities?.length > 0) {
+                this.$nextTick(() => this._initBboxCanvas());
+            }
         },
 
         /**
@@ -554,6 +565,87 @@ window.datasetViewerComponent = function () {
 
             this.selectedFile.crop_coordinates = [Math.round(newLeft), Math.round(newTop)];
             this.cropModified = true;
+        },
+
+        closeFileDetail() {
+            this._destroyBboxCanvas();
+            this.selectedFile = null;
+            this.previewOriginal = null;
+            this.previewIntermediary = null;
+            this.previewCropped = null;
+            this.cropOverlay = null;
+            this.cropModified = false;
+        },
+
+        _initBboxCanvas() {
+            this._destroyBboxCanvas();
+            const container = this.$refs.bboxCanvasContainer;
+            if (!container || typeof BboxCanvas === 'undefined') return;
+
+            const f = this.selectedFile;
+            const w = f.target_size?.[0] || f.intermediary_size?.[0] || 1024;
+            const h = f.target_size?.[1] || f.intermediary_size?.[1] || 1024;
+
+            this.bboxCanvas = new BboxCanvas(container, {
+                width: w,
+                height: h,
+                onChange: () => {
+                    this.bboxModified = true;
+                },
+            });
+
+            if (f.bbox_entities) {
+                this.bboxCanvas.setBoxes(f.bbox_entities);
+            }
+
+            // Use the intermediary preview as background if available
+            if (this.previewIntermediary) {
+                this.bboxCanvas.setBackgroundImage(this.previewIntermediary);
+            }
+            this.bboxModified = false;
+        },
+
+        _destroyBboxCanvas() {
+            if (this.bboxCanvas) {
+                this.bboxCanvas.destroy();
+                this.bboxCanvas = null;
+            }
+            this.bboxModified = false;
+            this.savingBbox = false;
+        },
+
+        async saveBboxEntities() {
+            const f = this.selectedFile;
+            if (!f || !this.bboxCanvas || !this.expandedDataset) return;
+            this.savingBbox = true;
+            try {
+                const entities = this.bboxCanvas.getBoxes();
+                const resp = await fetch('/api/datasets/viewer/bbox-entities', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dataset_id: this.expandedDataset,
+                        file_path: f.path,
+                        bbox_entities: entities.length > 0 ? entities : null,
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(err.detail || 'Save failed');
+                }
+                this.selectedFile.bbox_entities = entities.length > 0 ? entities : null;
+                this.bboxModified = false;
+                if (window.showToast) {
+                    window.showToast('Bounding boxes saved', 'success');
+                }
+            } catch (err) {
+                console.error('Error saving bbox entities:', err);
+                if (window.showToast) {
+                    window.showToast(err.message, 'error');
+                }
+            } finally {
+                this.savingBbox = false;
+            }
         },
 
         async saveCropCoordinates() {

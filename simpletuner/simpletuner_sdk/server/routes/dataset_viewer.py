@@ -193,6 +193,29 @@ async def update_viewer_crop_coordinates(
     }
 
 
+class BboxEntitiesUpdate(BaseModel):
+    dataset_id: str
+    file_path: str
+    bbox_entities: Optional[List[Dict[str, Any]]] = None
+
+
+@router.patch("/viewer/bbox-entities")
+async def update_viewer_bbox_entities(
+    request: BboxEntitiesUpdate, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Update bounding box entities for a file in the metadata cache."""
+    service = _get_viewer_service()
+    config = _require_dataset_config(request.dataset_id)
+
+    if not service.update_bbox_entities(config, request.file_path, request.bbox_entities):
+        raise HTTPException(status_code=404, detail="Metadata entry not found")
+
+    return {
+        "saved": True,
+        "bbox_entities": request.bbox_entities,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Caption validation (Stage 3)
 # ---------------------------------------------------------------------------

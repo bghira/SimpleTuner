@@ -571,6 +571,71 @@ class TestUpdateCropCoordinates(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TestUpdateBboxEntities(unittest.TestCase):
+    """Verify bbox entity persistence."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.service = DatasetViewerService(project_root=Path(self.tmpdir))
+        self.img_dir = Path(self.tmpdir) / "images"
+        self.img_dir.mkdir(parents=True, exist_ok=True)
+        meta_file = self.img_dir / "aspect_ratio_bucket_metadata_bbox-ds.json"
+        meta_file.write_text(
+            json.dumps(
+                {
+                    "photo.jpg": {
+                        "original_size": [800, 600],
+                        "target_size": [512, 384],
+                        "aspect_ratio": 1.333,
+                        "bbox_entities": [
+                            {"label": "cat", "bbox": [0.1, 0.2, 0.5, 0.8]},
+                        ],
+                    }
+                }
+            )
+        )
+
+    def _config(self):
+        return {"id": "bbox-ds", "type": "local", "instance_data_dir": str(self.img_dir)}
+
+    def test_get_file_metadata_returns_bbox_entities(self):
+        meta = self.service.get_file_metadata(self._config(), "photo.jpg")
+        self.assertIsNotNone(meta.bbox_entities)
+        self.assertEqual(len(meta.bbox_entities), 1)
+        self.assertEqual(meta.bbox_entities[0]["label"], "cat")
+        self.assertAlmostEqual(meta.bbox_entities[0]["bbox"][0], 0.1)
+
+    def test_bbox_entities_not_in_extra(self):
+        meta = self.service.get_file_metadata(self._config(), "photo.jpg")
+        self.assertNotIn("bbox_entities", meta.extra)
+
+    def test_update_saves_to_cache(self):
+        new_entities = [
+            {"label": "dog", "bbox": [0.2, 0.3, 0.6, 0.9]},
+            {"label": "cat", "bbox": [0.0, 0.0, 0.5, 0.5]},
+        ]
+        ok = self.service.update_bbox_entities(self._config(), "photo.jpg", new_entities)
+        self.assertTrue(ok)
+        meta = self.service.get_file_metadata(self._config(), "photo.jpg")
+        self.assertEqual(len(meta.bbox_entities), 2)
+        self.assertEqual(meta.bbox_entities[0]["label"], "dog")
+
+    def test_update_with_none_removes_entities(self):
+        ok = self.service.update_bbox_entities(self._config(), "photo.jpg", None)
+        self.assertTrue(ok)
+        meta = self.service.get_file_metadata(self._config(), "photo.jpg")
+        self.assertIsNone(meta.bbox_entities)
+
+    def test_update_missing_file_returns_false(self):
+        ok = self.service.update_bbox_entities(self._config(), "missing.jpg", [])
+        self.assertFalse(ok)
+
+    def test_update_no_cache_returns_false(self):
+        config = {"id": "no-cache", "type": "local", "instance_data_dir": self.tmpdir}
+        ok = self.service.update_bbox_entities(config, "photo.jpg", [])
+        self.assertFalse(ok)
+
+
 class TestRemoteThumbnails(unittest.TestCase):
     """Verify on-demand thumbnail fetching for remote backends."""
 

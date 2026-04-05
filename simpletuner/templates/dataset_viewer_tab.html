@@ -404,8 +404,8 @@
          :class="{ 'show d-block': selectedFile }"
          tabindex="-1"
          style="background-color: rgba(0,0,0,0.5);"
-         @click.self="selectedFile = null; previewOriginal = null; previewIntermediary = null; previewCropped = null; cropOverlay = null; cropModified = false"
-         @keydown.escape="selectedFile = null; previewOriginal = null; previewIntermediary = null; previewCropped = null; cropOverlay = null; cropModified = false">
+         @click.self="closeFileDetail()"
+         @keydown.escape="closeFileDetail()">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
@@ -413,7 +413,7 @@
                         <i class="fas fa-file-image me-2"></i>
                         <span x-text="selectedFile?.display_name || selectedFile?.path"></span>
                     </h6>
-                    <button type="button" class="btn-close" @click="selectedFile = null; previewOriginal = null; previewIntermediary = null; previewCropped = null; cropOverlay = null; cropModified = false" aria-label="Close"></button>
+                    <button type="button" class="btn-close" @click="closeFileDetail()" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
 
@@ -502,6 +502,36 @@
                             <span class="small" style="white-space: pre-wrap;" x-text="selectedFile?.caption"></span>
                         </div>
                     </div>
+
+                    <!-- Bounding Box Editor -->
+                    <template x-if="selectedFile && selectedFile.bbox_entities && selectedFile.bbox_entities.length > 0">
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="text-muted small d-block mb-0">
+                                    <i class="fas fa-vector-square me-1"></i>Bounding Boxes
+                                    <span class="badge bg-secondary ms-1" x-text="selectedFile.bbox_entities.length"></span>
+                                </label>
+                                <small class="text-muted" style="font-size: 0.75rem;">
+                                    Draw to create &middot; Click to select &middot; Double-click to rename &middot; <kbd>Del</kbd> to remove
+                                </small>
+                            </div>
+                            <div x-ref="bboxCanvasContainer" class="bbox-canvas-container"></div>
+                            <div class="d-flex align-items-center justify-content-between mt-2 px-1">
+                                <span class="text-muted small">
+                                    <span x-text="bboxCanvas ? bboxCanvas.getBoxes().length + ' box(es)' : ''"></span>
+                                    <span x-show="bboxModified" class="text-warning ms-1">(modified)</span>
+                                </span>
+                                <button x-show="bboxModified"
+                                        class="btn btn-sm btn-info"
+                                        :disabled="savingBbox"
+                                        @click="saveBboxEntities()">
+                                    <i class="fas fa-spinner fa-spin me-1" x-show="savingBbox"></i>
+                                    <i class="fas fa-save me-1" x-show="!savingBbox"></i>
+                                    Save Boxes
+                                </button>
+                            </div>
+                        </div>
+                    </template>
 
                     <!-- Loading metadata -->
                     <div x-show="loadingFileDetail" class="text-center py-3">
