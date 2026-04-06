@@ -90,6 +90,10 @@ class QwenImage(ImageModelFoundation):
     }
     MODEL_LICENSE = "other"
 
+    ASSISTANT_LORA_FLAVOURS = ["v2.0"]
+    ASSISTANT_LORA_PATH = ""
+    ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
+
     # Qwen Image uses a different text encoder configuration
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -332,6 +336,42 @@ class QwenImage(ImageModelFoundation):
         )
 
         logger.info("TREAD training is enabled")
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._maybe_load_assistant_lora()
+
+    def _assistant_lora_weight_for_flavour(self):
+        weight_map = getattr(self, "ASSISTANT_LORA_WEIGHT_NAMES", None) or {}
+        flavour = getattr(self.config, "model_flavour", None)
+        if isinstance(weight_map, dict) and flavour in weight_map:
+            return weight_map.get(flavour)
+        return getattr(self, "ASSISTANT_LORA_WEIGHT_NAME", None)
+
+    def _maybe_load_assistant_lora(self):
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not self.supports_assistant_lora(self.config):
+            return
+        if getattr(self.config, "model_type", "").lower() != "lora":
+            return
+
+        assistant_path = getattr(self.config, "assistant_lora_path", None) or self.ASSISTANT_LORA_PATH
+        if not assistant_path:
+            return
+
+        from simpletuner.helpers.assistant_lora import load_assistant_adapter
+
+        weight_name = getattr(self.config, "assistant_lora_weight_name", None) or self._assistant_lora_weight_for_flavour()
+        loaded = load_assistant_adapter(
+            transformer=self.unwrap_model(model=self.model),
+            pipeline_cls=QwenImagePipeline,
+            lora_path=assistant_path,
+            adapter_name=self.assistant_adapter_name,
+            low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+            weight_name=weight_name,
+        )
+        self.assistant_lora_loaded = loaded
 
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
