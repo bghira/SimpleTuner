@@ -4903,10 +4903,14 @@ class ModelFoundation(ABC):
 
         elif huber_schedule == "snr":
             # SNR-based scheduling
-            snr = compute_snr(timesteps, self.noise_schedule)
-            sigmas = (
-                (1.0 - self.noise_schedule.alphas_cumprod[timesteps]) / self.noise_schedule.alphas_cumprod[timesteps]
-            ) ** 0.5
+            if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+                sigmas = timesteps / 1000
+                sigmas = ((1.0 - sigmas) / (sigmas + 0.0001)) ** 0.5
+            else:
+                snr = compute_snr(timesteps, self.noise_schedule)
+                sigmas = (
+                    (1.0 - self.noise_schedule.alphas_cumprod[timesteps]) / self.noise_schedule.alphas_cumprod[timesteps]
+                ) ** 0.5
             huber_c = (1 - base_huber_c) / (1 + sigmas) ** 2 + base_huber_c
             return huber_c
 
@@ -4946,8 +4950,47 @@ class ModelFoundation(ABC):
                 raise ValueError("Flow target is None while diff2flow_loss is enabled.")
             loss = F.mse_loss(flow_pred.float(), flow_target.float(), reduction="none")
         elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
-            # Flow matching always uses L2 loss
-            loss = (model_pred.float() - target.float()) ** 2
+            # Check if we're using Huber or smooth L1 loss
+            if loss_type in ["huber", "smooth_l1"]:
+                # Get timesteps for the batch
+                timesteps = prepared_batch["timesteps"]
+
+                # For scheduled huber, we compute per-sample then average
+                if getattr(self.config, "huber_schedule", "constant") != "constant":
+                    batch_size = model_pred.shape[0]
+                    losses = []
+
+                    for i in range(batch_size):
+                        # Get scheduled huber_c for this timestep
+                        huber_c = self.compute_scheduled_huber_c(
+                            timesteps[i : i + 1]
+                        ).item()
+
+                        # Compute loss for this sample
+                        sample_loss = self.conditional_loss(
+                            model_pred[i : i + 1].float(),
+                            target[i : i + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                        losses.append(sample_loss)
+
+                    loss = torch.cat(losses, dim=0)
+                else:
+                    # Constant huber_c - can be computed all at once
+                    huber_c = getattr(self.config, "huber_c", 0.1)
+                    loss = self.conditional_loss(
+                        model_pred.float(),
+                        target.float(),
+                        reduction="none",
+                        loss_type=loss_type,
+                        huber_c=huber_c,
+                    )
+            else:
+                loss = F.mse_loss(
+                    model_pred.float(), target.float(), reduction="none"
+                )
             if getattr(self.config, "scheduled_sampling_reflexflow", False):
                 clean_pred = prepared_batch.get("_reflexflow_clean_pred")
                 biased_pred = prepared_batch.get("_reflexflow_biased_pred")
