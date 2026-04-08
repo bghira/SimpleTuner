@@ -597,6 +597,26 @@
                             No metadata available for this file.
                         </div>
                     </div>
+
+                    <!-- Per-file actions -->
+                    <div x-show="!loadingFileDetail && selectedFile" class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
+                        <button class="btn btn-sm btn-outline-info"
+                                :disabled="rebuildingMetadata"
+                                @click="rebuildFileMetadata()"
+                                title="Recalculate target size, crop coordinates, and aspect ratio from current config">
+                            <i class="fas fa-spinner fa-spin me-1" x-show="rebuildingMetadata"></i>
+                            <i class="fas fa-sync-alt me-1" x-show="!rebuildingMetadata"></i>
+                            Rebuild Metadata
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning"
+                                :disabled="deletingVaeCache"
+                                @click="deleteVaeCacheFile()"
+                                title="Delete the cached VAE latent so it is regenerated on next training run">
+                            <i class="fas fa-spinner fa-spin me-1" x-show="deletingVaeCache"></i>
+                            <i class="fas fa-trash-alt me-1" x-show="!deletingVaeCache"></i>
+                            Delete VAE Cache
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

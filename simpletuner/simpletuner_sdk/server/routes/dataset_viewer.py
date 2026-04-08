@@ -216,6 +216,33 @@ async def update_viewer_bbox_entities(
     }
 
 
+class SingleFileAction(BaseModel):
+    dataset_id: str
+    file_path: str
+
+
+@router.post("/viewer/rebuild-metadata")
+async def rebuild_file_metadata(request: SingleFileAction, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Recalculate metadata for a single file using current dataset config."""
+    service = _get_viewer_service()
+    config = _require_dataset_config(request.dataset_id)
+    global_config = _get_global_config()
+
+    result = service.rebuild_file_metadata(config, global_config, request.file_path)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Could not rebuild metadata for this file")
+
+    return {"rebuilt": True, "metadata": result}
+
+
+@router.post("/viewer/delete-vae-cache")
+async def delete_vae_cache_file(request: SingleFileAction, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Delete the VAE cache file for a single image/video."""
+    service = _get_viewer_service()
+    config = _require_dataset_config(request.dataset_id)
+    return service.delete_vae_cache_file(config, request.file_path)
+
+
 # ---------------------------------------------------------------------------
 # Caption validation (Stage 3)
 # ---------------------------------------------------------------------------

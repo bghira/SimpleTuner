@@ -650,6 +650,154 @@ class DatasetViewerService:
             json.dump(data, f)
         return True
 
+    def rebuild_file_metadata(
+        self,
+        dataset_config: Dict[str, Any],
+        global_config: Dict[str, Any],
+        file_path: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Recalculate metadata for a single file using TrainingSample.
+
+        Sets up a minimal StateTracker context (like the scan service) and
+        runs TrainingSample.prepare(image=None) to recompute target_size,
+        intermediary_size, crop_coordinates, and aspect_ratio purely from
+        original_size and the current dataset configuration.
+
+        Returns the updated metadata dict on success, None on failure.
+        """
+        from simpletuner.helpers.data_backend.config import create_backend_config
+        from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanArgsNamespace
+
+        # Load existing metadata
+        cache_path = self._find_cache_file(dataset_config, "metadata")
+        if cache_path is None:
+            return None
+        try:
+            all_metadata = self._load_cache(cache_path)
+        except (json.JSONDecodeError, OSError):
+            return None
+        if file_path not in all_metadata:
+            return None
+
+        existing = all_metadata[file_path]
+        original_size = existing.get("original_size")
+        if not original_size:
+            return None
+
+        # Build minimal args from config (mirrors scan service)
+        args_overrides = {}
+        for key in (
+            "resolution",
+            "resolution_type",
+            "minimum_image_size",
+            "maximum_image_size",
+            "target_downsample_size",
+            "caption_strategy",
+            "model_type",
+            "model_family",
+        ):
+            if key in dataset_config:
+                args_overrides[key] = dataset_config[key]
+            elif key in global_config:
+                args_overrides[key] = global_config[key]
+
+        scan_args = _ScanArgsNamespace(args_overrides)
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
+
+        scan_args.output_dir = DatasetScanService._resolve_scan_output_dir(scan_args.output_dir)
+
+        # Apply pixel_area conversion
+        dataset_config = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
+
+        original_args = StateTracker.get_args()
+        StateTracker.set_args(scan_args)
+        config_id = None
+
+        try:
+            args_dict = {k: getattr(scan_args, k, None) for k in vars(scan_args)}
+            config = create_backend_config(dataset_config, args_dict)
+            config_id = config.id
+            StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
+
+            # Build image_metadata with only original_size (forces recalculation)
+            rebuild_meta = {"original_size": tuple(original_size)}
+            # Preserve video-specific fields
+            for vkey in ("num_frames", "original_num_frames", "fps", "video_duration"):
+                if vkey in existing:
+                    rebuild_meta[vkey] = existing[vkey]
+
+            sample = TrainingSample(
+                image=None,
+                data_backend_id=config.id,
+                image_metadata=rebuild_meta,
+                image_path=file_path,
+                model=None,
+            )
+            prepared = sample.prepare()
+
+            # Merge recalculated fields into existing metadata
+            existing["target_size"] = list(prepared.target_size)
+            existing["intermediary_size"] = list(prepared.intermediary_size)
+            existing["crop_coordinates"] = list(prepared.crop_coordinates)
+            existing["aspect_ratio"] = prepared.aspect_ratio
+
+            with open(cache_path, "w") as f:
+                json.dump(all_metadata, f)
+
+            return existing
+
+        except Exception as e:
+            logger.warning("Failed to rebuild metadata for %s: %s", file_path, e)
+            return None
+        finally:
+            StateTracker.set_args(original_args)
+            if config_id is not None:
+                StateTracker.data_backends.pop(config_id, None)
+
+    def delete_vae_cache_file(
+        self,
+        dataset_config: Dict[str, Any],
+        file_path: str,
+    ) -> Dict[str, Any]:
+        """Delete the VAE cache .pt file for a single image/video.
+
+        Returns a dict with 'deleted' (bool) and 'cache_path' (str or None).
+        """
+        cache_dir_vae = dataset_config.get("cache_dir_vae", "")
+        if not cache_dir_vae:
+            return {"deleted": False, "cache_path": None, "error": "No cache_dir_vae configured"}
+
+        instance_data_dir = dataset_config.get("instance_data_dir", "")
+
+        # Replicate VAECache.generate_vae_cache_filename logic (hash_filenames=True always)
+        base_filename = os.path.splitext(os.path.basename(file_path))[0]
+        hashed = hashlib.sha256(base_filename.encode()).hexdigest()
+        cache_filename = hashed + ".pt"
+
+        # Compute subfolder (relative path within instance_data_dir)
+        subfolders = ""
+        if instance_data_dir:
+            subfolders = os.path.dirname(file_path).replace(instance_data_dir, "")
+            subfolders = subfolders.lstrip(os.sep)
+
+        if subfolders:
+            cache_path = os.path.join(cache_dir_vae, subfolders, cache_filename)
+        else:
+            cache_path = os.path.join(cache_dir_vae, cache_filename)
+
+        cache_path = os.path.abspath(cache_path)
+
+        if not os.path.isfile(cache_path):
+            return {"deleted": False, "cache_path": cache_path, "error": "File not found"}
+
+        try:
+            os.remove(cache_path)
+            return {"deleted": True, "cache_path": cache_path}
+        except OSError as e:
+            return {"deleted": False, "cache_path": cache_path, "error": str(e)}
+
     def _get_file_caption(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[str]:
         """Resolve the caption for a file based on the dataset's caption strategy."""
         strategy = dataset_config.get("caption_strategy", "filename")

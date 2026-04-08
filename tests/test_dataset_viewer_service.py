@@ -100,16 +100,10 @@ class TestFindCacheFile(unittest.TestCase):
         self._write_cache(cache_file)
 
         config = {"id": "deep-ds"}
-        import os
-
-        original_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
-        try:
-            result = self.service._find_cache_file(config, "indices")
-            self.assertIsNotNone(result)
-            self.assertEqual(result.resolve(), cache_file.resolve())
-        finally:
-            os.chdir(original_cwd)
+        service = DatasetViewerService(project_root=Path(self.tmpdir))
+        result = service._find_cache_file(config, "indices")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.resolve(), cache_file.resolve())
 
 
 class TestGetDatasetSummary(unittest.TestCase):
@@ -408,14 +402,14 @@ class TestImagePreview(unittest.TestCase):
         """Crop coordinates that would exceed intermediary bounds get clamped.
 
         Reproduces the user-reported case: 810x1080 original, 512x682 intermediary,
-        512x512 target at crop_coordinates (0, 143) in (left, top) order.
-        The batch crop path in training_sample.py stores (crop_x, crop_y) = (left, top).
+        512x512 target at crop_coordinates (143, 0) in (top, left) order.
+        Croppers and the batch crop path store (top, left) matching SDXL conditioning.
         """
         self._create_image(size=(810, 1080))
         config = {"id": "test", "type": "local", "instance_data_dir": self.tmpdir}
         metadata = {
             "intermediary_size": [512, 682],
-            "crop_coordinates": [0, 143],  # (left=0, top=143) from batch crop path
+            "crop_coordinates": [143, 0],  # (top=143, left=0)
             "target_size": [512, 512],
         }
         result = self.service.get_image_preview(config, "photo.jpg", metadata=metadata)
@@ -423,7 +417,7 @@ class TestImagePreview(unittest.TestCase):
         # Decode the cropped image to verify dimensions
         b64 = result["cropped"].split(",", 1)[1]
         cropped_img = Image.open(io.BytesIO(base64.b64decode(b64)))
-        # Should be 512x512 since (left=0, top=143) fits in 512w x 682h
+        # Should be 512x512 since (top=143, left=0) fits in 512w x 682h
         self.assertEqual(cropped_img.size[0], 512)
         self.assertEqual(cropped_img.size[1], 512)
 
@@ -436,7 +430,7 @@ class TestImagePreview(unittest.TestCase):
         # Result: 150x150 (clamped)
         metadata = {
             "intermediary_size": [200, 200],
-            "crop_coordinates": [50, 50],  # (left=50, top=50)
+            "crop_coordinates": [50, 50],  # (top=50, left=50) — symmetric so order doesn't matter
             "target_size": [200, 200],
         }
         result = self.service.get_image_preview(config, "photo.jpg", metadata=metadata)
@@ -448,14 +442,14 @@ class TestImagePreview(unittest.TestCase):
         self.assertEqual(cropped_img.size[1], 150)
 
     def test_preview_crop_coordinate_order_asymmetric(self):
-        """Verify (left, top) order: left=0 should produce full-width crop on portrait."""
+        """Verify (top, left) order: left=0 should produce full-width crop on portrait."""
         self._create_image(size=(512, 800))
         config = {"id": "test", "type": "local", "instance_data_dir": self.tmpdir}
         # Portrait intermediary 512w x 682h, target 512x512
-        # crop_coordinates = (left=0, top=211) → full width, offset vertically
+        # crop_coordinates = (top=211, left=0) → full width, offset vertically
         metadata = {
             "intermediary_size": [512, 682],
-            "crop_coordinates": [0, 211],  # (left=0, top=211)
+            "crop_coordinates": [211, 0],  # (top=211, left=0)
             "target_size": [512, 512],
         }
         result = self.service.get_image_preview(config, "photo.jpg", metadata=metadata)

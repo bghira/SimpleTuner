@@ -769,5 +769,102 @@ window.datasetViewerComponent = function () {
                 this.savingCrop = false;
             }
         },
+
+        // --- Single-file actions ---
+
+        rebuildingMetadata: false,
+        deletingVaeCache: false,
+
+        async rebuildFileMetadata() {
+            const f = this.selectedFile;
+            if (!f || !this.expandedDataset) return;
+            this.rebuildingMetadata = true;
+            try {
+                const resp = await fetch('/api/datasets/viewer/rebuild-metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dataset_id: this.expandedDataset,
+                        file_path: f.path,
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(err.detail || 'Rebuild failed');
+                }
+                const data = await resp.json();
+                if (data.metadata) {
+                    // Update the selected file with the new metadata
+                    const m = data.metadata;
+                    if (m.target_size) f.target_size = m.target_size;
+                    if (m.intermediary_size) f.intermediary_size = m.intermediary_size;
+                    if (m.crop_coordinates) f.crop_coordinates = m.crop_coordinates;
+                    if (m.aspect_ratio != null) f.aspect_ratio = m.aspect_ratio;
+                    // Recompute overlay and re-fetch previews
+                    this._computeCropOverlay();
+                    this.cropModified = false;
+                    // Refresh the preview images with updated metadata
+                    const params = new URLSearchParams({
+                        dataset_id: this.expandedDataset,
+                        file_path: f.path,
+                    });
+                    const pvResp = await fetch('/api/datasets/viewer/preview?' + params);
+                    if (pvResp.ok) {
+                        const pv = await pvResp.json();
+                        this.previewOriginal = pv.original || null;
+                        this.previewIntermediary = pv.intermediary || null;
+                        this.previewCropped = pv.cropped || null;
+                    }
+                }
+                if (window.showToast) {
+                    window.showToast('Metadata rebuilt successfully', 'success');
+                }
+            } catch (err) {
+                console.error('Error rebuilding metadata:', err);
+                if (window.showToast) {
+                    window.showToast(err.message, 'error');
+                }
+            } finally {
+                this.rebuildingMetadata = false;
+            }
+        },
+
+        async deleteVaeCacheFile() {
+            const f = this.selectedFile;
+            if (!f || !this.expandedDataset) return;
+            this.deletingVaeCache = true;
+            try {
+                const resp = await fetch('/api/datasets/viewer/delete-vae-cache', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dataset_id: this.expandedDataset,
+                        file_path: f.path,
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(err.detail || 'Delete failed');
+                }
+                const data = await resp.json();
+                if (data.deleted) {
+                    if (window.showToast) {
+                        window.showToast('VAE cache file deleted', 'success');
+                    }
+                } else {
+                    const reason = data.error || 'File not found';
+                    if (window.showToast) {
+                        window.showToast('VAE cache: ' + reason, 'warning');
+                    }
+                }
+            } catch (err) {
+                console.error('Error deleting VAE cache file:', err);
+                if (window.showToast) {
+                    window.showToast(err.message, 'error');
+                }
+            } finally {
+                this.deletingVaeCache = false;
+            }
+        },
     };
 };
