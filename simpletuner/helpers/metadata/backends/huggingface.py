@@ -714,7 +714,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         return aspect_ratio_bucket_indices
 
-    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
+    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         logger.info("Building aspect ratio buckets from Hugging Face dataset...")
 
         # for HF datasets, we process all items
@@ -745,6 +745,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             statistics["skipped"]["already_exists"] = len(existing_files)
         else:
             self.aspect_ratio_bucket_indices = {}
+            self.image_metadata = {}
             existing_files = set()
         if self.bucket_report:
             self.bucket_report.record_stage(
@@ -771,6 +772,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             leave=False,
             ncols=100,
         ):
+            if progress_callback is not None:
+                progress_callback(idx + 1, total_items)
+
             virtual_path = f"{idx}.{self.file_extension}"
 
             if virtual_path in existing_files:

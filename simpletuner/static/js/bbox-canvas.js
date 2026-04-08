@@ -27,6 +27,7 @@ class BboxCanvas {
 
         this.boxes = [];
         this._mode = 'idle';
+        this._bgImage = null;
         this._selectedIdx = -1;
         this._activeHandle = null;
         this._dragStart = null;
@@ -56,6 +57,20 @@ class BboxCanvas {
         this._targetH = h;
         this._resizeCanvas();
         this._draw();
+    }
+
+    setBackgroundImage(url) {
+        if (!url) {
+            this._bgImage = null;
+            this._draw();
+            return;
+        }
+        const img = new Image();
+        img.onload = () => {
+            this._bgImage = img;
+            this._draw();
+        };
+        img.src = url;
     }
 
     setBoxes(entities) {
@@ -461,29 +476,33 @@ class BboxCanvas {
 
         // Background
         ctx.clearRect(0, 0, w, h);
-        const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark'
-            || window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-        ctx.fillStyle = isDark ? '#1a1d21' : '#f8f9fa';
-        ctx.fillRect(0, 0, w, h);
+        if (this._bgImage) {
+            ctx.drawImage(this._bgImage, 0, 0, w, h);
+        } else {
+            const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark'
+                || window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+            ctx.fillStyle = isDark ? '#1a1d21' : '#f8f9fa';
+            ctx.fillRect(0, 0, w, h);
 
-        // Grid
-        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-        ctx.lineWidth = 0.5;
-        const step = Math.max(w, h) / 8;
-        for (let x = step; x < w; x += step) {
-            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-        }
-        for (let y = step; y < h; y += step) {
-            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-        }
+            // Grid
+            ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+            ctx.lineWidth = 0.5;
+            const step = Math.max(w, h) / 8;
+            for (let x = step; x < w; x += step) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            }
+            for (let y = step; y < h; y += step) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
 
-        // Crosshair at center
-        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 6]);
-        ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
-        ctx.setLineDash([]);
+            // Crosshair at center
+            ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 6]);
+            ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+            ctx.setLineDash([]);
+        }
 
         // Empty-state hint
         if (this.boxes.length === 0 && this._mode !== 'drawing') {

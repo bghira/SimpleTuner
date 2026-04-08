@@ -144,6 +144,7 @@ class StateTracker:
     @classmethod
     def _save_to_disk(cls, cache_name, data):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
         logger.debug(f"(rank={os.environ.get('RANK')}) Saving {cache_name} to disk: {cache_path}")
         with cache_path.open("w") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
