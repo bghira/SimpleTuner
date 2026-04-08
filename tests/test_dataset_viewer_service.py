@@ -636,6 +636,145 @@ class TestUpdateBboxEntities(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TestConditioningFileMatch(unittest.TestCase):
+    """Verify conditioning file matching by stem."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.service = DatasetViewerService(project_root=Path(self.tmpdir))
+
+        # Source dataset
+        self.src_dir = Path(self.tmpdir) / "source_images"
+        self.src_dir.mkdir(parents=True)
+        # Create a dummy source image
+        img = Image.new("RGB", (64, 64), color="red")
+        img.save(self.src_dir / "photo123.jpg")
+
+        # Conditioning dataset (in plan)
+        self.cond_dir = Path(self.tmpdir) / "cond_images"
+        self.cond_dir.mkdir(parents=True)
+        # Create a matching conditioning image
+        cond_img = Image.new("RGB", (64, 64), color="green")
+        cond_img.save(self.cond_dir / "photo123.png")
+
+        # Bucket cache for conditioning dataset
+        cond_cache = self.cond_dir / "aspect_ratio_bucket_indices_cond-ds.json"
+        cond_cache.write_text(
+            json.dumps(
+                {
+                    "aspect_ratio_bucket_indices": {"1.0": ["photo123.png"]},
+                }
+            )
+        )
+
+    def _src_config(self):
+        return {
+            "id": "src-ds",
+            "type": "local",
+            "instance_data_dir": str(self.src_dir),
+            "conditioning_data": ["cond-ds"],
+        }
+
+    def _cond_config(self):
+        return {
+            "id": "cond-ds",
+            "type": "local",
+            "instance_data_dir": str(self.cond_dir),
+            "conditioning_type": "controlnet",
+        }
+
+    def test_match_found_via_conditioning_data(self):
+        all_datasets = [self._src_config(), self._cond_config()]
+        result = self.service.get_conditioning_file_match(self._src_config(), all_datasets, "photo123.jpg")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["conditioning_id"], "cond-ds")
+        self.assertEqual(result["conditioning_type"], "controlnet")
+        self.assertIn("thumbnail", result)
+
+    def test_no_match_for_missing_stem(self):
+        all_datasets = [self._src_config(), self._cond_config()]
+        result = self.service.get_conditioning_file_match(self._src_config(), all_datasets, "nonexistent.jpg")
+        self.assertIsNone(result)
+
+    def test_no_match_without_conditioning(self):
+        config = {"id": "plain-ds", "type": "local", "instance_data_dir": str(self.src_dir)}
+        result = self.service.get_conditioning_file_match(config, [config], "photo123.jpg")
+        self.assertIsNone(result)
+
+    def test_match_via_filesystem_discovery(self):
+        """Auto-generated conditioning images found on disk with explicit id."""
+        gen_dir = Path(self.tmpdir) / "conditioning_data" / "auto-gen-canny"
+        gen_dir.mkdir(parents=True)
+        gen_img = Image.new("RGB", (64, 64), color="blue")
+        gen_img.save(gen_dir / "photo123.png")
+
+        src_config = {
+            "id": "src-ds",
+            "type": "local",
+            "instance_data_dir": str(self.src_dir),
+            "conditioning": [
+                {"id": "auto-gen-canny", "type": "canny", "instance_data_dir": str(gen_dir)},
+            ],
+        }
+        result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["conditioning_id"], "auto-gen-canny")
+        self.assertEqual(result["conditioning_type"], "canny")
+
+    def test_match_via_derived_id_and_path(self):
+        """Generator config without explicit id uses {source_id}_conditioning_{type}."""
+        # Simulate the directory structure the duplicator would create
+        gen_dir = Path(self.tmpdir) / "conditioning_data" / "src-ds_conditioning_canny"
+        gen_dir.mkdir(parents=True)
+        gen_img = Image.new("RGB", (64, 64), color="blue")
+        gen_img.save(gen_dir / "photo123.png")
+
+        src_config = {
+            "id": "src-ds",
+            "type": "local",
+            "instance_data_dir": str(self.src_dir),
+            # cache_dir_vae lets _derive_conditioning_dir find the cache root
+            "cache_dir_vae": str(Path(self.tmpdir) / "vae" / "model" / "src-ds"),
+            "conditioning": [
+                {"type": "canny", "conditioning_type": "controlnet"},
+            ],
+        }
+        result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["conditioning_id"], "src-ds_conditioning_canny")
+        self.assertEqual(result["conditioning_type"], "controlnet")
+
+    @patch("simpletuner.simpletuner_sdk.server.services.dataset_viewer_service.GENERATOR_REGISTRY_AVAILABLE", True)
+    def test_on_the_fly_generation(self):
+        """When conditioning images don't exist, generate preview on-the-fly."""
+        src_config = {
+            "id": "src-ds",
+            "type": "local",
+            "instance_data_dir": str(self.src_dir),
+            "conditioning": [
+                {"type": "canny", "conditioning_type": "controlnet"},
+            ],
+        }
+
+        # Mock the generator to avoid needing trainingsample C extension
+        mock_result = Image.new("RGB", (64, 64), color="white")
+        mock_generator = MagicMock()
+        mock_generator.transform_batch.return_value = [mock_result]
+
+        mock_registry = {"canny": MagicMock(return_value=mock_generator)}
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.dataset_viewer_service.GENERATOR_REGISTRY",
+            mock_registry,
+        ):
+            result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["conditioning_id"], "src-ds_conditioning_canny")
+        self.assertEqual(result["conditioning_type"], "controlnet")
+        self.assertTrue(result.get("generated_on_the_fly"))
+        self.assertIn("thumbnail", result)
+
+
 class TestRemoteThumbnails(unittest.TestCase):
     """Verify on-demand thumbnail fetching for remote backends."""
 

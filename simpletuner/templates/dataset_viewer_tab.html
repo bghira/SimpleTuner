@@ -187,11 +187,26 @@
                         </div>
 
                         <!-- Conditioning relationships -->
-                        <div x-show="ds.conditioning_data || ds.source_dataset_id" class="viewer-conditioning-info px-3 pt-3"
+                        <div x-show="(ds.conditioning_data && ds.conditioning_data.length > 0) || ds.source_dataset_id || (ds.conditioning_generators && ds.conditioning_generators.length > 0)"
+                             class="viewer-conditioning-info px-3 pt-3"
                              style="border-bottom: 1px solid rgba(148, 163, 184, 0.1); padding-bottom: 0.75rem;">
                             <h6 class="small text-muted mb-2">
                                 <i class="fas fa-project-diagram me-1"></i>Conditioning
                             </h6>
+
+                            <!-- Conditioning generators (auto-gen config from plan) -->
+                            <template x-if="ds.conditioning_generators && ds.conditioning_generators.length > 0">
+                                <div class="d-flex gap-2 flex-wrap mb-2">
+                                    <template x-for="gen in ds.conditioning_generators" :key="gen.id">
+                                        <span class="badge bg-dark">
+                                            <i class="fas fa-cog me-1" style="font-size: 0.6rem;"></i>
+                                            <span x-text="gen.type"></span>
+                                            <span x-show="gen.conditioning_type" class="ms-1 opacity-75"
+                                                  x-text="'(' + gen.conditioning_type + ')'"></span>
+                                        </span>
+                                    </template>
+                                </div>
+                            </template>
 
                             <!-- Source dataset has conditioning data linked -->
                             <template x-if="ds.conditioning_data && ds.conditioning_data.length > 0">
@@ -220,7 +235,7 @@
                                 </div>
                             </template>
 
-                            <!-- Generator info -->
+                            <!-- Generator config info -->
                             <div x-show="ds.conditioning_config" class="d-flex gap-2 flex-wrap">
                                 <span class="badge bg-dark" x-show="ds.conditioning_config?.type"
                                       x-text="'generator: ' + ds.conditioning_config?.type"></span>
@@ -495,6 +510,28 @@
                         </div>
                     </div>
 
+                    <!-- Conditioning input -->
+                    <div x-show="conditioningMatch || loadingConditioningMatch" class="mb-3">
+                        <label class="text-muted small d-block mb-1">
+                            <i class="fas fa-project-diagram me-1"></i>Conditioning Input
+                            <span x-show="conditioningMatch?.conditioning_type"
+                                  class="badge bg-dark ms-1"
+                                  x-text="conditioningMatch?.conditioning_type"></span>
+                        </label>
+                        <div x-show="loadingConditioningMatch && !conditioningMatch" class="text-center py-3">
+                            <i class="fas fa-spinner fa-spin text-info"></i>
+                        </div>
+                        <div x-show="conditioningMatch?.thumbnail" class="viewer-preview-wrapper" style="max-width: 300px;">
+                            <img :src="conditioningMatch?.thumbnail"
+                                 class="viewer-preview-image"
+                                 alt="Conditioning input"
+                                 style="border-radius: 6px;">
+                        </div>
+                        <div x-show="conditioningMatch" class="text-muted small mt-1" style="font-size: 0.7rem;">
+                            <span x-text="conditioningMatch?.conditioning_id"></span>
+                        </div>
+                    </div>
+
                     <!-- Caption -->
                     <div x-show="!loadingFileDetail && selectedFile?.caption" class="mb-3">
                         <label class="text-muted small d-block mb-1">Caption</label>
@@ -607,11 +644,18 @@
                         resolution changed, the VAE cache may contain stale latents that no longer match the new metadata.
                     </p>
                 </div>
-                <label class="d-flex align-items-center gap-2 small" style="cursor: pointer;">
+                <label class="d-flex align-items-center gap-2 small mb-2" style="cursor: pointer;">
                     <input type="checkbox" x-model="forceScanClearVae"
                            class="form-check-input mt-0" style="width: 1rem; height: 1rem;">
                     <span>Also clear VAE cache for this dataset</span>
                 </label>
+                <template x-if="datasets.find(d => d.dataset_id === forceScanDatasetId && d.conditioning_generators && d.conditioning_generators.length > 0)">
+                    <label class="d-flex align-items-center gap-2 small" style="cursor: pointer;">
+                        <input type="checkbox" x-model="forceScanClearConditioning"
+                               class="form-check-input mt-0" style="width: 1rem; height: 1rem;">
+                        <span>Also clear auto-generated conditioning data</span>
+                    </label>
+                </template>
             </div>
             <div class="card-footer d-flex justify-content-end gap-2"
                  style="border-top-color: rgba(148,163,184,0.15);">

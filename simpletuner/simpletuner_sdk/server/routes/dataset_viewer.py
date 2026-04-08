@@ -284,6 +284,21 @@ async def get_viewer_conditioning_pairs(
     )
 
 
+@router.get("/viewer/conditioning-match")
+async def get_viewer_conditioning_match(
+    dataset_id: str,
+    file_path: str,
+    _user: User = Depends(get_current_user),
+) -> Optional[Dict[str, Any]]:
+    """Find the conditioning image matching a source file."""
+    try:
+        datasets = _load_plan()
+    except ValueError:
+        return None
+    config = _require_dataset_config(dataset_id)
+    return _get_viewer_service().get_conditioning_file_match(config, datasets, file_path)
+
+
 @router.get("/viewer/conditioning-orphans", response_model=OrphanReport)
 async def get_viewer_conditioning_orphans(
     source_id: str, conditioning_id: str, _user: User = Depends(get_current_user)
@@ -323,6 +338,7 @@ class ScanRequest(BaseModel):
     dataset_id: str
     force_rescan: bool = False
     clear_vae_cache: bool = False
+    clear_conditioning_cache: bool = False
 
 
 class ScanAllRequest(BaseModel):
@@ -341,6 +357,7 @@ async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_cur
             global_config,
             force_rescan=request.force_rescan,
             clear_vae_cache=request.clear_vae_cache,
+            clear_conditioning_cache=request.clear_conditioning_cache,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))

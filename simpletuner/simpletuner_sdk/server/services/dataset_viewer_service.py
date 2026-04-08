@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+# Lazy-loaded at first use; patchable in tests
+GENERATOR_REGISTRY: Optional[Dict] = None
+GENERATOR_REGISTRY_AVAILABLE = False
+
 
 class BucketSummary(BaseModel):
     """Summary of a single aspect ratio bucket."""
@@ -42,6 +46,7 @@ class DatasetSummary(BaseModel):
     source_dataset_id: Optional[str] = None
     conditioning_type: Optional[str] = None
     conditioning_config: Optional[Dict[str, Any]] = None
+    conditioning_generators: Optional[List[Dict[str, Any]]] = None
     auto_generated: bool = False
 
 
@@ -404,16 +409,20 @@ class DatasetViewerService:
         cond_data_raw = dataset_config.get("conditioning_data")
         if isinstance(cond_data_raw, str):
             cond_data = [cond_data_raw]
-        elif isinstance(cond_data_raw, list):
+        elif isinstance(cond_data_raw, list) and cond_data_raw:
             cond_data = cond_data_raw
         else:
             cond_data = None
+
+        cond_generators_raw = dataset_config.get("conditioning")
+        cond_generators = cond_generators_raw if isinstance(cond_generators_raw, list) and cond_generators_raw else None
 
         cond_fields = dict(
             conditioning_data=cond_data,
             source_dataset_id=dataset_config.get("source_dataset_id"),
             conditioning_type=dataset_config.get("conditioning_type"),
             conditioning_config=dataset_config.get("conditioning_config"),
+            conditioning_generators=cond_generators,
             auto_generated=bool(dataset_config.get("auto_generated", False)),
         )
 
@@ -1267,6 +1276,178 @@ class DatasetViewerService:
             source_orphans=[f for name, f in source_by_name.items() if name not in cond_by_name][:500],
             conditioning_orphans=[f for name, f in cond_by_name.items() if name not in source_by_name][:500],
         )
+
+    def get_conditioning_file_match(
+        self,
+        source_config: Dict[str, Any],
+        all_datasets: List[Dict[str, Any]],
+        source_file_path: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Find the conditioning image matching a source file by stem.
+
+        Checks linked conditioning datasets in the plan and also attempts
+        to discover auto-generated conditioning images on disk.
+        """
+        source_stem = Path(source_file_path).stem
+
+        # 1. Check conditioning_data references (datasets in the plan)
+        cond_ids = source_config.get("conditioning_data") or []
+        if isinstance(cond_ids, str):
+            cond_ids = [cond_ids]
+
+        for cond_id in cond_ids:
+            cond_config = next((d for d in all_datasets if d.get("id") == cond_id), None)
+            if cond_config is None:
+                continue
+            match = self._find_conditioning_file_by_stem(cond_config, source_stem)
+            if match:
+                thumbnail = generate_thumbnail(match["path"])
+                return {
+                    "conditioning_id": cond_id,
+                    "conditioning_type": cond_config.get("conditioning_type"),
+                    "file_path": str(match["path"]),
+                    "thumbnail": thumbnail,
+                }
+
+        # 2. Try auto-generated conditioning from 'conditioning' generators
+        generators = source_config.get("conditioning") or []
+        if isinstance(generators, dict):
+            generators = [generators]
+
+        source_id = source_config.get("id", "")
+        for gen in generators:
+            gen_type = gen.get("type", "")
+            # Derive the ID the same way the duplicator does at runtime
+            gen_id = gen.get("id") or f"{source_id}_conditioning_{gen_type}"
+            # Skip if already checked via conditioning_data
+            if gen_id in cond_ids:
+                continue
+
+            # Try to find the conditioning images on disk
+            instance_dir = gen.get("instance_data_dir")
+            if not instance_dir:
+                instance_dir = self._derive_conditioning_dir(source_config, gen_id)
+
+            if instance_dir and Path(instance_dir).is_dir():
+                match = self._scan_directory_for_stem(instance_dir, source_stem)
+                if match:
+                    thumbnail = generate_thumbnail(str(match))
+                    return {
+                        "conditioning_id": gen_id,
+                        "conditioning_type": gen.get("conditioning_type", gen.get("type")),
+                        "file_path": str(match),
+                        "thumbnail": thumbnail,
+                    }
+
+            # 3. Images don't exist on disk — generate on-the-fly preview
+            result = self._generate_conditioning_preview(source_config, source_file_path, gen)
+            if result is not None:
+                result["conditioning_id"] = gen_id
+                return result
+
+        return None
+
+    def _find_conditioning_file_by_stem(self, cond_config: Dict[str, Any], stem: str) -> Optional[Dict[str, Any]]:
+        """Look up a file matching *stem* in a conditioning dataset's cache."""
+        files = self.get_dataset_files(cond_config, limit=1_000_000).files
+        for f in files:
+            if Path(f).stem == stem:
+                resolved = self._resolve_image_path(cond_config, f)
+                if resolved:
+                    return {"path": resolved}
+        return None
+
+    @staticmethod
+    def _derive_conditioning_dir(source_config: Dict[str, Any], gen_id: str) -> Optional[str]:
+        """Best-effort derivation of where auto-generated conditioning images live."""
+        # Try cache_dir_vae parent as an approximation of cache_root
+        cache_dir_vae = source_config.get("cache_dir_vae", "")
+        if cache_dir_vae:
+            # cache_dir_vae is typically {cache_root}/vae/{model_family}/{id}
+            # We need {cache_root}/conditioning_data/{gen_id}
+            parts = Path(cache_dir_vae).parts
+            try:
+                vae_idx = parts.index("vae")
+                cache_root = str(Path(*parts[:vae_idx]))
+                return os.path.join(cache_root, "conditioning_data", gen_id)
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    @staticmethod
+    def _scan_directory_for_stem(directory: str, stem: str) -> Optional[Path]:
+        """Find the first image file in *directory* whose stem matches."""
+        dir_path = Path(directory)
+        for ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"):
+            candidate = dir_path / (stem + ext)
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _generate_conditioning_preview(
+        self,
+        source_config: Dict[str, Any],
+        source_file_path: str,
+        generator_config: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Generate a conditioning image on-the-fly for preview.
+
+        Uses the same SampleGenerator pipeline as the trainer to produce
+        a preview when conditioning images haven't been generated yet.
+        """
+        gen_type = generator_config.get("type", "")
+        if not gen_type:
+            return None
+
+        global GENERATOR_REGISTRY, GENERATOR_REGISTRY_AVAILABLE
+        if GENERATOR_REGISTRY is None and not GENERATOR_REGISTRY_AVAILABLE:
+            try:
+                from simpletuner.helpers.data_generation.sample_generator import GENERATOR_REGISTRY as _reg
+
+                GENERATOR_REGISTRY = _reg
+                GENERATOR_REGISTRY_AVAILABLE = True
+            except ImportError:
+                pass
+
+        if GENERATOR_REGISTRY is None:
+            logger.warning("sample_generator not available for on-the-fly conditioning")
+            return None
+
+        generator_class = GENERATOR_REGISTRY.get(gen_type)
+        if generator_class is None:
+            logger.warning("Unknown conditioning generator type: %s", gen_type)
+            return None
+
+        # Load the source image
+        source_image = self._load_pil_image(source_config, source_file_path)
+        if source_image is None:
+            return None
+
+        try:
+            generator = generator_class(generator_config)
+
+            # Check if this generator needs GPU — still attempt it, the
+            # generator itself handles device selection gracefully
+            result_images = generator.transform_batch([source_image], [source_file_path], [{}], None)
+
+            if not result_images or result_images[0] is None:
+                return None
+
+            thumbnail = generate_thumbnail_from_pil(result_images[0], max_size=512)
+            return {
+                "conditioning_type": generator_config.get("conditioning_type", gen_type),
+                "file_path": source_file_path,
+                "thumbnail": thumbnail,
+                "generated_on_the_fly": True,
+            }
+        except Exception as e:
+            logger.warning(
+                "Failed to generate %s conditioning preview for %s: %s",
+                gen_type,
+                source_file_path,
+                e,
+            )
+            return None
 
     # --- Stage 6: Audio/Video Preview ---
 

@@ -52,6 +52,11 @@ window.datasetViewerComponent = function () {
         showingForceScanDialog: false,
         forceScanDatasetId: null,
         forceScanClearVae: false,
+        forceScanClearConditioning: false,
+
+        // Conditioning match state
+        conditioningMatch: null,
+        loadingConditioningMatch: false,
 
         // Bbox editor state
         bboxCanvas: null,
@@ -106,20 +111,36 @@ window.datasetViewerComponent = function () {
 
         _setupConfigListener() {
             this._configHandler = () => {
+                this.expandedDataset = null;
+                this.selectedBucket = null;
+                this.thumbnails = [];
+                this.selectedFile = null;
+                this.conditioningPairs = null;
+                this.captionStatus = {};
+                this.filterReport = {};
+                this.datasetGraph = null;
+                this._destroyBboxCanvas();
                 this.loadAllSummaries();
                 this._checkActiveScan();
             };
+            window.addEventListener('environment-changed', this._configHandler);
             document.body.addEventListener('config-changed', this._configHandler);
-            this.$el.addEventListener('viewer-tab-activated', this._configHandler);
+            this._viewerTabHandler = () => {
+                this.loadAllSummaries();
+                this._checkActiveScan();
+            };
+            window.addEventListener('viewer-tab-activated', this._viewerTabHandler);
         },
 
         _teardownConfigListener() {
             if (this._configHandler) {
+                window.removeEventListener('environment-changed', this._configHandler);
                 document.body.removeEventListener('config-changed', this._configHandler);
-                if (this.$el) {
-                    this.$el.removeEventListener('viewer-tab-activated', this._configHandler);
-                }
                 this._configHandler = null;
+            }
+            if (this._viewerTabHandler) {
+                window.removeEventListener('viewer-tab-activated', this._viewerTabHandler);
+                this._viewerTabHandler = null;
             }
         },
 
@@ -187,7 +208,7 @@ window.datasetViewerComponent = function () {
             } catch (e) { /* ignore */ }
         },
 
-        async scanDataset(datasetId, { forceRescan = false, clearVaeCache = false } = {}) {
+        async scanDataset(datasetId, { forceRescan = false, clearVaeCache = false, clearConditioningCache = false } = {}) {
             this.scanning = true;
             this.scanProgress = { dataset_id: datasetId, current: 0, total: 0 };
             try {
@@ -198,6 +219,7 @@ window.datasetViewerComponent = function () {
                         dataset_id: datasetId,
                         force_rescan: forceRescan,
                         clear_vae_cache: clearVaeCache,
+                        clear_conditioning_cache: clearConditioningCache,
                     }),
                 });
                 if (!resp.ok) {
@@ -217,6 +239,7 @@ window.datasetViewerComponent = function () {
         showForceScanDialog(datasetId) {
             this.forceScanDatasetId = datasetId;
             this.forceScanClearVae = false;
+            this.forceScanClearConditioning = false;
             this.showingForceScanDialog = true;
         },
 
@@ -224,13 +247,15 @@ window.datasetViewerComponent = function () {
             this.showingForceScanDialog = false;
             this.forceScanDatasetId = null;
             this.forceScanClearVae = false;
+            this.forceScanClearConditioning = false;
         },
 
         confirmForceScan() {
             const datasetId = this.forceScanDatasetId;
             const clearVaeCache = this.forceScanClearVae;
+            const clearConditioningCache = this.forceScanClearConditioning;
             this.closeForceScanDialog();
-            this.scanDataset(datasetId, { forceRescan: true, clearVaeCache });
+            this.scanDataset(datasetId, { forceRescan: true, clearVaeCache, clearConditioningCache });
         },
 
         async scanAll() {
@@ -429,6 +454,8 @@ window.datasetViewerComponent = function () {
             this.previewIntermediary = null;
             this.previewCropped = null;
             this.cropOverlay = null;
+            this.conditioningMatch = null;
+            this.loadingConditioningMatch = false;
 
             const params = new URLSearchParams({
                 dataset_id: datasetId,
@@ -436,25 +463,44 @@ window.datasetViewerComponent = function () {
             });
 
             // Load metadata and preview in parallel
-            const [metaResult, previewResult] = await Promise.allSettled([
+            const fetches = [
                 fetch('/api/datasets/viewer/file-metadata?' + params).then(r => r.ok ? r.json() : null),
                 fetch('/api/datasets/viewer/preview?' + params).then(r => r.ok ? r.json() : null),
-            ]);
+            ];
 
-            if (metaResult.status === 'fulfilled' && metaResult.value) {
-                this.selectedFile = metaResult.value;
+            // Also fetch conditioning match if this dataset has conditioning
+            const ds = this.datasets.find(d => d.dataset_id === datasetId);
+            const hasConditioning = (ds?.conditioning_data?.length > 0) ||
+                                    (ds?.conditioning_generators?.length > 0);
+            if (hasConditioning) {
+                this.loadingConditioningMatch = true;
+                fetches.push(
+                    fetch('/api/datasets/viewer/conditioning-match?' + params)
+                        .then(r => r.ok ? r.json() : null)
+                );
+            }
+
+            const results = await Promise.allSettled(fetches);
+
+            if (results[0].status === 'fulfilled' && results[0].value) {
+                this.selectedFile = results[0].value;
             } else {
                 this.selectedFile = { path: filePath, found: false };
             }
             this.loadingFileDetail = false;
 
-            if (previewResult.status === 'fulfilled' && previewResult.value) {
-                const pv = previewResult.value;
+            if (results[1].status === 'fulfilled' && results[1].value) {
+                const pv = results[1].value;
                 this.previewOriginal = pv.original || null;
                 this.previewIntermediary = pv.intermediary || null;
                 this.previewCropped = pv.cropped || null;
             }
             this.loadingPreview = false;
+
+            if (hasConditioning && results[2]?.status === 'fulfilled') {
+                this.conditioningMatch = results[2].value;
+            }
+            this.loadingConditioningMatch = false;
 
             // Initialize bbox canvas if entities exist
             if (this.selectedFile?.bbox_entities?.length > 0) {
@@ -575,6 +621,8 @@ window.datasetViewerComponent = function () {
             this.previewCropped = null;
             this.cropOverlay = null;
             this.cropModified = false;
+            this.conditioningMatch = null;
+            this.loadingConditioningMatch = false;
         },
 
         _initBboxCanvas() {
