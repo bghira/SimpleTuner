@@ -235,11 +235,6 @@ class DiscoveryMetadataBackend(MetadataBackend):
             list: A list of new files.
         """
         all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
-        if ignore_existing_cache:
-            # Return all files and remove the existing buckets.
-            logger.debug("Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache.")
-            self.aspect_ratio_bucket_indices = {}
-            return self._apply_max_num_samples_limit(list(all_image_files.keys()))
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             if self.dataset_type is DatasetType.AUDIO:
@@ -266,6 +261,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
         # Apply max_num_samples limit deterministically before filtering
         all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
+
+        if ignore_existing_cache:
+            logger.debug("Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache.")
+            self.aspect_ratio_bucket_indices = {}
+            return all_image_files
+
         all_image_files_set = set(all_image_files)
 
         if for_metadata:

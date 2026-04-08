@@ -439,6 +439,8 @@ class DatasetScanService:
                 },
             )
         except Exception as e:
+            if job.status == ScanStatus.CANCELLED:
+                return
             logger.exception("Scan failed for %s", job.dataset_id)
             job.status = ScanStatus.FAILED
             job.error = str(e)
@@ -512,9 +514,10 @@ class DatasetScanService:
             "model_type",
             "model_family",
         ):
-            val = dataset_config.get(key) or global_config.get(key)
-            if val is not None:
-                args_overrides[key] = val
+            if key in dataset_config:
+                args_overrides[key] = dataset_config[key]
+            elif key in global_config:
+                args_overrides[key] = global_config[key]
 
         scan_args = _ScanArgsNamespace(args_overrides)
         scan_args.output_dir = self._resolve_scan_output_dir(scan_args.output_dir)
@@ -527,10 +530,12 @@ class DatasetScanService:
         original_args = StateTracker.get_args()
         StateTracker.set_args(scan_args)
 
+        config_id = None
         try:
             # Create config object
             args_dict = {k: getattr(scan_args, k, None) for k in vars(scan_args)}
             config = create_backend_config(dataset_config, args_dict)
+            config_id = config.id
 
             # Skip validation for scan-only operation - some fields may not be set
             # config.validate(args_dict)
@@ -548,6 +553,8 @@ class DatasetScanService:
 
             # Define progress callback
             def on_progress(current: int, total: int):
+                if job.status == ScanStatus.CANCELLED:
+                    raise RuntimeError("Scan cancelled by user")
                 job.current = current
                 job.total = total
                 # Throttle broadcasts to every 50 files or 2 seconds
@@ -571,7 +578,8 @@ class DatasetScanService:
         finally:
             # Restore original args and clean up registered config
             StateTracker.set_args(original_args)
-            StateTracker.data_backends.pop(config.id, None)
+            if config_id is not None:
+                StateTracker.data_backends.pop(config_id, None)
 
 
 # Module-level singleton

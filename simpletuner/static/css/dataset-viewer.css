@@ -1,6 +1,28 @@
 /* Dataset Viewer styles */
 
-/* Sub-tab navigation */
+/* --- Shared utilities --- */
+
+.viewer-section {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    padding-bottom: 0.75rem;
+}
+
+.viewer-text-xs {
+    font-size: 0.7rem;
+}
+
+.viewer-text-xxs {
+    font-size: 0.6rem;
+}
+
+.viewer-panel {
+    background-color: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 0.375rem;
+}
+
+/* --- Sub-tab navigation --- */
+
 .dataset-subtab-nav {
     display: flex;
     gap: 0.25rem;
@@ -29,7 +51,8 @@
     border-bottom-color: #38bdf8;
 }
 
-/* Dataset cards */
+/* --- Dataset cards --- */
+
 .viewer-dataset-card {
     border: 1px solid rgba(148, 163, 184, 0.15);
     background-color: rgba(15, 23, 42, 0.5);
@@ -55,21 +78,39 @@
     transform: rotate(90deg);
 }
 
-/* Filter stats badges */
-.viewer-filter-stats {
+/* --- Compact dashboard grid (stats + config + caption + filter) --- */
+
+.viewer-dashboard {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 1rem;
+    padding: 0.75rem;
     border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    padding-bottom: 0.75rem;
 }
+
+.viewer-dashboard-cell {
+    min-width: 0;
+}
+
+.viewer-dashboard-cell h6 {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(148, 163, 184, 0.7);
+    margin-bottom: 0.25rem;
+}
+
+/* --- Stat badges --- */
 
 .viewer-stat-badge {
     display: inline-flex;
     flex-direction: column;
     align-items: center;
-    padding: 0.35rem 0.65rem;
+    padding: 0.25rem 0.5rem;
     border-radius: 0.375rem;
     background-color: rgba(56, 189, 248, 0.1);
     border: 1px solid rgba(56, 189, 248, 0.15);
-    min-width: 60px;
+    min-width: 50px;
 }
 
 .viewer-stat-badge.viewer-stat-skipped {
@@ -78,25 +119,25 @@
 }
 
 .viewer-stat-label {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: rgba(148, 163, 184, 0.8);
 }
 
 .viewer-stat-value {
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: #e2e8f0;
 }
 
-/* Config summary */
-.viewer-config-summary {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    padding-bottom: 0.75rem;
+/* --- Bucket buttons --- */
+
+.viewer-bucket-list {
+    max-height: 7.5rem;
+    overflow-y: auto;
 }
 
-/* Bucket buttons */
 .viewer-bucket-btn {
     background-color: rgba(15, 23, 42, 0.65);
     border: 1px solid rgba(148, 163, 184, 0.2);
@@ -116,7 +157,8 @@
     color: #38bdf8;
 }
 
-/* Thumbnail grid */
+/* --- Thumbnail grid --- */
+
 .viewer-thumbnail-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -165,26 +207,16 @@
     text-align: center;
 }
 
-/* Empty state */
+/* --- Empty state --- */
+
 .viewer-empty-state {
     border: 1px dashed rgba(148, 163, 184, 0.2);
     border-radius: 0.5rem;
     background-color: rgba(15, 23, 42, 0.3);
 }
 
-/* Caption health */
-.viewer-caption-health {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    padding-bottom: 0.75rem;
-}
+/* --- Dataset relationship graph --- */
 
-/* Filter report */
-.viewer-filter-report {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-    padding-bottom: 0.75rem;
-}
-
-/* Dataset relationship graph */
 .viewer-graph-panel {
     border: 1px solid rgba(148, 163, 184, 0.15);
     background-color: rgba(15, 23, 42, 0.5);
@@ -199,7 +231,8 @@
     border: 1px solid rgba(148, 163, 184, 0.1);
 }
 
-/* Scan progress */
+/* --- Scan progress --- */
+
 .viewer-scan-progress {
     padding: 0.75rem;
     border-radius: 0.375rem;
@@ -211,7 +244,8 @@
     background-color: rgba(15, 23, 42, 0.65);
 }
 
-/* Preview image in detail modal */
+/* --- Preview images in detail modal --- */
+
 .viewer-preview-container {
     background-color: rgba(15, 23, 42, 0.65);
     border-radius: 0.375rem;
@@ -231,6 +265,7 @@
     max-width: 100%;
     max-height: 60vh;
     display: block;
+    border-radius: 0.25rem;
 }
 
 /* Pipeline step layout */
@@ -253,7 +288,8 @@
     font-size: 1.2rem;
 }
 
-/* Crop bounding box with shadow dimming everything outside */
+/* --- Crop overlay --- */
+
 .viewer-crop-overlay {
     position: absolute;
     border: 2px solid #38bdf8;
@@ -274,7 +310,12 @@
     border-color: #7dd3fc;
 }
 
-/* Conditioning pair viewer */
+/* --- Conditioning --- */
+
+.viewer-conditioning-thumb {
+    max-width: 300px;
+}
+
 .viewer-conditioning-pairs {
     max-height: 300px;
     overflow-y: auto;
@@ -306,4 +347,76 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* --- File detail: caption block --- */
+
+.viewer-caption-block {
+    background-color: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    white-space: pre-wrap;
+}
+
+/* --- File detail: two-column metadata + caption layout --- */
+
+.viewer-detail-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.viewer-detail-columns > :only-child {
+    grid-column: 1 / -1;
+}
+
+/* --- Responsive --- */
+
+@media (max-width: 767px) {
+    .viewer-dashboard {
+        grid-template-columns: 1fr;
+    }
+
+    .viewer-thumbnail-grid {
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: 0.35rem;
+    }
+
+    .viewer-preview-arrow {
+        display: none;
+    }
+
+    .viewer-preview-container .d-flex.gap-3 {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .viewer-detail-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .viewer-card-header .d-flex {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+}
+
+@media (max-width: 575px) {
+    .viewer-thumbnail-grid {
+        grid-template-columns: repeat(auto-fill, minmax(75px, 1fr));
+    }
+
+    .viewer-thumbnail-label {
+        font-size: 0.55rem;
+    }
+
+    .viewer-stat-badge {
+        min-width: 40px;
+        padding: 0.2rem 0.35rem;
+    }
+
+    .viewer-stat-value {
+        font-size: 0.75rem;
+    }
 }

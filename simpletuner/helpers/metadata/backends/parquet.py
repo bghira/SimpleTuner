@@ -349,12 +349,12 @@ class ParquetMetadataBackend(MetadataBackend):
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
             return
 
-        try:
-            self.load_image_metadata()
-        except Exception as e:
-            if ignore_existing_cache:
-                self.image_metadata = {}
-            else:
+        if ignore_existing_cache:
+            self.image_metadata = {}
+        else:
+            try:
+                self.load_image_metadata()
+            except Exception as e:
                 raise Exception(f"Error loading image metadata. Consider removing the metadata file manually: {e}")
 
         last_write_time = time.time()
@@ -372,7 +372,7 @@ class ParquetMetadataBackend(MetadataBackend):
             )
         ):
             if progress_callback is not None:
-                progress_callback(file_idx, total_files)
+                progress_callback(file_idx + 1, total_files)
 
             current_time = time.time()
             if file not in existing_files_set:

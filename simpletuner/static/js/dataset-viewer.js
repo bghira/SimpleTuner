@@ -77,22 +77,22 @@ window.datasetViewerComponent = function () {
 
         // --- SSE handling ---
 
+        _parseSSEDetail(event) {
+            try {
+                return typeof event.detail === 'string'
+                    ? JSON.parse(event.detail)
+                    : event.detail;
+            } catch (e) { return null; }
+        },
+
         _setupSSEListener() {
             this._scanHandler = (event) => {
-                try {
-                    const data = typeof event.detail === 'string'
-                        ? JSON.parse(event.detail)
-                        : event.detail;
-                    if (data) this._handleScanEvent(data);
-                } catch (e) { /* ignore parse errors */ }
+                const data = this._parseSSEDetail(event);
+                if (data) this._handleScanEvent(data);
             };
             this._queueHandler = (event) => {
-                try {
-                    const data = typeof event.detail === 'string'
-                        ? JSON.parse(event.detail)
-                        : event.detail;
-                    if (data) this._handleQueueEvent(data);
-                } catch (e) { /* ignore parse errors */ }
+                const data = this._parseSSEDetail(event);
+                if (data) this._handleQueueEvent(data);
             };
             window.addEventListener('sse:dataset_scan', this._scanHandler);
             window.addEventListener('sse:dataset_scan_queue', this._queueHandler);
@@ -383,15 +383,9 @@ window.datasetViewerComponent = function () {
         },
 
         toggleDataset(datasetId) {
-            if (this.expandedDataset === datasetId) {
-                this.expandedDataset = null;
-                this.selectedBucket = null;
-                this.thumbnails = [];
-            } else {
-                this.expandedDataset = datasetId;
-                this.selectedBucket = null;
-                this.thumbnails = [];
-            }
+            this.expandedDataset = this.expandedDataset === datasetId ? null : datasetId;
+            this.selectedBucket = null;
+            this.thumbnails = [];
             this.conditioningPairs = null;
             this.pairsOffset = 0;
         },

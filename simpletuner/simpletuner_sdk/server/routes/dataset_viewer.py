@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, conlist
 
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
@@ -167,7 +167,7 @@ async def get_viewer_preview(
 class CropCoordinatesUpdate(BaseModel):
     dataset_id: str
     file_path: str
-    crop_coordinates: List[int]
+    crop_coordinates: conlist(int, min_length=2, max_length=2)
 
 
 @router.patch("/viewer/crop-coordinates")

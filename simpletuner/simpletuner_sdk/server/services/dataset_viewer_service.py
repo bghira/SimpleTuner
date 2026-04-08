@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+import numpy as np
+import trainingsample as tsr
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -231,6 +233,20 @@ def generate_thumbnail_from_pil(img: Image.Image, max_size: int = 256) -> Option
         return None
 
 
+def _array_to_thumbnail(array: np.ndarray, max_size: int = 256) -> str:
+    """Convert an RGB numpy array to a base64-encoded JPEG thumbnail data URL.
+
+    Creates a fresh PIL Image from the array so thumbnail() cannot
+    mutate any caller-owned data.
+    """
+    img = Image.fromarray(array)
+    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=85)
+    buffer.seek(0)
+    return f"data:image/jpeg;base64,{base64.b64encode(buffer.read()).decode('utf-8')}"
+
+
 # Module-level cache for data backends used by on-demand thumbnail generation.
 # Keyed by dataset ID. Backends are expensive to create (HuggingFace loads the
 # full dataset on first access) but subsequent uses are fast.
@@ -285,7 +301,10 @@ class DatasetViewerService:
                 return candidate
 
         # Fallback: glob under instance_data_dir and cache/
-        for base_dir in [Path(instance_data_dir), Path("cache")]:
+        fallback_dirs = [self.project_root / "cache"]
+        if instance_data_dir:
+            fallback_dirs.insert(0, Path(instance_data_dir))
+        for base_dir in fallback_dirs:
             if base_dir.is_dir():
                 matches = list(base_dir.rglob(filename))
                 if matches:
@@ -734,7 +753,8 @@ class DatasetViewerService:
             if resolved is None:
                 return None
             try:
-                return Image.open(resolved).copy()
+                with Image.open(resolved) as img:
+                    return img.copy()
             except Exception as e:
                 logger.warning("Failed to open %s: %s", resolved, e)
                 return None
@@ -744,7 +764,8 @@ class DatasetViewerService:
         cached_path = self._get_thumbnail_cache_path(dataset_id, file_path)
         if cached_path.is_file():
             try:
-                return Image.open(cached_path).copy()
+                with Image.open(cached_path) as img:
+                    return img.copy()
             except Exception:
                 pass
 
@@ -773,6 +794,8 @@ class DatasetViewerService:
           - 'original': the original image (base64)
         The crop simulation mirrors TrainingSample.prepare():
           original -> resize to intermediary_size -> crop at crop_coordinates
+        Uses the trainingsample Rust library for resize (matching the training
+        pipeline) and numpy slicing for the crop (matching cropping.py).
         """
         img = self._load_pil_image(dataset_config, file_path)
         if img is None:
@@ -787,31 +810,32 @@ class DatasetViewerService:
         if not intermediary_size or not crop_coordinates or not target_size:
             return {"original": original_b64, "intermediary": None, "cropped": None}
 
-        # Step 1: Resize to intermediary (mirrors _downsample_before_crop)
         try:
             inter_w, inter_h = int(intermediary_size[0]), int(intermediary_size[1])
-            intermediary_img = img.resize((inter_w, inter_h), Image.Resampling.LANCZOS)
-        except Exception as e:
-            logger.warning("Failed to resize to intermediary: %s", e)
-            return {"original": original_b64, "intermediary": None, "cropped": None}
-
-        intermediary_b64 = generate_thumbnail_from_pil(intermediary_img, max_size)
-
-        # Step 2: Crop from intermediary (mirrors cropper.crop())
-        # The batch crop path in training_sample.py stores (crop_x, crop_y) = (left, top).
-        try:
             left, top = int(crop_coordinates[0]), int(crop_coordinates[1])
             tw, th = int(target_size[0]), int(target_size[1])
-            # Clamp to intermediary bounds, mirroring the safeguards in cropping.py
+
+            # Convert to numpy RGB for trainingsample operations
+            img_array = np.array(img.convert("RGB"))
+
+            # Step 1: Resize to intermediary via trainingsample (mirrors _downsample_before_crop)
+            resized = tsr.batch_resize_images([img_array], [(inter_w, inter_h)])
+            if not resized:
+                raise RuntimeError("batch_resize_images returned empty result")
+            intermediary_array = resized[0]
+
+            # Step 2: Crop via numpy slicing (mirrors cropping.py)
             left = max(0, min(left, inter_w))
             top = max(0, min(top, inter_h))
-            right = left + min(tw, inter_w - left)
-            bottom = top + min(th, inter_h - top)
-            cropped_img = intermediary_img.crop((left, top, right, bottom))
-            cropped_b64 = generate_thumbnail_from_pil(cropped_img, max_size)
+            right = min(left + tw, inter_w)
+            bottom = min(top + th, inter_h)
+            cropped_array = intermediary_array[top:bottom, left:right, :]
+
+            intermediary_b64 = _array_to_thumbnail(intermediary_array, max_size)
+            cropped_b64 = _array_to_thumbnail(cropped_array, max_size)
         except Exception as e:
-            logger.warning("Failed to simulate crop: %s", e)
-            cropped_b64 = None
+            logger.warning("Failed to generate crop preview: %s", e)
+            return {"original": original_b64, "intermediary": None, "cropped": None}
 
         return {
             "original": original_b64,

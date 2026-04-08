@@ -81,9 +81,9 @@
                 <template x-for="edge in (datasetGraph?.edges || [])" :key="edge.source_id + '-' + edge.target_id">
                     <div class="viewer-graph-edge">
                         <span class="badge bg-info" x-text="edge.source_id"></span>
-                        <i class="fas fa-arrow-right mx-1 text-muted" style="font-size: 0.7rem;"></i>
+                        <i class="fas fa-arrow-right mx-1 text-muted viewer-text-xs"></i>
                         <span class="badge bg-success" x-text="edge.target_id"></span>
-                        <span class="badge bg-dark ms-1" x-text="edge.relationship.replace(/_/g, ' ')" style="font-size: 0.6rem;"></span>
+                        <span class="badge bg-dark ms-1 viewer-text-xxs" x-text="edge.relationship.replace(/_/g, ' ')"></span>
                     </div>
                 </template>
             </div>
@@ -111,11 +111,7 @@
                         </div>
                         <div class="d-flex align-items-center gap-3">
                             <span class="text-muted small" x-show="ds.has_cache">
-                                <i class="fas fa-images me-1"></i>
-                                <span x-text="ds.total_files"></span> files
-                            </span>
-                            <span class="text-muted small" x-show="ds.has_cache">
-                                <i class="fas fa-th-large me-1"></i>
+                                <span x-text="ds.total_files"></span> files &middot;
                                 <span x-text="ds.bucket_count"></span> buckets
                             </span>
                             <button type="button"
@@ -123,14 +119,14 @@
                                     @click.stop="scanDataset(ds.dataset_id)"
                                     :disabled="scanning"
                                     title="Scan this dataset">
-                                <i class="fas fa-search" style="font-size: 0.7rem;"></i>
+                                <i class="fas fa-search viewer-text-xs"></i>
                             </button>
                             <button type="button"
                                     class="btn btn-outline-danger btn-sm py-0 px-2"
                                     @click.stop="showForceScanDialog(ds.dataset_id)"
                                     :disabled="scanning"
                                     title="Force rescan (rebuild metadata from scratch)">
-                                <i class="fas fa-redo" style="font-size: 0.7rem;"></i>
+                                <i class="fas fa-redo viewer-text-xs"></i>
                             </button>
                         </div>
                     </div>
@@ -156,195 +152,190 @@
                     <!-- Cached content -->
                     <div x-show="ds.has_cache">
 
-                        <!-- Filtering statistics -->
-                        <div x-show="ds.filtering_statistics" class="viewer-filter-stats px-3 pt-3">
-                            <div class="d-flex gap-3 flex-wrap">
-                                <div class="viewer-stat-badge">
-                                    <span class="viewer-stat-label">Processed</span>
-                                    <span class="viewer-stat-value" x-text="ds.filtering_statistics?.total_processed || 0"></span>
-                                </div>
-                                <template x-for="[reason, count] in Object.entries(ds.filtering_statistics?.skipped || {})" :key="reason">
-                                    <div class="viewer-stat-badge viewer-stat-skipped" x-show="count > 0">
-                                        <span class="viewer-stat-label" x-text="reason.replace(/_/g, ' ')"></span>
-                                        <span class="viewer-stat-value" x-text="count"></span>
+                        <!-- Compact dashboard: stats + config + caption + filter in a 2-col grid -->
+                        <div class="viewer-dashboard">
+
+                            <!-- Stats -->
+                            <div class="viewer-dashboard-cell" x-show="ds.filtering_statistics">
+                                <h6><i class="fas fa-chart-bar me-1"></i>Stats</h6>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <div class="viewer-stat-badge">
+                                        <span class="viewer-stat-label">Processed</span>
+                                        <span class="viewer-stat-value" x-text="ds.filtering_statistics?.total_processed || 0"></span>
                                     </div>
-                                </template>
-                            </div>
-                        </div>
-
-                        <!-- Config summary -->
-                        <div x-show="ds.config" class="viewer-config-summary px-3 pt-3">
-                            <div class="d-flex gap-3 flex-wrap">
-                                <span class="badge bg-dark" x-show="ds.config?.dataset_type"
-                                      x-text="ds.config?.dataset_type"></span>
-                                <span class="badge bg-dark" x-show="ds.config?.resolution"
-                                      x-text="ds.config?.resolution + 'px'"></span>
-                                <span class="badge bg-dark" x-show="ds.config?.caption_strategy"
-                                      x-text="ds.config?.caption_strategy"></span>
-                                <span class="badge bg-dark" x-show="ds.config?.crop_style"
-                                      x-text="'crop: ' + ds.config?.crop_style"></span>
-                            </div>
-                        </div>
-
-                        <!-- Conditioning relationships -->
-                        <div x-show="(ds.conditioning_data && ds.conditioning_data.length > 0) || ds.source_dataset_id || (ds.conditioning_generators && ds.conditioning_generators.length > 0)"
-                             class="viewer-conditioning-info px-3 pt-3"
-                             style="border-bottom: 1px solid rgba(148, 163, 184, 0.1); padding-bottom: 0.75rem;">
-                            <h6 class="small text-muted mb-2">
-                                <i class="fas fa-project-diagram me-1"></i>Conditioning
-                            </h6>
-
-                            <!-- Conditioning generators (auto-gen config from plan) -->
-                            <template x-if="ds.conditioning_generators && ds.conditioning_generators.length > 0">
-                                <div class="d-flex gap-2 flex-wrap mb-2">
-                                    <template x-for="gen in ds.conditioning_generators" :key="gen.id">
-                                        <span class="badge bg-dark">
-                                            <i class="fas fa-cog me-1" style="font-size: 0.6rem;"></i>
-                                            <span x-text="gen.type"></span>
-                                            <span x-show="gen.conditioning_type" class="ms-1 opacity-75"
-                                                  x-text="'(' + gen.conditioning_type + ')'"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                            </template>
-
-                            <!-- Source dataset has conditioning data linked -->
-                            <template x-if="ds.conditioning_data && ds.conditioning_data.length > 0">
-                                <div>
-                                    <div class="d-flex gap-2 flex-wrap mb-2">
-                                        <template x-for="condId in ds.conditioning_data" :key="condId">
-                                            <button class="btn btn-sm viewer-bucket-btn"
-                                                    @click.stop="pairsOffset = 0; loadConditioningPairs(ds.dataset_id, condId)">
-                                                <i class="fas fa-link me-1" style="font-size: 0.65rem;"></i>
-                                                <span x-text="condId"></span>
-                                            </button>
-                                        </template>
-                                    </div>
-                                </div>
-                            </template>
-
-                            <!-- This IS a conditioning dataset, show source link -->
-                            <template x-if="ds.source_dataset_id">
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <span class="text-muted small">Source:</span>
-                                    <button class="btn btn-sm viewer-bucket-btn"
-                                            @click.stop="pairsOffset = 0; loadConditioningPairs(ds.source_dataset_id, ds.dataset_id)">
-                                        <i class="fas fa-link me-1" style="font-size: 0.65rem;"></i>
-                                        <span x-text="ds.source_dataset_id"></span>
-                                    </button>
-                                </div>
-                            </template>
-
-                            <!-- Generator config info -->
-                            <div x-show="ds.conditioning_config" class="d-flex gap-2 flex-wrap">
-                                <span class="badge bg-dark" x-show="ds.conditioning_config?.type"
-                                      x-text="'generator: ' + ds.conditioning_config?.type"></span>
-                                <template x-for="[key, val] in Object.entries(ds.conditioning_config || {}).filter(([k]) => k !== 'type')" :key="key">
-                                    <span class="badge bg-dark" x-text="key + ': ' + val"></span>
-                                </template>
-                            </div>
-
-                            <!-- Conditioning pairs viewer -->
-                            <div x-show="conditioningPairs && expandedDataset === ds.dataset_id" class="mt-3">
-                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <span class="small text-muted">
-                                        <span x-text="conditioningPairs?.total_pairs || 0"></span> matched pairs
-                                        <span x-show="conditioningPairs?.source_orphan_count > 0"
-                                              class="text-warning ms-2">
-                                            <i class="fas fa-exclamation-triangle" style="font-size: 0.65rem;"></i>
-                                            <span x-text="conditioningPairs?.source_orphan_count"></span> source orphans
-                                        </span>
-                                        <span x-show="conditioningPairs?.conditioning_orphan_count > 0"
-                                              class="text-warning ms-2">
-                                            <i class="fas fa-exclamation-triangle" style="font-size: 0.65rem;"></i>
-                                            <span x-text="conditioningPairs?.conditioning_orphan_count"></span> conditioning orphans
-                                        </span>
-                                    </span>
-                                    <div class="d-flex gap-2 align-items-center" x-show="conditioningPairs?.total_pairs > pairsLimit">
-                                        <button class="btn btn-outline-secondary btn-sm"
-                                                :disabled="pairsOffset === 0"
-                                                @click="pairsPrevPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
-                                            <i class="fas fa-chevron-left"></i>
-                                        </button>
-                                        <span class="text-muted small"
-                                              x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.total_pairs || 0)">
-                                        </span>
-                                        <button class="btn btn-outline-secondary btn-sm"
-                                                :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.total_pairs || 0)"
-                                                @click="pairsNextPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
-                                            <i class="fas fa-chevron-right"></i>
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div x-show="loadingPairs" class="text-center py-2">
-                                    <i class="fas fa-spinner fa-spin text-info"></i>
-                                </div>
-
-                                <div x-show="!loadingPairs && conditioningPairs?.pairs" class="viewer-conditioning-pairs">
-                                    <template x-for="pair in (conditioningPairs?.pairs || [])" :key="pair.source_path">
-                                        <div class="viewer-pair-row d-flex gap-2 mb-2 align-items-center">
-                                            <div class="viewer-pair-thumb" @click="showFileDetail(ds.source_dataset_id || ds.dataset_id, pair.source_path)">
-                                                <div class="text-muted text-center" style="font-size: 0.55rem;">Source</div>
-                                                <div class="viewer-pair-filename" x-text="pair.source_path.split('/').pop()"></div>
-                                            </div>
-                                            <i class="fas fa-arrow-right text-muted" style="font-size: 0.6rem;"></i>
-                                            <div class="viewer-pair-thumb" @click="showFileDetail(ds.conditioning_data?.[0] || ds.dataset_id, pair.conditioning_path)">
-                                                <div class="text-muted text-center" style="font-size: 0.55rem;">Conditioning</div>
-                                                <div class="viewer-pair-filename" x-text="pair.conditioning_path.split('/').pop()"></div>
-                                            </div>
+                                    <template x-for="[reason, count] in Object.entries(ds.filtering_statistics?.skipped || {})" :key="reason">
+                                        <div class="viewer-stat-badge viewer-stat-skipped" x-show="count > 0">
+                                            <span class="viewer-stat-label" x-text="reason.replace(/_/g, ' ')"></span>
+                                            <span class="viewer-stat-value" x-text="count"></span>
                                         </div>
                                     </template>
                                 </div>
                             </div>
-                        </div>
 
-                        <!-- Caption Health (Stage 3) -->
-                        <div class="viewer-caption-health px-3 pt-3"
-                             x-show="captionStatus[ds.dataset_id]">
-                            <h6 class="small text-muted mb-2">
-                                <i class="fas fa-comment-alt me-1"></i>Caption Health
-                            </h6>
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span class="badge bg-dark" x-text="captionStatus[ds.dataset_id]?.strategy || 'unknown'"></span>
-                                <div class="progress flex-grow-1" style="height: 8px;">
-                                    <div class="progress-bar"
-                                         :class="{
-                                             'bg-success': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) > 0.95,
-                                             'bg-warning': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) > 0.5 && (captionStatus[ds.dataset_id]?.coverage_ratio || 0) <= 0.95,
-                                             'bg-danger': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) <= 0.5
-                                         }"
-                                         :style="'width: ' + ((captionStatus[ds.dataset_id]?.coverage_ratio || 0) * 100) + '%'">
+                            <!-- Caption health -->
+                            <div class="viewer-dashboard-cell" x-show="captionStatus[ds.dataset_id]">
+                                <h6><i class="fas fa-comment-alt me-1"></i>Caption Health</h6>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-dark" x-text="captionStatus[ds.dataset_id]?.strategy || 'unknown'"></span>
+                                    <div class="progress flex-grow-1" style="height: 6px;">
+                                        <div class="progress-bar"
+                                             :class="{
+                                                 'bg-success': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) > 0.95,
+                                                 'bg-warning': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) > 0.5 && (captionStatus[ds.dataset_id]?.coverage_ratio || 0) <= 0.95,
+                                                 'bg-danger': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) <= 0.5
+                                             }"
+                                             :style="'width: ' + ((captionStatus[ds.dataset_id]?.coverage_ratio || 0) * 100) + '%'">
+                                        </div>
                                     </div>
+                                    <span class="small text-muted"
+                                          x-text="Math.round((captionStatus[ds.dataset_id]?.coverage_ratio || 0) * 100) + '%'"></span>
                                 </div>
-                                <span class="small text-muted"
-                                      x-text="Math.round((captionStatus[ds.dataset_id]?.coverage_ratio || 0) * 100) + '%'"></span>
+                                <template x-for="warn in (captionStatus[ds.dataset_id]?.warnings || [])" :key="warn">
+                                    <div class="text-warning small mt-1 viewer-text-xs" x-text="warn"></div>
+                                </template>
                             </div>
-                            <template x-for="warn in (captionStatus[ds.dataset_id]?.warnings || [])" :key="warn">
-                                <div class="alert alert-warning py-1 px-2 small mb-1" x-text="warn"></div>
-                            </template>
+
+                            <!-- Config -->
+                            <div class="viewer-dashboard-cell" x-show="ds.config">
+                                <h6><i class="fas fa-cog me-1"></i>Config</h6>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <span class="badge bg-dark" x-show="ds.config?.dataset_type"
+                                          x-text="ds.config?.dataset_type"></span>
+                                    <span class="badge bg-dark" x-show="ds.config?.resolution"
+                                          x-text="ds.config?.resolution + 'px'"></span>
+                                    <span class="badge bg-dark" x-show="ds.config?.caption_strategy"
+                                          x-text="ds.config?.caption_strategy"></span>
+                                    <span class="badge bg-dark" x-show="ds.config?.crop_style"
+                                          x-text="'crop: ' + ds.config?.crop_style"></span>
+                                </div>
+                            </div>
+
+                            <!-- Filtered files -->
+                            <div class="viewer-dashboard-cell"
+                                 x-show="filterReport[ds.dataset_id] && filterReport[ds.dataset_id].total_filtered > 0">
+                                <h6><i class="fas fa-filter me-1"></i>Filtered
+                                    (<span x-text="filterReport[ds.dataset_id]?.total_filtered || 0"></span>)</h6>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <template x-for="[reason, count] in Object.entries(filterReport[ds.dataset_id]?.by_reason || {})" :key="reason">
+                                        <span class="badge bg-warning text-dark" x-show="count > 0">
+                                            <span x-text="reason.replace(/_/g, ' ')"></span>: <span x-text="count"></span>
+                                        </span>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Conditioning -->
+                            <div class="viewer-dashboard-cell"
+                                 x-show="(ds.conditioning_data && ds.conditioning_data.length > 0) || ds.source_dataset_id || (ds.conditioning_generators && ds.conditioning_generators.length > 0)">
+                                <h6><i class="fas fa-project-diagram me-1"></i>Conditioning</h6>
+
+                                <!-- Generators -->
+                                <template x-if="ds.conditioning_generators && ds.conditioning_generators.length > 0">
+                                    <div class="d-flex gap-2 flex-wrap mb-1">
+                                        <template x-for="gen in ds.conditioning_generators" :key="gen.id">
+                                            <span class="badge bg-dark">
+                                                <span x-text="gen.type"></span>
+                                                <span x-show="gen.conditioning_type" class="ms-1 opacity-75"
+                                                      x-text="'(' + gen.conditioning_type + ')'"></span>
+                                            </span>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Linked conditioning datasets -->
+                                <template x-if="ds.conditioning_data && ds.conditioning_data.length > 0">
+                                    <div class="d-flex gap-2 flex-wrap mb-1">
+                                        <template x-for="condId in ds.conditioning_data" :key="condId">
+                                            <button class="btn btn-sm viewer-bucket-btn py-0 px-2"
+                                                    @click.stop="pairsOffset = 0; loadConditioningPairs(ds.dataset_id, condId)">
+                                                <i class="fas fa-link me-1 viewer-text-xxs"></i>
+                                                <span x-text="condId"></span>
+                                            </button>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Source link -->
+                                <template x-if="ds.source_dataset_id">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="text-muted small">Source:</span>
+                                        <button class="btn btn-sm viewer-bucket-btn py-0 px-2"
+                                                @click.stop="pairsOffset = 0; loadConditioningPairs(ds.source_dataset_id, ds.dataset_id)">
+                                            <i class="fas fa-link me-1 viewer-text-xxs"></i>
+                                            <span x-text="ds.source_dataset_id"></span>
+                                        </button>
+                                    </div>
+                                </template>
+
+                                <!-- Generator config details -->
+                                <div x-show="ds.conditioning_config" class="d-flex gap-2 flex-wrap mt-1">
+                                    <span class="badge bg-dark" x-show="ds.conditioning_config?.type"
+                                          x-text="'generator: ' + ds.conditioning_config?.type"></span>
+                                    <template x-for="[key, val] in Object.entries(ds.conditioning_config || {}).filter(([k]) => k !== 'type')" :key="key">
+                                        <span class="badge bg-dark" x-text="key + ': ' + val"></span>
+                                    </template>
+                                </div>
+                            </div>
                         </div>
 
-                        <!-- Filtering Report (Stage 4) -->
-                        <div class="viewer-filter-report px-3 pt-3"
-                             x-show="filterReport[ds.dataset_id] && filterReport[ds.dataset_id].total_filtered > 0">
-                            <h6 class="small text-muted mb-2">
-                                <i class="fas fa-filter me-1"></i>Filtered Files
-                                (<span x-text="filterReport[ds.dataset_id]?.total_filtered || 0"></span> excluded)
-                            </h6>
-                            <div class="d-flex gap-2 flex-wrap mb-1">
-                                <template x-for="[reason, count] in Object.entries(filterReport[ds.dataset_id]?.by_reason || {})" :key="reason">
-                                    <span class="badge bg-warning text-dark" x-show="count > 0">
-                                        <span x-text="reason.replace(/_/g, ' ')"></span>: <span x-text="count"></span>
+                        <!-- Conditioning pairs viewer (expanded inline) -->
+                        <div x-show="conditioningPairs && expandedDataset === ds.dataset_id" class="px-3 py-2 viewer-section">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="small text-muted">
+                                    <span x-text="conditioningPairs?.total_pairs || 0"></span> matched pairs
+                                    <span x-show="conditioningPairs?.source_orphan_count > 0"
+                                          class="text-warning ms-2">
+                                        <i class="fas fa-exclamation-triangle viewer-text-xxs"></i>
+                                        <span x-text="conditioningPairs?.source_orphan_count"></span> source orphans
                                     </span>
+                                    <span x-show="conditioningPairs?.conditioning_orphan_count > 0"
+                                          class="text-warning ms-2">
+                                        <i class="fas fa-exclamation-triangle viewer-text-xxs"></i>
+                                        <span x-text="conditioningPairs?.conditioning_orphan_count"></span> conditioning orphans
+                                    </span>
+                                </span>
+                                <div class="d-flex gap-2 align-items-center" x-show="conditioningPairs?.total_pairs > pairsLimit">
+                                    <button class="btn btn-outline-secondary btn-sm"
+                                            :disabled="pairsOffset === 0"
+                                            @click="pairsPrevPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                        <i class="fas fa-chevron-left"></i>
+                                    </button>
+                                    <span class="text-muted small"
+                                          x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.total_pairs || 0)">
+                                    </span>
+                                    <button class="btn btn-outline-secondary btn-sm"
+                                            :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.total_pairs || 0)"
+                                            @click="pairsNextPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div x-show="loadingPairs" class="text-center py-2">
+                                <i class="fas fa-spinner fa-spin text-info"></i>
+                            </div>
+
+                            <div x-show="!loadingPairs && conditioningPairs?.pairs" class="viewer-conditioning-pairs">
+                                <template x-for="pair in (conditioningPairs?.pairs || [])" :key="pair.source_path">
+                                    <div class="viewer-pair-row d-flex gap-2 mb-2 align-items-center">
+                                        <div class="viewer-pair-thumb" @click="showFileDetail(ds.source_dataset_id || ds.dataset_id, pair.source_path)">
+                                            <div class="text-muted text-center viewer-text-xxs">Source</div>
+                                            <div class="viewer-pair-filename" x-text="pair.source_path.split('/').pop()"></div>
+                                        </div>
+                                        <i class="fas fa-arrow-right text-muted viewer-text-xxs"></i>
+                                        <div class="viewer-pair-thumb" @click="showFileDetail(ds.conditioning_data?.[0] || ds.dataset_id, pair.conditioning_path)">
+                                            <div class="text-muted text-center viewer-text-xxs">Conditioning</div>
+                                            <div class="viewer-pair-filename" x-text="pair.conditioning_path.split('/').pop()"></div>
+                                        </div>
+                                    </div>
                                 </template>
                             </div>
                         </div>
 
                         <!-- Bucket list -->
-                        <div class="viewer-bucket-list px-3 pt-3 pb-2">
+                        <div class="px-3 pt-3 pb-2">
                             <h6 class="small text-muted mb-2">Aspect Ratio Buckets</h6>
-                            <div class="d-flex gap-2 flex-wrap">
+                            <div class="viewer-bucket-list d-flex gap-2 flex-wrap">
                                 <template x-for="bucket in ds.buckets" :key="bucket.key">
                                     <button type="button"
                                             class="btn btn-sm viewer-bucket-btn"
@@ -521,22 +512,13 @@
                         <div x-show="loadingConditioningMatch && !conditioningMatch" class="text-center py-3">
                             <i class="fas fa-spinner fa-spin text-info"></i>
                         </div>
-                        <div x-show="conditioningMatch?.thumbnail" class="viewer-preview-wrapper" style="max-width: 300px;">
+                        <div x-show="conditioningMatch?.thumbnail" class="viewer-preview-wrapper viewer-conditioning-thumb">
                             <img :src="conditioningMatch?.thumbnail"
                                  class="viewer-preview-image"
-                                 alt="Conditioning input"
-                                 style="border-radius: 6px;">
+                                 alt="Conditioning input">
                         </div>
-                        <div x-show="conditioningMatch" class="text-muted small mt-1" style="font-size: 0.7rem;">
+                        <div x-show="conditioningMatch" class="text-muted small mt-1 viewer-text-xs">
                             <span x-text="conditioningMatch?.conditioning_id"></span>
-                        </div>
-                    </div>
-
-                    <!-- Caption -->
-                    <div x-show="!loadingFileDetail && selectedFile?.caption" class="mb-3">
-                        <label class="text-muted small d-block mb-1">Caption</label>
-                        <div class="p-2 rounded" style="background-color: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.15);">
-                            <span class="small" style="white-space: pre-wrap;" x-text="selectedFile?.caption"></span>
                         </div>
                     </div>
 
@@ -575,42 +557,42 @@
                         <i class="fas fa-spinner fa-spin text-info"></i>
                     </div>
 
-                    <!-- Metadata table -->
-                    <div x-show="!loadingFileDetail && selectedFile">
-                        <table class="table table-sm table-dark mb-0" x-show="selectedFile?.found !== false">
-                            <tbody>
-                                <tr x-show="selectedFile?.original_size">
-                                    <td class="text-muted">Original Size</td>
-                                    <td x-text="selectedFile?.original_size?.join(' x ')"></td>
-                                </tr>
-                                <tr x-show="selectedFile?.intermediary_size">
-                                    <td class="text-muted">Intermediary Size</td>
-                                    <td x-text="selectedFile?.intermediary_size?.join(' x ')"></td>
-                                </tr>
-                                <tr x-show="selectedFile?.target_size">
-                                    <td class="text-muted">Target Size</td>
-                                    <td x-text="selectedFile?.target_size?.join(' x ')"></td>
-                                </tr>
-                                <tr x-show="selectedFile?.aspect_ratio">
-                                    <td class="text-muted">Aspect Ratio</td>
-                                    <td x-text="Number(selectedFile?.aspect_ratio).toFixed(3)"></td>
-                                </tr>
-                                <tr x-show="selectedFile?.crop_coordinates">
-                                    <td class="text-muted">Crop Coordinates</td>
-                                    <td x-text="selectedFile?.crop_coordinates?.join(', ')"></td>
-                                </tr>
-                                <tr x-show="selectedFile?.luminance != null">
-                                    <td class="text-muted">Luminance</td>
-                                    <td x-text="Number(selectedFile?.luminance).toFixed(3)"></td>
-                                </tr>
-                                <template x-for="[key, val] in Object.entries(selectedFile?.extra || {})" :key="key">
-                                    <tr>
-                                        <td class="text-muted" x-text="key.replace(/_/g, ' ')"></td>
-                                        <td x-text="typeof val === 'object' ? JSON.stringify(val) : val"></td>
+                    <!-- Caption + Metadata side by side -->
+                    <div x-show="!loadingFileDetail && selectedFile" class="viewer-detail-columns">
+
+                        <!-- Caption -->
+                        <div x-show="selectedFile?.caption">
+                            <label class="text-muted small d-block mb-1">Caption</label>
+                            <div class="viewer-caption-block small" x-text="selectedFile?.caption"></div>
+                        </div>
+
+                        <!-- Metadata table (omit fields already visible in preview labels) -->
+                        <div x-show="selectedFile?.found !== false">
+                            <label class="text-muted small d-block mb-1">Metadata</label>
+                            <table class="table table-sm table-dark mb-0">
+                                <tbody>
+                                    <tr x-show="selectedFile?.original_size">
+                                        <td class="text-muted">Original Size</td>
+                                        <td x-text="selectedFile?.original_size?.join(' x ')"></td>
                                     </tr>
-                                </template>
-                            </tbody>
-                        </table>
+                                    <tr x-show="selectedFile?.aspect_ratio">
+                                        <td class="text-muted">Aspect Ratio</td>
+                                        <td x-text="Number(selectedFile?.aspect_ratio).toFixed(3)"></td>
+                                    </tr>
+                                    <tr x-show="selectedFile?.luminance != null">
+                                        <td class="text-muted">Luminance</td>
+                                        <td x-text="Number(selectedFile?.luminance).toFixed(3)"></td>
+                                    </tr>
+                                    <template x-for="[key, val] in Object.entries(selectedFile?.extra || {})" :key="key">
+                                        <tr>
+                                            <td class="text-muted" x-text="key.replace(/_/g, ' ')"></td>
+                                            <td x-text="typeof val === 'object' ? JSON.stringify(val) : val"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+
                         <div x-show="selectedFile?.found === false" class="text-muted text-center py-3">
                             No metadata available for this file.
                         </div>

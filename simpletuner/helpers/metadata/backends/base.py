@@ -473,23 +473,23 @@ class MetadataBackend:
             progress_callback: Optional callable(current, total) invoked as files are processed.
         """
         logger.info("Discovering new files...")
-        if not self.image_metadata_loaded:
+        if ignore_existing_cache:
+            logger.info("Force rescan: clearing existing metadata cache.")
+            self.image_metadata = {}
+        elif not self.image_metadata_loaded:
             try:
                 self.load_image_metadata()
             except Exception as e:
-                if ignore_existing_cache:
-                    logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
-                    self.image_metadata = {}
-                else:
-                    raise Exception(
-                        f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
-                    )
+                raise Exception(
+                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                )
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
 
         # Audio datasets use duration-based bucketing, not spatial aspect ratios.
         if self.dataset_type is DatasetType.AUDIO:
             logger.info("Audio dataset detected; processing audio files for duration buckets.")
-            self.load_image_metadata()
+            if not ignore_existing_cache:
+                self.load_image_metadata()
 
             # Process new audio files to generate metadata
             if new_files:
@@ -578,17 +578,13 @@ class MetadataBackend:
         written_files_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
-        if not self.image_metadata_loaded:
+        if not ignore_existing_cache and not self.image_metadata_loaded:
             try:
                 self.load_image_metadata()
             except Exception as e:
-                if ignore_existing_cache:
-                    logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
-                    self.image_metadata = {}
-                else:
-                    raise Exception(
-                        f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
-                    )
+                raise Exception(
+                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                )
         worker_cls = Process if StateTracker.get_args().enable_multiprocessing else Thread
         workers = [
             worker_cls(

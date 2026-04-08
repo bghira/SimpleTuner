@@ -745,6 +745,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             statistics["skipped"]["already_exists"] = len(existing_files)
         else:
             self.aspect_ratio_bucket_indices = {}
+            self.image_metadata = {}
             existing_files = set()
         if self.bucket_report:
             self.bucket_report.record_stage(
@@ -772,7 +773,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             ncols=100,
         ):
             if progress_callback is not None:
-                progress_callback(idx, total_items)
+                progress_callback(idx + 1, total_items)
 
             virtual_path = f"{idx}.{self.file_extension}"
 
