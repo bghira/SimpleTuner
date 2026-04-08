@@ -375,8 +375,8 @@ class CannyEdgeSampleGenerator(SampleGenerator):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.low_threshold = config.get("low_threshold", 100)
-        self.high_threshold = config.get("high_threshold", 200)
+        self.low_threshold = config.get("low_threshold", 50)
+        self.high_threshold = config.get("high_threshold", 100)
 
     def transform_batch(
         self,
