@@ -214,9 +214,49 @@ def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
-def generate_thumbnail(image_path: Path, max_size: int = 256) -> Optional[str]:
-    """Generate a base64 encoded JPEG thumbnail from a file path."""
+# Extensions that require video frame extraction instead of Image.open()
+_VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".mkv",
+    ".webm",
+    ".flv",
+    ".wmv",
+    ".m4v",
+    ".mpeg",
+    ".mpg",
+    ".3gp",
+    ".ogv",
+}
+
+
+def _extract_first_frame(video_path: Path) -> Optional[np.ndarray]:
+    """Extract the first frame from a video file as an RGB numpy array."""
+    cap = tsr.PyVideoCapture(str(video_path))
+    if not cap.is_opened():
+        return None
     try:
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            return None
+        return tsr.cvt_color_py(frame, 4)  # BGR→RGB
+    finally:
+        cap.release()
+
+
+def generate_thumbnail(image_path: Path, max_size: int = 256) -> Optional[str]:
+    """Generate a base64 encoded JPEG thumbnail from a file path.
+
+    Handles both image files (via PIL) and video files (extracts first frame
+    via trainingsample's VideoCapture).
+    """
+    try:
+        if image_path.suffix.lower() in _VIDEO_EXTENSIONS:
+            frame = _extract_first_frame(image_path)
+            if frame is None:
+                return None
+            return _array_to_thumbnail(frame, max_size)
         with Image.open(image_path) as img:
             return _pil_to_thumbnail(img, max_size)
     except Exception as e:
@@ -745,7 +785,10 @@ class DatasetViewerService:
         return generate_thumbnail_from_pil(pil_image, max_size)
 
     def _load_pil_image(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[Image.Image]:
-        """Load the full PIL Image for a file, local or remote."""
+        """Load the full PIL Image for a file, local or remote.
+
+        For video files, extracts the first frame via trainingsample's VideoCapture.
+        """
         backend_type = dataset_config.get("type", "local")
 
         if backend_type == "local":
@@ -753,6 +796,11 @@ class DatasetViewerService:
             if resolved is None:
                 return None
             try:
+                if resolved.suffix.lower() in _VIDEO_EXTENSIONS:
+                    frame = _extract_first_frame(resolved)
+                    if frame is None:
+                        return None
+                    return Image.fromarray(frame)
                 with Image.open(resolved) as img:
                     return img.copy()
             except Exception as e:
@@ -812,7 +860,8 @@ class DatasetViewerService:
 
         try:
             inter_w, inter_h = int(intermediary_size[0]), int(intermediary_size[1])
-            left, top = int(crop_coordinates[0]), int(crop_coordinates[1])
+            # crop_coordinates are (top, left) matching cropping.py convention
+            top, left = int(crop_coordinates[0]), int(crop_coordinates[1])
             tw, th = int(target_size[0]), int(target_size[1])
 
             # Convert to numpy RGB for trainingsample operations

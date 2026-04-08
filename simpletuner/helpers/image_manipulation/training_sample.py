@@ -661,10 +661,11 @@ class TrainingSample:
                         if cropped_arrays and len(cropped_arrays) > 0:
                             self.image = Image.fromarray(cropped_arrays[0])
                             # Calculate crop coordinates for center crop
+                            # Convention: (top, left) matching cropping.py and SDXL conditioning
                             original_size = img_array.shape[:2]  # (H, W)
-                            crop_x = (original_size[1] - self.target_size[0]) // 2
-                            crop_y = (original_size[0] - self.target_size[1]) // 2
-                            self.crop_coordinates = (crop_x, crop_y)
+                            crop_top = (original_size[0] - self.target_size[1]) // 2
+                            crop_left = (original_size[1] - self.target_size[0]) // 2
+                            self.crop_coordinates = (crop_top, crop_left)
                             self.current_size = self.target_size
                             logger.debug(f"Used trainingsample center crop: {self.target_size}")
                             return self
@@ -674,11 +675,11 @@ class TrainingSample:
                         if cropped_arrays and len(cropped_arrays) > 0:
                             self.image = Image.fromarray(cropped_arrays[0])
                             # Note: We can't get exact coordinates from random crop, so estimate
+                            # Convention: (top, left) matching cropping.py and SDXL conditioning
                             original_size = img_array.shape[:2]  # (H, W)
-                            max_x = original_size[1] - self.target_size[0]
-                            max_y = original_size[0] - self.target_size[1]
-                            # Use a placeholder since we don't know the exact random coordinates
-                            self.crop_coordinates = (max_x // 2, max_y // 2)
+                            max_top = original_size[0] - self.target_size[1]
+                            max_left = original_size[1] - self.target_size[0]
+                            self.crop_coordinates = (max_top // 2, max_left // 2)
                             self.current_size = self.target_size
                             logger.debug(f"Used trainingsample random crop: {self.target_size}")
                             return self

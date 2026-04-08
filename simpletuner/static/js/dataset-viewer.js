@@ -533,9 +533,9 @@ window.datasetViewerComponent = function () {
             const intH = f.intermediary_size[1];
             if (!intW || !intH) return;
 
-            // Batch crop path stores (crop_x, crop_y) = (left, top)
-            const left = Math.max(0, Math.min(f.crop_coordinates[0], intW));
-            const top = Math.max(0, Math.min(f.crop_coordinates[1], intH));
+            // crop_coordinates are (top, left) matching cropping.py convention
+            const top = Math.max(0, Math.min(f.crop_coordinates[0], intH));
+            const left = Math.max(0, Math.min(f.crop_coordinates[1], intW));
             const tw = Math.min(f.target_size[0], intW - left);
             const th = Math.min(f.target_size[1], intH - top);
 
@@ -603,7 +603,8 @@ window.datasetViewerComponent = function () {
                 topPct: newTop / intH * 100,
             };
 
-            this.selectedFile.crop_coordinates = [Math.round(newLeft), Math.round(newTop)];
+            // Write back as (top, left) matching cropping.py convention
+            this.selectedFile.crop_coordinates = [Math.round(newTop), Math.round(newLeft)];
             this.cropModified = true;
         },
 
