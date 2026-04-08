@@ -64,6 +64,7 @@ window.datasetViewerComponent = function () {
         savingBbox: false,
 
         init() {
+            this._restoreNavState();
             this.loadAllSummaries();
             this._checkActiveScan();
             this._setupSSEListener();
@@ -73,6 +74,31 @@ window.datasetViewerComponent = function () {
         destroy() {
             this._teardownSSEListener();
             this._teardownConfigListener();
+        },
+
+        // --- Navigation state persistence ---
+
+        _saveNavState() {
+            const state = {
+                expandedDataset: this.expandedDataset,
+                selectedBucketKey: this.selectedBucket?.key || null,
+            };
+            try {
+                sessionStorage.setItem('dataset-viewer-nav', JSON.stringify(state));
+            } catch (_) { /* quota or private mode */ }
+        },
+
+        _restoreNavState() {
+            try {
+                const raw = sessionStorage.getItem('dataset-viewer-nav');
+                if (!raw) return;
+                const state = JSON.parse(raw);
+                if (state.expandedDataset) {
+                    this.expandedDataset = state.expandedDataset;
+                }
+                // Bucket can only be resolved after summaries load, so stash the key
+                this._pendingBucketKey = state.selectedBucketKey || null;
+            } catch (_) { /* parse error or private mode */ }
         },
 
         // --- SSE handling ---
@@ -313,6 +339,20 @@ window.datasetViewerComponent = function () {
                 }
                 fetchPromises.push(this._loadGraph());
                 await Promise.allSettled(fetchPromises);
+
+                // Restore pending bucket selection from sessionStorage
+                if (this._pendingBucketKey && this.expandedDataset) {
+                    const ds = this.datasets.find(d => d.dataset_id === this.expandedDataset);
+                    if (ds?.buckets) {
+                        const bucket = ds.buckets.find(b => b.key === this._pendingBucketKey);
+                        if (bucket) {
+                            this.selectedBucket = bucket;
+                            this.thumbnailOffset = 0;
+                            this.loadBucketThumbnails(this.expandedDataset);
+                        }
+                    }
+                    this._pendingBucketKey = null;
+                }
             } catch (err) {
                 console.error('Error loading dataset summaries:', err);
                 this.datasets = [];
@@ -388,16 +428,19 @@ window.datasetViewerComponent = function () {
             this.thumbnails = [];
             this.conditioningPairs = null;
             this.pairsOffset = 0;
+            this._saveNavState();
         },
 
         async selectBucket(datasetId, bucket) {
             if (this.selectedBucket?.key === bucket.key && this.expandedDataset === datasetId) {
                 this.selectedBucket = null;
                 this.thumbnails = [];
+                this._saveNavState();
                 return;
             }
             this.selectedBucket = bucket;
             this.thumbnailOffset = 0;
+            this._saveNavState();
             await this.loadBucketThumbnails(datasetId);
         },
 
