@@ -1017,7 +1017,7 @@ def test_huggingface_dataset(
     split: Optional[str] = None,
     revision: Optional[str] = None,
     streaming: bool = False,
-    use_auth_token: Optional[str] = None,
+    token: Optional[str] = None,
     sample_count: int = 1,
 ) -> Dict[str, Any]:
     """Load lightweight dataset metadata and sample rows for validation."""
@@ -1037,8 +1037,7 @@ def test_huggingface_dataset(
             dataset_name,
             name=dataset_config,
             revision=revision,
-            token=use_auth_token,
-            use_auth_token=use_auth_token,
+            token=token,
         )
     except Exception as exc:
         raise ValueError(f"Failed to load dataset metadata: {exc}") from exc
@@ -1056,7 +1055,7 @@ def test_huggingface_dataset(
                 split=split,
                 revision=revision,
                 streaming=True,
-                use_auth_token=use_auth_token,
+                token=token,
             )
             iterator = iter(dataset_stream)
             try:
@@ -1080,7 +1079,7 @@ def test_huggingface_dataset(
                     split=limited_split,
                     revision=revision,
                     streaming=False,
-                    use_auth_token=use_auth_token,
+                    token=token,
                 )
                 if sample_count == 1:
                     sample = dataset_slice[0] if len(dataset_slice) else None
