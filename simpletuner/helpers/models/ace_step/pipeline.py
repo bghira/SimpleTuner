@@ -16,6 +16,7 @@ import os
 import random
 import re
 import time
+from dataclasses import dataclass
 from typing import List, Optional, Union
 
 import torch
@@ -30,6 +31,14 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, UMT5EncoderModel
 
 from .apg_guidance import MomentumBuffer, apg_forward, cfg_double_condition_forward, cfg_forward, cfg_zero_star
+from .constants import (
+    V15_AUDIO_SAMPLES_PER_LATENT,
+    V15_DEFAULT_DIT_INSTRUCTION,
+    V15_LYRIC_MAX_LENGTH,
+    V15_SAMPLE_RATE,
+    V15_SFT_GEN_PROMPT,
+    V15_TEXT_MAX_LENGTH,
+)
 from .cpu_offload import cpu_offload
 from .language_segmentation import LangSegment, language_filters
 from .lyrics_utils.lyric_tokenizer import VoiceBpeTokenizer
@@ -75,6 +84,13 @@ def ensure_directory_exists(directory):
 
 REPO_ID = "ACE-Step/ACE-Step-v1-3.5B"
 REPO_ID_QUANT = REPO_ID + "-q4-K-M"
+
+
+@dataclass
+class ACEStepPipelineOutput:
+    audios: list
+    paths: list
+    params: dict
 
 
 # class ACEStepPipeline(DiffusionPipeline):
@@ -124,6 +140,10 @@ class ACEStepPipeline(LoraLoaderMixin):
         self.text_encoder_4 = None
         # LoRA/LyCORIS bookkeeping
         self.unet = None  # Expected by diffusers LoRA helpers
+        self.is_v15_pipeline = False
+        self.v15_model = None
+        self.silence_latent = None
+        self.sample_rate = 44100
 
     def to(self, device):
         # Simple no-op hook for validation; components are moved elsewhere.
@@ -325,6 +345,237 @@ class ACEStepPipeline(LoraLoaderMixin):
             last_hidden_states = outputs.last_hidden_state
         attention_mask = inputs["attention_mask"]
         return last_hidden_states, attention_mask
+
+    def _get_v15_text_embedding_layer(self):
+        text_encoder = self.text_encoder_model
+        embedding_layer = getattr(text_encoder, "embed_tokens", None)
+        if embedding_layer is None and hasattr(text_encoder, "model"):
+            embedding_layer = getattr(text_encoder.model, "embed_tokens", None)
+        if embedding_layer is None and hasattr(text_encoder, "get_input_embeddings"):
+            embedding_layer = text_encoder.get_input_embeddings()
+        if embedding_layer is None:
+            raise AttributeError("ACE-Step v1.5 text encoder does not expose an input embedding layer.")
+        return embedding_layer
+
+    def _build_v15_text_prompt(self, prompt: Optional[str], audio_duration: float | None = None) -> str:
+        duration = audio_duration if audio_duration and audio_duration > 0 else "N/A"
+        metas = "- bpm: N/A\n" "- timesignature: N/A\n" "- keyscale: N/A\n" f"- duration: {duration} seconds\n"
+        return V15_SFT_GEN_PROMPT.format(V15_DEFAULT_DIT_INSTRUCTION, prompt or "", metas)
+
+    def _get_v15_silence_latent_slice(self, length: int) -> torch.Tensor:
+        if self.silence_latent is None:
+            raise ValueError("ACE-Step v1.5 validation requires silence_latent to be loaded.")
+        silence_latent = self.silence_latent.to(device=self.device, dtype=self.dtype)
+        available = silence_latent.shape[1]
+        if available >= length:
+            return silence_latent[:, :length, :]
+        repeats = (length + available - 1) // available
+        return silence_latent.repeat(1, repeats, 1)[:, :length, :]
+
+    def _repeat_condition_batch(self, tensor: Optional[torch.Tensor], batch_size: int, dtype: Optional[torch.dtype] = None):
+        if tensor is None:
+            return None
+        target_dtype = dtype if dtype is not None and torch.is_floating_point(tensor) else None
+        if target_dtype is None:
+            tensor = tensor.to(device=self.device)
+        else:
+            tensor = tensor.to(device=self.device, dtype=target_dtype)
+        if tensor.shape[0] == 1 and batch_size > 1:
+            tensor = tensor.repeat(batch_size, *([1] * (tensor.ndim - 1)))
+        return tensor
+
+    def _prepare_v15_text_conditioning(
+        self,
+        prompt: Optional[str],
+        batch_size: int,
+        audio_duration: float,
+        encoder_text_hidden_states: Optional[torch.Tensor],
+        text_attention_mask: Optional[torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if encoder_text_hidden_states is None:
+            text_prompt = self._build_v15_text_prompt(prompt, audio_duration=audio_duration)
+            text_inputs = self.text_tokenizer(
+                [text_prompt],
+                padding="max_length",
+                truncation=True,
+                max_length=V15_TEXT_MAX_LENGTH,
+                return_tensors="pt",
+            )
+            if hasattr(text_inputs, "items"):
+                text_inputs = {key: value.to(self.device) for key, value in text_inputs.items()}
+            else:
+                text_inputs = {key: value.to(self.device) for key, value in vars(text_inputs).items()}
+            encoder_device = getattr(self.text_encoder_model, "device", None)
+            if encoder_device is None:
+                try:
+                    encoder_device = next(self.text_encoder_model.parameters()).device
+                except (StopIteration, AttributeError, TypeError):
+                    encoder_device = None
+            if encoder_device != self.device:
+                self.text_encoder_model.to(self.device, dtype=self.dtype)
+            with torch.no_grad():
+                encoder_outputs = self.text_encoder_model(**text_inputs)
+            encoder_text_hidden_states = encoder_outputs.last_hidden_state.to(dtype=self.dtype)
+            text_attention_mask = text_inputs["attention_mask"]
+        else:
+            encoder_text_hidden_states = encoder_text_hidden_states.to(device=self.device, dtype=self.dtype)
+            if text_attention_mask is None:
+                text_attention_mask = torch.ones(
+                    encoder_text_hidden_states.shape[:2],
+                    device=self.device,
+                    dtype=torch.long,
+                )
+            else:
+                text_attention_mask = text_attention_mask.to(device=self.device)
+
+        encoder_text_hidden_states = self._repeat_condition_batch(encoder_text_hidden_states, batch_size, dtype=self.dtype)
+        text_attention_mask = self._repeat_condition_batch(text_attention_mask, batch_size)
+        return encoder_text_hidden_states, text_attention_mask
+
+    def _prepare_v15_lyric_conditioning(self, lyrics: Optional[Union[str, list[str]]], batch_size: int):
+        if isinstance(lyrics, str) or lyrics is None:
+            lyric_texts = [lyrics or ""] * batch_size
+        else:
+            lyric_texts = [(entry or "") for entry in lyrics]
+            if len(lyric_texts) == 1 and batch_size > 1:
+                lyric_texts = lyric_texts * batch_size
+            elif len(lyric_texts) != batch_size:
+                raise ValueError(
+                    f"ACE-Step v1.5 validation expected {batch_size} lyric entries, received {len(lyric_texts)}."
+                )
+
+        lyrics_inputs = self.text_tokenizer(
+            lyric_texts,
+            padding="max_length",
+            truncation=True,
+            max_length=V15_LYRIC_MAX_LENGTH,
+            return_tensors="pt",
+        )
+        lyric_token_ids = lyrics_inputs.input_ids.to(self.device)
+        lyric_attention_mask = lyrics_inputs.attention_mask.to(self.device)
+        lyric_hidden_states = self._get_v15_text_embedding_layer()(lyric_token_ids).to(dtype=self.dtype)
+        return lyric_hidden_states, lyric_attention_mask
+
+    def _decode_v15_latents(self, target_latents: torch.Tensor) -> list[torch.Tensor]:
+        pred_latents = target_latents.transpose(1, 2).contiguous()
+        vae_dtype = getattr(self.music_dcae, "dtype", None) or self.dtype
+        decoder_output = self.music_dcae.decode(pred_latents.to(device=self.device, dtype=vae_dtype))
+        pred_wavs = decoder_output.sample if hasattr(decoder_output, "sample") else decoder_output[0]
+        if pred_wavs.dtype != torch.float32:
+            pred_wavs = pred_wavs.float()
+        peak = pred_wavs.abs().amax(dim=[1, 2], keepdim=True)
+        if torch.any(peak > 1.0):
+            pred_wavs = pred_wavs / peak.clamp(min=1.0)
+        return [pred_wav.detach().cpu() for pred_wav in pred_wavs]
+
+    def _resolve_seed_param(
+        self,
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]],
+        manual_seeds,
+        batch_size: int,
+    ):
+        if manual_seeds is not None:
+            return manual_seeds
+        if generator is None:
+            return None
+        if isinstance(generator, list):
+            seeds = []
+            for item in generator:
+                if item is None:
+                    seeds.append(None)
+                elif hasattr(item, "initial_seed"):
+                    seeds.append(int(item.initial_seed()))
+                else:
+                    seeds.append(None)
+            return seeds[:batch_size]
+        if hasattr(generator, "initial_seed"):
+            return int(generator.initial_seed())
+        return None
+
+    def _call_v15(
+        self,
+        *,
+        prompt: Optional[str],
+        lyrics: Optional[Union[str, list[str]]],
+        audio_duration: float,
+        infer_step: int,
+        guidance_scale: float,
+        batch_size: int,
+        encoder_text_hidden_states: Optional[torch.Tensor],
+        text_attention_mask: Optional[torch.Tensor],
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]],
+        manual_seeds,
+        format: str,
+        save_path: Optional[str],
+    ):
+        if not self.loaded:
+            raise ValueError("ACE-Step v1.5 validation pipeline must be wired with already-loaded components.")
+        if any(
+            component is None
+            for component in (self.v15_model, self.music_dcae, self.text_encoder_model, self.text_tokenizer)
+        ):
+            raise ValueError("ACE-Step v1.5 validation pipeline is missing required model components.")
+
+        encoder_text_hidden_states, text_attention_mask = self._prepare_v15_text_conditioning(
+            prompt=prompt,
+            batch_size=batch_size,
+            audio_duration=audio_duration,
+            encoder_text_hidden_states=encoder_text_hidden_states,
+            text_attention_mask=text_attention_mask,
+        )
+        lyric_hidden_states, lyric_attention_mask = self._prepare_v15_lyric_conditioning(lyrics, batch_size=batch_size)
+
+        latent_length = max(1, int(round(float(audio_duration) * V15_SAMPLE_RATE / V15_AUDIO_SAMPLES_PER_LATENT)))
+        src_latents = self._get_v15_silence_latent_slice(latent_length).expand(batch_size, -1, -1)
+        chunk_masks = torch.ones(batch_size, latent_length, 64, device=self.device, dtype=self.dtype)
+        refer_audio_hidden = torch.zeros(batch_size, 1, 64, device=self.device, dtype=self.dtype)
+        refer_audio_order_mask = torch.zeros(batch_size, device=self.device, dtype=torch.long)
+        is_covers = torch.zeros(batch_size, device=self.device, dtype=torch.long)
+        attention_mask = torch.ones(batch_size, latent_length, device=self.device, dtype=self.dtype)
+        seed = self._resolve_seed_param(generator=generator, manual_seeds=manual_seeds, batch_size=batch_size)
+
+        outputs = self.v15_model.generate_audio(
+            text_hidden_states=encoder_text_hidden_states,
+            text_attention_mask=text_attention_mask,
+            lyric_hidden_states=lyric_hidden_states,
+            lyric_attention_mask=lyric_attention_mask,
+            refer_audio_acoustic_hidden_states_packed=refer_audio_hidden,
+            refer_audio_order_mask=refer_audio_order_mask,
+            src_latents=src_latents,
+            chunk_masks=chunk_masks,
+            is_covers=is_covers,
+            silence_latent=self.silence_latent.to(device=self.device, dtype=self.dtype),
+            attention_mask=attention_mask,
+            seed=seed,
+            infer_method="ode",
+            infer_steps=infer_step,
+            diffusion_guidance_scale=guidance_scale,
+            use_progress_bar=False,
+        )
+        target_latents = outputs.get("target_latents")
+        if target_latents is None:
+            raise ValueError("ACE-Step v1.5 decoder did not return target latents during validation.")
+
+        pred_wavs = self._decode_v15_latents(target_latents)
+        output_paths = []
+        if save_path is not None:
+            for i, audio in enumerate(pred_wavs):
+                output_paths.append(
+                    self.save_wav_file(audio, i, save_path=save_path, sample_rate=V15_SAMPLE_RATE, format=format)
+                )
+
+        return ACEStepPipelineOutput(
+            audios=pred_wavs,
+            paths=output_paths,
+            params={
+                "prompt": prompt,
+                "lyrics": lyrics,
+                "audio_duration": audio_duration,
+                "infer_step": infer_step,
+                "guidance_scale": guidance_scale,
+                "sample_rate": V15_SAMPLE_RATE,
+            },
+        )
 
     @cpu_offload("text_encoder_model")
     def get_text_embeddings_null(self, texts, text_max_length=256, tau=0.01, l_min=8, l_max=10):
@@ -1401,6 +1652,7 @@ class ACEStepPipeline(LoraLoaderMixin):
         prompt: str = None,
         lyrics: str = None,
         infer_step: int = 60,
+        num_inference_steps: Optional[int] = None,
         guidance_scale: float = 15.0,
         scheduler_type: str = "euler",
         cfg_type: str = "apg",
@@ -1433,12 +1685,33 @@ class ACEStepPipeline(LoraLoaderMixin):
         edit_n_avg: int = 1,
         save_path: str = None,
         batch_size: int = 1,
+        num_images_per_prompt: Optional[int] = None,
         debug: bool = False,
         encoder_text_hidden_states: Optional[torch.Tensor] = None,
         text_attention_mask: Optional[torch.Tensor] = None,
         encoder_text_hidden_states_null: Optional[torch.Tensor] = None,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
     ):
+        if num_inference_steps is not None:
+            infer_step = int(num_inference_steps)
+        if num_images_per_prompt is not None:
+            batch_size = int(num_images_per_prompt)
+
+        if self.is_v15_pipeline:
+            return self._call_v15(
+                prompt=prompt,
+                lyrics=lyrics,
+                audio_duration=audio_duration,
+                infer_step=infer_step,
+                guidance_scale=guidance_scale,
+                batch_size=batch_size,
+                encoder_text_hidden_states=encoder_text_hidden_states,
+                text_attention_mask=text_attention_mask,
+                generator=generator,
+                manual_seeds=manual_seeds,
+                format=format,
+                save_path=save_path,
+            )
 
         start_time = time.time()
 
@@ -1690,13 +1963,5 @@ class ACEStepPipeline(LoraLoaderMixin):
             input_params_json["audio_path"] = output_audio_path
             with open(input_params_json_save_path, "w", encoding="utf-8") as f:
                 json.dump(input_params_json, f, indent=4, ensure_ascii=False)
-
-        from dataclasses import dataclass
-
-        @dataclass
-        class ACEStepPipelineOutput:
-            audios: list
-            paths: list
-            params: dict
 
         return ACEStepPipelineOutput(audios=pred_wavs, paths=output_paths, params=input_params_json)

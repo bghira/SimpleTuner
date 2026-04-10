@@ -45,7 +45,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertEqual(self.service.get_license_for_model(""), "apache-2.0")
         self.assertEqual(self.service.get_license_for_model(None), "apache-2.0")
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("pathlib.Path.exists")
     def test_validate_token_no_token_found(self, mock_exists, mock_get_token) -> None:
         """Test token validation when no token is found."""
@@ -56,7 +56,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertIn("No HuggingFace token found", result["message"])
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_validate_token_valid(self, mock_api_class, mock_get_token) -> None:
         """Test token validation with a valid token."""
@@ -70,7 +70,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertTrue(result["valid"])
         self.assertEqual(result["username"], "testuser")
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_check_repository_exists(self, mock_api_class, mock_get_token) -> None:
         """Test checking a repository that exists."""
@@ -87,7 +87,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertTrue(result["exists"])
         self.assertFalse(result["available"])
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_check_repository_available(self, mock_api_class, mock_get_token) -> None:
         """Test checking a repository that doesn't exist (available)."""
@@ -107,7 +107,7 @@ class PublishingServiceTestCase(unittest.TestCase):
             self.service.check_repository("invalid-repo-id")
         self.assertEqual(ctx.exception.status_code, 400)
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_get_user_organizations(self, mock_api_class, mock_get_token) -> None:
         """Test getting user organizations."""
@@ -125,7 +125,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertEqual(result["organizations"], ["org1", "org2"])
         self.assertEqual(result["namespaces"], ["testuser", "org1", "org2"])
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("pathlib.Path.exists")
     def test_get_organizations_no_token(self, mock_exists, mock_get_token) -> None:
         """Test getting organizations when no token exists."""
@@ -138,7 +138,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 401)
         self.assertIn("No HuggingFace token found", ctx.exception.message)
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_get_organizations_no_orgs(self, mock_api_class, mock_get_token) -> None:
         """Test getting organizations when user has no organizations."""
@@ -153,7 +153,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertEqual(result["organizations"], [])
         self.assertEqual(result["namespaces"], ["solouser"])
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_get_organizations_missing_orgs_key(self, mock_api_class, mock_get_token) -> None:
         """Test getting organizations when orgs key is missing from API response."""
@@ -168,7 +168,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertEqual(result["organizations"], [])
         self.assertEqual(result["namespaces"], ["testuser"])
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
     def test_validate_token_invalid(self, mock_api_class, mock_get_token) -> None:
         """Test token validation with an invalid token."""
@@ -182,7 +182,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertIn("Token is invalid or expired", result["message"])
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("pathlib.Path.exists")
     @patch("builtins.open", new_callable=unittest.mock.mock_open, read_data="hf_file_token\n")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")
@@ -208,7 +208,7 @@ class PublishingServiceTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("Invalid repository ID", ctx.exception.message)
 
-    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfFolder.get_token")
+    @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.hf_get_token")
     @patch("pathlib.Path.exists")
     @patch("builtins.open", new_callable=unittest.mock.mock_open, read_data="hf_file_token")
     @patch("simpletuner.simpletuner_sdk.server.services.publishing_service.HfApi")

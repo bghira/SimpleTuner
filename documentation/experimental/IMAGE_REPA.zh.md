@@ -182,6 +182,6 @@ REPA 和 U-REPA 都支持调度以在训练过程中衰减正则化：
 
 ## 参考文献
 
-- [REPA 论文](https://arxiv.org/abs/2402.17750) - 生成的表示对齐
-- [U-REPA 论文](https://arxiv.org/abs/2410.xxxxx) - UNet 架构的通用 REPA（NeurIPS 2025）
-- [DINOv2](https://github.com/facebookresearch/dinov2) - 自监督视觉编码器
+- [REPA 论文](https://github.com/sihyun-yu/REPA) - 生成的表示对齐
+- [U-REPA 论文](https://github.com/YuchuanTian/U-REPA) - UNet 架构的通用 REPA（NeurIPS 2025）
+- [DINOv2](https://github.com/facebookresearch/dinov3) - 自监督视觉编码器

@@ -526,6 +526,7 @@ class HiDream(ImageModelFoundation):
             latent_model_input = out
 
         # Call the forward method with the updated parameter names
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         model_pred = (
             self.model(
                 hidden_states=latent_model_input.to(
@@ -543,6 +544,7 @@ class HiDream(ImageModelFoundation):
                 img_ids=img_ids,
                 return_dict=False,
                 hidden_states_buffer=hidden_states_buffer,
+                grounding_kwargs=grounding_kwargs,
             )[0]
             * -1  # the model is trained with inverted velocity :(
         )

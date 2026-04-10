@@ -1694,6 +1694,7 @@ class Trainer:
                     self.init_precision,
                     self.init_controlnet_model,
                     self.init_tread_model,
+                    self.init_gligen_layers,
                     self.init_freeze_models,
                     self.init_trainable_peft_adapter,
                     self.init_lyrics_embedder_training,
@@ -2692,6 +2693,51 @@ class Trainer:
         self.model.tread_init()
         self.accelerator.wait_for_everyone()
 
+    def init_gligen_layers(self):
+        """Inject GLIGEN grounding layers into the model after it has been loaded."""
+        if not self.model.supports_grounding():
+            return
+
+        from simpletuner.helpers.training.grounding.gligen_layers import _extract_block_dims, inject_gligen_layers
+
+        component = self.model.get_trained_component(base_model=True)
+        if component is None:
+            logger.warning("GLIGEN: get_trained_component(base_model=True) returned None, skipping injection")
+            return
+
+        model_config = getattr(component, "config", None)
+        cross_attention_dim = getattr(model_config, "cross_attention_dim", None)
+        if cross_attention_dim is None:
+            cross_attention_dim = getattr(model_config, "joint_attention_dim", None)
+        if isinstance(cross_attention_dim, (list, tuple)):
+            cross_attention_dim = cross_attention_dim[0]
+
+        if cross_attention_dim is None:
+            for module in component.modules():
+                dims = _extract_block_dims(module)
+                if dims is not None:
+                    cross_attention_dim = dims[0]
+                    break
+
+        if cross_attention_dim is None:
+            logger.warning(
+                "GLIGEN: could not determine cross_attention_dim from %s, skipping injection",
+                type(component).__name__,
+            )
+            return
+
+        grounding_model_path = getattr(self.config, "pretrained_grounding_model_name_or_path", None)
+        feature_type = "text-image" if grounding_model_path else "text-only"
+
+        inject_gligen_layers(
+            model=component,
+            positive_len=cross_attention_dim,
+            cross_attention_dim=cross_attention_dim,
+            feature_type=feature_type,
+        )
+        logger.info("GLIGEN layers injected into model")
+        self.accelerator.wait_for_everyone()
+
     def init_trainable_peft_adapter(self):
         if "lora" not in self.config.model_type:
             return
@@ -2743,6 +2789,13 @@ class Trainer:
             tlora_alpha = float(self.lycoris_config.get("tlora_alpha", 1.0))
             apply_preset = self.lycoris_config.get("apply_preset", None)
             if apply_preset is not None and apply_preset != {}:
+                if self.model.supports_grounding() and getattr(self.model, "_data_has_grounding", False):
+                    gligen_targets = self.model.GLIGEN_LYCORIS_TARGET
+                    apply_preset["target_module"] = gligen_targets
+                    if "module_algo_map" in apply_preset:
+                        algo_settings = next(iter(apply_preset["module_algo_map"].values()), {})
+                        apply_preset["module_algo_map"] = {t: dict(algo_settings) for t in gligen_targets}
+                    logger.info(f"GLIGEN: overriding LyCORIS target_module to {gligen_targets}")
                 LycorisNetwork.apply_preset(apply_preset)
 
             # Remove the positional arguments we extracted.
@@ -2753,6 +2806,43 @@ class Trainer:
 
             logger.info("Using lycoris training mode")
             self._send_webhook_msg(message="Using lycoris training mode.")
+
+            if self.model.supports_grounding() and getattr(self.model, "_data_has_grounding", False):
+                component = self.model.get_trained_component()
+                from diffusers.models.attention import GatedSelfAttentionDense
+
+                gligen_count = sum(1 for m in component.modules() if isinstance(m, GatedSelfAttentionDense))
+                logger.info(f"GLIGEN: {gligen_count} fuser layers found on model before LyCORIS init")
+                if gligen_count == 0:
+                    logger.warning("GLIGEN: no fuser layers found — injecting now (post-hoc)")
+                    from simpletuner.helpers.training.grounding.gligen_layers import (
+                        _extract_block_dims,
+                        inject_gligen_layers,
+                    )
+
+                    model_config = getattr(component, "config", None)
+                    cross_attention_dim = getattr(model_config, "cross_attention_dim", None)
+                    if cross_attention_dim is None:
+                        cross_attention_dim = getattr(model_config, "joint_attention_dim", None)
+                    if isinstance(cross_attention_dim, (list, tuple)):
+                        cross_attention_dim = cross_attention_dim[0]
+                    if cross_attention_dim is None:
+                        for module in component.modules():
+                            dims = _extract_block_dims(module)
+                            if dims is not None:
+                                cross_attention_dim = dims[0]
+                                break
+                    if cross_attention_dim is not None:
+                        grounding_model_path = getattr(self.config, "pretrained_grounding_model_name_or_path", None)
+                        feature_type = "text-image" if grounding_model_path else "text-only"
+                        inject_gligen_layers(
+                            model=component,
+                            positive_len=cross_attention_dim,
+                            cross_attention_dim=cross_attention_dim,
+                            feature_type=feature_type,
+                        )
+                        gligen_count = sum(1 for m in component.modules() if isinstance(m, GatedSelfAttentionDense))
+                        logger.info(f"GLIGEN: post-hoc injection complete, {gligen_count} fuser layers")
 
             if self.config.init_lora is not None:
                 from lycoris import create_lycoris_from_weights
@@ -2985,7 +3075,13 @@ class Trainer:
                 except Exception:
                     caption_batches_supported = False
 
-        training_dataset_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}
+        training_dataset_types = {
+            DatasetType.IMAGE,
+            DatasetType.VIDEO,
+            DatasetType.AUDIO,
+            DatasetType.CONDITIONING,
+            DatasetType.GROUNDING,
+        }
         if caption_batches_supported:
             training_dataset_types.add(DatasetType.CAPTION)
 
@@ -3106,7 +3202,13 @@ class Trainer:
         max_steps = getattr(self.config, "max_train_steps", None)
         for dataset_id, backend in StateTracker.get_data_backends().items():
             backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}:
+            if backend_type not in {
+                DatasetType.IMAGE,
+                DatasetType.VIDEO,
+                DatasetType.AUDIO,
+                DatasetType.CONDITIONING,
+                DatasetType.GROUNDING,
+            }:
                 continue
             schedule = StateTracker.get_dataset_schedule(dataset_id) or {}
             start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend.get("config", {}).get("start_epoch", 1)))
@@ -6366,9 +6468,9 @@ def run_trainer_job(config):
             if token:
                 return token
         try:
-            from huggingface_hub import HfFolder
+            from huggingface_hub import get_token as hf_get_token
 
-            token = HfFolder.get_token()
+            token = hf_get_token()
             if token:
                 return token
         except Exception:

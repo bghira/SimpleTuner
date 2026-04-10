@@ -777,6 +777,73 @@ Veja a seção [Solução de Problemas](#solucionando-problemas-de-datasets-filt
 
 - Os nomes de arquivos das entradas do cache do VAE são sempre hash. Isso não é configurável pelo usuário e garante que datasets com nomes de arquivo muito longos possam ser usados facilmente sem problemas de comprimento de caminho. Qualquer configuração `hash_filenames` no seu arquivo será ignorada.
 
+## Grounding (Anotacoes Espaciais)
+
+O pipeline de grounding permite anotacoes de bounding box e mascara por entidade para grounding espacial durante o treinamento. Isso e util para prevenir o sangramento de sujeitos (subject bleeding) durante o fine-tuning com multiplos sujeitos.
+
+### Habilitando o grounding
+
+Adicione um bloco `grounding` a qualquer dataset de imagem ou video:
+
+```json
+{
+  "id": "my-dataset",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/path/to/images",
+  "grounding": {
+    "enabled": true
+  }
+}
+```
+
+Voce tambem deve definir `--max_grounding_entities` para um valor maior que 0 (por exemplo, 8) para habilitar o pipeline de grounding.
+
+### Auto-deteccao de bounding boxes
+
+Se voce nao possui anotacoes `.bbox` pre-existentes, pode deixar o SimpleTuner gera-las automaticamente usando [Florence-2](https://huggingface.co/florence-community/Florence-2-large). Adicione um bloco `auto_detect` dentro da configuracao `grounding`:
+
+```json
+{
+    "id": "my-images",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "/data/images",
+    "grounding": {
+        "enabled": true,
+        "auto_detect": {
+            "enabled": true,
+            "model": "florence-community/Florence-2-large",
+            "labels": ["person", "dog", "cat"],
+            "batch_size": 4
+        }
+    }
+}
+```
+
+| Chave | Padrao | Descricao |
+|-----|---------|-------------|
+| `enabled` | `false` | Habilitar auto-deteccao. |
+| `model` | `florence-community/Florence-2-large` | ID do modelo HuggingFace Florence-2. |
+| `labels` | `[]` | Lista opcional de labels de entidades para deteccao guiada (usa `<OPEN_VOCABULARY_DETECTION>`). Quando vazia, Florence-2 gera automaticamente uma descricao de cada imagem e localiza as frases encontradas (usa `<CAPTION>` + `<CAPTION_TO_PHRASE_GROUNDING>`). |
+| `batch_size` | `4` | Numero de imagens por lote de inferencia. |
+
+A auto-deteccao e executada uma vez durante a configuracao do dataset. Imagens que ja possuem um arquivo sidecar `.bbox` sao ignoradas, permitindo retomar com seguranca apos uma interrupcao. O modelo e carregado no dispositivo do acelerador e liberado imediatamente apos a conclusao da deteccao.
+
+> **Nota:** A auto-deteccao suporta apenas backends `type: "local"`.
+
+### Arquivos sidecar `.bbox`
+
+Coloque um arquivo `.bbox` ao lado de cada imagem com o mesmo nome base.
+
+O arquivo `.bbox` suporta tres formatos: array JSON, JSON lines, formato txt YOLO.
+
+As coordenadas do bounding box sao normalizadas para [0, 1] no formato XYXY. O formato YOLO usa XYWH baseado no centro e e convertido automaticamente. O campo `mask` e opcional.
+
+### Coluna bbox Parquet / HuggingFace
+
+Para datasets parquet ou HuggingFace, especifique um `bbox_column` na configuracao do backend.
+
 ## Filtragem de captions
 
 ### `caption_filter_list`

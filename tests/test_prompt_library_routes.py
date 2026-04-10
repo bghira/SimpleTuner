@@ -72,6 +72,60 @@ class PromptLibraryRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.json()["entries"]["slider"], {"prompt": "hello", "adapter_strength": 0.25})
 
+    def test_save_prompt_library_with_bbox_entities(self) -> None:
+        entities = [
+            {"label": "cat", "bbox": [0.2, 0.3, 0.6, 0.8]},
+            {"label": "table", "bbox": [0.0, 0.5, 1.0, 1.0]},
+        ]
+        payload = {
+            "entries": {
+                "cat_scene": {
+                    "prompt": "a cat on a table",
+                    "bbox_entities": entities,
+                },
+                "plain": "a simple prompt",
+            }
+        }
+        response = self.client.put("/api/prompt-libraries/user_prompt_library-bbox.json", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["entries"]["cat_scene"]["prompt"], "a cat on a table")
+        self.assertEqual(len(body["entries"]["cat_scene"]["bbox_entities"]), 2)
+        self.assertEqual(body["entries"]["plain"], "a simple prompt")
+
+        get_resp = self.client.get("/api/prompt-libraries/user_prompt_library-bbox.json")
+        self.assertEqual(get_resp.status_code, 200)
+        reloaded = get_resp.json()["entries"]
+        self.assertEqual(reloaded["cat_scene"]["bbox_entities"][0]["label"], "cat")
+        self.assertEqual(reloaded["plain"], "a simple prompt")
+
+    def test_save_prompt_library_with_bbox_keyframes(self) -> None:
+        keyframes = [
+            {"frame": 0, "entities": [{"label": "cat", "bbox": [0.1, 0.2, 0.5, 0.6]}]},
+            {"frame": 20, "entities": [{"label": "cat", "bbox": [0.3, 0.4, 0.7, 0.8]}]},
+        ]
+        payload = {
+            "entries": {
+                "moving_cat": {
+                    "prompt": "a cat walking",
+                    "bbox_keyframes": keyframes,
+                },
+                "plain": "a simple prompt",
+            }
+        }
+        response = self.client.put("/api/prompt-libraries/user_prompt_library-kf.json", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["entries"]["moving_cat"]["prompt"], "a cat walking")
+        self.assertEqual(len(body["entries"]["moving_cat"]["bbox_keyframes"]), 2)
+        self.assertEqual(body["entries"]["plain"], "a simple prompt")
+
+        get_resp = self.client.get("/api/prompt-libraries/user_prompt_library-kf.json")
+        self.assertEqual(get_resp.status_code, 200)
+        reloaded = get_resp.json()["entries"]
+        self.assertEqual(reloaded["moving_cat"]["bbox_keyframes"][0]["frame"], 0)
+        self.assertEqual(reloaded["moving_cat"]["bbox_keyframes"][1]["entities"][0]["label"], "cat")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,95 @@
+<div class="dataset-subgroup">
+    <div class="dataset-subgroup-title">Spatial Grounding</div>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <div class="checkbox-item">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'grounding-enabled-' + editingDataset.id"
+                           x-model="editingDataset.grounding.enabled"
+                           @change="markAsUnsaved()">
+                    <div class="checkbox-content">
+                        <label class="form-check-label" :for="'grounding-enabled-' + editingDataset.id">
+                            Enable Grounding
+                        </label>
+                        <div class="form-text">
+                            Enable per-entity bounding box annotations for spatial grounding.
+                            Requires <code>.bbox</code> sidecar files alongside images.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auto-detect settings (visible only when grounding is enabled) -->
+    <div x-show="editingDataset.grounding && editingDataset.grounding.enabled"
+         x-cloak>
+        <div class="dataset-subgroup-title mt-3">Auto-Detect Bounding Boxes</div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div class="checkbox-item">
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               :id="'grounding-auto-detect-enabled-' + editingDataset.id"
+                               x-model="editingDataset.grounding.auto_detect.enabled"
+                               :disabled="editingDataset.type !== 'local'"
+                               @change="markAsUnsaved()">
+                        <div class="checkbox-content">
+                            <label class="form-check-label" :for="'grounding-auto-detect-enabled-' + editingDataset.id">
+                                Enable Auto-Detect
+                            </label>
+                            <div class="form-text" x-show="editingDataset.type === 'local'">
+                                Automatically generate <code>.bbox</code> sidecar files using Florence-2.
+                                Images that already have <code>.bbox</code> files will be skipped.
+                            </div>
+                            <div class="form-text text-warning" x-show="editingDataset.type !== 'local'">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                Auto-detect requires a local backend.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div x-show="editingDataset.grounding.auto_detect && editingDataset.grounding.auto_detect.enabled && editingDataset.type === 'local'" x-cloak>
+            <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                    <label :for="'grounding-auto-detect-model-' + editingDataset.id" class="form-label">Model</label>
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           :id="'grounding-auto-detect-model-' + editingDataset.id"
+                           x-model="editingDataset.grounding.auto_detect.model"
+                           @change="markAsUnsaved()"
+                           placeholder="florence-community/Florence-2-large">
+                    <div class="form-text">HuggingFace Florence-2 model ID.</div>
+                </div>
+                <div class="col-md-6">
+                    <label :for="'grounding-auto-detect-labels-' + editingDataset.id" class="form-label">Labels (optional)</label>
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           :id="'grounding-auto-detect-labels-' + editingDataset.id"
+                           x-model="editingDataset.grounding.auto_detect.labels"
+                           @change="markAsUnsaved()"
+                           placeholder="person, dog, cat">
+                    <div class="form-text">Comma-separated labels for guided detection. Leave empty for automatic captioning and grounding.</div>
+                </div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                    <label :for="'grounding-auto-detect-batch-size-' + editingDataset.id" class="form-label">Batch Size</label>
+                    <input type="number"
+                           class="form-control form-control-sm"
+                           :id="'grounding-auto-detect-batch-size-' + editingDataset.id"
+                           x-model.number="editingDataset.grounding.auto_detect.batch_size"
+                           @change="markAsUnsaved()"
+                           min="1" step="1"
+                           placeholder="4">
+                    <div class="form-text">Number of images per inference batch.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -274,7 +274,7 @@ def _collect_package_files(*directories: str):
 # Base dependencies (minimal, works on all platforms)
 base_deps = [
     "diffusers>=0.36.0",
-    "transformers>=4.55.0",
+    "transformers>=5.0.0",
     "hf_transfer>=0.1.0",
     "datasets>=3.0.1",
     "wandb>=0.21.0",
@@ -283,8 +283,6 @@ base_deps = [
     "trainingsample>=0.2.10",
     "accelerate>=1.5.2",
     "safetensors>=0.5.3",
-    "compel>=2.1.1",
-    "clip-interrogator>=0.6.0",
     "open-clip-torch>=2.26.1",
     "iterutils>=0.1.6",
     "scipy>=1.11.1",

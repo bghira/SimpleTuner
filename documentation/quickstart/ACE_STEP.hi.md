@@ -1,10 +1,13 @@
 # ACE-Step क्विकस्टार्ट
 
-इस उदाहरण में, हम ACE‑Step v1 3.5B ऑडियो जेनरेशन मॉडल को प्रशिक्षित करेंगे।
+इस उदाहरण में, हम ACE‑Step ऑडियो जेनरेशन मॉडल को प्रशिक्षित करेंगे। SimpleTuner वर्तमान में मूल ACE‑Step v1 3.5B पाथ और ACE‑Step v1.5 bundle के लिए forward-compatible LoRA प्रशिक्षण, दोनों को सपोर्ट करता है।
 
 ## अवलोकन
 
-ACE-Step एक 3.5B पैरामीटर वाला ट्रांसफ़ॉर्मर‑आधारित फ्लो‑मैचिंग मॉडल है, जिसे उच्च गुणवत्ता वाली ऑडियो सिंथेसिस के लिए डिज़ाइन किया गया है। यह टेक्स्ट‑टू‑ऑडियो जनरेशन को सपोर्ट करता है और लिरिक्स पर कंडीशन किया जा सकता है।
+ACE-Step उच्च गुणवत्ता वाली ऑडियो सिंथेसिस के लिए डिज़ाइन किया गया ट्रांसफ़ॉर्मर‑आधारित फ्लो‑मैचिंग ऑडियो मॉडल है। SimpleTuner में:
+
+- `base` मूल ACE‑Step v1 3.5B प्रशिक्षण पाथ का उपयोग करता है।
+- `v15-turbo`, `v15-base`, और `v15-sft` `ACE-Step/Ace-Step1.5` से लोड होने वाले ACE‑Step v1.5 bundle variants का उपयोग करते हैं।
 
 ## हार्डवेयर आवश्यकताएँ
 
@@ -40,6 +43,22 @@ mkdir -p config/acestep-training-demo
 
 ### महत्वपूर्ण सेटिंग्स
 
+SimpleTuner वर्तमान में ACE-Step के लिए ये flavours सपोर्ट करता है:
+
+- `base`: मूल ACE‑Step v1 3.5B
+- `v15-turbo`, `v15-base`, `v15-sft`: ACE‑Step v1.5 bundle variants
+
+अपनी लक्ष्य variant के अनुसार उपयुक्त कॉन्फ़िग चुनें।
+
+तुरंत उपयोग के लिए example presets यहाँ उपलब्ध हैं:
+
+- `simpletuner/examples/ace_step-v1-0.peft-lora`
+- `simpletuner/examples/ace_step-v1-5.peft-lora`
+
+आप इन्हें सीधे `simpletuner train example=ace_step-v1-0.peft-lora` या `simpletuner train example=ace_step-v1-5.peft-lora` से चला सकते हैं।
+
+#### ACE-Step v1 उदाहरण
+
 इन वैल्यूज़ के साथ `config/acestep-training-demo/config.json` बनाएँ:
 
 <details>
@@ -59,6 +78,28 @@ mkdir -p config/acestep-training-demo
 ```
 </details>
 
+#### ACE-Step v1.5 उदाहरण
+
+ACE-Step v1.5 के लिए `model_family: "ace_step"` को वैसा ही रखें, कोई v1.5 flavour चुनें, और checkpoint root को साझा v1.5 bundle पर सेट करें:
+
+<details>
+<summary>उदाहरण कॉन्फ़िग देखें</summary>
+
+```json
+{
+  "model_family": "ace_step",
+  "model_type": "lora",
+  "model_flavour": "v15-base",
+  "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "trust_remote_code": true,
+  "resolution": 0,
+  "mixed_precision": "bf16",
+  "base_model_precision": "int8-quanto",
+  "data_backend_config": "config/acestep-training-demo/multidatabackend.json"
+}
+```
+</details>
+
 ### वैलिडेशन सेटिंग्स
 
 प्रगति मॉनिटर करने के लिए इन्हें अपने `config.json` में जोड़ें:
@@ -68,6 +109,8 @@ mkdir -p config/acestep-training-demo
 - **`validation_audio_duration`**: वैलिडेशन क्लिप्स की अवधि सेकंड में (डिफ़ॉल्ट: 30.0)।
 - **`validation_guidance`**: गाइडेंस स्केल (डिफ़ॉल्ट: ~3.0 - 5.0)।
 - **`validation_step_interval`**: सैंपल कितनी बार जनरेट करना है (जैसे, हर 100 स्टेप पर)।
+
+> ℹ️ **ACE-Step v1.5 नोट:** SimpleTuner अब prompt और वैकल्पिक lyrics conditioning के साथ built-in v1.5 validation renders को सपोर्ट करता है। upstream v1.5 repository को लोड करने के लिए अभी भी `trust_remote_code: true` आवश्यक है, और अधिक advanced upstream editing/inference workflows अभी SimpleTuner validation pipeline में exposed नहीं हैं।
 
 ### उन्नत प्रयोगात्मक विशेषताएँ
 

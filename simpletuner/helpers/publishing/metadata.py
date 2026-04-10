@@ -118,6 +118,9 @@ def _model_imports(args):
     output += "from diffusers import DiffusionPipeline"
     if "lycoris" == args.lora_type.lower() and "lora" in args.model_type:
         output += "\nfrom lycoris import create_lycoris_from_weights"
+    model = StateTracker.get_model()
+    if model is not None and model.gligen:
+        output += "\nfrom simpletuner.helpers.training.grounding.gligen_layers import inject_gligen_layers"
 
     return f"{output}"
 
@@ -165,11 +168,38 @@ def _model_component_name(model):
     return model_component_name
 
 
+def _gligen_injection_code(model):
+    m = StateTracker.get_model()
+    if m is None or not m.gligen:
+        return ""
+    component = m.get_trained_component(base_model=True)
+    model_config = getattr(component, "config", None)
+    cross_attention_dim = getattr(model_config, "cross_attention_dim", None)
+    if cross_attention_dim is None:
+        cross_attention_dim = getattr(model_config, "joint_attention_dim", None)
+    if isinstance(cross_attention_dim, (list, tuple)):
+        cross_attention_dim = cross_attention_dim[0]
+    args = StateTracker.get_args()
+    grounding_model = getattr(args, "pretrained_grounding_model_name_or_path", None)
+    feature_type = "text-image" if grounding_model else "text-only"
+    component_name = _model_component_name(model)
+    return (
+        f"\n# Inject GLIGEN grounding layers (position_net + fusers) before loading adapter weights"
+        f"\ninject_gligen_layers("
+        f"\n    model={component_name},"
+        f"\n    positive_len={cross_attention_dim},"
+        f"\n    cross_attention_dim={cross_attention_dim},"
+        f'\n    feature_type="{feature_type}",'
+        f"\n)"
+    )
+
+
 def _model_load(args, repo_id: str = None, model=None):
     model_component_name = _model_component_name(model)
     hf_user_name = StateTracker.get_hf_username()
     if hf_user_name is not None:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
+    gligen_code = _gligen_injection_code(model)
     if "lora" in args.model_type:
         if args.lora_type.lower() == "standard":
             lora_imports = ""
@@ -183,6 +213,7 @@ def _model_load(args, repo_id: str = None, model=None):
                 f"model_id = '{args.pretrained_model_name_or_path}'"
                 f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
                 f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
+                f"{gligen_code}"
                 f"\npipeline.load_lora_weights(adapter_id)"
             )
         elif args.lora_type.lower() == "lycoris":
@@ -193,12 +224,14 @@ def _model_load(args, repo_id: str = None, model=None):
                 f"\nadapter_filename = 'pytorch_lora_weights.safetensors'"
                 f"\nadapter_file_path = download_adapter(repo_id=adapter_repo_id)"
                 f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
+                f"{gligen_code}"
                 "\nlora_scale = 1.0"
             )
     else:
         output = (
             f"model_id = '{repo_id if repo_id else os.path.join(args.output_dir, 'pipeline')}'"
             f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
+            f"{gligen_code}"
         )
     if args.model_type == "lora" and args.lora_type.lower() == "lycoris":
         output += f"\nwrapper, _ = create_lycoris_from_weights(lora_scale, adapter_file_path, {model_component_name})"
@@ -323,7 +356,12 @@ model_output = pipeline(
 
 
 def model_type(args):
-    prefix = "ControlNet " if args.controlnet or args.control else ""
+    prefix = ""
+    if args.controlnet or args.control:
+        prefix += "ControlNet "
+    model = StateTracker.get_model()
+    if model is not None and model.gligen:
+        prefix += "GLIGEN "
     if "lora" in args.model_type:
         if "standard" == args.lora_type.lower():
             if args.peft_lora_mode == "singlora":
@@ -656,6 +694,7 @@ tags:
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
   - {args.model_type}
 {'  - controlnet' if args.controlnet or args.control else ''}
+{'  - gligen' if StateTracker.get_model() is not None and StateTracker.get_model().gligen else ''}
 {'  - template:sd-lora' if 'lora' in args.model_type else ''}
 {f'  - {args.lora_type}' if 'lora' in args.model_type else ''}
 pipeline_tag: {_pipeline_tag(args)}

@@ -80,6 +80,13 @@ simpletuner configure config/foo/config.json
   - 多节点环境下，仅每个节点的 local-rank 0 执行删除。为处理共享网络存储中的竞态，删除失败会被静默忽略。
   - 不影响训练检查点，仅影响预训练基础模型缓存。
 
+### `--trust_remote_code`
+
+- **内容**：当 checkpoint 依赖上游自定义类时，允许 Transformers 和 tokenizer 执行模型仓库中的自定义 Python 代码。
+- **默认值**：`False`
+- **原因**：ACE-Step v1.5 checkpoint 需要它，因为上游仓库包含自定义的 `AutoModel` 和 tokenizer 代码。
+- **警告**：仅对你信任的模型仓库启用此选项。
+
 ### `--enable_group_offload`
 
 - **内容**：启用 diffusers 的分组模块卸载，使模型块在前向之间驻留在 CPU（或磁盘）。
@@ -202,6 +209,12 @@ simpletuner configure config/foo/config.json
 
 - **内容**：预训练 Gemma 模型路径或 <https://huggingface.co/models> 上的标识符。
 - **原因**：训练 Gemma 系模型（例如 LTX-2、Sana、Lumina2）时，可单独指定 Gemma 权重来源，而无需更换基础扩散模型路径。
+
+### `--max_grounding_entities`
+- 每张图像用于 GLIGEN 风格空间标注的最大 grounding 实体数。默认值：0（禁用）。典型值：4-16。
+
+### `--pretrained_grounding_model_name_or_path`
+- 用于按实体提取图像特征的可选预训练模型。默认值：None。
 
 ### `--custom_text_encoder_intermediary_layers`
 
@@ -1685,10 +1698,14 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        ACE-Step 的 flavour 包括 `base`、`v15-turbo`、
+                        `v15-base` 和 `v15-sft`。v1.5 flavour 现已支持训练和
+                        内置验证音频生成，并且对上游仓库需要
+                        `--trust_remote_code`。
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.
