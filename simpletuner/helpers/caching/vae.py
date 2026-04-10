@@ -1502,7 +1502,7 @@ class VAECache(WebhookMixin):
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
-    def process_buckets(self):
+    def process_buckets(self, progress_callback=None):
         futures = []
         self.debug_log("Listing cached images")
         processed_images = self._list_cached_images()
@@ -1515,8 +1515,10 @@ class VAECache(WebhookMixin):
             shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
 
+        total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
+        overall_processed = 0
+
         if self.webhook_handler is not None:
-            total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
             self.send_progress_update(
                 type="init_vae_cache",
                 readable_type="VAE Cache initialising",
@@ -1546,6 +1548,9 @@ class VAECache(WebhookMixin):
                     leave=False,
                 ):
                     statistics["total"] += 1
+                    overall_processed += 1
+                    if progress_callback is not None:
+                        progress_callback(overall_processed, total_count)
                     filepath = self._process_raw_filepath(raw_filepath)
                     test_filepath = self._image_filename_from_vaecache_filename(filepath)
                     if test_filepath is None:

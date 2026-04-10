@@ -12,7 +12,7 @@
             <button type="button"
                     class="btn btn-outline-warning btn-sm"
                     @click="scanAll()"
-                    :disabled="scanning">
+                    :disabled="scanning || caching">
                 <i class="fas" :class="scanning ? 'fa-spinner fa-spin' : 'fa-search'" style="margin-right: 0.35rem;"></i>
                 <span x-text="scanning ? 'Scanning...' : 'Scan All'"></span>
             </button>
@@ -47,6 +47,41 @@
                  :style="'width: ' + (scanProgress.total > 0 ? Math.round(scanProgress.current / scanProgress.total * 100) : 0) + '%'">
             </div>
         </div>
+    </div>
+
+    <!-- Cache progress bar -->
+    <div x-show="caching" class="viewer-scan-progress mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="small text-muted">
+                Caching <strong x-text="(cacheProgress.cache_type || '').replace(/_/g, ' ')"></strong>
+                for <strong x-text="cacheProgress.dataset_id || '...'"></strong>
+                <span x-show="cacheProgress.stage" class="ms-1">
+                    &mdash; <span x-text="cacheProgress.stage"></span>
+                </span>
+            </span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="small text-muted" x-show="cacheProgress.total > 0"
+                      x-text="cacheProgress.current + ' / ' + cacheProgress.total"></span>
+                <button type="button"
+                        class="btn btn-outline-danger btn-sm py-0 px-2"
+                        @click="cancelCacheJob()">
+                    <i class="fas fa-stop viewer-text-xs"></i> Cancel
+                </button>
+            </div>
+        </div>
+        <div class="progress" style="height: 6px;">
+            <div class="progress-bar bg-primary progress-bar-striped progress-bar-animated"
+                 role="progressbar"
+                 :style="'width: ' + (cacheProgress.total > 0 ? Math.round(cacheProgress.current / cacheProgress.total * 100) : 100) + '%'">
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache error banner -->
+    <div x-show="cacheError" class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+        <i class="fas fa-exclamation-triangle me-1"></i>
+        <strong>Cache job failed:</strong> <span x-text="cacheError"></span>
+        <button type="button" class="btn-close" @click="cacheError = ''"></button>
     </div>
 
     <!-- Loading state -->
@@ -117,14 +152,14 @@
                             <button type="button"
                                     class="btn btn-outline-warning btn-sm py-0 px-2"
                                     @click.stop="scanDataset(ds.dataset_id)"
-                                    :disabled="scanning"
+                                    :disabled="scanning || caching"
                                     title="Scan this dataset">
                                 <i class="fas fa-search viewer-text-xs"></i>
                             </button>
                             <button type="button"
                                     class="btn btn-outline-danger btn-sm py-0 px-2"
                                     @click.stop="showForceScanDialog(ds.dataset_id)"
-                                    :disabled="scanning"
+                                    :disabled="scanning || caching"
                                     title="Force rescan (rebuild metadata from scratch)">
                                 <i class="fas fa-redo viewer-text-xs"></i>
                             </button>
@@ -144,7 +179,7 @@
                         <button type="button"
                                 class="btn btn-outline-warning btn-sm"
                                 @click.stop="scanDataset(ds.dataset_id)"
-                                :disabled="scanning">
+                                :disabled="scanning || caching">
                             <i class="fas fa-search me-1"></i> Scan This Dataset
                         </button>
                     </div>
@@ -221,6 +256,39 @@
                                             <span x-text="reason.replace(/_/g, ' ')"></span>: <span x-text="count"></span>
                                         </span>
                                     </template>
+                                </div>
+                            </div>
+
+                            <!-- Cache operations -->
+                            <div class="viewer-dashboard-cell"
+                                 x-show="ds.dataset_type !== 'text_embeds' && ds.dataset_type !== 'image_embeds'">
+                                <h6><i class="fas fa-database me-1"></i>Cache</h6>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary py-0 px-2"
+                                            x-show="cacheCapabilities.text_embeds"
+                                            @click.stop="startCacheJob(ds.dataset_id, 'text_embeds')"
+                                            :disabled="caching || scanning"
+                                            title="Pre-compute text encoder embeddings for this dataset's captions">
+                                        <i class="fas fa-font viewer-text-xs me-1"></i>Text Embeds
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary py-0 px-2"
+                                            x-show="cacheCapabilities.vae"
+                                            @click.stop="startCacheJob(ds.dataset_id, 'vae')"
+                                            :disabled="caching || scanning"
+                                            title="Pre-compute VAE latents for this dataset's images">
+                                        <i class="fas fa-image viewer-text-xs me-1"></i>VAE Latents
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary py-0 px-2"
+                                            x-show="cacheCapabilities.conditioning_types && cacheCapabilities.conditioning_types.length > 0"
+                                            @click.stop="startCacheJob(ds.dataset_id, 'conditioning')"
+                                            :disabled="caching || scanning"
+                                            title="Pre-compute auxiliary conditioning embeddings">
+                                        <i class="fas fa-layer-group viewer-text-xs me-1"></i>Aux Embeds:
+                                        <span x-text="cacheCapabilities.conditioning_types.join(', ')"></span>
+                                    </button>
                                 </div>
                             </div>
 

@@ -63,10 +63,19 @@ window.datasetViewerComponent = function () {
         bboxModified: false,
         savingBbox: false,
 
+        // Cache job state
+        caching: false,
+        cacheError: '',
+        cacheProgress: { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 },
+        cacheCapabilities: { text_embeds: false, vae: false, conditioning_types: [] },
+        _cacheHandler: null,
+
         init() {
             this._restoreNavState();
             this.loadAllSummaries();
             this._checkActiveScan();
+            this._checkActiveCacheJob();
+            this.loadCacheCapabilities();
             this._setupSSEListener();
             this._setupConfigListener();
         },
@@ -120,8 +129,13 @@ window.datasetViewerComponent = function () {
                 const data = this._parseSSEDetail(event);
                 if (data) this._handleQueueEvent(data);
             };
+            this._cacheHandler = (event) => {
+                const data = this._parseSSEDetail(event);
+                if (data) this._handleCacheEvent(data);
+            };
             window.addEventListener('sse:dataset_scan', this._scanHandler);
             window.addEventListener('sse:dataset_scan_queue', this._queueHandler);
+            window.addEventListener('sse:dataset_cache', this._cacheHandler);
         },
 
         _teardownSSEListener() {
@@ -132,6 +146,10 @@ window.datasetViewerComponent = function () {
             if (this._queueHandler) {
                 window.removeEventListener('sse:dataset_scan_queue', this._queueHandler);
                 this._queueHandler = null;
+            }
+            if (this._cacheHandler) {
+                window.removeEventListener('sse:dataset_cache', this._cacheHandler);
+                this._cacheHandler = null;
             }
         },
 
@@ -148,6 +166,8 @@ window.datasetViewerComponent = function () {
                 this._destroyBboxCanvas();
                 this.loadAllSummaries();
                 this._checkActiveScan();
+                this._checkActiveCacheJob();
+                this.loadCacheCapabilities();
             };
             window.addEventListener('environment-changed', this._configHandler);
             document.body.addEventListener('config-changed', this._configHandler);
@@ -199,6 +219,37 @@ window.datasetViewerComponent = function () {
                 this.scanning = false;
                 this.scanProgress = { dataset_id: '', current: 0, total: 0 };
                 this.loadAllSummaries();
+            }
+        },
+
+        _handleCacheEvent(data) {
+            if (data.status === 'loading_model' || data.status === 'running') {
+                this.caching = true;
+                this.cacheError = '';
+                this.cacheProgress = {
+                    dataset_id: data.dataset_id || this.cacheProgress.dataset_id,
+                    cache_type: data.cache_type || this.cacheProgress.cache_type,
+                    stage: data.stage || '',
+                    current: data.current || 0,
+                    total: data.total || 0,
+                };
+            } else if (data.status === 'completed') {
+                this.caching = false;
+                this.cacheError = '';
+                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
+                if (window.showToast) {
+                    const label = (data.cache_type || '').replace(/_/g, ' ');
+                    window.showToast('Cache job completed: ' + label, 'success');
+                }
+            } else if (data.status === 'failed' || data.status === 'cancelled') {
+                this.caching = false;
+                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
+                if (data.error) {
+                    this.cacheError = data.error;
+                    if (window.showToast) {
+                        window.showToast('Cache job failed: ' + data.error, 'error');
+                    }
+                }
             }
         },
 
@@ -313,6 +364,68 @@ window.datasetViewerComponent = function () {
                 this.scanProgress = { dataset_id: '', current: 0, total: 0 };
             } catch (err) {
                 console.error('Error cancelling scan:', err);
+            }
+        },
+
+        // --- Cache operations ---
+
+        async loadCacheCapabilities() {
+            try {
+                const resp = await fetch('/api/datasets/cache/capabilities');
+                if (!resp.ok) return;
+                this.cacheCapabilities = await resp.json();
+            } catch (e) { /* ignore */ }
+        },
+
+        async _checkActiveCacheJob() {
+            try {
+                const resp = await fetch('/api/datasets/cache/active');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.active) {
+                    this.caching = true;
+                    this.cacheProgress = {
+                        dataset_id: data.dataset_id || '',
+                        cache_type: data.cache_type || '',
+                        stage: data.stage || '',
+                        current: data.current || 0,
+                        total: data.total || 0,
+                    };
+                }
+            } catch (e) { /* ignore */ }
+        },
+
+        async startCacheJob(datasetId, cacheType) {
+            this.caching = true;
+            this.cacheError = '';
+            this.cacheProgress = { dataset_id: datasetId, cache_type: cacheType, stage: 'Starting...', current: 0, total: 0 };
+            try {
+                const resp = await fetch('/api/datasets/cache/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dataset_id: datasetId, cache_type: cacheType }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(err.detail || 'Cache request failed');
+                }
+            } catch (err) {
+                console.error('Error starting cache job:', err);
+                this.caching = false;
+                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
+                if (window.showToast) {
+                    window.showToast(err.message, 'error');
+                }
+            }
+        },
+
+        async cancelCacheJob() {
+            try {
+                await fetch('/api/datasets/cache/cancel', { method: 'POST' });
+                this.caching = false;
+                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
+            } catch (err) {
+                console.error('Error cancelling cache job:', err);
             }
         },
 

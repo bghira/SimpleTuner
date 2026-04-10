@@ -33,6 +33,7 @@
         var errorEventListener = null;
         var datasetScanListener = null;
         var datasetScanQueueListener = null;
+        var datasetCacheListener = null;
         var callbackEventListeners = {};
 
         /**
@@ -505,6 +506,7 @@
                 eventSource.removeEventListener('error', errorEventListener);
                 eventSource.removeEventListener('dataset_scan', datasetScanListener);
                 eventSource.removeEventListener('dataset_scan_queue', datasetScanQueueListener);
+                eventSource.removeEventListener('dataset_cache', datasetCacheListener);
 
                 // Remove callback event listeners
                 CALLBACK_EVENT_TYPES.forEach(function(category) {
@@ -692,6 +694,18 @@
                     }
                 };
                 eventSource.addEventListener('dataset_scan_queue', datasetScanQueueListener);
+
+                datasetCacheListener = function(event) {
+                    lastHeartbeat = Date.now();
+                    try {
+                        var data = JSON.parse(event.data);
+                        notifyListeners('dataset_cache', data);
+                        window.dispatchEvent(new CustomEvent('sse:dataset_cache', { detail: data }));
+                    } catch (error) {
+                        console.error('Error parsing dataset cache event:', error);
+                    }
+                };
+                eventSource.addEventListener('dataset_cache', datasetCacheListener);
 
                 errorEventListener = function(event) {
                     lastHeartbeat = Date.now();
