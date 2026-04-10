@@ -291,6 +291,7 @@ class CacheJobService:
             ):
                 self._active_job.status = CacheJobStatus.CANCELLED
                 self._active_job.finished_at = time.time()
+                self._broadcast("dataset_cache", self._job_to_dict(self._active_job))
                 return True
         return False
 
@@ -328,6 +329,7 @@ class CacheJobService:
                 raise ValueError(f"Unknown cache type: {job.cache_type}")
 
             if job.status == CacheJobStatus.CANCELLED:
+                self._broadcast("dataset_cache", self._job_to_dict(job))
                 return
 
             job.status = CacheJobStatus.COMPLETED
@@ -337,6 +339,7 @@ class CacheJobService:
 
         except Exception as e:
             if job.status == CacheJobStatus.CANCELLED:
+                self._broadcast("dataset_cache", self._job_to_dict(job))
                 return
             logger.exception("Cache job failed for %s (%s)", job.dataset_id, job.cache_type)
             job.status = CacheJobStatus.FAILED
@@ -533,7 +536,17 @@ class CacheJobService:
 
         return model_cls(args, accelerator)
 
-    def _cleanup_gpu(self):
+    @staticmethod
+    def _cleanup_gpu(*objects):
+        """Delete provided objects and release GPU memory."""
+        import gc
+
+        for obj in objects:
+            try:
+                del obj
+            except Exception:
+                pass
+        gc.collect()
         try:
             import torch
 
@@ -556,6 +569,8 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         config_id = None
+        model = None
+        vae_cache = None
 
         try:
             self._check_cancelled(job)
@@ -653,6 +668,7 @@ class CacheJobService:
             StateTracker.set_accelerator(original_accelerator)
             if config_id is not None:
                 StateTracker.data_backends.pop(config_id, None)
+            del vae_cache, model
             self._cleanup_gpu()
 
     def _execute_text_embed_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
@@ -665,6 +681,8 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         config_id = None
+        model = None
+        text_cache = None
 
         try:
             self._check_cancelled(job)
@@ -754,6 +772,7 @@ class CacheJobService:
             StateTracker.set_accelerator(original_accelerator)
             if config_id is not None:
                 StateTracker.data_backends.pop(config_id, None)
+            del text_cache, model
             self._cleanup_gpu()
 
     def _execute_conditioning_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
@@ -766,6 +785,8 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         config_id = None
+        model = None
+        embed_cache = None
 
         try:
             self._check_cancelled(job)
@@ -795,7 +816,8 @@ class CacheJobService:
                 raise ValueError("No image files found in metadata cache. Run a metadata scan first.")
 
             cache_dir = self._resolve_cache_dir(
-                dataset_config.get("cache_dir_conditioning") or self._resolve_global_key(global_config, "cache_dir"),
+                dataset_config.get("cache_dir_conditioning_image_embeds")
+                or self._resolve_global_key(global_config, "cache_dir_conditioning_image_embeds"),
                 global_config,
                 dataset_config,
             )
@@ -835,13 +857,25 @@ class CacheJobService:
             if pending:
                 job.total = len(pending)
                 self._broadcast("dataset_cache", self._job_to_dict(job))
-                embed_cache.process_files(pending)
+
+                _last_broadcast = [0.0]
+
+                def _cond_progress(current, total):
+                    job.current = current
+                    job.total = total
+                    now = time.time()
+                    if now - _last_broadcast[0] >= 1.0 or current >= total:
+                        _last_broadcast[0] = now
+                        self._broadcast("dataset_cache", self._job_to_dict(job))
+
+                embed_cache.process_files(pending, progress_callback=_cond_progress)
 
         finally:
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
             if config_id is not None:
                 StateTracker.data_backends.pop(config_id, None)
+            del embed_cache, model
             self._cleanup_gpu()
 
 

@@ -421,11 +421,19 @@ window.datasetViewerComponent = function () {
 
         async cancelCacheJob() {
             try {
-                await fetch('/api/datasets/cache/cancel', { method: 'POST' });
-                this.caching = false;
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
+                const resp = await fetch('/api/datasets/cache/cancel', { method: 'POST' });
+                const data = await resp.json().catch(() => ({}));
+                if (data.cancelled) {
+                    this.caching = false;
+                    this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
+                } else if (window.showToast) {
+                    window.showToast('No active cache job to cancel', 'warning');
+                }
             } catch (err) {
                 console.error('Error cancelling cache job:', err);
+                if (window.showToast) {
+                    window.showToast('Failed to cancel cache job', 'error');
+                }
             }
         },
 

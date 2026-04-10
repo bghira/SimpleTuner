@@ -282,12 +282,11 @@
                                     </button>
                                     <button type="button"
                                             class="btn btn-sm btn-outline-primary py-0 px-2"
-                                            x-show="cacheCapabilities.conditioning_types && cacheCapabilities.conditioning_types.length > 0"
+                                            x-show="ds.conditioning_data && ds.conditioning_data.length > 0"
                                             @click.stop="startCacheJob(ds.dataset_id, 'conditioning')"
                                             :disabled="caching || scanning"
-                                            title="Pre-compute auxiliary conditioning embeddings">
-                                        <i class="fas fa-layer-group viewer-text-xs me-1"></i>Aux Embeds:
-                                        <span x-text="cacheCapabilities.conditioning_types.join(', ')"></span>
+                                            title="Pre-compute auxiliary conditioning embeddings for this dataset's linked conditioning data">
+                                        <i class="fas fa-layer-group viewer-text-xs me-1"></i>Aux Embeds
                                     </button>
                                 </div>
                             </div>

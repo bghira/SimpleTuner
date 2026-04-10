@@ -4,7 +4,7 @@ and cache operations (text embeds, VAE, conditioning)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, conlist
@@ -454,7 +454,7 @@ async def cancel_scan(_user: User = Depends(get_current_user)) -> Dict[str, Any]
 
 class CacheStartRequest(BaseModel):
     dataset_id: str
-    cache_type: str  # "text_embeds", "vae", or "conditioning"
+    cache_type: Literal["text_embeds", "vae", "conditioning"]
 
 
 @router.get("/cache/capabilities")

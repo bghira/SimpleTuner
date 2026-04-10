@@ -1515,7 +1515,7 @@ class VAECache(WebhookMixin):
             shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
 
-        total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
+        total_count = sum(len(sublist) for sublist in aspect_bucket_cache.values())
         overall_processed = 0
 
         if self.webhook_handler is not None:

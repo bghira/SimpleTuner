@@ -188,6 +188,22 @@ class TestCacheJobManagement(unittest.TestCase):
         self.assertEqual(job.status, CacheJobStatus.CANCELLED)
         self.assertIsNotNone(job.finished_at)
 
+    def test_cancel_broadcasts_cancelled_status(self):
+        mock_fn = MagicMock()
+        service = CacheJobService(broadcast_fn=mock_fn)
+        job = CacheJob(
+            job_id="abc",
+            dataset_id="ds1",
+            cache_type="vae",
+            status=CacheJobStatus.RUNNING,
+        )
+        CacheJobService._active_job = job
+        service.cancel()
+        mock_fn.assert_called_once()
+        call_kwargs = mock_fn.call_args
+        self.assertEqual(call_kwargs.kwargs["event_type"], "dataset_cache")
+        self.assertEqual(call_kwargs.kwargs["data"]["status"], "cancelled")
+
     def test_get_active_status_when_running(self):
         job = CacheJob(
             job_id="abc",

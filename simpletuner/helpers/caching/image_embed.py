@@ -1,7 +1,7 @@
 import logging
 import os
 from hashlib import sha256
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -271,12 +271,18 @@ class ImageEmbedCache(WebhookMixin):
         if isinstance(current_cache, dict):
             current_cache[cache_path] = True
 
-    def process_files(self, filepaths: List[str], captions: Optional[List[Optional[str]]] = None) -> None:
+    def process_files(
+        self,
+        filepaths: List[str],
+        captions: Optional[List[Optional[str]]] = None,
+        progress_callback: Optional[Callable] = None,
+    ) -> None:
         if not filepaths:
             self.debug_log("process_files called with empty filepaths list")
             return
-        self.debug_log(f"process_files processing {len(filepaths)} files in batches of {self.embed_batch_size}")
-        for idx in range(0, len(filepaths), self.embed_batch_size):
+        total = len(filepaths)
+        self.debug_log(f"process_files processing {total} files in batches of {self.embed_batch_size}")
+        for idx in range(0, total, self.embed_batch_size):
             batch_paths = filepaths[idx : idx + self.embed_batch_size]
             batch_captions = None
             if captions is not None:
@@ -286,6 +292,8 @@ class ImageEmbedCache(WebhookMixin):
             self.debug_log(f"Encoded {len(valid_paths)} valid embeddings from batch")
             for fp, embed in zip(valid_paths, embeddings):
                 self._write_embed(fp, embed)
+            if progress_callback is not None:
+                progress_callback(min(idx + len(batch_paths), total), total)
         if self.cache_dir:
             StateTracker.set_conditioning_image_embed_files(
                 self.cache_data_backend.list_files(
