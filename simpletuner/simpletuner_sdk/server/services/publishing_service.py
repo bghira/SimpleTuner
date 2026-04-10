@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import status
-from huggingface_hub import HfApi, HfFolder
+from huggingface_hub import HfApi, get_token as hf_get_token, login as hf_login, logout as hf_logout
 
 
 class PublishingServiceError(Exception):
@@ -56,8 +56,8 @@ class PublishingService:
             Dictionary with validation status and user information.
         """
         try:
-            # Try to get token from HfFolder (standard location)
-            token = HfFolder.get_token()
+            # Try to get token from huggingface_hub
+            token = hf_get_token()
 
             # If not found, try direct file read
             if not token:
@@ -115,8 +115,8 @@ class PublishingService:
             token_path.write_text(token.strip())
             token_path.chmod(0o600)  # Secure permissions
 
-            # Also save via HfFolder for compatibility
-            HfFolder.save_token(token.strip())
+            # Also save via huggingface_hub login for compatibility
+            hf_login(token=token.strip(), add_to_git_credential=False)
 
             return {
                 "valid": True,
@@ -145,9 +145,9 @@ class PublishingService:
             if token_path.exists():
                 token_path.unlink()
 
-            # Also delete via HfFolder for compatibility
+            # Also delete via huggingface_hub logout for compatibility
             try:
-                HfFolder.delete_token()
+                hf_logout()
             except Exception:
                 pass  # May not exist, that's ok
 
@@ -176,7 +176,7 @@ class PublishingService:
             )
 
         try:
-            token = HfFolder.get_token()
+            token = hf_get_token()
             if not token:
                 token_path = Path.home() / ".cache" / "huggingface" / "token"
                 if token_path.exists():
@@ -227,7 +227,7 @@ class PublishingService:
             return self._orgs_cache
 
         try:
-            token = HfFolder.get_token()
+            token = hf_get_token()
             if not token:
                 token_path = Path.home() / ".cache" / "huggingface" / "token"
                 if token_path.exists():

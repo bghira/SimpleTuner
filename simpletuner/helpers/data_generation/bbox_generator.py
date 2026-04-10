@@ -147,7 +147,7 @@ class BboxGenerator:
                 do_sample=False,
                 num_beams=3,
             )
-        generated_text = self._processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+        generated_text = self._processor.decode(generated_ids, skip_special_tokens=False)[0]
         return self._processor.post_process_generation(generated_text, task=task, image_size=(image.width, image.height))
 
     def _detect_batch(self, batch_paths: list[Path]) -> list[list[dict]]:

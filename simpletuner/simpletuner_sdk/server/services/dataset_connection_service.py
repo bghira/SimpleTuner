@@ -114,7 +114,7 @@ class DatasetConnectionService:
         split = dataset.get("split")
         revision = dataset.get("revision")
         streaming = bool(dataset.get("streaming"))
-        auth_token = dataset.get("auth_token") or dataset.get("use_auth_token")
+        auth_token = dataset.get("auth_token") or dataset.get("token")
 
         try:
             details = test_huggingface_dataset(
@@ -123,7 +123,7 @@ class DatasetConnectionService:
                 split=split,
                 revision=revision,
                 streaming=streaming,
-                use_auth_token=auth_token,
+                token=auth_token,
                 sample_count=1,
             )
         except ImportError as exc:

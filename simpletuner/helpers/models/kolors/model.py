@@ -152,7 +152,7 @@ class Kolors(ImageModelFoundation):
                 if untruncated_ids.shape[-1] > tokenizer.model_max_length and not torch.equal(
                     text_inputs.input_ids, untruncated_ids
                 ):
-                    removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
+                    removed_text = tokenizer.decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
                     if not emitted_warning:
                         # Only print this once. It's a bit spammy otherwise.
                         emitted_warning = True

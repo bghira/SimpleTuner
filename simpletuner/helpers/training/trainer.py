@@ -6468,9 +6468,9 @@ def run_trainer_job(config):
             if token:
                 return token
         try:
-            from huggingface_hub import HfFolder
+            from huggingface_hub import get_token as hf_get_token
 
-            token = HfFolder.get_token()
+            token = hf_get_token()
             if token:
                 return token
         except Exception:

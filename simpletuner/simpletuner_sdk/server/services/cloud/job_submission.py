@@ -521,9 +521,9 @@ class JobSubmissionService:
             if token:
                 return token
 
-        from huggingface_hub import HfFolder
+        from huggingface_hub import get_token as hf_get_token
 
-        token = HfFolder.get_token()
+        token = hf_get_token()
         if token:
             return token
 

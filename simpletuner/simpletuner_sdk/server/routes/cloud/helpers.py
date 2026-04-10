@@ -204,9 +204,9 @@ def get_local_upload_dir() -> Path:
 def get_hf_token() -> Optional[str]:
     """Read HF token from local cache."""
     try:
-        from huggingface_hub import HfFolder
+        from huggingface_hub import get_token as hf_get_token
 
-        token = HfFolder.get_token()
+        token = hf_get_token()
         if token:
             return token
     except ImportError:
