@@ -333,6 +333,14 @@ class DatasetScanService:
         force_rescan: bool = False,
     ) -> str:
         """Queue all datasets for sequential scanning. Returns queue_id."""
+        try:
+            from .cache_job_service import get_cache_service
+
+            if get_cache_service().get_active_status():
+                raise RuntimeError("A cache job is in progress. Wait for it to finish first.")
+        except ImportError:
+            pass
+
         with self._lock:
             if self._active_job and self._active_job.status == ScanStatus.RUNNING:
                 raise RuntimeError("A scan is already in progress.")

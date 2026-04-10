@@ -379,7 +379,7 @@ class CacheJobService:
             return None
         from simpletuner.helpers.configuration.template_vars import resolve_string_placeholders
 
-        output_dir = global_config.get("output_dir", "")
+        output_dir = CacheJobService._resolve_global_key(global_config, "output_dir")
         if not output_dir:
             output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
         from .dataset_scan_service import DatasetScanService
@@ -654,6 +654,7 @@ class CacheJobService:
             _last_broadcast = [0.0]
 
             def _vae_progress(current, total):
+                self._check_cancelled(job)
                 job.current = current
                 job.total = total
                 now = time.time()
@@ -751,6 +752,7 @@ class CacheJobService:
             _last_broadcast = [0.0]
 
             def _text_progress(current, total):
+                self._check_cancelled(job)
                 job.current = current
                 job.total = total
                 now = time.time()
@@ -861,6 +863,7 @@ class CacheJobService:
                 _last_broadcast = [0.0]
 
                 def _cond_progress(current, total):
+                    self._check_cancelled(job)
                     job.current = current
                     job.total = total
                     now = time.time()

@@ -244,11 +244,9 @@ window.datasetViewerComponent = function () {
             } else if (data.status === 'failed' || data.status === 'cancelled') {
                 this.caching = false;
                 this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                if (data.error) {
-                    this.cacheError = data.error;
-                    if (window.showToast) {
-                        window.showToast('Cache job failed: ' + data.error, 'error');
-                    }
+                this.cacheError = data.error || '';
+                if (data.error && window.showToast) {
+                    window.showToast('Cache job failed: ' + data.error, 'error');
                 }
             }
         },
@@ -422,6 +420,10 @@ window.datasetViewerComponent = function () {
         async cancelCacheJob() {
             try {
                 const resp = await fetch('/api/datasets/cache/cancel', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+                    throw new Error(err.detail || 'Cancel request failed');
+                }
                 const data = await resp.json().catch(() => ({}));
                 if (data.cancelled) {
                     this.caching = false;
@@ -432,7 +434,7 @@ window.datasetViewerComponent = function () {
             } catch (err) {
                 console.error('Error cancelling cache job:', err);
                 if (window.showToast) {
-                    window.showToast('Failed to cancel cache job', 'error');
+                    window.showToast('Failed to cancel cache job: ' + err.message, 'error');
                 }
             }
         },

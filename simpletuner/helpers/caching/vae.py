@@ -1510,9 +1510,9 @@ class VAECache(WebhookMixin):
         aspect_bucket_cache = self.metadata_backend.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
+        shuffled_keys = list(aspect_bucket_cache.keys())
         do_shuffle = os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true"
         if do_shuffle:
-            shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
 
         total_count = sum(len(sublist) for sublist in aspect_bucket_cache.values())
