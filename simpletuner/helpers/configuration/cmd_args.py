@@ -1233,8 +1233,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             strength = float(strength_value)
         except (TypeError, ValueError):
             raise ValueError(f"Invalid --validation_adapter_strength value: {strength_value}") from None
-        if strength <= 0:
-            raise ValueError("--validation_adapter_strength must be greater than 0.")
+        if strength == 0:
+            raise ValueError("--validation_adapter_strength must not be 0.")
         args.validation_adapter_strength = strength
 
     mode_value = getattr(args, "validation_adapter_mode", None)
