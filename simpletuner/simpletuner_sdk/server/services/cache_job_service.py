@@ -228,7 +228,11 @@ class CacheJobService:
                 count = asyncio.run(_count())
             return count > 0
         except Exception:
-            return False
+            logger.exception(
+                "Failed to determine whether a training job is running; "
+                "assuming training may be active and blocking cache job start."
+            )
+            return True
 
     def start_cache_job(
         self,

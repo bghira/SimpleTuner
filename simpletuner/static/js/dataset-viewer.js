@@ -409,10 +409,11 @@ window.datasetViewerComponent = function () {
                 }
             } catch (err) {
                 console.error('Error starting cache job:', err);
+                this.cacheError = err.message || 'Cache request failed';
                 this.caching = false;
                 this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
                 if (window.showToast) {
-                    window.showToast(err.message, 'error');
+                    window.showToast(this.cacheError, 'error');
                 }
             }
         },

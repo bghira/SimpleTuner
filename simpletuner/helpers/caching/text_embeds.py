@@ -510,7 +510,7 @@ class TextEmbeddingCache(WebhookMixin):
             ):
                 current_idx += 1
                 if progress_callback is not None:
-                    progress_callback(current_idx, len(local_records))
+                    progress_callback(current_idx + 1, len(local_records))
                 filename = self.hash_prompt_with_path(record)
                 prompt = record.get("prompt")
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}, records: {record}"
