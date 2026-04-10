@@ -81,10 +81,27 @@ class TrainingServiceTests(unittest.TestCase):
         self._saved_state = copy.deepcopy(training_service.APIState.state)
         self._save_state_patch = patch.object(training_service.APIState, "save_state", return_value=None)
         self._save_state_patch.start()
+        # Mock cache/scan service checks so stale singleton state doesn't block training
+        mock_cache_svc = MagicMock()
+        mock_cache_svc.get_active_status.return_value = None
+        self._cache_svc_patch = patch(
+            "simpletuner.simpletuner_sdk.server.services.cache_job_service.get_cache_service",
+            return_value=mock_cache_svc,
+        )
+        self._cache_svc_patch.start()
+        mock_scan_svc = MagicMock()
+        mock_scan_svc.get_active_status.return_value = None
+        self._scan_svc_patch = patch(
+            "simpletuner.simpletuner_sdk.server.services.dataset_scan_service.get_scan_service",
+            return_value=mock_scan_svc,
+        )
+        self._scan_svc_patch.start()
 
     def tearDown(self) -> None:
         training_service.APIState.state = self._saved_state
         self._save_state_patch.stop()
+        self._cache_svc_patch.stop()
+        self._scan_svc_patch.stop()
 
     def _build_bundle(
         self,

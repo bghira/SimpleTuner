@@ -868,6 +868,26 @@ class DatasetViewerService:
         cache_dir = self.project_root / self.THUMBNAIL_CACHE_DIR / dataset_id
         return cache_dir / f"{path_hash}.jpg"
 
+    @staticmethod
+    def _ensure_pil_image(data) -> Optional[Image.Image]:
+        """Convert backend read_image() result to a PIL Image.
+
+        Some backends (e.g. HuggingFace video) return numpy arrays instead of
+        PIL Images.  For multi-frame arrays the first frame is extracted.
+        """
+        if data is None:
+            return None
+        if isinstance(data, Image.Image):
+            return data
+        if isinstance(data, np.ndarray):
+            try:
+                if data.ndim == 4:
+                    data = data[0]
+                return Image.fromarray(data)
+            except Exception as e:
+                logger.warning("Failed to convert numpy array to PIL Image: %s", e)
+        return None
+
     def _save_thumbnail_to_cache(self, cache_path: Path, img: Image.Image, max_size: int = 256) -> None:
         """Save a PIL Image as a JPEG thumbnail to the cache directory."""
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -916,11 +936,15 @@ class DatasetViewerService:
             return None
 
         try:
-            pil_image = data_backend.read_image(file_path)
+            image_data = data_backend.read_image(file_path)
         except Exception as e:
             logger.warning("Failed to read image %s from %s: %s", file_path, dataset_id, e)
             return None
 
+        if image_data is None:
+            return None
+
+        pil_image = self._ensure_pil_image(image_data)
         if pil_image is None:
             return None
 
@@ -967,7 +991,8 @@ class DatasetViewerService:
 
         try:
             data_backend = self._get_or_create_data_backend(dataset_config)
-            pil_image = data_backend.read_image(file_path)
+            image_data = data_backend.read_image(file_path)
+            pil_image = self._ensure_pil_image(image_data)
             if pil_image is not None:
                 self._save_thumbnail_to_cache(cached_path, pil_image)
             return pil_image

@@ -1,13 +1,15 @@
 """Dataset viewer and scan routes - browsing, thumbnails, caption validation,
-filtering analysis, conditioning visualization, media preview, and standalone scanning."""
+filtering analysis, conditioning visualization, media preview, standalone scanning,
+and cache operations (text embeds, VAE, conditioning)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, conlist
 
+from simpletuner.simpletuner_sdk.server.services.cache_job_service import get_cache_service
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import get_scan_service
@@ -443,3 +445,69 @@ async def get_scan_queue_status(queue_id: str, _user: User = Depends(get_current
 async def cancel_scan(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Cancel the active scan and remaining queue."""
     return {"cancelled": get_scan_service().cancel_scan()}
+
+
+# ---------------------------------------------------------------------------
+# Cache operations (text embeds, VAE, conditioning)
+# ---------------------------------------------------------------------------
+
+
+class CacheStartRequest(BaseModel):
+    dataset_id: str
+    cache_type: Literal["text_embeds", "vae", "conditioning"]
+
+
+@router.get("/cache/capabilities")
+async def get_cache_capabilities(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Available cache types based on model family and dataset configuration."""
+    global_config = _get_global_config()
+    model_family = global_config.get("model_family", "")
+    try:
+        datasets = _load_plan()
+    except ValueError:
+        datasets = []
+
+    from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
+
+    return CacheJobService.get_capabilities(model_family, datasets, global_config)
+
+
+@router.post("/cache/start")
+async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Start a background cache job for a dataset."""
+    config = _require_dataset_config(request.dataset_id)
+    global_config = _get_global_config()
+    try:
+        job_id = get_cache_service().start_cache_job(
+            request.dataset_id,
+            request.cache_type,
+            config,
+            global_config,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"job_id": job_id, "dataset_id": request.dataset_id, "cache_type": request.cache_type}
+
+
+@router.get("/cache/active")
+async def get_active_cache_job(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Current active cache job status, if any."""
+    result = get_cache_service().get_active_status()
+    if result is None:
+        return {"active": False}
+    return {"active": True, **result}
+
+
+@router.get("/cache/status")
+async def get_cache_job_status(job_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Status of a cache job."""
+    result = get_cache_service().get_job_status(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Cache job '{job_id}' not found")
+    return result
+
+
+@router.post("/cache/cancel")
+async def cancel_cache_job(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Cancel the active cache job."""
+    return {"cancelled": get_cache_service().cancel()}
