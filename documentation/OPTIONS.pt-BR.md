@@ -980,7 +980,7 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 ### `--scheduled_sampling_sampler`
 
 - **O que**: Solver usado para os passos de rollout.
-- **Opcoes**: `unipc`, `euler`, `dpm`, `rk4`.
+- **Opcoes**: `unipc`, `euler`, `dpm`.
 - **Padrao**: `unipc`.
 
 ### `--scheduled_sampling_order`

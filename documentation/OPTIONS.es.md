@@ -984,7 +984,7 @@ Consulta la guía [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscripti
 ### `--scheduled_sampling_sampler`
 
 - **Qué**: El solver usado para los pasos de generación de rollout.
-- **Opciones**: `unipc`, `euler`, `dpm`, `rk4`.
+- **Opciones**: `unipc`, `euler`, `dpm`.
 - **Predeterminado**: `unipc`.
 
 ### `--scheduled_sampling_order`

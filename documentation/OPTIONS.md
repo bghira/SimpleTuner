@@ -989,7 +989,7 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 ### `--scheduled_sampling_sampler`
 
 - **What**: The solver used for the rollout generation steps.
-- **Choices**: `unipc`, `euler`, `dpm`, `rk4`.
+- **Choices**: `unipc`, `euler`, `dpm`.
 - **Default**: `unipc`.
 
 ### `--scheduled_sampling_order`

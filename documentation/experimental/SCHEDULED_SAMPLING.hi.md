@@ -58,7 +58,7 @@
 #### `scheduled_sampling_sampler` (String)
 **डिफ़ॉल्ट:** `unipc`
 रोलआउट जेनरेशन स्टेप्स के लिए उपयोग किया गया solver।
-*   **विकल्प:** `unipc` (अनुशंसित, तेज़ और सटीक), `euler`, `dpm`, `rk4`।
+*   **विकल्प:** `unipc` (अनुशंसित, तेज़ और सटीक), `euler`, `dpm`।
 *   इन छोटे sampling bursts के लिए `unipc` आमतौर पर गति और सटीकता का सर्वश्रेष्ठ संतुलन है।
 
 ### Flow Matching + ReflexFlow
