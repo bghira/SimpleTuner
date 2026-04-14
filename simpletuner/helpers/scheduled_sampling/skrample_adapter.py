@@ -56,9 +56,7 @@ def make_sampler(name: str, order: int):
         return structured.DPM(order=max_order)
     if name == "euler" and hasattr(structured, "Euler"):
         return structured.Euler()
-    if name == "rk4" and hasattr(structured, "Euler"):
-        return structured.Euler()
-    if hasattr(structured, "Euler"):
-        return structured.Euler()
+    if name == "rk4":
+        raise ImportError("Scheduled sampling sampler 'rk4' is not available in skrample 0.6.0 structured samplers.")
 
-    raise ImportError("No compatible skrample sampler implementations found.")
+    raise ValueError(f"Unsupported scheduled sampling sampler: {name}")

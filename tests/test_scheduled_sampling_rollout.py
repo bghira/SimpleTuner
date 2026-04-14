@@ -11,7 +11,7 @@ from simpletuner.diff2flow.bridge import DiffusionToFlowBridge
 from simpletuner.helpers.models.common import ModelFoundation, PredictionTypes
 from simpletuner.helpers.scheduled_sampling.plan import ScheduledSamplingPlan, build_rollout_schedule
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
-from simpletuner.helpers.scheduled_sampling.skrample_adapter import make_sigma_schedule_from_ddpm
+from simpletuner.helpers.scheduled_sampling.skrample_adapter import make_sampler, make_sigma_schedule_from_ddpm
 
 
 class _DummySampler:
@@ -97,6 +97,14 @@ class ScheduledSamplingRolloutTests(unittest.TestCase):
 
         assert_close(torch.tensor(point.sigma), torch.sqrt(1.0 - alpha_bar), atol=1e-6, rtol=1e-6)
         assert_close(torch.tensor(point.alpha), torch.sqrt(alpha_bar), atol=1e-6, rtol=1e-6)
+
+    def test_make_sampler_rejects_unknown_name(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported scheduled sampling sampler: bogus"):
+            make_sampler("bogus", 2)
+
+    def test_make_sampler_rejects_rk4_without_structured_support(self):
+        with self.assertRaisesRegex(ImportError, "sampler 'rk4' is not available"):
+            make_sampler("rk4", 4)
 
     @patch("simpletuner.helpers.scheduled_sampling.rollout.make_sampler", return_value=_DummySampler())
     def test_apply_scheduled_sampling_rollout_updates_noisy_latents(self, _sampler_ctor):
