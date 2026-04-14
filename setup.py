@@ -291,7 +291,7 @@ base_deps = [
     "boto3>=1.35.83",
     "pandas>=2.2.3",
     "botocore>=1.35.83",
-    "skrample>=0.5.0",
+    "skrample==0.6.0",
     "urllib3<1.27",
     "torchsde>=0.2.6",
     "torchmetrics>=1.1.1",

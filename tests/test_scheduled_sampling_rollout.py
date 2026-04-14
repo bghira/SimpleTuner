@@ -11,12 +11,13 @@ from simpletuner.diff2flow.bridge import DiffusionToFlowBridge
 from simpletuner.helpers.models.common import ModelFoundation, PredictionTypes
 from simpletuner.helpers.scheduled_sampling.plan import ScheduledSamplingPlan, build_rollout_schedule
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
+from simpletuner.helpers.scheduled_sampling.skrample_adapter import make_sigma_schedule_from_ddpm
 
 
 class _DummySampler:
     require_previous = 0
 
-    def sample(self, current, x_pred, *, step, schedule, sigma_transform, noise, previous):
+    def sample(self, current, x_pred, *, step, model_transform, schedule, noise, previous):
         # Return the provided x_pred as the next state; sufficient to validate rollout wiring.
         return types.SimpleNamespace(final=x_pred)
 
@@ -86,6 +87,16 @@ class ScheduledSamplingRolloutTests(unittest.TestCase):
         self.assertTrue(torch.all(plan.source_timesteps >= base_ts))
         self.assertTrue(torch.all(plan.source_timesteps <= base_ts + 2))
         self.assertTrue(torch.equal(plan.rollout_steps, plan.source_timesteps - base_ts))
+
+    def test_make_sigma_schedule_from_ddpm_matches_scheduler_alphas(self):
+        scheduler = DDPMScheduler(num_train_timesteps=6)
+        schedule = make_sigma_schedule_from_ddpm(scheduler)
+
+        point = schedule.ipoint(2.0 / 6.0)
+        alpha_bar = scheduler.alphas_cumprod[2]
+
+        assert_close(torch.tensor(point.sigma), torch.sqrt(1.0 - alpha_bar), atol=1e-6, rtol=1e-6)
+        assert_close(torch.tensor(point.alpha), torch.sqrt(alpha_bar), atol=1e-6, rtol=1e-6)
 
     @patch("simpletuner.helpers.scheduled_sampling.rollout.make_sampler", return_value=_DummySampler())
     def test_apply_scheduled_sampling_rollout_updates_noisy_latents(self, _sampler_ctor):
