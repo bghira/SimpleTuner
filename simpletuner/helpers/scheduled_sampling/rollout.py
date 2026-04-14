@@ -1,10 +1,13 @@
 from typing import Any
 
 import torch
-from skrample import common as sk_common
 
 from simpletuner.helpers.models.common import PredictionTypes
-from simpletuner.helpers.scheduled_sampling.skrample_adapter import make_sampler, make_sigma_schedule_from_ddpm
+from simpletuner.helpers.scheduled_sampling.skrample_adapter import (
+    make_data_prediction_transform,
+    make_sampler,
+    make_sigma_schedule_from_ddpm,
+)
 
 
 def _slice_batch_for_index(batch: dict[str, Any], idx: int, device: torch.device) -> dict[str, Any]:
@@ -32,21 +35,19 @@ def _slice_batch_for_index(batch: dict[str, Any], idx: int, device: torch.device
 def _prediction_to_x(
     noisy_latents: torch.Tensor,
     model_pred: torch.Tensor,
-    sigma: float,
-    sigma_transform,
+    point,
     prediction_type: PredictionTypes,
 ) -> torch.Tensor:
     """
     Convert model prediction (eps or v) to a denoised sample x0 compatible with Skrample samplers.
     """
-    sigma_u, sigma_v = sigma_transform(float(sigma))
-    sigma_u = torch.as_tensor(sigma_u, device=noisy_latents.device, dtype=noisy_latents.dtype)
-    sigma_v = torch.as_tensor(sigma_v, device=noisy_latents.device, dtype=noisy_latents.dtype)
+    sigma = torch.as_tensor(point.sigma, device=noisy_latents.device, dtype=noisy_latents.dtype)
+    alpha = torch.as_tensor(point.alpha, device=noisy_latents.device, dtype=noisy_latents.dtype)
 
     if prediction_type is PredictionTypes.EPSILON:
-        return (noisy_latents - sigma_u * model_pred) / sigma_v
+        return (noisy_latents - sigma * model_pred) / alpha
     if prediction_type is PredictionTypes.V_PREDICTION:
-        return sigma_v * noisy_latents - sigma_u * model_pred
+        return alpha * noisy_latents - sigma * model_pred
     return model_pred
 
 
@@ -221,18 +222,14 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
         return prepared_batch
 
     try:
-        schedule, sigma_transform = make_sigma_schedule_from_ddpm(noise_schedule)
+        schedule = make_sigma_schedule_from_ddpm(noise_schedule)
     except Exception:
         return prepared_batch
 
     sampler_name = getattr(config, "scheduled_sampling_sampler", "unipc")
     sampler_order = getattr(config, "scheduled_sampling_order", 2)
     sampler = make_sampler(sampler_name, sampler_order)
-
-    expects_pair_schedule = getattr(sampler, "_expects_pair_schedule", True)
-    sigma_schedule = schedule
-    if not expects_pair_schedule and hasattr(schedule, "ndim") and getattr(schedule, "ndim", 1) > 1:
-        sigma_schedule = schedule[:, 1]
+    model_transform = make_data_prediction_transform()
 
     device = prepared_batch["noisy_latents"].device
     dtype = prepared_batch["noisy_latents"].dtype
@@ -247,7 +244,10 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
     new_timesteps = prepared_batch["timesteps"].clone()
 
     bsz = latents.shape[0]
-    schedule_len = len(sigma_schedule)
+    schedule_len = len(getattr(noise_schedule, "alphas_cumprod", []))
+    if schedule_len <= 0:
+        return prepared_batch
+
     # Track previous samples per batch for multistep samplers
     prev_cache: list[list] = [[] for _ in range(bsz)]
     for i in range(bsz):
@@ -272,7 +272,10 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
         for t in range(source_t, target_t, -1):
             if t <= 0:
                 break
-            sigma = sigma_schedule[t][1] if expects_pair_schedule else sigma_schedule[t]
+            next_t = t - 1
+            step = (float(t) / float(schedule_len), float(next_t) / float(schedule_len))
+            point = schedule.ipoint(step[0])
+
             # Build a sliced batch for this sample/timestep
             mini_batch = _slice_batch_for_index(prepared_batch, i, device)
             mini_batch["noisy_latents"] = current
@@ -292,13 +295,13 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
             else:
                 model_pred = model_out
 
-            x_pred = _prediction_to_x(current, model_pred, sigma, sigma_transform, model.PREDICTION_TYPE)
+            x_pred = _prediction_to_x(current, model_pred, point, model.PREDICTION_TYPE)
             sk_result = sampler.sample(
                 current,
                 x_pred,
-                step=t,
+                step=step,
+                model_transform=model_transform,
                 schedule=schedule,
-                sigma_transform=sigma_transform,
                 noise=None,
                 previous=tuple(prev_samples),
             )

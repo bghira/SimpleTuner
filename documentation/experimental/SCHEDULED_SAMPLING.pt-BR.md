@@ -58,7 +58,7 @@ Se definido, a probabilidade sobe linearmente de `scheduled_sampling_prob_start`
 #### `scheduled_sampling_sampler` (String)
 **Padrao:** `unipc`
 O solver usado para os steps de rollout.
-*   **Opcoes:** `unipc` (recomendado, rapido e preciso), `euler`, `dpm`, `rk4`.
+*   **Opcoes:** `unipc` (recomendado, rapido e preciso), `euler`, `dpm`.
 *   `unipc` e geralmente o melhor trade-off entre velocidade e precisao para esses pequenos bursts de amostragem.
 
 ### Flow Matching + ReflexFlow

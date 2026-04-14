@@ -58,7 +58,7 @@ Si se configura, la probabilidad subirá linealmente desde `scheduled_sampling_p
 #### `scheduled_sampling_sampler` (String)
 **Default:** `unipc`
 El solver usado para los pasos de generación del rollout.
-*   **Opciones:** `unipc` (recomendado, rápido y preciso), `euler`, `dpm`, `rk4`.
+*   **Opciones:** `unipc` (recomendado, rápido y preciso), `euler`, `dpm`.
 *   `unipc` suele ser el mejor equilibrio entre velocidad y precisión para estas ráfagas cortas de sampling.
 
 ### Flow Matching + ReflexFlow

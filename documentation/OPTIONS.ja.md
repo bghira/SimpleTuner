@@ -986,7 +986,7 @@ SimpleTunerは、コンディショニング入力（参照画像、制御信号
 ### `--scheduled_sampling_sampler`
 
 - **内容**: ロールアウト生成ステップに使用するソルバ。
-- **選択肢**: `unipc`, `euler`, `dpm`, `rk4`。
+- **選択肢**: `unipc`, `euler`, `dpm`。
 - **既定**: `unipc`。
 
 ### `--scheduled_sampling_order`

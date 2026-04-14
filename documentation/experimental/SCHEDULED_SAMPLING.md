@@ -58,7 +58,7 @@ If set, the probability will linearly ramp from `scheduled_sampling_prob_start` 
 #### `scheduled_sampling_sampler` (String)
 **Default:** `unipc`
 The solver used for the rollout generation steps.
-*   **Choices:** `unipc` (recommended, fast & accurate), `euler`, `dpm`, `rk4`.
+*   **Choices:** `unipc` (recommended, fast & accurate), `euler`, `dpm`.
 *   `unipc` is generally the best trade-off between speed and accuracy for these short sampling bursts.
 
 ### Flow Matching + ReflexFlow
