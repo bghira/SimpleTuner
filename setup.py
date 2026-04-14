@@ -17,7 +17,7 @@ def run_command(cmd):
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         return result.returncode == 0
-    except:
+    except Exception:
         return False
 
 
@@ -54,7 +54,7 @@ def get_version():
             for line in f:
                 if line.startswith("__version__"):
                     return line.split("=")[1].strip().strip('"').strip("'")
-    except:
+    except Exception:
         pass
     return "3.0.0"
 
@@ -379,7 +379,7 @@ if not _is_building_dist:
 try:
     with open("README.md", "r", encoding="utf-8") as fh:
         long_description = fh.read()
-except:
+except Exception:
     long_description = "Stable Diffusion 2.x and XL tuner."
 
 setup(
