@@ -20,7 +20,6 @@ import json
 from typing import Callable, List, Optional, Union
 
 import torch
-from diffusers import AutoencoderKLFlux2
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
@@ -29,6 +28,7 @@ from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from simpletuner.helpers.models.ernie.pipeline_output import ErnieImagePipelineOutput
 from simpletuner.helpers.models.ernie.transformer import ErnieImageTransformer2DModel
+from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 
 
 class ErnieImagePipeline(DiffusionPipeline):

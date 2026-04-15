@@ -4,7 +4,6 @@ import os
 from typing import List, Optional
 
 import torch
-from diffusers import AutoencoderKLFlux2
 from huggingface_hub import hf_hub_download
 from transformers import AutoModel, Mistral3Config, PreTrainedTokenizerFast
 from transformers.utils import ContextManagers
@@ -12,6 +11,7 @@ from transformers.utils import ContextManagers
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.ernie.pipeline import ErnieImagePipeline
 from simpletuner.helpers.models.ernie.transformer import ErnieImageTransformer2DModel
+from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.tae.types import Flux2TAESpec
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
