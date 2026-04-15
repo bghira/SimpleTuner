@@ -4,11 +4,11 @@ from typing import Any, Dict, List, Optional
 import torch
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.loaders import peft as diffusers_peft
-from diffusers.models.transformers.transformer_ernie_image import (
+
+from simpletuner.helpers.models.ernie.transformer_diffusers import (
     ErnieImageTransformer2DModel as DiffusersErnieImageTransformer2DModel,
 )
-from diffusers.models.transformers.transformer_ernie_image import ErnieImageTransformer2DModelOutput
-
+from simpletuner.helpers.models.ernie.transformer_diffusers import ErnieImageTransformer2DModelOutput
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.getLogger(__name__)
