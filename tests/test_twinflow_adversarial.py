@@ -94,8 +94,8 @@ class TwinFlowAdversarialTest(unittest.TestCase):
 
     def test_adversarial_loss_target(self):
         """Test that adversarial loss target is z - x_fake."""
-        x_fake = torch.randn(2, 4, 8, 8)
-        z = torch.randn(2, 4, 8, 8)
+        x_fake = torch.randn(2, 4, 8, 8, dtype=torch.float64)
+        z = torch.randn(2, 4, 8, 8, dtype=torch.float64)
 
         target_fake = z - x_fake
 

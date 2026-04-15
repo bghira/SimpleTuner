@@ -18,6 +18,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | **Lumina2** | 2B | [Guia Lumina2](LUMINA2.md) |
 | **HiDream** | 17B MoE | [Guia HiDream](HIDREAM.md) |
 | **Z-Image** | - | [Guia Z-Image](ZIMAGE.md) |
+| **ERNIE-Image** | - | [Guia ERNIE](ERNIE.md) |
 
 ### DiT / Transformador
 

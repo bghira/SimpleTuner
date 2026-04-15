@@ -24,7 +24,7 @@ from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
-from transformers import AutoTokenizer, PreTrainedModel, Siglip2ImageProcessorFast, Siglip2VisionModel
+from transformers import AutoTokenizer, PreTrainedModel, Siglip2ImageProcessor, Siglip2VisionModel
 
 from simpletuner.helpers.models.z_image.pipeline import ZImageLoraLoaderMixin
 from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
@@ -125,7 +125,7 @@ class ZImageOmniPipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFil
         tokenizer: AutoTokenizer,
         transformer: ZImageOmniTransformer2DModel,
         siglip: Siglip2VisionModel,
-        siglip_processor: Siglip2ImageProcessorFast,
+        siglip_processor: Siglip2ImageProcessor,
     ):
         super().__init__()
 

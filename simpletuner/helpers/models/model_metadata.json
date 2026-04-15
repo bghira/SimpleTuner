@@ -74,6 +74,16 @@
             "edit-v3"
         ]
     },
+    "ernie": {
+        "class_name": "Ernie",
+        "module_path": "simpletuner.helpers.models.ernie.model",
+        "name": "ERNIE-Image",
+        "prediction_type": "flow_matching",
+        "flavour_choices": [
+            "base",
+            "turbo"
+        ]
+    },
     "z_image_omni": {
         "class_name": "ZImageOmni",
         "module_path": "simpletuner.helpers.models.z_image_omni.model",
