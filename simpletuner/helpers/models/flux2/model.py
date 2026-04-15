@@ -357,6 +357,10 @@ class Flux2(ImageModelFoundation):
         flavour = getattr(self.config, "model_flavour", None)
         return flavour in KLEIN_FLAVOURS
 
+    def load_text_tokenizer(self):
+        """Tokenizer is loaded alongside the text encoder, so this is a no-op."""
+        return
+
     def load_text_encoder(self, move_to_device: bool = True):
         """Load the text encoder (Qwen3 for Klein, Mistral-3 for dev)."""
         if self._is_klein_flavour():
