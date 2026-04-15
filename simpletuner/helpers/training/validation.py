@@ -1527,6 +1527,12 @@ class ValidationAbortedException(Exception):
     pass
 
 
+class ValidationCheckpointUnavailableError(ValueError):
+    """Raised when external validation requires a checkpoint before one exists."""
+
+    pass
+
+
 class Validation:
     def __init__(
         self,
@@ -1639,7 +1645,7 @@ class Validation:
         checkpoint_manager = CheckpointManager(self.config.output_dir)
         latest_checkpoint = checkpoint_manager.get_latest_checkpoint()
         if latest_checkpoint is None:
-            raise ValueError(
+            raise ValidationCheckpointUnavailableError(
                 "validation_external_script requires {local_checkpoint_path}, but no checkpoints exist in output_dir."
             )
         checkpoint_path = os.path.join(self.config.output_dir, latest_checkpoint)
@@ -1683,8 +1689,17 @@ class Validation:
 
         return build_script_command(script_template, _resolver)
 
-    def _run_external_validation(self, validation_type: str | None, step: int):
-        command = self._build_external_validation_command()
+    def _run_external_validation(self, validation_type: str | None, step: int) -> bool:
+        try:
+            command = self._build_external_validation_command()
+        except ValidationCheckpointUnavailableError as exc:
+            logger.warning(
+                "Skipping external validation for %s at step %s: %s",
+                validation_type or "validation",
+                step,
+                exc,
+            )
+            return False
         background = bool(getattr(self.config, "validation_external_background", False))
         logger.info(
             "Running external validation command for %s (step=%s, background=%s): %s",
@@ -1695,8 +1710,9 @@ class Validation:
         )
         if background:
             subprocess.Popen(command)
-            return
+            return True
         subprocess.run(command, check=True)
+        return True
 
     def _validation_multigpu_mode(self) -> str:
         """
@@ -2088,7 +2104,7 @@ class Validation:
         skip_execution: bool = False,
     ):
         self._update_state()
-        validation_method = self._validation_method()
+        configured_validation_method = self._validation_method()
         if self.validation_prompt_metadata is None:
             return self
         content = self.validation_prompt_metadata.get("validation_prompts", None)
@@ -2106,6 +2122,13 @@ class Validation:
         current_validation_will_execute = has_validation_prompts and (
             current_step_aligns_with_interval or is_base_model_benchmark
         )
+        validation_method = configured_validation_method
+        if validation_method == "external-script" and is_base_model_benchmark:
+            logger.info(
+                "Using built-in validation pipeline for base model benchmark; external-script is not used at step 0 "
+                "because the benchmark runs before checkpoints are available."
+            )
+            validation_method = "simpletuner-local"
         logger.debug(
             f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
@@ -2145,7 +2168,16 @@ class Validation:
                 self.validation_video_paths.clear()
                 self.eval_scores = {}
                 self.evaluation_result = None
-                self._run_external_validation(validation_type=validation_type, step=step)
+                external_validation_ran = self._run_external_validation(validation_type=validation_type, step=step)
+                if not external_validation_ran:
+                    if should_notify:
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key="validation",
+                            stage_label="Running Validation",
+                            stage_status="skipped",
+                            message="Validation skipped because no checkpoint is available yet.",
+                        )
+                    return self
                 if should_notify:
                     webhook_handler.send_lifecycle_stage(
                         stage_key="validation",

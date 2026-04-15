@@ -159,6 +159,115 @@ class ValidationExternalScriptTests(unittest.TestCase):
         validation._run_external_validation.assert_called_once_with(validation_type="intermediary", step=1)
         self.assertEqual(validation.validation_images, {})
 
+    def test_run_validations_reports_skipped_when_external_validation_does_not_run(self):
+        webhook_handler = MagicMock()
+        validation = Validation.__new__(Validation)
+        validation.config = SimpleNamespace(
+            validation_method="external-script",
+            validation_multigpu="single-gpu",
+            gradient_accumulation_steps=1,
+        )
+        validation.accelerator = SimpleNamespace(is_main_process=True, num_processes=1)
+        validation.deepspeed = False
+        validation._pending_epoch_validation = None
+        validation._epoch_validations_completed = set()
+        validation.validation_prompt_metadata = {"validation_prompts": ["prompt-1"]}
+        validation.validation_prompt_dict = {}
+        validation.validation_video_paths = {}
+        validation.eval_scores = {}
+        validation.validation_images = None
+        validation.evaluation_result = None
+        validation.global_step = 1
+        validation.global_resume_step = 0
+        validation.current_epoch = 0
+        validation.current_epoch_step = 0
+        validation._run_external_validation = MagicMock(return_value=False)
+        validation._use_distributed_validation = MagicMock(return_value=False)
+        validation.should_perform_intermediary_validation = MagicMock(return_value=True)
+        validation._update_state = MagicMock()
+
+        with patch(
+            "simpletuner.helpers.training.validation.StateTracker.get_webhook_handler",
+            return_value=webhook_handler,
+        ):
+            validation.run_validations(step=1, validation_type="intermediary")
+
+        lifecycle_statuses = [call.kwargs["stage_status"] for call in webhook_handler.send_lifecycle_stage.call_args_list]
+        self.assertIn("running", lifecycle_statuses)
+        self.assertIn("skipped", lifecycle_statuses)
+        self.assertNotIn("completed", lifecycle_statuses)
+
+    @patch("simpletuner.helpers.training.validation.StateTracker.get_webhook_handler", return_value=None)
+    @patch("simpletuner.helpers.training.validation.reclaim_memory")
+    def test_base_model_benchmark_uses_builtin_validation_when_external_script_configured(
+        self, _mock_reclaim_memory, _mock_webhook
+    ):
+        validation = Validation.__new__(Validation)
+        validation.config = SimpleNamespace(
+            validation_method="external-script",
+            validation_multigpu="single-gpu",
+            gradient_accumulation_steps=1,
+        )
+        validation.accelerator = SimpleNamespace(is_main_process=True, num_processes=1)
+        validation.deepspeed = False
+        validation._pending_epoch_validation = None
+        validation._epoch_validations_completed = set()
+        validation.validation_prompt_metadata = {"validation_prompts": ["prompt-1"]}
+        validation.validation_prompt_dict = {}
+        validation.validation_video_paths = {}
+        validation.eval_scores = {}
+        validation.validation_images = None
+        validation.validation_audios = None
+        validation.evaluation_result = None
+        validation.global_step = 0
+        validation.global_resume_step = 0
+        validation.current_epoch = 0
+        validation.current_epoch_step = 0
+        validation.validation_adapter_runs = []
+        validation.model = SimpleNamespace(pipeline=object())
+        validation._run_external_validation = MagicMock()
+        validation._use_distributed_validation = MagicMock(return_value=False)
+        validation.should_perform_intermediary_validation = MagicMock(return_value=False)
+        validation._update_state = MagicMock()
+        validation._check_abort = MagicMock()
+        validation.setup_pipeline = MagicMock()
+        validation.setup_scheduler = MagicMock()
+        validation.finalize_validation = MagicMock()
+        validation._publish_validation_artifacts = MagicMock()
+        validation.clean_pipeline = MagicMock()
+
+        validation.run_validations(step=0, validation_type="base_model")
+
+        validation._run_external_validation.assert_not_called()
+        validation.setup_pipeline.assert_called_once_with("base_model")
+        validation.setup_scheduler.assert_called_once()
+        validation.finalize_validation.assert_called_once_with("base_model")
+        validation.clean_pipeline.assert_called_once()
+
+    def test_run_external_validation_skips_when_checkpoint_placeholder_has_no_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            validation = Validation.__new__(Validation)
+            validation.config = SimpleNamespace(
+                validation_external_script="echo {local_checkpoint_path}",
+                validation_external_background=False,
+                output_dir=tmp_dir,
+            )
+
+            with (
+                patch(
+                    "simpletuner.helpers.training.validation.CheckpointManager.get_latest_checkpoint",
+                    return_value=None,
+                ),
+                patch("subprocess.run") as mock_run,
+                patch("simpletuner.helpers.training.validation.logger.warning") as mock_warning,
+            ):
+                result = validation._run_external_validation(validation_type="intermediary", step=100)
+
+        self.assertFalse(result)
+        mock_run.assert_not_called()
+        mock_warning.assert_called_once()
+        self.assertEqual(mock_warning.call_args.args[1:3], ("intermediary", 100))
+
     def test_run_external_validation_background_uses_popen(self):
         validation = Validation.__new__(Validation)
         validation.config = SimpleNamespace(validation_external_background=True)
