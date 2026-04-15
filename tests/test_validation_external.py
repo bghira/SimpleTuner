@@ -259,13 +259,14 @@ class ValidationExternalScriptTests(unittest.TestCase):
                     return_value=None,
                 ),
                 patch("subprocess.run") as mock_run,
-                self.assertLogs("Validation", level="WARNING") as logs,
+                patch("simpletuner.helpers.training.validation.logger.warning") as mock_warning,
             ):
                 result = validation._run_external_validation(validation_type="intermediary", step=100)
 
         self.assertFalse(result)
         mock_run.assert_not_called()
-        self.assertIn("Skipping external validation for intermediary at step 100", "\n".join(logs.output))
+        mock_warning.assert_called_once()
+        self.assertEqual(mock_warning.call_args.args[1:3], ("intermediary", 100))
 
     def test_run_external_validation_background_uses_popen(self):
         validation = Validation.__new__(Validation)
