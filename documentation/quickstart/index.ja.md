@@ -18,6 +18,7 @@
 | **Lumina2** | 2B | [Lumina2 ガイド](LUMINA2.md) |
 | **HiDream** | 17B MoE | [HiDream ガイド](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image ガイド](ZIMAGE.md) |
+| **ERNIE-Image** | - | [ERNIE ガイド](ERNIE.md) |
 
 ### DiT / Transformer
 
