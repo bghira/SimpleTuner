@@ -395,6 +395,28 @@ class TestTREADTransformers(unittest.TestCase):
             self.assertIsNotNone(model._tread_router)
             self.assertIsNotNone(model._tread_routes)
 
+    def test_ernie_tread_integration(self):
+        """Test TREAD integration in ERNIE transformer."""
+        with patch("simpletuner.helpers.models.ernie.transformer.TREADRouter"):
+            from simpletuner.helpers.models.ernie.transformer import ErnieImageTransformer2DModel
+
+            model = ErnieImageTransformer2DModel(
+                hidden_size=128,
+                num_attention_heads=8,
+                num_layers=2,
+                ffn_hidden_size=256,
+                in_channels=16,
+                out_channels=16,
+                text_in_dim=64,
+                rope_axes_dim=(8, 4, 4),
+            )
+
+            model.set_router(self.mock_router, self.test_routes)
+            self.assertEqual(model._tread_router, self.mock_router)
+            self.assertEqual(model._tread_routes, self.test_routes)
+            self.assertIsNotNone(model._tread_router)
+            self.assertIsNotNone(model._tread_routes)
+
 
 class TestTREADModelInitialization(unittest.TestCase):
     """Test TREAD initialization methods in model classes."""
@@ -630,6 +652,25 @@ class TestTREADModelInitialization(unittest.TestCase):
 
                 # Verify TREADRouter was called with correct parameters
                 mock_tread_router.assert_called_once_with(seed=42, device="cuda")
+
+    def test_ernie_tread_init(self):
+        """Test TREAD initialization in ERNIE model."""
+        with patch("simpletuner.helpers.training.tread.TREADRouter") as mock_tread_router:
+            with patch("simpletuner.helpers.models.ernie.model.logger"):
+                from simpletuner.helpers.models.ernie.model import Ernie
+
+                model_instance = Mock()
+                model_instance.config = self.mock_config
+                model_instance.accelerator = Mock()
+                model_instance.accelerator.device = "cpu"
+                model_instance.unwrap_model.return_value = Mock()
+
+                self.assertTrue(hasattr(Ernie, "tread_init"))
+
+                model_instance.__class__ = Ernie
+                Ernie.tread_init(model_instance)
+
+                mock_tread_router.assert_called_once_with(seed=42, device="cpu")
 
 
 if __name__ == "__main__":
