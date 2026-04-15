@@ -52,6 +52,7 @@ class _CacheAcceleratorStub:
 
     num_processes = 1
     process_index = 0
+    local_process_index = 0
     is_main_process = True
     is_local_main_process = True
     data_parallel_rank = 0
