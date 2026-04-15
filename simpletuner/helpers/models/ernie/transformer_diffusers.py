@@ -18,7 +18,7 @@ Ernie-Image Transformer2DModel for HuggingFace Diffusers.
 
 import inspect
 from dataclasses import dataclass
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -31,6 +31,8 @@ from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import BaseOutput, logging
+
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -302,6 +304,9 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         rope_axes_dim: Tuple[int, int, int] = (32, 48, 48),
         eps: float = 1e-6,
         qk_layernorm: bool = True,
+        enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -317,6 +322,10 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         self.text_proj = nn.Linear(text_in_dim, hidden_size, bias=False) if text_in_dim != hidden_size else None
         self.time_proj = Timesteps(hidden_size, flip_sin_to_cos=False, downscale_freq_shift=0)
         self.time_embedding = TimestepEmbedding(hidden_size, hidden_size)
+        self.time_sign_embed = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, hidden_size)
+            nn.init.zeros_(self.time_sign_embed.weight)
         self.pos_embed = ErnieImageEmbedND3(dim=self.head_dim, theta=rope_theta, axes_dim=rope_axes_dim)
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size))
         nn.init.zeros_(self.adaLN_modulation[-1].weight)
@@ -332,6 +341,19 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         nn.init.zeros_(self.final_linear.weight)
         nn.init.zeros_(self.final_linear.bias)
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_backend = "torch"
+        self.onload_device = None
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
+
+    @property
+    def device(self):
+        return next(self.x_embedder.parameters()).device
 
     def forward(
         self,
@@ -341,6 +363,8 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         text_bth: torch.Tensor,
         text_lens: torch.Tensor,
         return_dict: bool = True,
+        timestep_sign: Optional[torch.Tensor] = None,
+        skip_layers: Optional[List[int]] = None,
     ):
         device, dtype = hidden_states.device, hidden_states.dtype
         B, C, H, W = hidden_states.shape
@@ -397,21 +421,48 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         sample = self.time_proj(timestep)
         sample = sample.to(dtype=dtype)
         c = self.time_embedding(sample)
+        if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable `twinflow_enabled` before loading the ERNIE transformer."
+                )
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=device)
+            c = c + self.time_sign_embed(sign_idx).to(device=device, dtype=c.dtype)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
             t.unsqueeze(0).expand(S, -1, -1).contiguous() for t in self.adaLN_modulation(c).chunk(6, dim=-1)
         ]
-        for layer in self.layers:
-            temb = [shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp]
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                x = self._gradient_checkpointing_func(
-                    layer,
-                    x,
-                    rotary_pos_emb,
-                    temb,
-                    attention_mask,
-                )
+        temb = [shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp]
+        skip_set = set(skip_layers) if skip_layers is not None else set()
+        combined_blocks = list(self.layers)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, x.device, grad_enabled)
+
+        for layer_idx, layer in enumerate(self.layers):
+            if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                musubi_manager.stream_in(layer, x.device)
+            if layer_idx in skip_set:
+                if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                    musubi_manager.stream_out(layer)
+                continue
+            if (
+                torch.is_grad_enabled()
+                and self.gradient_checkpointing
+                and (self.gradient_checkpointing_interval is None or layer_idx % self.gradient_checkpointing_interval == 0)
+            ):
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    x = offloaded_checkpoint(layer, x, rotary_pos_emb, temb, attention_mask, use_reentrant=False)
+                else:
+                    x = self._gradient_checkpointing_func(layer, x, rotary_pos_emb, temb, attention_mask)
             else:
                 x = layer(x, rotary_pos_emb, temb, attention_mask)
+            if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                musubi_manager.stream_out(layer)
         x = self.final_norm(x, c).type_as(x)
         patches = self.final_linear(x)[:N_img].transpose(0, 1).contiguous()
         output = (

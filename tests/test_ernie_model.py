@@ -6,6 +6,9 @@ import torch
 from transformers import Mistral3Config
 
 from simpletuner.helpers.models.ernie.model import Ernie
+from simpletuner.helpers.models.ernie.transformer import ErnieImageTransformer2DModel
+from simpletuner.helpers.models.tae.types import Flux2TAESpec
+from simpletuner.helpers.training.tread import TREADRouter
 
 
 class DummyAccelerator:
@@ -304,6 +307,110 @@ class ErnieModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(output["attention_masks"], torch.tensor([[True, True], [True, False]])))
         self.assertTrue(torch.equal(output["prompt_embeds"][1, 1], torch.zeros(2)))
 
+    def test_transformer_device_tracks_x_embedder_for_offload(self):
+        transformer = ErnieImageTransformer2DModel(
+            hidden_size=12,
+            num_attention_heads=2,
+            num_layers=1,
+            ffn_hidden_size=24,
+            in_channels=4,
+            out_channels=4,
+            text_in_dim=12,
+            rope_axes_dim=(2, 2, 2),
+        )
+
+        self.assertIsNone(transformer.onload_device)
+        self.assertEqual(transformer.device, next(transformer.x_embedder.parameters()).device)
+
+    def test_validation_preview_uses_flux2_tae_spec(self):
+        self.assertIsInstance(Ernie.VALIDATION_PREVIEW_SPEC, Flux2TAESpec)
+
+    def test_transformer_accepts_timestep_sign_and_skip_layers(self):
+        transformer = ErnieImageTransformer2DModel(
+            hidden_size=12,
+            num_attention_heads=2,
+            num_layers=2,
+            ffn_hidden_size=24,
+            in_channels=4,
+            out_channels=4,
+            text_in_dim=12,
+            rope_axes_dim=(2, 2, 2),
+            enable_time_sign_embed=True,
+        )
+
+        output = transformer(
+            hidden_states=torch.randn(1, 4, 2, 2),
+            timestep=torch.tensor([0.5]),
+            timestep_sign=torch.tensor([-1.0]),
+            text_bth=torch.randn(1, 1, 12),
+            text_lens=torch.tensor([1]),
+            skip_layers=[1],
+            return_dict=False,
+        )[0]
+
+        self.assertEqual(tuple(output.shape), (1, 4, 2, 2))
+
+    def test_transformer_tread_routes_4d_rotary_embeddings(self):
+        transformer = ErnieImageTransformer2DModel(
+            hidden_size=12,
+            num_attention_heads=2,
+            num_layers=1,
+            ffn_hidden_size=24,
+            in_channels=4,
+            out_channels=4,
+            text_in_dim=12,
+            rope_axes_dim=(2, 2, 2),
+        )
+        transformer.set_router(
+            TREADRouter(seed=1, device=torch.device("cpu")),
+            [{"start_layer_idx": 0, "end_layer_idx": 0, "selection_ratio": 0.5}],
+        )
+
+        with torch.enable_grad():
+            output = transformer(
+                hidden_states=torch.randn(1, 4, 2, 2, requires_grad=True),
+                timestep=torch.tensor([0.5]),
+                text_bth=torch.randn(1, 1, 12),
+                text_lens=torch.tensor([1]),
+                return_dict=False,
+            )[0]
+
+        self.assertEqual(tuple(output.shape), (1, 4, 2, 2))
+
+    def test_transformer_requires_time_sign_embedding_when_timestep_sign_used(self):
+        transformer = ErnieImageTransformer2DModel(
+            hidden_size=12,
+            num_attention_heads=2,
+            num_layers=1,
+            ffn_hidden_size=24,
+            in_channels=4,
+            out_channels=4,
+            text_in_dim=12,
+            rope_axes_dim=(2, 2, 2),
+        )
+
+        with self.assertRaisesRegex(ValueError, "enable_time_sign_embed"):
+            transformer(
+                hidden_states=torch.randn(1, 4, 2, 2),
+                timestep=torch.tensor([0.5]),
+                timestep_sign=torch.tensor([-1.0]),
+                text_bth=torch.randn(1, 1, 12),
+                text_lens=torch.tensor([1]),
+                return_dict=False,
+            )
+
+    def test_pretrained_load_args_enable_twinflow_and_musubi(self):
+        model = self._build_model()
+        model.config.twinflow_enabled = True
+        model.config.musubi_blocks_to_swap = 4
+        model.config.musubi_block_swap_device = "cpu"
+
+        args = model.pretrained_load_args({})
+
+        self.assertTrue(args["enable_time_sign_embed"])
+        self.assertEqual(args["musubi_blocks_to_swap"], 4)
+        self.assertEqual(args["musubi_block_swap_device"], "cpu")
+
     def test_model_predict_shapes_and_timesteps(self):
         model = self._build_model()
         latents = torch.randn(2, 128, 8, 8)
@@ -330,6 +437,24 @@ class ErnieModelTests(unittest.TestCase):
         self.assertEqual(text_bth.shape[:2], (2, 3))
         self.assertNotIn("hidden_states_buffer", kwargs)
         self.assertIsNone(output["hidden_states_buffer"])
+
+    def test_model_predict_passes_twinflow_time_sign(self):
+        model = self._build_model()
+        model.config.twinflow_enabled = True
+        time_sign = torch.tensor([-1.0, 1.0])
+
+        model.model_predict(
+            {
+                "noisy_latents": torch.randn(2, 128, 8, 8),
+                "timesteps": torch.tensor([100.0, 500.0]),
+                "encoder_hidden_states": torch.randn(2, 5, 6),
+                "encoder_attention_mask": torch.ones(2, 5, dtype=torch.bool),
+                "twinflow_time_sign": time_sign,
+            }
+        )
+
+        kwargs = model.model.received[-1]
+        self.assertIs(kwargs["timestep_sign"], time_sign)
 
 
 if __name__ == "__main__":

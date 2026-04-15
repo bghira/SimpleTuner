@@ -13,6 +13,8 @@ from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, 
 from simpletuner.helpers.models.ernie.pipeline import ErnieImagePipeline
 from simpletuner.helpers.models.ernie.transformer import ErnieImageTransformer2DModel
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.models.tae.types import Flux2TAESpec
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ class Ernie(ImageModelFoundation):
     LATENT_CHANNEL_COUNT = 128
     VAE_SCALE_FACTOR = 16
     VALIDATION_USES_NEGATIVE_PROMPT = True
+    VALIDATION_PREVIEW_SPEC = Flux2TAESpec()
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
 
@@ -435,6 +438,8 @@ class Ernie(ImageModelFoundation):
             call_kwargs["force_keep_mask"] = force_keep_mask.to(device=self.accelerator.device, dtype=torch.bool)
         if hidden_states_buffer is not None:
             call_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        if getattr(self.config, "twinflow_enabled", False):
+            call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
 
         model_pred = self.model(**call_kwargs)[0].float()
 
@@ -458,6 +463,11 @@ class Ernie(ImageModelFoundation):
             and getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None")
         ):
             self.config.assistant_lora_weight_name = self.ASSISTANT_LORA_WEIGHT_NAME
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        args = apply_musubi_pretrained_defaults(self.config, args)
+        return args
 
 
 ModelRegistry.register("ernie", Ernie)

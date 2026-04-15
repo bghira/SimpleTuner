@@ -4445,13 +4445,15 @@ class Trainer:
         # Collect all transformer blocks in the same order as the musubi manager
         # For Kandinsky: text_transformer_blocks + visual_transformer_blocks
         # For Flux: transformer_blocks + single_transformer_blocks
+        # For ERNIE/Z-Image-style single stream models: layers
         text_blocks = list(getattr(model, "text_transformer_blocks", []) or [])
         visual_blocks = list(getattr(model, "visual_transformer_blocks", []) or [])
         # For Flux-style: double blocks first, then single blocks (matching combined_blocks order)
         double_blocks = list(getattr(model, "transformer_blocks", []) or [])
         single_blocks = list(getattr(model, "single_transformer_blocks", []) or [])
+        layer_blocks = list(getattr(model, "layers", []) or [])
 
-        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks
+        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks + layer_blocks
         total_blocks = len(all_blocks)
 
         # Determine which block indices are managed by block swap
@@ -4476,6 +4478,7 @@ class Trainer:
             "visual_transformer_blocks",
             "single_transformer_blocks",
             "transformer_blocks",
+            "layers",
         }
         for name, child in model.named_children():
             if name not in block_module_names:

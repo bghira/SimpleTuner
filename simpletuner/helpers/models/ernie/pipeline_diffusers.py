@@ -194,6 +194,15 @@ class ErnieImagePipeline(DiffusionPipeline):
             text_bth[i, : t.shape[0], :] = t
         return text_bth, lens
 
+    @staticmethod
+    def _repeat_text_hiddens(text_hiddens: List[torch.Tensor], num_images_per_prompt: int) -> List[torch.Tensor]:
+        if num_images_per_prompt == 1:
+            return list(text_hiddens)
+        repeated = []
+        for text_hidden in text_hiddens:
+            repeated.extend([text_hidden] * num_images_per_prompt)
+        return repeated
+
     @torch.no_grad()
     def __call__(
         self,
@@ -213,6 +222,14 @@ class ErnieImagePipeline(DiffusionPipeline):
         callback_on_step_end: Optional[Callable[[int, int, dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         use_pe: bool = True,  # 默认使用PE进行改写
+        skip_guidance_layers: Optional[List[int]] = None,
+        skip_layer_guidance_scale: float = 2.8,
+        skip_layer_guidance_stop: float = 0.2,
+        skip_layer_guidance_start: float = 0.01,
+        use_cfg_zero_star: bool = True,
+        use_zero_init: bool = True,
+        zero_steps: int = 0,
+        no_cfg_until_timestep: int = 0,
     ):
         """
         Generate images from text prompts.
@@ -240,6 +257,14 @@ class ErnieImagePipeline(DiffusionPipeline):
             callback_on_step_end_tensor_inputs: List of tensor names passed into the callback kwargs.
                 Must be a subset of `_callback_tensor_inputs` (default: `["latents"]`).
             use_pe: Whether to use the PE model to enhance prompts before generation.
+            skip_guidance_layers: Layer indices to skip when computing optional skipped-layer guidance.
+            skip_layer_guidance_scale: Scale for skipped-layer guidance correction.
+            skip_layer_guidance_stop: Fraction of inference after which skipped-layer guidance stops.
+            skip_layer_guidance_start: Fraction of inference before which skipped-layer guidance is disabled.
+            use_cfg_zero_star: Whether to use CFG-Zero* scaling when applying classifier-free guidance.
+            use_zero_init: Whether CFG-Zero* should zero guided predictions for the first `zero_steps` steps.
+            zero_steps: Number of initial denoising steps to zero when `use_zero_init` is enabled.
+            no_cfg_until_timestep: Zero-indexed denoising step before which CFG is skipped.
 
         Returns:
             :class:`ErnieImagePipelineOutput` with `images` and `revised_prompts`.
@@ -254,6 +279,13 @@ class ErnieImagePipeline(DiffusionPipeline):
             raise ValueError("Must provide either `prompt` or `prompt_embeds`.")
         if prompt is not None and prompt_embeds is not None:
             raise ValueError("Cannot provide both `prompt` and `prompt_embeds` at the same time.")
+        if callback_on_step_end_tensor_inputs is None:
+            callback_on_step_end_tensor_inputs = []
+        elif not all(k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs):
+            raise ValueError(
+                f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found "
+                f"{[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
+            )
 
         # Validate dimensions
         if height % self.vae_scale_factor != 0 or width % self.vae_scale_factor != 0:
@@ -286,14 +318,16 @@ class ErnieImagePipeline(DiffusionPipeline):
 
         # [Phase 2] Text encoding
         if prompt_embeds is not None:
-            text_hiddens = prompt_embeds
+            text_hiddens = self._repeat_text_hiddens(prompt_embeds, num_images_per_prompt)
         else:
             text_hiddens = self.encode_prompt(prompt, device, num_images_per_prompt)
 
         # CFG with negative prompt
         if self.do_classifier_free_guidance:
             if negative_prompt_embeds is not None:
-                uncond_text_hiddens = negative_prompt_embeds
+                if len(negative_prompt_embeds) != batch_size:
+                    raise ValueError(f"negative_prompt_embeds must have same length as prompt ({batch_size})")
+                uncond_text_hiddens = self._repeat_text_hiddens(negative_prompt_embeds, num_images_per_prompt)
             else:
                 uncond_text_hiddens = self.encode_prompt(negative_prompt, device, num_images_per_prompt)
 
@@ -323,15 +357,18 @@ class ErnieImagePipeline(DiffusionPipeline):
         text_bth, text_lens = self._pad_text(
             text_hiddens=cfg_text_hiddens, device=device, dtype=dtype, text_in_dim=self.transformer.config.text_in_dim
         )
+        positive_text_bth, positive_text_lens = self._pad_text(
+            text_hiddens=text_hiddens, device=device, dtype=dtype, text_in_dim=self.transformer.config.text_in_dim
+        )
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(self.scheduler.timesteps):
                 if self.do_classifier_free_guidance:
                     latent_model_input = torch.cat([latents, latents], dim=0)
-                    t_batch = torch.full((total_batch_size * 2,), t.item(), device=device, dtype=dtype)
+                    t_batch = torch.full((total_batch_size * 2,), t.item(), device=device, dtype=torch.float32)
                 else:
                     latent_model_input = latents
-                    t_batch = torch.full((total_batch_size,), t.item(), device=device, dtype=dtype)
+                    t_batch = torch.full((total_batch_size,), t.item(), device=device, dtype=torch.float32)
 
                 # Model prediction
                 pred = self.transformer(
@@ -345,7 +382,40 @@ class ErnieImagePipeline(DiffusionPipeline):
                 # Apply CFG
                 if self.do_classifier_free_guidance:
                     pred_uncond, pred_cond = pred.chunk(2, dim=0)
-                    pred = pred_uncond + guidance_scale * (pred_cond - pred_uncond)
+                    if i >= no_cfg_until_timestep:
+                        if use_cfg_zero_star:
+                            pos_flat = pred_cond.float().reshape(pred_cond.shape[0], -1)
+                            neg_flat = pred_uncond.float().reshape(pred_uncond.shape[0], -1)
+                            alpha = (
+                                pos_flat.norm(dim=1) / neg_flat.norm(dim=1).clamp_min(torch.finfo(neg_flat.dtype).eps)
+                            ).view(pred_cond.shape[0], *([1] * (pred_cond.ndim - 1)))
+                            pred = pred_uncond * alpha.to(dtype=pred_uncond.dtype) + guidance_scale * (
+                                pred_cond - pred_uncond * alpha.to(dtype=pred_uncond.dtype)
+                            )
+                            if i <= zero_steps and use_zero_init:
+                                pred = torch.zeros_like(pred)
+                        else:
+                            pred = pred_uncond + guidance_scale * (pred_cond - pred_uncond)
+                    else:
+                        pred = pred_cond
+
+                    should_skip_layers = (
+                        skip_guidance_layers is not None
+                        and len(skip_guidance_layers) > 0
+                        and i >= no_cfg_until_timestep
+                        and i > num_inference_steps * skip_layer_guidance_start
+                        and i < num_inference_steps * skip_layer_guidance_stop
+                    )
+                    if should_skip_layers:
+                        skip_pred = self.transformer(
+                            hidden_states=latents,
+                            timestep=torch.full((total_batch_size,), t.item(), device=device, dtype=torch.float32),
+                            text_bth=positive_text_bth,
+                            text_lens=positive_text_lens,
+                            return_dict=False,
+                            skip_layers=skip_guidance_layers,
+                        )[0]
+                        pred = pred + (pred_cond - skip_pred) * skip_layer_guidance_scale
 
                 # Scheduler step
                 latents = self.scheduler.step(pred, t, latents).prev_sample
@@ -364,7 +434,8 @@ class ErnieImagePipeline(DiffusionPipeline):
         # Decode latents to images
         # Unnormalize latents using VAE's BN stats
         bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(device)
-        bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + 1e-5).to(device)
+        bn_eps = getattr(self.vae.config, "batch_norm_eps", 1e-5)
+        bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + bn_eps).to(device)
         latents = latents * bn_std + bn_mean
 
         # Unpatchify

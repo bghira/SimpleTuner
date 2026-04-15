@@ -20,6 +20,26 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
     buffer[key] = hidden_states
 
 
+def _start_route_rotary(rotary_emb: torch.Tensor, mask_info) -> torch.Tensor:
+    ids = mask_info.ids_shuffle.view(mask_info.ids_shuffle.shape[0], mask_info.ids_shuffle.shape[1], 1, 1)
+    routed = torch.take_along_dim(rotary_emb, ids.expand_as(rotary_emb), dim=1)
+    return routed[:, : mask_info.ids_keep.size(1), :, :]
+
+
+def _start_route_sequence_first(sequence_tensor: torch.Tensor, mask_info) -> torch.Tensor:
+    batch_first = sequence_tensor.permute(1, 0, 2).contiguous()
+    routed = torch.take_along_dim(
+        batch_first,
+        mask_info.ids_shuffle.unsqueeze(-1).expand_as(batch_first),
+        dim=1,
+    )
+    return routed[:, : mask_info.ids_keep.size(1), :].permute(1, 0, 2).contiguous()
+
+
+def _start_route_temb(temb: List[torch.Tensor], mask_info) -> List[torch.Tensor]:
+    return [_start_route_sequence_first(value, mask_info) for value in temb]
+
+
 if "ErnieImageTransformer2DModel" not in diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING:
     diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING["ErnieImageTransformer2DModel"] = lambda model_cls, weights: weights
 
@@ -36,6 +56,12 @@ class ErnieImageTransformer2DModel(
         self._tread_router = router
         self._tread_routes = routes
 
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -45,6 +71,8 @@ class ErnieImageTransformer2DModel(
         return_dict: bool = True,
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
+        skip_layers: Optional[List[int]] = None,
     ):
         device, dtype = hidden_states.device, hidden_states.dtype
         batch_size, channels, height, width = hidden_states.shape
@@ -104,6 +132,14 @@ class ErnieImageTransformer2DModel(
 
         timestep_proj = self.time_proj(timestep).to(dtype=dtype)
         conditioning = self.time_embedding(timestep_proj)
+        if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable `twinflow_enabled` before loading the ERNIE transformer."
+                )
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=device)
+            conditioning = conditioning + self.time_sign_embed(sign_idx).to(device=device, dtype=conditioning.dtype)
         temb = [
             value.unsqueeze(0).expand(total_tokens, -1, -1).contiguous()
             for value in self.adaLN_modulation(conditioning).chunk(6, dim=-1)
@@ -112,6 +148,7 @@ class ErnieImageTransformer2DModel(
         hidden_states = hidden_states.permute(1, 0, 2).contiguous()
         current_rotary = rotary_pos_emb
         current_attention_mask = attention_mask
+        current_temb = temb
 
         routes = self._tread_routes or []
         router = self._tread_router
@@ -147,23 +184,50 @@ class ErnieImageTransformer2DModel(
         saved_hidden_states = None
         saved_rotary = None
         saved_attention_mask = None
+        saved_temb = None
         capture_idx = 0
 
-        def apply_layer(layer, batch_first_hidden_states, rotary_emb, attn_mask):
+        def apply_layer(layer_idx, layer, batch_first_hidden_states, rotary_emb, attn_mask, temb_values):
             sequence_first_hidden_states = batch_first_hidden_states.permute(1, 0, 2).contiguous()
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                sequence_first_hidden_states = self._gradient_checkpointing_func(
-                    layer,
-                    sequence_first_hidden_states,
-                    rotary_emb,
-                    temb,
-                    attn_mask,
-                )
+            if (
+                torch.is_grad_enabled()
+                and self.gradient_checkpointing
+                and (self.gradient_checkpointing_interval is None or layer_idx % self.gradient_checkpointing_interval == 0)
+            ):
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    sequence_first_hidden_states = offloaded_checkpoint(
+                        layer,
+                        sequence_first_hidden_states,
+                        rotary_emb,
+                        temb_values,
+                        attn_mask,
+                        use_reentrant=False,
+                    )
+                else:
+                    sequence_first_hidden_states = self._gradient_checkpointing_func(
+                        layer,
+                        sequence_first_hidden_states,
+                        rotary_emb,
+                        temb_values,
+                        attn_mask,
+                    )
             else:
-                sequence_first_hidden_states = layer(sequence_first_hidden_states, rotary_emb, temb, attn_mask)
+                sequence_first_hidden_states = layer(sequence_first_hidden_states, rotary_emb, temb_values, attn_mask)
             return sequence_first_hidden_states.permute(1, 0, 2).contiguous()
 
+        skip_set = set(skip_layers) if skip_layers is not None else set()
+        combined_blocks = list(self.layers)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         for layer_idx, layer in enumerate(self.layers):
+            if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                musubi_manager.stream_in(layer, hidden_states.device)
             if use_routing and route_ptr < len(routes) and layer_idx == routes[route_ptr]["start_layer_idx"]:
                 keep_mask = torch.zeros(
                     (batch_size, hidden_states.shape[1]),
@@ -182,8 +246,10 @@ class ErnieImageTransformer2DModel(
                 saved_hidden_states = hidden_states.clone()
                 saved_rotary = current_rotary.clone()
                 saved_attention_mask = current_attention_mask.clone()
+                saved_temb = current_temb
                 hidden_states = router.start_route(hidden_states, tread_mask_info)
-                current_rotary = router.start_route(current_rotary, tread_mask_info)
+                current_rotary = _start_route_rotary(current_rotary, tread_mask_info)
+                current_temb = _start_route_temb(current_temb, tread_mask_info)
                 current_attention_mask = torch.ones(
                     (batch_size, 1, 1, hidden_states.shape[1]),
                     device=hidden_states.device,
@@ -191,7 +257,15 @@ class ErnieImageTransformer2DModel(
                 )
                 routing_now = True
 
-            hidden_states = apply_layer(layer, hidden_states, current_rotary, current_attention_mask)
+            if layer_idx not in skip_set:
+                hidden_states = apply_layer(
+                    layer_idx,
+                    layer,
+                    hidden_states,
+                    current_rotary,
+                    current_attention_mask,
+                    current_temb,
+                )
             capture_hidden_states = hidden_states
             if routing_now:
                 capture_hidden_states = router.end_route(
@@ -208,10 +282,13 @@ class ErnieImageTransformer2DModel(
 
             if routing_now and route_ptr < len(routes) and layer_idx == routes[route_ptr]["end_layer_idx"]:
                 hidden_states = router.end_route(hidden_states, tread_mask_info, original_x=saved_hidden_states)
-                current_rotary = router.end_route(current_rotary, tread_mask_info, original_x=saved_rotary)
+                current_rotary = saved_rotary
                 current_attention_mask = saved_attention_mask
+                current_temb = saved_temb
                 routing_now = False
                 route_ptr += 1
+            if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                musubi_manager.stream_out(layer)
 
         hidden_states = hidden_states.permute(1, 0, 2).contiguous()
         hidden_states = self.final_norm(hidden_states, conditioning).type_as(hidden_states)
