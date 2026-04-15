@@ -159,6 +159,44 @@ class ValidationExternalScriptTests(unittest.TestCase):
         validation._run_external_validation.assert_called_once_with(validation_type="intermediary", step=1)
         self.assertEqual(validation.validation_images, {})
 
+    def test_run_validations_reports_skipped_when_external_validation_does_not_run(self):
+        webhook_handler = MagicMock()
+        validation = Validation.__new__(Validation)
+        validation.config = SimpleNamespace(
+            validation_method="external-script",
+            validation_multigpu="single-gpu",
+            gradient_accumulation_steps=1,
+        )
+        validation.accelerator = SimpleNamespace(is_main_process=True, num_processes=1)
+        validation.deepspeed = False
+        validation._pending_epoch_validation = None
+        validation._epoch_validations_completed = set()
+        validation.validation_prompt_metadata = {"validation_prompts": ["prompt-1"]}
+        validation.validation_prompt_dict = {}
+        validation.validation_video_paths = {}
+        validation.eval_scores = {}
+        validation.validation_images = None
+        validation.evaluation_result = None
+        validation.global_step = 1
+        validation.global_resume_step = 0
+        validation.current_epoch = 0
+        validation.current_epoch_step = 0
+        validation._run_external_validation = MagicMock(return_value=False)
+        validation._use_distributed_validation = MagicMock(return_value=False)
+        validation.should_perform_intermediary_validation = MagicMock(return_value=True)
+        validation._update_state = MagicMock()
+
+        with patch(
+            "simpletuner.helpers.training.validation.StateTracker.get_webhook_handler",
+            return_value=webhook_handler,
+        ):
+            validation.run_validations(step=1, validation_type="intermediary")
+
+        lifecycle_statuses = [call.kwargs["stage_status"] for call in webhook_handler.send_lifecycle_stage.call_args_list]
+        self.assertIn("running", lifecycle_statuses)
+        self.assertIn("skipped", lifecycle_statuses)
+        self.assertNotIn("completed", lifecycle_statuses)
+
     @patch("simpletuner.helpers.training.validation.StateTracker.get_webhook_handler", return_value=None)
     @patch("simpletuner.helpers.training.validation.reclaim_memory")
     def test_base_model_benchmark_uses_builtin_validation_when_external_script_configured(

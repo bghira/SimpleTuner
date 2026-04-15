@@ -1689,7 +1689,7 @@ class Validation:
 
         return build_script_command(script_template, _resolver)
 
-    def _run_external_validation(self, validation_type: str | None, step: int):
+    def _run_external_validation(self, validation_type: str | None, step: int) -> bool:
         try:
             command = self._build_external_validation_command()
         except ValidationCheckpointUnavailableError as exc:
@@ -2124,7 +2124,10 @@ class Validation:
         )
         validation_method = configured_validation_method
         if validation_method == "external-script" and is_base_model_benchmark:
-            logger.info("Using built-in validation pipeline for base model benchmark; external-script needs a checkpoint.")
+            logger.info(
+                "Using built-in validation pipeline for base model benchmark; external-script is not used at step 0 "
+                "because the benchmark runs before checkpoints are available."
+            )
             validation_method = "simpletuner-local"
         logger.debug(
             f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
@@ -2165,7 +2168,16 @@ class Validation:
                 self.validation_video_paths.clear()
                 self.eval_scores = {}
                 self.evaluation_result = None
-                self._run_external_validation(validation_type=validation_type, step=step)
+                external_validation_ran = self._run_external_validation(validation_type=validation_type, step=step)
+                if not external_validation_ran:
+                    if should_notify:
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key="validation",
+                            stage_label="Running Validation",
+                            stage_status="skipped",
+                            message="Validation skipped because no checkpoint is available yet.",
+                        )
+                    return self
                 if should_notify:
                     webhook_handler.send_lifecycle_stage(
                         stage_key="validation",
