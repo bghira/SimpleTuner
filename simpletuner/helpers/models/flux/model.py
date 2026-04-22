@@ -927,6 +927,12 @@ class Flux(ImageModelFoundation):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline
         ):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
+        if self.config.model_flavour == "kontext" and getattr(self.config, "validation_using_datasets", False):
+            logger.warning(
+                "Flux Kontext validation uses its standard conditioning path, not --validation_using_datasets. "
+                "Disabling --validation_using_datasets and using --eval_dataset_id to select the validation dataset."
+            )
+            self.config.validation_using_datasets = False
 
         if self.config.model_flavour == "libreflux":
             if self.config.validation_num_inference_steps < 28:

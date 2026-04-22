@@ -126,6 +126,7 @@ Há um exemplo preparado do dataset demo [Kontext Max derived](https://huggingfa
 ### Configurando uma divisão de validação dedicada
 
 Aqui está um exemplo de configuração que usa um conjunto de treino com 200.000 amostras e um conjunto de validação com apenas algumas.
+Deixe `validation_using_datasets` ausente ou `false` para Kontext. A validação já usa automaticamente o dataset de referência pareado; `eval_dataset_id` apenas escolhe qual dataset de edição fornece as amostras de validação.
 
 No seu `config.json` você vai querer adicionar:
 

@@ -129,6 +129,7 @@ Existe un ejemplo preparado de dataset demo [Kontext Max derived](https://huggin
 ### Configurar una división de validación dedicada
 
 Aquí hay un ejemplo de configuración que usa un conjunto de entrenamiento con 200,000 muestras y un conjunto de validación con solo unas pocas.
+Deja `validation_using_datasets` sin configurar o en `false` para Kontext. La validación ya usa automáticamente el dataset de referencia emparejado; `eval_dataset_id` solo elige qué dataset de edición aporta las muestras de validación.
 
 En tu `config.json` deberías agregar:
 
