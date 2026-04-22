@@ -711,6 +711,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - Requer que o modelo tenha um pipeline `IMG2IMG` ou `IMG2VIDEO` registrado
   - Pode ser combinado com `--eval_dataset_id` para obter imagens de um dataset especifico
   - Para modelos i2v, permite usar um dataset de imagens simples para validacao sem a configuracao complexa de pareamento de datasets de conditioning usada durante o treinamento
+  - Flux Kontext nao usa este flag para validacao; deixe-o desativado e use `--eval_dataset_id` para escolher o dataset de edicao enquanto o Kontext carrega automaticamente o dataset de referencia pareado
   - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
 
 ### `--eval_dataset_id`
@@ -723,6 +724,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - O ID do dataset deve corresponder a um dataset configurado no seu config do dataloader
   - Util para manter avaliacao consistente usando um dataset de eval dedicado
   - Para modelos de conditioning, os dados de conditioning do dataset (se houver) tambem serao usados
+  - Para Flux Kontext, esta e a forma correta de selecionar o dataset de validacao; nao habilite `--validation_using_datasets`
 
 ---
 
@@ -738,6 +740,7 @@ Alguns modelos nao funcionam sem entradas de conditioning:
 - **Treinamento ControlNet**: Requer imagens de sinal de controle
 
 Para estes modelos, um dataset de conditioning e obrigatorio. A WebUI mostrara opcoes de conditioning como obrigatorias, e o treinamento falhara sem elas.
+A validacao do Flux Kontext tambem permanece nesse caminho baseado em conditioning. Use `--eval_dataset_id` para escolher o dataset de edicao para validacao e deixe `--validation_using_datasets` desativado.
 
 ### 2. Modelos que SUPORTAM Conditioning Opcional
 
@@ -769,6 +772,8 @@ Para estes modelos, voce PODE adicionar datasets de conditioning mas nao e obrig
 - Use `--eval_dataset_id` para controlar qual dataset fornece entradas
 
 **Modelos I2V com `--validation_using_datasets`**: Para modelos de video i2v (HunyuanVideo, WAN, Kandinsky5Video), habilitar este flag permite usar um dataset de imagens simples para validacao. As imagens sao usadas como entradas de conditioning de primeiro frame para gerar videos de validacao, sem precisar da configuracao complexa de pareamento de datasets de conditioning.
+
+**Flux Kontext com `--validation_using_datasets`**: Nao habilite este flag. Kontext e somente edicao e valida pelo caminho normal de datasets pareados de imagem + conditioning. Use `--eval_dataset_id` para selecionar o dataset de edicao.
 
 ### Tipos de Dados de Conditioning
 
