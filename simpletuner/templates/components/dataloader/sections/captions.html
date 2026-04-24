@@ -25,6 +25,7 @@
                                     @change="markAsUnsaved()"
                                     :class="{'border-danger': !dataset.caption_strategy}">
                                 <option value="">Select caption source...</option>
+                                <option value="filename">Filename</option>
                                 <option value="textfile">Text files (.txt)</option>
                                 <option value="csv">CSV</option>
                                 <option value="parquet">Parquet</option>

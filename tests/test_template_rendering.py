@@ -219,6 +219,18 @@ class TemplateRenderingTests(unittest.TestCase):
         self.assertIn("window.__promptLibraries =", rendered)
         self.assertIn("user_prompt_library-alpha.json", rendered)
 
+    def test_dataloader_caption_strategy_lists_filename_option(self):
+        template_dir = Path(__file__).parent.parent / "simpletuner" / "templates"
+        relative_paths = [
+            "components/dataloader/sections/captions.html",
+            "components/dataloader/sections/captions_body.html",
+        ]
+
+        for relative_path in relative_paths:
+            with self.subTest(template=relative_path):
+                contents = (template_dir / relative_path).read_text(encoding="utf-8")
+                self.assertIn('<option value="filename">Filename</option>', contents)
+
 
 if __name__ == "__main__":
     unittest.main()
