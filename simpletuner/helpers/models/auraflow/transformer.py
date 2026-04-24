@@ -36,6 +36,26 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states
 
 
+def _apply_adaln_zero(
+    layer: AdaLayerNormZero,
+    hidden_states: torch.Tensor,
+    temb: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if temb.ndim != 3:
+        return layer(hidden_states, emb=temb)
+
+    if temb.shape[0] != hidden_states.shape[0] or temb.shape[1] != hidden_states.shape[1]:
+        raise ValueError(
+            "AuraFlow tokenwise conditioning expected per-token embeddings with shape "
+            f"({hidden_states.shape[0]}, {hidden_states.shape[1]}, dim), got {tuple(temb.shape)}."
+        )
+
+    emb = layer.linear(layer.silu(temb))
+    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.chunk(6, dim=-1)
+    normalized = layer.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return normalized, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
 def find_multiple(n: int, k: int) -> int:
     if n % k == 0:
         return n
@@ -178,6 +198,10 @@ class AuraFlowPreFinalBlock(nn.Module):
 
     def forward(self, x: torch.Tensor, conditioning_embedding: torch.Tensor) -> torch.Tensor:
         emb = self.linear(self.silu(conditioning_embedding).to(x.dtype))
+        if conditioning_embedding.ndim == 3:
+            scale, shift = torch.chunk(emb, 2, dim=-1)
+            x = x * (1 + scale) + shift
+            return x
         scale, shift = torch.chunk(emb, 2, dim=1)
         x = x * (1 + scale)[:, None, :] + shift[:, None, :]
         return x
@@ -219,16 +243,20 @@ class AuraFlowSingleTransformerBlock(PatchableModule):
         attention_kwargs = attention_kwargs or {}
 
         # Norm + Projection.
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _apply_adaln_zero(self.norm1, hidden_states, temb)
 
         # Attention.
         attn_output = self.attn(hidden_states=norm_hidden_states, **attention_kwargs)
 
         # Process attention outputs for the `hidden_states`.
-        hidden_states = self.norm2(residual + gate_msa.unsqueeze(1) * attn_output)
-        hidden_states = hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        ff_output = self.ff(hidden_states)
-        hidden_states = gate_mlp.unsqueeze(1) * ff_output
+        if gate_msa.ndim == 3:
+            hidden_states = self.norm2(residual + gate_msa * attn_output)
+            hidden_states = hidden_states * (1 + scale_mlp) + shift_mlp
+            hidden_states = gate_mlp * self.ff(hidden_states)
+        else:
+            hidden_states = self.norm2(residual + gate_msa.unsqueeze(1) * attn_output)
+            hidden_states = hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+            hidden_states = gate_mlp.unsqueeze(1) * self.ff(hidden_states)
         hidden_states = residual + hidden_states
 
         return hidden_states
@@ -274,15 +302,17 @@ class AuraFlowJointTransformerBlock(PatchableModule):
         encoder_hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         attention_kwargs: Optional[Dict[str, Any]] = None,
+        context_temb: Optional[torch.FloatTensor] = None,
     ):
         residual = hidden_states
         residual_context = encoder_hidden_states
         attention_kwargs = attention_kwargs or {}
+        context_temb = temb if context_temb is None else context_temb
 
         # Norm + Projection.
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
-        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
-            encoder_hidden_states, emb=temb
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _apply_adaln_zero(self.norm1, hidden_states, temb)
+        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = _apply_adaln_zero(
+            self.norm1_context, encoder_hidden_states, context_temb
         )
 
         # Attention.
@@ -293,15 +323,25 @@ class AuraFlowJointTransformerBlock(PatchableModule):
         )
 
         # Process attention outputs for the `hidden_states`.
-        hidden_states = self.norm2(residual + gate_msa.unsqueeze(1) * attn_output)
-        hidden_states = hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        hidden_states = gate_mlp.unsqueeze(1) * self.ff(hidden_states)
+        if gate_msa.ndim == 3:
+            hidden_states = self.norm2(residual + gate_msa * attn_output)
+            hidden_states = hidden_states * (1 + scale_mlp) + shift_mlp
+            hidden_states = gate_mlp * self.ff(hidden_states)
+        else:
+            hidden_states = self.norm2(residual + gate_msa.unsqueeze(1) * attn_output)
+            hidden_states = hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+            hidden_states = gate_mlp.unsqueeze(1) * self.ff(hidden_states)
         hidden_states = residual + hidden_states
 
         # Process attention outputs for the `encoder_hidden_states`.
-        encoder_hidden_states = self.norm2_context(residual_context + c_gate_msa.unsqueeze(1) * context_attn_output)
-        encoder_hidden_states = encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
-        encoder_hidden_states = c_gate_mlp.unsqueeze(1) * self.ff_context(encoder_hidden_states)
+        if c_gate_msa.ndim == 3:
+            encoder_hidden_states = self.norm2_context(residual_context + c_gate_msa * context_attn_output)
+            encoder_hidden_states = encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
+            encoder_hidden_states = c_gate_mlp * self.ff_context(encoder_hidden_states)
+        else:
+            encoder_hidden_states = self.norm2_context(residual_context + c_gate_msa.unsqueeze(1) * context_attn_output)
+            encoder_hidden_states = encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+            encoder_hidden_states = c_gate_mlp.unsqueeze(1) * self.ff_context(encoder_hidden_states)
         encoder_hidden_states = residual_context + encoder_hidden_states
 
         return encoder_hidden_states, hidden_states
@@ -636,16 +676,47 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
         # Apply patch embedding, timestep embedding, and project the caption embeddings.
         hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
-        temb = self.time_step_embed(timestep).to(dtype=next(self.parameters()).dtype)
-        temb = self.time_step_proj(temb)
+        temb = self._prepare_timestep_embeddings(
+            timestep=timestep,
+            batch_size=hidden_states.shape[0],
+            sequence_length=hidden_states.shape[1],
+            dtype=next(self.parameters()).dtype,
+            device=hidden_states.device,
+        )
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
-            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
+            sign_tensor = timestep_sign.to(device=hidden_states.device)
+            if temb.ndim == 3:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(temb.shape[0], temb.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(temb.shape[0])
+                    elif sign_tensor.shape[0] != temb.shape[0]:
+                        raise ValueError(
+                            f"AuraFlow tokenwise timestep_sign expected 1 or {temb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, temb.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape != temb.shape[:2]:
+                        raise ValueError(
+                            f"AuraFlow tokenwise timestep_sign expected shape {tuple(temb.shape[:2])}, got {tuple(sign_tensor.shape)}."
+                        )
+                else:
+                    raise ValueError(
+                        f"AuraFlow timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long()
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
+                temb = temb + sign_emb.view(temb.shape[0], temb.shape[1], -1)
+            else:
+                sign_idx = (sign_tensor.view(-1) < 0).long().to(device=hidden_states.device)
+                temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
+        context_temb = temb.mean(dim=1) if temb.ndim == 3 else temb
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         encoder_hidden_states = torch.cat(
             [
@@ -748,6 +819,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     hidden_states,
                     encoder_hidden_states,
                     temb,
+                    context_temb,
                     **ckpt_kwargs,
                 )
             else:
@@ -755,6 +827,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     temb=temb,
+                    context_temb=context_temb,
                     attention_kwargs=attention_kwargs,
                 )
 
@@ -786,6 +859,17 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         if len(self.single_transformer_blocks) > 0:
             encoder_seq_len = encoder_hidden_states.size(1)
             combined_hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+            single_temb = (
+                torch.cat(
+                    [
+                        context_temb[:, None, :].expand(-1, encoder_seq_len, -1),
+                        temb,
+                    ],
+                    dim=1,
+                )
+                if temb.ndim == 3
+                else temb
+            )
 
             for index_block, block in enumerate(self.single_transformer_blocks):
                 actual_index = len(self.joint_transformer_blocks) + index_block
@@ -859,13 +943,13 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     combined_hidden_states = checkpoint_fn(
                         create_custom_forward(block),
                         combined_hidden_states,
-                        temb,
+                        single_temb,
                         **ckpt_kwargs,
                     )
                 else:
                     combined_hidden_states = block(
                         hidden_states=combined_hidden_states,
-                        temb=temb,
+                        temb=single_temb,
                         attention_kwargs=attention_kwargs,
                     )
 
@@ -955,3 +1039,26 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+
+    def _prepare_timestep_embeddings(
+        self,
+        *,
+        timestep: torch.Tensor,
+        batch_size: int,
+        sequence_length: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if timestep.ndim != 2:
+            temb = self.time_step_embed(timestep).to(dtype=dtype)
+            return self.time_step_proj(temb)
+
+        if timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length:
+            raise ValueError(
+                f"AuraFlow tokenwise timestep embedding expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
+            )
+
+        timestep_flat = timestep.reshape(-1)
+        temb = self.time_step_embed(timestep_flat).to(dtype=dtype)
+        temb = self.time_step_proj(temb)
+        return temb.view(batch_size, sequence_length, -1).to(device=device, dtype=dtype)

@@ -43,6 +43,97 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states
 
 
+class PixArtSelfFlowTransformerBlock(BasicTransformerBlock):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        encoder_hidden_states: torch.Tensor | None = None,
+        encoder_attention_mask: torch.Tensor | None = None,
+        timestep: torch.LongTensor | None = None,
+        cross_attention_kwargs: dict[str, Any] = None,
+        class_labels: torch.LongTensor | None = None,
+        added_cond_kwargs: dict[str, torch.Tensor] | None = None,
+    ) -> torch.Tensor:
+        if timestep is None or timestep.ndim != 3:
+            return super().forward(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                timestep=timestep,
+                cross_attention_kwargs=cross_attention_kwargs,
+                class_labels=class_labels,
+                added_cond_kwargs=added_cond_kwargs,
+            )
+
+        if self.norm_type != "ada_norm_single":
+            raise ValueError("PixArt tokenwise Self-Flow support requires ada_norm_single blocks.")
+
+        cross_attention_kwargs = cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
+        if cross_attention_kwargs.get("scale", None) is not None:
+            logger.warning("Passing `scale` to `cross_attention_kwargs` is deprecated. `scale` will be ignored.")
+            cross_attention_kwargs.pop("scale", None)
+
+        batch_size, seq_len, _ = hidden_states.shape
+        if timestep.shape[0] != batch_size or timestep.shape[1] != seq_len:
+            raise ValueError(
+                f"PixArt tokenwise modulation expected timestep shape ({batch_size}, {seq_len}, dim), got {tuple(timestep.shape)}."
+            )
+
+        modulation = self.scale_shift_table[None, None].to(dtype=timestep.dtype, device=timestep.device)
+        modulation = modulation + timestep.reshape(batch_size, seq_len, 6, -1).to(self.scale_shift_table.dtype)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
+            tensor.squeeze(2).to(hidden_states.dtype) for tensor in modulation.chunk(6, dim=2)
+        ]
+
+        norm_hidden_states = self.norm1(hidden_states)
+        norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
+
+        if self.pos_embed is not None:
+            norm_hidden_states = self.pos_embed(norm_hidden_states)
+
+        gligen_kwargs = cross_attention_kwargs.pop("gligen", None)
+        attn_output = self.attn1(
+            norm_hidden_states,
+            encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
+            attention_mask=attention_mask,
+            **cross_attention_kwargs,
+        )
+        hidden_states = gate_msa * attn_output + hidden_states
+        if hidden_states.ndim == 4:
+            hidden_states = hidden_states.squeeze(1)
+
+        if gligen_kwargs is not None:
+            hidden_states = self.fuser(hidden_states, gligen_kwargs["objs"])
+
+        if self.attn2 is not None:
+            norm_hidden_states = hidden_states
+            attn_output = self.attn2(
+                norm_hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                attention_mask=encoder_attention_mask,
+                **cross_attention_kwargs,
+            )
+            hidden_states = attn_output + hidden_states
+
+        norm_hidden_states = self.norm2(hidden_states)
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+
+        if self._chunk_size is not None:
+            from diffusers.models.attention import _chunked_feed_forward
+
+            ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
+        else:
+            ff_output = self.ff(norm_hidden_states)
+
+        hidden_states = gate_mlp * ff_output + hidden_states
+        if hidden_states.ndim == 4:
+            hidden_states = hidden_states.squeeze(1)
+
+        return hidden_states
+
+
 class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model as introduced in PixArt family of models (https://huggingface.co/papers/2310.00426,
@@ -204,7 +295,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
 
         self.transformer_blocks = MutableModuleList(
             [
-                BasicTransformerBlock(
+                PixArtSelfFlowTransformerBlock(
                     self.inner_dim,
                     self.config.num_attention_heads,
                     self.config.attention_head_dim,
@@ -434,11 +525,12 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         )
         hidden_states = self.pos_embed(hidden_states)
 
-        timestep, embedded_timestep = self.adaln_single(
+        timestep, embedded_timestep = self._prepare_timestep_embeddings(
             timestep,
             added_cond_kwargs,
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
+            sequence_length=hidden_states.shape[1],
         )
 
         if self.caption_projection is not None:
@@ -549,12 +641,17 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             capture_idx += 1
             global_idx += 1
 
-        shift, scale = (self.scale_shift_table[None] + embedded_timestep[:, None].to(self.scale_shift_table.device)).chunk(
-            2, dim=1
-        )
         hidden_states = self.norm_out(hidden_states)
-        # Modulation
-        hidden_states = hidden_states * (1 + scale.to(hidden_states.device)) + shift.to(hidden_states.device)
+        if embedded_timestep.ndim == 3:
+            modulation = self.scale_shift_table[None, None].to(dtype=hidden_states.dtype, device=hidden_states.device)
+            modulation = modulation + embedded_timestep[:, :, None].to(hidden_states.dtype)
+            shift, scale = [tensor.squeeze(2) for tensor in modulation.chunk(2, dim=2)]
+            hidden_states = hidden_states * (1 + scale) + shift
+        else:
+            shift, scale = (
+                self.scale_shift_table[None] + embedded_timestep[:, None].to(self.scale_shift_table.device)
+            ).chunk(2, dim=1)
+            hidden_states = hidden_states * (1 + scale.to(hidden_states.device)) + shift.to(hidden_states.device)
         hidden_states = self.proj_out(hidden_states)
         hidden_states = hidden_states.squeeze(1)
 
@@ -583,3 +680,45 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+
+    def _prepare_timestep_embeddings(
+        self,
+        timestep: torch.Tensor,
+        added_cond_kwargs: Dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+        hidden_dtype: torch.dtype,
+        sequence_length: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if timestep.ndim != 2:
+            return self.adaln_single(
+                timestep,
+                added_cond_kwargs,
+                batch_size=batch_size,
+                hidden_dtype=hidden_dtype,
+            )
+
+        if timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length:
+            raise ValueError(
+                f"PixArt tokenwise timestep embedding expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
+            )
+
+        emb = self.adaln_single.emb
+        timestep_flat = timestep.reshape(-1)
+        timesteps_proj = emb.time_proj(timestep_flat)
+        timesteps_emb = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype)).view(batch_size, sequence_length, -1)
+
+        if self.use_additional_conditions:
+            resolution = added_cond_kwargs["resolution"]
+            aspect_ratio = added_cond_kwargs["aspect_ratio"]
+            resolution_emb = emb.additional_condition_proj(resolution.flatten()).to(hidden_dtype)
+            resolution_emb = emb.resolution_embedder(resolution_emb).reshape(batch_size, -1)
+            aspect_ratio_emb = emb.additional_condition_proj(aspect_ratio.flatten()).to(hidden_dtype)
+            aspect_ratio_emb = emb.aspect_ratio_embedder(aspect_ratio_emb).reshape(batch_size, -1)
+            size_cond = torch.cat([resolution_emb, aspect_ratio_emb], dim=1).unsqueeze(1).expand(-1, sequence_length, -1)
+            embedded_timestep = timesteps_emb + size_cond
+        else:
+            embedded_timestep = timesteps_emb
+
+        modulation = self.adaln_single.linear(self.adaln_single.silu(embedded_timestep))
+        return modulation, embedded_timestep

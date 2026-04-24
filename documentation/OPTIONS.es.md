@@ -1103,11 +1103,32 @@ CREPA es una técnica de regularización para fine-tuning de modelos de difusió
 - **Por qué**: Evita cargar DINOv2 cuando el backbone ya tiene una capa semántica más fuerte para supervisar.
 - **Predeterminado**: `false`
 
+### `--crepa_feature_source`
+
+- **Qué**: Selecciona de dónde obtiene CREPA su señal de maestro.
+- **Por qué**: Usa `encoder` para la ruta clásica con encoder externo, `backbone` para alineación interna bloque a bloque, o `self_flow` para el maestro EMA con vista más limpia usado por Self-Flow.
+- **Opciones**: `encoder`, `backbone`, `self_flow`
+- **Predeterminado**: `encoder`
+
+### `--crepa_self_flow`
+
+- **Qué**: Alias booleano legado que activa el modo Self-Flow.
+- **Por qué**: Las configuraciones antiguas aún pueden usarlo, pero las nuevas deberían preferir `crepa_feature_source=self_flow`.
+- **Predeterminado**: `false`
+- **Nota**: Entra en conflicto con `crepa_use_backbone_features` y con `crepa_feature_source` si apunta a otro modo.
+
+### `--crepa_self_flow_mask_ratio`
+
+- **Qué**: Fracción de tokens que reciben el timestep alternativo en Self-Flow.
+- **Por qué**: Controla cuánta asimetría de información se introduce entre tokens más limpios y más ruidosos. Valores altos fortalecen la señal auto-supervisada pero pueden desestabilizar el entrenamiento.
+- **Predeterminado**: `0.1`
+- **Rango**: `0.0` a `0.5`
+
 ### `--crepa_teacher_block_index`
 
-- **Qué**: Índice del bloque maestro al usar características del backbone.
-- **Por qué**: Te permite alinear un bloque estudiante temprano con un bloque maestro más profundo sin un encoder externo. Si no se establece, cae en el bloque estudiante.
-- **Predeterminado**: Usa `crepa_block_index` si no se proporciona.
+- **Qué**: Índice del bloque maestro al usar características del backbone o Self-Flow.
+- **Por qué**: Te permite alinear un bloque estudiante temprano con un bloque maestro más profundo sin un encoder externo. Self-Flow lo requiere explícitamente para que el profesor EMA lea una capa semántica más profunda.
+- **Predeterminado**: Usa `crepa_block_index` si no se proporciona en modo backbone; es obligatorio en modo Self-Flow.
 
 ### `--crepa_encoder_image_size`
 

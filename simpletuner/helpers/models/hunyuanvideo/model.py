@@ -108,6 +108,24 @@ class HunyuanVideo(VideoModelFoundation):
         "to_add_out",
     ]
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        if hidden_states_buffer is None:
+            return None
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # HunyuanVideo has 54 transformer layers (double blocks)
@@ -619,7 +637,7 @@ class HunyuanVideo(VideoModelFoundation):
         if encoder_attention_mask_2 is not None:
             encoder_attention_mask_2 = encoder_attention_mask_2.to(device=latents.device, dtype=torch.bool)
 
-        timesteps = prepared_batch["timesteps"]
+        timesteps = prepared_batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
         wants_i2v_batch = bool(prepared_batch.get("is_i2v_data", False))
         is_i2v_model = self._is_i2v_like_flavour()
 
@@ -668,6 +686,8 @@ class HunyuanVideo(VideoModelFoundation):
                 device=latents.device,
                 dtype=latents.dtype,
             )
+        else:
+            image_embeds = image_embeds.to(device=latents.device, dtype=self.config.weight_dtype)
 
         if encoder_hidden_states_2 is None:
             encoder_hidden_states_2 = torch.zeros(
@@ -708,6 +728,7 @@ class HunyuanVideo(VideoModelFoundation):
         )[0]
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
 

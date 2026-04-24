@@ -251,7 +251,14 @@ class SanaModulatedNorm(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, temb: torch.Tensor, scale_shift_table: torch.Tensor) -> torch.Tensor:
         hidden_states = self.norm(hidden_states)
-        shift, scale = (scale_shift_table[None] + temb[:, None].to(scale_shift_table.device)).chunk(2, dim=1)
+        if temb.ndim == 2:
+            shift, scale = (scale_shift_table[None] + temb[:, None].to(scale_shift_table.device)).chunk(2, dim=1)
+        elif temb.ndim == 3:
+            shift, scale = (scale_shift_table[None, None] + temb[:, :, None].to(scale_shift_table.device)).chunk(2, dim=2)
+            shift = shift.squeeze(2)
+            scale = scale.squeeze(2)
+        else:
+            raise ValueError(f"SanaModulatedNorm expected 2D or 3D timestep embeddings, got {temb.shape}.")
         hidden_states = hidden_states * (1 + scale) + shift
         return hidden_states
 
@@ -279,10 +286,53 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
         hidden_dtype: torch.dtype = None,
         timestep_sign: Optional[torch.Tensor] = None,
     ):
-        timesteps_proj = self.time_proj(timestep)
+        tokenwise_timestep = timestep.ndim == 2
+        if tokenwise_timestep:
+            batch_size, token_count = timestep.shape
+            flat_timestep = timestep.reshape(-1)
+        else:
+            batch_size = timestep.shape[0]
+            token_count = None
+            flat_timestep = timestep
+
+        timesteps_proj = self.time_proj(flat_timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))  # (N, D)
 
-        guidance_proj = self.guidance_condition_proj(guidance)
+        if guidance is None:
+            raise ValueError(
+                "SanaCombinedTimestepGuidanceEmbeddings requires guidance when guidance embeddings are enabled."
+            )
+        if guidance.ndim == 0:
+            guidance = guidance.view(1)
+        if guidance.ndim == 1:
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(
+                    f"SanaCombinedTimestepGuidanceEmbeddings expected 1 or {batch_size} batch guidance values, got {guidance.shape[0]}."
+                )
+            guidance = guidance[:, None].expand(-1, token_count if tokenwise_timestep else 1)
+        elif guidance.ndim == 2 and tokenwise_timestep and guidance.shape[1] == token_count:
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size, -1)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(
+                    f"SanaCombinedTimestepGuidanceEmbeddings expected tokenwise guidance for batch size {batch_size}, got {guidance.shape[0]}."
+                )
+        elif guidance.ndim == 2 and not tokenwise_timestep and guidance.shape[1] == 1:
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size, -1)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(
+                    f"SanaCombinedTimestepGuidanceEmbeddings expected batched guidance for batch size {batch_size}, got {guidance.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"SanaCombinedTimestepGuidanceEmbeddings received incompatible guidance shape {guidance.shape} "
+                f"for timestep shape {timestep.shape}."
+            )
+
+        guidance_proj = self.guidance_condition_proj(guidance.reshape(-1))
         guidance_emb = self.guidance_embedder(guidance_proj.to(dtype=hidden_dtype))
         conditioning = timesteps_emb + guidance_emb
         if timestep_sign is not None:
@@ -291,10 +341,56 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=conditioning.device)
+            sign_tensor = timestep_sign.to(device=conditioning.device)
+            if tokenwise_timestep:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(batch_size, token_count)
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"SanaVideo tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, token_count)
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != token_count:
+                        raise ValueError(
+                            f"SanaVideo tokenwise timestep_sign expected sequence length {token_count}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size, -1)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"SanaVideo tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"SanaVideo timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+            else:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(batch_size)
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"SanaVideo timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"SanaVideo timestep_sign expected scalar or 1D batch tensor for batchwise timesteps, got shape {tuple(sign_tensor.shape)}."
+                    )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=conditioning.device)
             conditioning = conditioning + self.time_sign_embed(sign_idx).to(
                 dtype=conditioning.dtype, device=conditioning.device
             )
+
+        if tokenwise_timestep:
+            conditioning = conditioning.view(batch_size, token_count, -1)
+            projected = self.linear(self.silu(conditioning))
+            return projected, conditioning
 
         return self.linear(self.silu(conditioning)), conditioning
 
@@ -451,11 +547,17 @@ class SanaVideoTransformerBlock(nn.Module):
         rotary_emb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         batch_size = hidden_states.shape[0]
+        if timestep is None:
+            raise ValueError("SanaVideoTransformerBlock requires timestep modulation parameters.")
+        if timestep.ndim == 2:
+            timestep = timestep.unsqueeze(1)
+        elif timestep.ndim != 3:
+            raise ValueError(f"SanaVideoTransformerBlock expected 2D or 3D timestep modulation, got {timestep.shape}.")
 
         # 1. Modulation
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1)
-        ).chunk(6, dim=1)
+            self.scale_shift_table[None, None] + timestep.reshape(batch_size, timestep.shape[1], 6, -1)
+        ).unbind(dim=2)
 
         # 2. Self Attention
         norm_hidden_states = self.norm1(hidden_states)
@@ -691,26 +793,87 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         post_patch_num_frames = num_frames // p_t
         post_patch_height = height // p_h
         post_patch_width = width // p_w
+        token_count = post_patch_num_frames * post_patch_height * post_patch_width
 
         rotary_emb = self.rope(hidden_states)
 
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
+        tokenwise_timestep = timestep.ndim == 2
+        if tokenwise_timestep and timestep.shape[1] != token_count:
+            raise ValueError(
+                f"SanaVideo tokenwise timestep sequence length {timestep.shape[1]} does not match token count "
+                f"{token_count}."
+            )
 
         if guidance is not None:
             timestep, embedded_timestep = self.time_embed(
                 timestep, guidance=guidance, hidden_dtype=hidden_states.dtype, timestep_sign=timestep_sign
             )
         else:
-            timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
+            projected_timestep, embedded_timestep = self.time_embed(
+                timestep.flatten() if tokenwise_timestep else timestep,
+                batch_size=batch_size,
+                hidden_dtype=hidden_states.dtype,
+            )
+            if tokenwise_timestep:
+                timestep = projected_timestep.view(batch_size, token_count, projected_timestep.size(-1))
+                embedded_timestep = embedded_timestep.view(batch_size, token_count, embedded_timestep.size(-1))
+            else:
+                timestep = projected_timestep
             if timestep_sign is not None:
                 if self.time_sign_embed is None:
                     raise ValueError(
                         "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                         "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                     )
-                sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+                sign_tensor = timestep_sign.to(device=hidden_states.device)
+                if embedded_timestep.ndim == 3:
+                    if sign_tensor.ndim == 0:
+                        sign_tensor = sign_tensor.expand(batch_size, embedded_timestep.shape[1])
+                    elif sign_tensor.ndim == 1:
+                        if sign_tensor.shape[0] == 1:
+                            sign_tensor = sign_tensor.expand(batch_size)
+                        elif sign_tensor.shape[0] != batch_size:
+                            raise ValueError(
+                                f"SanaVideo tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                            )
+                        sign_tensor = sign_tensor[:, None].expand(-1, embedded_timestep.shape[1])
+                    elif sign_tensor.ndim == 2:
+                        if sign_tensor.shape[1] != embedded_timestep.shape[1]:
+                            raise ValueError(
+                                f"SanaVideo tokenwise timestep_sign expected sequence length {embedded_timestep.shape[1]}, got {sign_tensor.shape[1]}."
+                            )
+                        if sign_tensor.shape[0] == 1:
+                            sign_tensor = sign_tensor.expand(batch_size, -1)
+                        elif sign_tensor.shape[0] != batch_size:
+                            raise ValueError(
+                                f"SanaVideo tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}."
+                            )
+                    else:
+                        raise ValueError(
+                            f"SanaVideo timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                        )
+                else:
+                    if sign_tensor.ndim == 0:
+                        sign_tensor = sign_tensor.expand(batch_size)
+                    elif sign_tensor.ndim == 1:
+                        if sign_tensor.shape[0] == 1:
+                            sign_tensor = sign_tensor.expand(batch_size)
+                        elif sign_tensor.shape[0] != batch_size:
+                            raise ValueError(
+                                f"SanaVideo timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                            )
+                    else:
+                        raise ValueError(
+                            f"SanaVideo timestep_sign expected scalar or 1D batch tensor for batchwise timesteps, got shape {tuple(sign_tensor.shape)}."
+                        )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=hidden_states.device)
                 sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+                if embedded_timestep.ndim == 3:
+                    sign_emb = sign_emb.view(batch_size, embedded_timestep.shape[1], -1)
+                else:
+                    sign_emb = sign_emb.view(batch_size, -1)
                 embedded_timestep = embedded_timestep + sign_emb
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)

@@ -419,6 +419,19 @@ class TestTimestepEmbed(TransformerBaseTest, EmbeddingTestMixin):
         with self.assertRaises(TypeError):
             embed.forward(timesteps=timesteps, dtype=wdtype)  # Wrong name
 
+    def test_forward_pass_tokenwise(self):
+        """Test TimestepEmbed tokenwise forward pass."""
+        embed = TimestepEmbed(hidden_size=512, enable_time_sign_embed=True)
+
+        timesteps = torch.tensor([[100.0, 900.0, 250.0, 750.0]], dtype=torch.float32)
+        timestep_sign = torch.tensor([[1.0, -1.0, 1.0, -1.0]], dtype=torch.float32)
+        wdtype = torch.float32
+        result = embed(timesteps, wdtype, timestep_sign=timestep_sign)
+
+        self.assertEqual(result.shape, (1, 4, 512))
+        self.assertEqual(result.dtype, wdtype)
+        self.assert_no_nan_or_inf(result)
+
 
 class TestOutEmbed(TransformerBaseTest, EmbeddingTestMixin):
     """Test OutEmbed class."""
@@ -1222,6 +1235,16 @@ class TestHiDreamImageTransformer2DModel(TransformerBaseTest):
         result = model.expand_timesteps(timesteps, 2, torch.device("cpu"))
         self.assertEqual(result.shape, (2,))
 
+        # Test tokenwise timesteps
+        timesteps = torch.tensor([[0.1, 0.9, 0.2, 0.8]], dtype=torch.float32)
+        result = model.expand_timesteps(timesteps, 2, torch.device("cpu"))
+        self.assertEqual(result.shape, (2, 4))
+
+    def test_expand_timesteps_rejects_wrong_tokenwise_batch(self):
+        model = HiDreamImageTransformer2DModel(**self.config)
+        with self.assertRaisesRegex(ValueError, "batch size 2"):
+            model.expand_timesteps(torch.ones(3, 4), 2, torch.device("cpu"))
+
     def test_patchify_method(self):
         """Test patchify method."""
         model = HiDreamImageTransformer2DModel(**self.config)
@@ -1303,6 +1326,33 @@ class TestHiDreamImageTransformer2DModel(TransformerBaseTest):
                     self.assertIsInstance(result.sample, torch.Tensor)
                 else:
                     self.assertIsInstance(result, tuple)
+
+    def test_forward_pass_tokenwise_timesteps(self):
+        model = HiDreamImageTransformer2DModel(**self.config)
+
+        batch_size = 1
+        hidden_states = torch.randn(batch_size, 64, 8, 8)
+        timesteps = torch.tensor([[100.0] * 16], dtype=torch.float32)
+        t5_hidden_states = torch.randn(batch_size, 512, 4096)
+        llama_hidden_states = torch.randn(2, batch_size, 32, 768)
+        pooled_embeds = torch.randn(batch_size, 768)
+        hidden_states_buffer = {}
+
+        with patch.object(model, "double_stream_blocks") as mock_double_blocks:
+            with patch.object(model, "single_stream_blocks") as mock_single_blocks:
+                mock_double_blocks.__iter__.return_value = []
+                mock_single_blocks.__iter__.return_value = []
+
+                result = model(
+                    hidden_states=hidden_states,
+                    timesteps=timesteps,
+                    t5_hidden_states=t5_hidden_states,
+                    llama_hidden_states=llama_hidden_states,
+                    pooled_embeds=pooled_embeds,
+                    hidden_states_buffer=hidden_states_buffer,
+                )
+
+                self.assertIsNotNone(result)
 
     def test_parameter_name_typos_config(self):
         """Test that config rejects common typos."""

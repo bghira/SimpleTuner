@@ -1,8 +1,29 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
+
+
+def _twinflow_settings_for(**config_values):
+    from simpletuner.helpers.models.common import ModelFoundation
+
+    class _Model(ModelFoundation):
+        def _encode_prompts(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def convert_negative_text_embed_for_pipeline(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def convert_text_embed_for_pipeline(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def model_predict(self, *args, **kwargs):
+            raise NotImplementedError
+
+    model = object.__new__(_Model)
+    model.config = SimpleNamespace(**config_values)
+    return model._twinflow_settings()
 
 
 class TwinFlowAdversarialTest(unittest.TestCase):
@@ -10,26 +31,17 @@ class TwinFlowAdversarialTest(unittest.TestCase):
 
     def test_adversarial_settings_defaults(self):
         """Test that adversarial settings have correct defaults."""
-        from simpletuner.helpers.models.common import ModelFoundation
-
-        # Create a minimal mock for testing settings
-        mock_config = MagicMock()
-        mock_config.twinflow_adversarial_enabled = False
-        mock_config.twinflow_adversarial_weight = None
-        mock_config.twinflow_rectify_weight = None
-        mock_config.twinflow_estimate_order = None
-        mock_config.twinflow_enhanced_ratio = None
-        mock_config.twinflow_target_step_count = None
-        mock_config.twinflow_delta_t = None
-        mock_config.twinflow_target_clamp = None
-        mock_config.twinflow_require_ema = True
-
-        # Manually call the settings method logic
-        settings = {
-            "adversarial_enabled": bool(getattr(mock_config, "twinflow_adversarial_enabled", False)),
-            "adversarial_weight": float(getattr(mock_config, "twinflow_adversarial_weight", 1.0) or 1.0),
-            "rectify_weight": float(getattr(mock_config, "twinflow_rectify_weight", 1.0) or 1.0),
-        }
+        settings = _twinflow_settings_for(
+            twinflow_adversarial_enabled=False,
+            twinflow_adversarial_weight=None,
+            twinflow_rectify_weight=None,
+            twinflow_estimate_order=None,
+            twinflow_enhanced_ratio=None,
+            twinflow_target_step_count=None,
+            twinflow_delta_t=None,
+            twinflow_target_clamp=None,
+            twinflow_require_ema=True,
+        )
 
         self.assertFalse(settings["adversarial_enabled"])
         self.assertEqual(settings["adversarial_weight"], 1.0)
@@ -37,20 +49,30 @@ class TwinFlowAdversarialTest(unittest.TestCase):
 
     def test_adversarial_enabled_when_set(self):
         """Test that adversarial_enabled is True when config sets it."""
-        mock_config = MagicMock()
-        mock_config.twinflow_adversarial_enabled = True
-        mock_config.twinflow_adversarial_weight = 0.5
-        mock_config.twinflow_rectify_weight = 0.8
-
-        settings = {
-            "adversarial_enabled": bool(getattr(mock_config, "twinflow_adversarial_enabled", False)),
-            "adversarial_weight": float(getattr(mock_config, "twinflow_adversarial_weight", 1.0) or 1.0),
-            "rectify_weight": float(getattr(mock_config, "twinflow_rectify_weight", 1.0) or 1.0),
-        }
+        settings = _twinflow_settings_for(
+            twinflow_adversarial_enabled=True,
+            twinflow_adversarial_weight=0.5,
+            twinflow_rectify_weight=0.8,
+        )
 
         self.assertTrue(settings["adversarial_enabled"])
         self.assertEqual(settings["adversarial_weight"], 0.5)
         self.assertEqual(settings["rectify_weight"], 0.8)
+
+    def test_explicit_zero_settings_are_preserved(self):
+        settings = _twinflow_settings_for(
+            twinflow_enhanced_ratio=0.0,
+            twinflow_adversarial_weight=0.0,
+            twinflow_rectify_weight=0.0,
+            twinflow_delta_t=0.0,
+            twinflow_target_clamp=0.0,
+        )
+
+        self.assertEqual(settings["enhanced_ratio"], 0.0)
+        self.assertEqual(settings["adversarial_weight"], 0.0)
+        self.assertEqual(settings["rectify_weight"], 0.0)
+        self.assertEqual(settings["delta_t"], 0.0)
+        self.assertEqual(settings["clamp_target"], 0.0)
 
     def test_fake_trajectory_uses_negative_time(self):
         """Test that fake trajectory time sampling produces negative values."""

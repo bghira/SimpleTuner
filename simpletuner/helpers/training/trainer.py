@@ -187,7 +187,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from peft.utils import get_peft_model_state_dict
 from tqdm.auto import tqdm
 
-from simpletuner.helpers.models.common import ImageModelFoundation, VideoModelFoundation
+from simpletuner.helpers.models.common import ImageModelFoundation, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.training.ema import EMAModel
 
 is_optimi_available = False
@@ -5017,7 +5017,7 @@ class Trainer:
         custom_timesteps: list = None,
     ):
         if custom_timesteps is not None:
-            timesteps = custom_timesteps
+            prepared_batch = self._prepare_custom_timestep_batch(prepared_batch, custom_timesteps)
         if self.model.uses_noise_schedule():
             prepared_batch = apply_scheduled_sampling_rollout(
                 self.model,
@@ -5067,6 +5067,108 @@ class Trainer:
             model_pred = model_pred - prepared_batch["noise"]
 
         return model_pred
+
+    def _prepare_custom_timestep_batch(self, prepared_batch: dict, custom_timesteps):
+        overridden_batch = dict(prepared_batch)
+        reference_timesteps = prepared_batch.get("timesteps")
+        reference_device = None
+        reference_dtype = torch.float32
+        if torch.is_tensor(reference_timesteps):
+            reference_device = reference_timesteps.device
+            reference_dtype = reference_timesteps.dtype
+        elif "noisy_latents" in prepared_batch and torch.is_tensor(prepared_batch["noisy_latents"]):
+            reference_device = prepared_batch["noisy_latents"].device
+
+        custom_timesteps_tensor = torch.as_tensor(
+            custom_timesteps,
+            device=reference_device if reference_device is not None else self.accelerator.device,
+            dtype=reference_dtype,
+        )
+        overridden_batch["timesteps"] = custom_timesteps_tensor
+
+        if not self.model.uses_noise_schedule():
+            return overridden_batch
+
+        latents = prepared_batch.get("latents")
+        noise = prepared_batch.get("input_noise", prepared_batch.get("noise"))
+        if not (torch.is_tensor(latents) and torch.is_tensor(noise)):
+            return overridden_batch
+
+        if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+            sigma_values = custom_timesteps_tensor.to(device=latents.device, dtype=latents.dtype)
+            max_timestep = float(getattr(self.noise_scheduler.config, "num_train_timesteps", 1000) or 1000)
+            if torch.max(sigma_values) > 1.0:
+                sigma_values = sigma_values / max_timestep
+            sigma_values = sigma_values.clamp(0.0, 1.0)
+
+            reference_sigmas = prepared_batch.get("sigmas")
+            if torch.is_tensor(reference_sigmas) and reference_sigmas.ndim > sigma_values.ndim:
+                sigma_for_model = sigma_values
+                while sigma_for_model.ndim < reference_sigmas.ndim:
+                    sigma_for_model = sigma_for_model.unsqueeze(-1)
+                sigma_for_model = sigma_for_model.to(device=latents.device, dtype=latents.dtype).expand_as(
+                    reference_sigmas.to(device=latents.device, dtype=latents.dtype)
+                )
+            else:
+                sigma_for_model = sigma_values
+
+            sigma_for_noise = sigma_values
+            while sigma_for_noise.ndim < latents.ndim:
+                sigma_for_noise = sigma_for_noise.unsqueeze(-1)
+            sigma_for_noise = sigma_for_noise.to(device=latents.device, dtype=latents.dtype)
+
+            overridden_batch["sigmas"] = sigma_for_model.to(device=latents.device, dtype=latents.dtype)
+            overridden_batch["noisy_latents"] = (1 - sigma_for_noise) * latents + sigma_for_noise * noise
+
+            audio_latents = prepared_batch.get("audio_latents")
+            if torch.is_tensor(audio_latents):
+                audio_noise = prepared_batch.get("audio_input_noise", prepared_batch.get("audio_noise"))
+                if not torch.is_tensor(audio_noise):
+                    return overridden_batch
+                audio_sigma_reference = prepared_batch.get("audio_sigmas")
+                audio_sigma_values = sigma_values.to(device=audio_latents.device, dtype=audio_latents.dtype)
+                if torch.is_tensor(audio_sigma_reference) and audio_sigma_reference.ndim > audio_sigma_values.ndim:
+                    audio_sigma_for_model = audio_sigma_values
+                    while audio_sigma_for_model.ndim < audio_sigma_reference.ndim:
+                        audio_sigma_for_model = audio_sigma_for_model.unsqueeze(-1)
+                    audio_sigma_for_model = audio_sigma_for_model.to(
+                        device=audio_latents.device, dtype=audio_latents.dtype
+                    ).expand_as(audio_sigma_reference.to(device=audio_latents.device, dtype=audio_latents.dtype))
+                else:
+                    audio_sigma_for_model = audio_sigma_values
+
+                audio_sigma_for_noise = audio_sigma_values
+                while audio_sigma_for_noise.ndim < audio_latents.ndim:
+                    audio_sigma_for_noise = audio_sigma_for_noise.unsqueeze(-1)
+                audio_sigma_for_noise = audio_sigma_for_noise.to(device=audio_latents.device, dtype=audio_latents.dtype)
+                overridden_batch["audio_sigmas"] = audio_sigma_for_model
+                overridden_batch["audio_timesteps"] = custom_timesteps_tensor.to(
+                    device=audio_latents.device,
+                    dtype=(
+                        prepared_batch.get("audio_timesteps", custom_timesteps_tensor).dtype
+                        if torch.is_tensor(prepared_batch.get("audio_timesteps"))
+                        else torch.float32
+                    ),
+                )
+                overridden_batch["audio_noisy_latents"] = (1 - audio_sigma_for_noise) * audio_latents + (
+                    audio_sigma_for_noise * audio_noise
+                )
+            return overridden_batch
+
+        timestep_values = custom_timesteps_tensor
+        if timestep_values.ndim == 0:
+            timestep_values = timestep_values.expand(latents.shape[0])
+        elif timestep_values.ndim != 1:
+            raise ValueError(
+                f"Custom timesteps for scheduler-based evaluation must be scalar or 1D batch tensors, got {tuple(timestep_values.shape)}."
+            )
+        overridden_batch["timesteps"] = timestep_values.to(device=latents.device, dtype=torch.long)
+        overridden_batch["noisy_latents"] = self.noise_scheduler.add_noise(
+            latents.float(),
+            noise.float(),
+            overridden_batch["timesteps"],
+        ).to(device=latents.device, dtype=latents.dtype)
+        return overridden_batch
 
     def _max_grad_value(self):
         max_grad_value = float("-inf")  # Start with a very small number
@@ -5548,7 +5650,11 @@ class Trainer:
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
                     if self.model.uses_noise_schedule():
-                        for timestep in prepared_batch["timesteps"].tolist():
+                        timesteps_for_logging = prepared_batch["timesteps"]
+                        if torch.is_tensor(timesteps_for_logging) and timesteps_for_logging.ndim > 1:
+                            reduce_dims = tuple(range(1, timesteps_for_logging.ndim))
+                            timesteps_for_logging = timesteps_for_logging.detach().float().mean(dim=reduce_dims)
+                        for timestep in timesteps_for_logging.tolist():
                             self.timesteps_buffer.append((self.state["global_step"], timestep))
                         if getattr(self.config, "twinflow_enabled", False):
                             sigmas = prepared_batch.get("sigmas")

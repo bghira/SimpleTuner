@@ -292,6 +292,16 @@ class OmniGenBlock(nn.Module):
         return hidden_states
 
 
+def _omnigen_apply_ada_layer_norm(norm: AdaLayerNorm, hidden_states: torch.Tensor, temb: torch.Tensor) -> torch.Tensor:
+    if temb.ndim == 2:
+        return norm(hidden_states, temb=temb)
+
+    emb = norm.linear(norm.silu(temb))
+    shift, scale = emb.chunk(2, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale) + shift
+    return hidden_states
+
+
 class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
     """
     The Transformer model introduced in OmniGen (https://huggingface.co/papers/2409.11340).
@@ -448,16 +458,55 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
         # 1. Patch & Timestep & Conditional Embedding
         hidden_states = self.patch_embedding(hidden_states, is_input_image=False)
         num_tokens_for_output_image = hidden_states.size(1)
+        if not torch.is_tensor(timestep):
+            timestep = torch.tensor(timestep, device=hidden_states.device, dtype=hidden_states.dtype)
+        else:
+            timestep = timestep.to(device=hidden_states.device, dtype=hidden_states.dtype)
 
-        timestep_proj = self.time_proj(timestep).type_as(hidden_states)
-        time_token = self.time_token(timestep_proj).unsqueeze(1)
-        temb = self.t_embedder(timestep_proj)
+        if timestep.ndim == 0:
+            timestep = timestep.expand(batch_size)
+        elif timestep.ndim == 1:
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(batch_size)
+            elif timestep.shape[0] != batch_size:
+                raise ValueError(
+                    f"OmniGen expected 1 timestep or {batch_size} per-batch timesteps, got {timestep.shape[0]}."
+                )
+        elif timestep.ndim == 2:
+            if timestep.shape[1] != num_tokens_for_output_image:
+                raise ValueError(
+                    f"OmniGen expected tokenwise timesteps with sequence length {num_tokens_for_output_image}, got {timestep.shape[1]}."
+                )
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(batch_size, -1)
+            elif timestep.shape[0] != batch_size:
+                raise ValueError(
+                    f"OmniGen expected tokenwise timesteps for batch size {batch_size}, got {timestep.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"OmniGen expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(timestep.shape)}."
+            )
+
+        if timestep.ndim == 2:
+            timestep_proj = (
+                self.time_proj(timestep.reshape(-1)).type_as(hidden_states).view(batch_size, num_tokens_for_output_image, -1)
+            )
+            temb = self.t_embedder(timestep_proj)
+            pooled_timestep_proj = timestep_proj.mean(dim=1)
+        else:
+            timestep_proj = self.time_proj(timestep).type_as(hidden_states)
+            temb = self.t_embedder(timestep_proj)
+            pooled_timestep_proj = timestep_proj
+
+        time_token = self.time_token(pooled_timestep_proj).unsqueeze(1)
 
         condition_tokens = self._get_multimodal_embeddings(input_ids, input_img_latents, input_image_sizes)
         if condition_tokens is not None:
             hidden_states = torch.cat([condition_tokens, time_token, hidden_states], dim=1)
         else:
             hidden_states = torch.cat([time_token, hidden_states], dim=1)
+        image_tokens_start = hidden_states.size(1) - num_tokens_for_output_image
 
         seq_length = hidden_states.size(1)
         position_ids = position_ids.view(-1, seq_length).long()
@@ -493,13 +542,15 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
 
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
                 musubi_manager.stream_out(block)
-            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            _store_hidden_state(
+                hidden_states_buffer, f"layer_{capture_idx}", hidden_states, image_tokens_start=image_tokens_start
+            )
             capture_idx += 1
 
         # 5. Output norm & projection
         hidden_states = self.norm(hidden_states)
         hidden_states = hidden_states[:, -num_tokens_for_output_image:]
-        hidden_states = self.norm_out(hidden_states, temb=temb)
+        hidden_states = _omnigen_apply_ada_layer_norm(self.norm_out, hidden_states, temb)
         hidden_states = self.proj_out(hidden_states)
         hidden_states = hidden_states.reshape(batch_size, post_patch_height, post_patch_width, p, p, -1)
         output = hidden_states.permute(0, 5, 1, 3, 2, 4).flatten(4, 5).flatten(2, 3)

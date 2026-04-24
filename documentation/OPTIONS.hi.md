@@ -1101,11 +1101,32 @@ CREPA एक regularization तकनीक है जो video diffusion models
 - **Why**: जब backbone के पास पहले से मजबूत semantic layer हो, तब DINOv2 लोड करने से बचता है।
 - **Default**: `false`
 
+### `--crepa_feature_source`
+
+- **What**: चुनता है कि CREPA अपना teacher signal कहां से ले।
+- **Why**: classic external encoder path के लिए `encoder`, internal block-to-block alignment के लिए `backbone`, और Self-Flow के cleaner EMA teacher view के लिए `self_flow` उपयोग करें।
+- **Choices**: `encoder`, `backbone`, `self_flow`
+- **Default**: `encoder`
+
+### `--crepa_self_flow`
+
+- **What**: Self-Flow mode enable करने वाला legacy boolean alias।
+- **Why**: पुराने configs अब भी इसका उपयोग कर सकते हैं, लेकिन नए configs को `crepa_feature_source=self_flow` उपयोग करना चाहिए।
+- **Default**: `false`
+- **Note**: यह `crepa_use_backbone_features` और किसी दूसरे mode वाले `crepa_feature_source` के साथ conflict करता है।
+
+### `--crepa_self_flow_mask_ratio`
+
+- **What**: Self-Flow में alternate timestep पाने वाले tokens का fraction।
+- **Why**: यह cleaner और noisier tokens के बीच information asymmetry नियंत्रित करता है। ऊंचे values self-supervised signal को मजबूत करते हैं, लेकिन training unstable भी कर सकते हैं।
+- **Default**: `0.1`
+- **Range**: `0.0` से `0.5`
+
 ### `--crepa_teacher_block_index`
 
-- **What**: backbone features उपयोग करते समय teacher block index।
-- **Why**: external encoder के बिना, earlier student block को later teacher block से align करने देता है। unset होने पर student block पर fallback होता है।
-- **Default**: यदि नहीं दिया गया, तो `crepa_block_index` उपयोग होगा।
+- **What**: backbone features या Self-Flow उपयोग करते समय teacher block index।
+- **Why**: external encoder के बिना earlier student block को later teacher block से align करने देता है। Self-Flow में यह explicitly जरूरी है ताकि EMA teacher deeper semantic layer से पढ़े।
+- **Default**: backbone mode में नहीं दिया गया तो `crepa_block_index` उपयोग होगा; Self-Flow mode में यह required है।
 
 ### `--crepa_encoder_image_size`
 

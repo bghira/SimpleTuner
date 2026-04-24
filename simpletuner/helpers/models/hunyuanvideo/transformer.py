@@ -49,6 +49,58 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states
 
 
+def _hunyuan_tokenwise_conditioning(
+    conditioning_module,
+    timestep: torch.Tensor,
+    pooled_projections: torch.Tensor,
+) -> torch.Tensor:
+    if timestep.ndim != 2:
+        return conditioning_module(timestep, pooled_projections)
+
+    batch_size, sequence_length = timestep.shape
+    flat_timestep = timestep.reshape(-1)
+    repeated_pooled = (
+        pooled_projections[:, None, :].expand(-1, sequence_length, -1).reshape(-1, pooled_projections.shape[-1])
+    )
+    conditioning = conditioning_module(flat_timestep, repeated_pooled)
+    return conditioning.view(batch_size, sequence_length, -1)
+
+
+def _hunyuan_apply_ada_layer_norm_zero(norm, hidden_states: torch.Tensor, emb: torch.Tensor):
+    if emb.ndim == 2:
+        return norm(hidden_states, emb=emb)
+
+    modulation = norm.linear(norm.silu(emb))
+    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = modulation.chunk(6, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
+def _hunyuan_apply_ada_layer_norm_continuous(norm, hidden_states: torch.Tensor, conditioning_embedding: torch.Tensor):
+    if conditioning_embedding.ndim == 2:
+        return norm(hidden_states, conditioning_embedding)
+
+    emb = norm.linear(norm.silu(conditioning_embedding).to(hidden_states.dtype))
+    scale, shift = torch.chunk(emb, 2, dim=-1)
+    return norm.norm(hidden_states) * (1 + scale) + shift
+
+
+def _reshape_hunyuan_video_tokens(
+    hidden_states: torch.Tensor,
+    *,
+    batch_size: int,
+    post_patch_num_frames: int,
+    post_patch_height: int,
+    post_patch_width: int,
+) -> torch.Tensor:
+    return hidden_states.reshape(
+        batch_size,
+        post_patch_num_frames,
+        post_patch_height * post_patch_width,
+        -1,
+    )
+
+
 class HunyuanVideo15AttnProcessor2_0:
     _attention_backend = None
     _parallel_config = None
@@ -213,22 +265,68 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
         timestep_r: Optional[torch.Tensor] = None,
         timestep_sign: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=timestep.dtype))
+        original_shape = timestep.shape
+        timestep_flat = timestep.reshape(-1)
+        timesteps_proj = self.time_proj(timestep_flat)
+        timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=timestep_flat.dtype))
+        if timestep.ndim > 1:
+            timesteps_emb = timesteps_emb.view(*original_shape, -1)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=timesteps_emb.device)
-            timesteps_emb = timesteps_emb + self.time_sign_embed(sign_idx).to(
-                dtype=timesteps_emb.dtype, device=timesteps_emb.device
-            )
+            sign_tensor = timestep_sign.to(device=timesteps_emb.device)
+            if timestep.ndim == 2:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(timestep.shape[0], timestep.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0])
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"HunyuanVideo tokenwise timestep_sign expected 1 or {timestep.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, timestep.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != timestep.shape[1]:
+                        raise ValueError(
+                            f"HunyuanVideo tokenwise timestep_sign expected sequence length {timestep.shape[1]}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0], -1)
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"HunyuanVideo tokenwise timestep_sign expected batch size {timestep.shape[0]}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"HunyuanVideo timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=timesteps_emb.device)
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=timesteps_emb.dtype, device=timesteps_emb.device)
+            if timestep.ndim > 1:
+                sign_emb = sign_emb.view(*original_shape, -1)
+            timesteps_emb = timesteps_emb + sign_emb
 
         if timestep_r is not None:
-            timesteps_proj_r = self.time_proj_r(timestep_r)
-            timesteps_emb_r = self.timestep_embedder_r(timesteps_proj_r.to(dtype=timestep.dtype))
+            if timestep.ndim == 2 and timestep_r.ndim == 1:
+                timestep_r = timestep_r[:, None].expand(-1, timestep.shape[1])
+            elif timestep.ndim == 2 and timestep_r.ndim == 2:
+                if timestep_r.shape != timestep.shape:
+                    raise ValueError(
+                        f"HunyuanVideo tokenwise timestep_r expected shape {tuple(timestep.shape)}, got {tuple(timestep_r.shape)}."
+                    )
+            elif timestep.ndim != timestep_r.ndim:
+                raise ValueError(
+                    f"HunyuanVideo timestep_r must match timestep dimensionality, got timestep {tuple(timestep.shape)} and timestep_r {tuple(timestep_r.shape)}."
+                )
+            timestep_r_flat = timestep_r.reshape(-1)
+            timesteps_proj_r = self.time_proj_r(timestep_r_flat)
+            timesteps_emb_r = self.timestep_embedder_r(timesteps_proj_r.to(dtype=timestep_flat.dtype))
+            if timestep_r.ndim > 1:
+                timesteps_emb_r = timesteps_emb_r.view(*timestep_r.shape, -1)
             timesteps_emb = timesteps_emb + timesteps_emb_r
 
         return timesteps_emb
@@ -388,6 +486,8 @@ class HunyuanVideo15TokenRefiner(nn.Module):
             pooled_projections = (hidden_states * mask_float).sum(dim=1) / mask_float.sum(dim=1)
             pooled_projections = pooled_projections.to(original_dtype)
 
+        if timestep.ndim == 2:
+            timestep = timestep.mean(dim=1)
         temb = self.time_text_embed(timestep, pooled_projections)
         hidden_states = self.proj_in(hidden_states)
         hidden_states = self.token_refiner(hidden_states, temb, attention_mask)
@@ -505,15 +605,20 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         temb: torch.Tensor,
+        context_temb: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         freqs_cis: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if context_temb is None:
+            context_temb = temb
         # 1. Input normalization
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
-        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
-            encoder_hidden_states, emb=temb
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _hunyuan_apply_ada_layer_norm_zero(
+            self.norm1, hidden_states, temb
+        )
+        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = _hunyuan_apply_ada_layer_norm_zero(
+            self.norm1_context, encoder_hidden_states, context_temb
         )
 
         # 2. Joint attention
@@ -525,21 +630,35 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         )
 
         # 3. Modulation and residual connection
-        hidden_states = hidden_states + attn_output * gate_msa.unsqueeze(1)
-        encoder_hidden_states = encoder_hidden_states + context_attn_output * c_gate_msa.unsqueeze(1)
+        if gate_msa.ndim == 2:
+            gate_msa = gate_msa.unsqueeze(1)
+        if c_gate_msa.ndim == 2:
+            c_gate_msa = c_gate_msa.unsqueeze(1)
+        hidden_states = hidden_states + attn_output * gate_msa
+        encoder_hidden_states = encoder_hidden_states + context_attn_output * c_gate_msa
 
         norm_hidden_states = self.norm2(hidden_states)
         norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
 
-        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        if scale_mlp.ndim == 2:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        else:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+        if c_scale_mlp.ndim == 2:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        else:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
 
         # 4. Feed-forward
         ff_output = self.ff(norm_hidden_states)
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
 
-        hidden_states = hidden_states + gate_mlp.unsqueeze(1) * ff_output
-        encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+        if gate_mlp.ndim == 2:
+            gate_mlp = gate_mlp.unsqueeze(1)
+        if c_gate_mlp.ndim == 2:
+            c_gate_mlp = c_gate_mlp.unsqueeze(1)
+        hidden_states = hidden_states + gate_mlp * ff_output
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
 
         return hidden_states, encoder_hidden_states
 
@@ -726,6 +845,16 @@ class HunyuanVideo15Transformer3DModel(
             timestep_r=timestep_r,
             timestep_sign=timestep_sign,
         )
+        if temb.ndim == 3:
+            if temb.shape[1] != post_patch_num_frames * post_patch_height * post_patch_width:
+                raise ValueError(
+                    f"HunyuanVideo tokenwise timesteps expected shape {(batch_size, post_patch_num_frames * post_patch_height * post_patch_width)}, got {tuple(timestep.shape)}."
+                )
+            temb_hidden = temb
+            temb_context = temb.mean(dim=1)
+        else:
+            temb_hidden = temb
+            temb_context = temb
 
         hidden_states = self.x_embedder(hidden_states)
 
@@ -849,14 +978,22 @@ class HunyuanVideo15Transformer3DModel(
                     block,
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
+                    temb_hidden,
+                    temb_context,
                     encoder_attention_mask,
                     image_rotary_emb,
                     use_reentrant=False,
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
-                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                tokens_view = _reshape_hunyuan_video_tokens(
+                    hidden_states,
+                    batch_size=batch_size,
+                    post_patch_num_frames=post_patch_num_frames,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                )
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
                 capture_idx += 1
 
         else:
@@ -866,17 +1003,25 @@ class HunyuanVideo15Transformer3DModel(
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
+                    temb_hidden,
+                    temb_context,
                     encoder_attention_mask,
                     image_rotary_emb,
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
-                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                tokens_view = _reshape_hunyuan_video_tokens(
+                    hidden_states,
+                    batch_size=batch_size,
+                    post_patch_num_frames=post_patch_num_frames,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                )
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
                 capture_idx += 1
 
         # 5. Output projection
-        hidden_states = self.norm_out(hidden_states, temb)
+        hidden_states = _hunyuan_apply_ada_layer_norm_continuous(self.norm_out, hidden_states, temb_hidden)
         hidden_states = self.proj_out(hidden_states)
 
         hidden_states = hidden_states.reshape(

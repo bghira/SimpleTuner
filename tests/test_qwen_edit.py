@@ -64,8 +64,9 @@ class DummyVAE:
 class DummyTransformer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.config = SimpleNamespace(in_channels=64)
+        self.config = SimpleNamespace(in_channels=64, patch_size=2)
         self.last_img_shapes = None
+        self.last_timestep = None
 
     def forward(
         self,
@@ -79,6 +80,7 @@ class DummyTransformer(nn.Module):
         return_dict=False,
     ):
         self.last_img_shapes = img_shapes
+        self.last_timestep = timestep
         return (hidden_states,)
 
 
@@ -214,6 +216,23 @@ class QwenEditTests(unittest.TestCase):
         self.assertEqual(len(model.model.last_img_shapes[0]), 2)
         self.assertEqual(model.model.last_img_shapes[0][0], (1, 4, 4))
 
+    def test_model_predict_edit_path_keeps_control_tokens_clean_for_tokenwise_self_flow(self):
+        model = self._make_model("edit-v1")
+        latents = torch.randn(1, 16, 8, 8)
+        control_latents = torch.randn(1, 16, 8, 8)
+        prepared_batch = {
+            "noisy_latents": latents.clone(),
+            "edit_control_latents": control_latents.clone(),
+            "prompt_embeds": torch.randn(1, 4, 8),
+            "encoder_attention_mask": torch.ones(1, 4, dtype=torch.int64),
+            "timesteps": torch.tensor([[100.0] * 16], dtype=torch.float32),
+        }
+
+        model._model_predict_edit_v1(prepared_batch)
+
+        self.assertEqual(model.model.last_timestep.shape, torch.Size([1, 32]))
+        self.assertTrue(torch.equal(model.model.last_timestep[0, 16:], torch.zeros(16)))
+
     def test_prepare_edit_batch_v2_builds_control_tensors(self):
         prompt_embeds = torch.ones(2, 4, 8)
         prompt_mask = torch.ones(2, 4, dtype=torch.int64)
@@ -270,6 +289,24 @@ class QwenEditTests(unittest.TestCase):
         self.assertEqual(len(model.model.last_img_shapes), 1)
         self.assertEqual(len(model.model.last_img_shapes[0]), 2)
         self.assertEqual(model.model.last_img_shapes[0][0], (1, 4, 4))
+
+    def test_model_predict_edit_plus_keeps_control_tokens_clean_for_tokenwise_self_flow(self):
+        model = self._make_model("edit-v2")
+
+        latents = torch.randn(1, 16, 8, 8)
+        control_latent_list = [[torch.zeros(16, 4, 4)]]
+        prepared_batch = {
+            "noisy_latents": latents.clone(),
+            "control_latent_list": control_latent_list,
+            "prompt_embeds": torch.randn(1, 4, 8),
+            "encoder_attention_mask": torch.ones(1, 4, dtype=torch.int64),
+            "timesteps": torch.tensor([[100.0] * 16], dtype=torch.float32),
+        }
+
+        model._model_predict_edit_plus(prepared_batch)
+
+        self.assertEqual(model.model.last_timestep.shape, torch.Size([1, 20]))
+        self.assertTrue(torch.equal(model.model.last_timestep[0, 16:], torch.zeros(4)))
 
     def test_edit_flavours_require_conditioning_latents(self):
         edit_v1 = self._make_model("edit-v1")

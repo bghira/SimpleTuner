@@ -643,6 +643,27 @@ class WanTimeTextAudioPoseEmbedding(nn.Module):
         )
         self.pose_embedder = nn.Conv3d(pose_embed_dim, dim, kernel_size=patch_size, stride=patch_size)
 
+    def project_timestep(
+        self,
+        timestep: torch.Tensor,
+        dtype_reference: torch.Tensor,
+        timestep_seq_len: Optional[int] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if timestep.ndim > 1:
+            timestep_seq_len = timestep.shape[1]
+            timestep = timestep.reshape(-1)
+
+        timestep = self.timesteps_proj(timestep)
+        if timestep_seq_len is not None:
+            timestep = timestep.unflatten(0, (-1, timestep_seq_len))
+
+        time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
+        if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
+            timestep = timestep.to(time_embedder_dtype)
+        temb = self.time_embedder(timestep).type_as(dtype_reference)
+        timestep_proj = self.time_proj(self.act_fn(temb))
+        return temb, timestep_proj
+
     def forward(
         self,
         timestep: torch.Tensor,
@@ -651,15 +672,11 @@ class WanTimeTextAudioPoseEmbedding(nn.Module):
         pose_hidden_states: Optional[torch.Tensor] = None,
         timestep_seq_len: Optional[int] = None,
     ):
-        timestep = self.timesteps_proj(timestep)
-        if timestep_seq_len is not None:
-            timestep = timestep.unflatten(0, (-1, timestep_seq_len))
-
-        time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
-        if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
-            timestep = timestep.to(time_embedder_dtype)
-        temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
-        timestep_proj = self.time_proj(self.act_fn(temb))
+        temb, timestep_proj = self.project_timestep(
+            timestep,
+            encoder_hidden_states,
+            timestep_seq_len=timestep_seq_len,
+        )
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
         audio_hidden_states = self.causal_audio_encoder(audio_hidden_states)
@@ -723,57 +740,128 @@ class WanS2VTransformerBlock(nn.Module):
         temb: Tuple[torch.Tensor, int],
         rotary_emb: torch.Tensor,
     ) -> torch.Tensor:
-        # Segment handling for different timestep embeddings on ref vs motion frames
-        seg_idx = temb[1].item() if isinstance(temb[1], torch.Tensor) else temb[1]
-        seg_idx = min(max(0, seg_idx), hidden_states.shape[1])
-        seg_idx = [0, seg_idx, hidden_states.shape[1]]
-        temb = temb[0]
+        # Legacy path: scalar timestep modulation for two token segments.
+        if len(temb) == 2:
+            seg_idx = temb[1].item() if isinstance(temb[1], torch.Tensor) else temb[1]
+            seg_idx = min(max(0, seg_idx), hidden_states.shape[1])
+            seg_idx = [0, seg_idx, hidden_states.shape[1]]
+            temb = temb[0]
 
-        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (
-            self.scale_shift_table.unsqueeze(2) + temb.float()
-        ).chunk(6, dim=1)
+            shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (
+                self.scale_shift_table.unsqueeze(2) + temb.float()
+            ).chunk(6, dim=1)
 
-        shift_msa = shift_msa.squeeze(1)
-        scale_msa = scale_msa.squeeze(1)
-        gate_msa = gate_msa.squeeze(1)
-        c_shift_msa = c_shift_msa.squeeze(1)
-        c_scale_msa = c_scale_msa.squeeze(1)
-        c_gate_msa = c_gate_msa.squeeze(1)
+            shift_msa = shift_msa.squeeze(1)
+            scale_msa = scale_msa.squeeze(1)
+            gate_msa = gate_msa.squeeze(1)
+            c_shift_msa = c_shift_msa.squeeze(1)
+            c_scale_msa = c_scale_msa.squeeze(1)
+            c_gate_msa = c_gate_msa.squeeze(1)
+
+            norm_hidden_states = self.norm1(hidden_states.float())
+            parts = []
+            for i in range(2):
+                parts.append(
+                    norm_hidden_states[:, seg_idx[i] : seg_idx[i + 1]] * (1 + scale_msa[:, i : i + 1])
+                    + shift_msa[:, i : i + 1]
+                )
+            norm_hidden_states = torch.cat(parts, dim=1).type_as(hidden_states)
+
+            # Self-attention
+            attn_output = self.attn1(hidden_states=norm_hidden_states, rotary_emb=rotary_emb)
+            z = []
+            for i in range(2):
+                z.append(attn_output[:, seg_idx[i] : seg_idx[i + 1]] * gate_msa[:, i : i + 1])
+            attn_output = torch.cat(z, dim=1)
+            hidden_states = (hidden_states.float() + attn_output).type_as(hidden_states)
+
+            # Cross-attention
+            norm_hidden_states = self.norm2(hidden_states.float()).type_as(hidden_states)
+            attn_output = self.attn2(
+                hidden_states=norm_hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+            )
+            hidden_states = hidden_states + attn_output
+
+            # Feed-forward
+            norm3_hidden_states = self.norm3(hidden_states.float())
+            parts = []
+            for i in range(2):
+                parts.append(
+                    norm3_hidden_states[:, seg_idx[i] : seg_idx[i + 1]] * (1 + c_scale_msa[:, i : i + 1])
+                    + c_shift_msa[:, i : i + 1]
+                )
+            norm3_hidden_states = torch.cat(parts, dim=1).type_as(hidden_states)
+            ff_output = self.ffn(norm3_hidden_states)
+            z = []
+            for i in range(2):
+                z.append(ff_output[:, seg_idx[i] : seg_idx[i + 1]] * c_gate_msa[:, i : i + 1])
+            ff_output = torch.cat(z, dim=1)
+            hidden_states = (hidden_states.float() + ff_output.float()).type_as(hidden_states)
+
+            return hidden_states
+
+        if len(temb) != 3:
+            raise ValueError(f"WanS2VTransformerBlock expected 2 or 3 timestep payload items, got {len(temb)}.")
+
+        video_temb, conditioning_temb, seg_idx = temb
+        seg_idx = seg_idx.item() if isinstance(seg_idx, torch.Tensor) else seg_idx
+        video_len = min(max(0, seg_idx), hidden_states.shape[1], video_temb.shape[1])
+
+        video_mod = self.scale_shift_table.unsqueeze(1) + video_temb.float()
+        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = video_mod.chunk(6, dim=2)
+        shift_msa = shift_msa.squeeze(2)
+        scale_msa = scale_msa.squeeze(2)
+        gate_msa = gate_msa.squeeze(2)
+        c_shift_msa = c_shift_msa.squeeze(2)
+        c_scale_msa = c_scale_msa.squeeze(2)
+        c_gate_msa = c_gate_msa.squeeze(2)
+
+        conditioning_mod = self.scale_shift_table + conditioning_temb.float()
+        cond_shift_msa, cond_scale_msa, cond_gate_msa, cond_c_shift_msa, cond_c_scale_msa, cond_c_gate_msa = (
+            conditioning_mod.chunk(6, dim=1)
+        )
 
         norm_hidden_states = self.norm1(hidden_states.float())
         parts = []
-        for i in range(2):
-            parts.append(
-                norm_hidden_states[:, seg_idx[i] : seg_idx[i + 1]] * (1 + scale_msa[:, i : i + 1]) + shift_msa[:, i : i + 1]
-            )
+        if video_len > 0:
+            parts.append(norm_hidden_states[:, :video_len] * (1 + scale_msa[:, :video_len]) + shift_msa[:, :video_len])
+        if video_len < hidden_states.shape[1]:
+            parts.append(norm_hidden_states[:, video_len:] * (1 + cond_scale_msa) + cond_shift_msa)
         norm_hidden_states = torch.cat(parts, dim=1).type_as(hidden_states)
 
         # Self-attention
-        attn_output = self.attn1(norm_hidden_states, None, None, rotary_emb)
+        attn_output = self.attn1(hidden_states=norm_hidden_states, rotary_emb=rotary_emb)
         z = []
-        for i in range(2):
-            z.append(attn_output[:, seg_idx[i] : seg_idx[i + 1]] * gate_msa[:, i : i + 1])
+        if video_len > 0:
+            z.append(attn_output[:, :video_len] * gate_msa[:, :video_len])
+        if video_len < hidden_states.shape[1]:
+            z.append(attn_output[:, video_len:] * cond_gate_msa)
         attn_output = torch.cat(z, dim=1)
         hidden_states = (hidden_states.float() + attn_output).type_as(hidden_states)
 
         # Cross-attention
         norm_hidden_states = self.norm2(hidden_states.float()).type_as(hidden_states)
-        attn_output = self.attn2(norm_hidden_states, encoder_hidden_states, None, None)
+        attn_output = self.attn2(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+        )
         hidden_states = hidden_states + attn_output
 
         # Feed-forward
         norm3_hidden_states = self.norm3(hidden_states.float())
         parts = []
-        for i in range(2):
-            parts.append(
-                norm3_hidden_states[:, seg_idx[i] : seg_idx[i + 1]] * (1 + c_scale_msa[:, i : i + 1])
-                + c_shift_msa[:, i : i + 1]
-            )
+        if video_len > 0:
+            parts.append(norm3_hidden_states[:, :video_len] * (1 + c_scale_msa[:, :video_len]) + c_shift_msa[:, :video_len])
+        if video_len < hidden_states.shape[1]:
+            parts.append(norm3_hidden_states[:, video_len:] * (1 + cond_c_scale_msa) + cond_c_shift_msa)
         norm3_hidden_states = torch.cat(parts, dim=1).type_as(hidden_states)
         ff_output = self.ffn(norm3_hidden_states)
         z = []
-        for i in range(2):
-            z.append(ff_output[:, seg_idx[i] : seg_idx[i + 1]] * c_gate_msa[:, i : i + 1])
+        if video_len > 0:
+            z.append(ff_output[:, :video_len] * c_gate_msa[:, :video_len])
+        if video_len < hidden_states.shape[1]:
+            z.append(ff_output[:, video_len:] * cond_c_gate_msa)
         ff_output = torch.cat(z, dim=1)
         hidden_states = (hidden_states.float() + ff_output.float()).type_as(hidden_states)
 
@@ -1024,14 +1112,20 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         audio_embeds = torch.cat(
             [audio_embeds[..., 0].unsqueeze(-1).repeat(1, 1, 1, motion_frames[0]), audio_embeds], dim=-1
         )
-
-        if self.config.zero_timestep:
-            timestep = torch.cat([timestep, torch.zeros([1], dtype=timestep.dtype, device=timestep.device)])
+        token_sequence_length = post_patch_num_frames * post_patch_height * post_patch_width
+        if timestep.ndim > 1 and timestep.shape[1] != token_sequence_length:
+            raise ValueError(
+                "WanS2VTransformer3DModel received tokenwise timesteps with sequence length "
+                f"{timestep.shape[1]}, but the latent token sequence length is {token_sequence_length}."
+            )
 
         temb, timestep_proj, encoder_hidden_states, audio_hidden_states, pose_hidden_states = self.condition_embedder(
-            timestep, encoder_hidden_states, audio_embeds, pose_latents
+            timestep,
+            encoder_hidden_states,
+            audio_embeds,
+            pose_latents,
         )
-        timestep_proj = timestep_proj.unflatten(1, (6, -1))
+        timestep_proj = timestep_proj.unflatten(-1, (6, -1))
 
         if self.config.enable_adain:
             audio_emb_global, audio_emb = audio_hidden_states
@@ -1067,17 +1161,26 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         hidden_states = hidden_states + self.trainable_condition_mask(mask_input).to(hidden_states.dtype)
 
-        if self.config.zero_timestep:
-            temb = temb[:-1]
-            zero_timestep_proj = timestep_proj[-1:]
-            timestep_proj = timestep_proj[:-1]
-            timestep_proj = torch.cat(
-                [timestep_proj.unsqueeze(2), zero_timestep_proj.unsqueeze(2).repeat(timestep_proj.shape[0], 1, 1, 1)], dim=2
-            )
-            timestep_proj = [timestep_proj, original_sequence_length]
+        if timestep.ndim > 1:
+            if self.config.zero_timestep:
+                _, conditioning_timestep_proj = self.condition_embedder.project_timestep(
+                    torch.zeros(batch_size, dtype=timestep.dtype, device=timestep.device),
+                    encoder_hidden_states,
+                )
+                conditioning_timestep_proj = conditioning_timestep_proj.unflatten(-1, (6, -1))
+            else:
+                conditioning_timestep_proj = timestep_proj.mean(dim=1)
+            timestep_proj = [timestep_proj, conditioning_timestep_proj, original_sequence_length]
         else:
-            timestep_proj = timestep_proj.unsqueeze(2).repeat(1, 1, 2, 1)
-            timestep_proj = [timestep_proj, torch.tensor(0)]
+            if self.config.zero_timestep:
+                _, conditioning_timestep_proj = self.condition_embedder.project_timestep(
+                    torch.zeros(batch_size, dtype=timestep.dtype, device=timestep.device),
+                    encoder_hidden_states,
+                )
+                conditioning_timestep_proj = conditioning_timestep_proj.unflatten(-1, (6, -1))
+                timestep_proj = [torch.stack([timestep_proj, conditioning_timestep_proj], dim=2), original_sequence_length]
+            else:
+                timestep_proj = [torch.stack([timestep_proj, timestep_proj], dim=2), torch.tensor(0)]
 
         merged_audio_emb_num_frames = merged_audio_emb.shape[1]
         attn_audio_emb = merged_audio_emb.flatten(0, 1).to(hidden_states.dtype)
@@ -1195,7 +1298,16 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         hidden_states = hidden_states[:, : original_sequence_length.item()]
 
         # Output projection
-        shift, scale = (self.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
+        if temb.ndim == 2:
+            output_modulation = self.scale_shift_table + temb.unsqueeze(1)
+            shift, scale = output_modulation.chunk(2, dim=1)
+        elif temb.ndim == 3:
+            output_modulation = self.scale_shift_table.unsqueeze(1) + temb.unsqueeze(2)
+            shift, scale = output_modulation.chunk(2, dim=2)
+            shift = shift.squeeze(2)
+            scale = scale.squeeze(2)
+        else:
+            raise ValueError(f"WanS2VTransformer3DModel expected temb with 2 or 3 dims, got shape {tuple(temb.shape)}.")
         shift = shift.to(hidden_states.device)
         scale = scale.to(hidden_states.device)
 

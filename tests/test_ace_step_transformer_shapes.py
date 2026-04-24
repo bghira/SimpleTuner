@@ -120,6 +120,70 @@ class ACEStepTransformerShapeTest(unittest.TestCase):
         self.assertIsNotNone(output.sample)
         self.assertEqual(output.sample.shape, (batch_size, self.config["out_channels"], height, width))
 
+    def test_forward_accepts_tokenwise_timesteps(self):
+        batch_size = 1
+        hidden_states = torch.randn(
+            batch_size, self.config["in_channels"], self.config["max_height"], self.config["max_width"]
+        )
+        token_count = (self.config["max_height"] // self.config["patch_size"][0]) * (
+            self.config["max_width"] // self.config["patch_size"][1]
+        )
+        output = self.model(
+            hidden_states=hidden_states,
+            attention_mask=None,
+            encoder_text_hidden_states=torch.randn(batch_size, 8, self.config["text_embedding_dim"]),
+            speaker_embeds=torch.randn(batch_size, self.config["speaker_embedding_dim"]),
+            lyric_token_idx=torch.zeros(batch_size, 1, dtype=torch.long),
+            lyric_mask=torch.zeros(batch_size, 1, dtype=torch.long),
+            timestep=torch.linspace(0.1, 0.9, token_count, dtype=torch.float32).unsqueeze(0),
+        )
+
+        self.assertEqual(
+            output.sample.shape,
+            (batch_size, self.config["out_channels"], self.config["max_height"], self.config["max_width"]),
+        )
+
+    def test_forward_rejects_wrong_tokenwise_timestep_length(self):
+        batch_size = 1
+        hidden_states = torch.randn(
+            batch_size, self.config["in_channels"], self.config["max_height"], self.config["max_width"]
+        )
+
+        with self.assertRaisesRegex(ValueError, "tokenwise timesteps expected sequence length"):
+            _ = self.model(
+                hidden_states=hidden_states,
+                attention_mask=None,
+                encoder_text_hidden_states=torch.randn(batch_size, 8, self.config["text_embedding_dim"]),
+                speaker_embeds=torch.randn(batch_size, self.config["speaker_embedding_dim"]),
+                lyric_token_idx=torch.zeros(batch_size, 1, dtype=torch.long),
+                lyric_mask=torch.zeros(batch_size, 1, dtype=torch.long),
+                timestep=torch.tensor([[0.1, 0.9, 0.2]], dtype=torch.float32),
+            )
+
+    def test_hidden_state_capture_works_with_tokenwise_timesteps(self):
+        batch_size = 1
+        hidden_states = torch.randn(
+            batch_size, self.config["in_channels"], self.config["max_height"], self.config["max_width"]
+        )
+        hidden_states_buffer = {}
+        token_count = (self.config["max_height"] // self.config["patch_size"][0]) * (
+            self.config["max_width"] // self.config["patch_size"][1]
+        )
+
+        _ = self.model(
+            hidden_states=hidden_states,
+            attention_mask=None,
+            encoder_text_hidden_states=torch.randn(batch_size, 8, self.config["text_embedding_dim"]),
+            speaker_embeds=torch.randn(batch_size, self.config["speaker_embedding_dim"]),
+            lyric_token_idx=torch.zeros(batch_size, 1, dtype=torch.long),
+            lyric_mask=torch.zeros(batch_size, 1, dtype=torch.long),
+            timestep=torch.linspace(0.1, 0.9, token_count, dtype=torch.float32).unsqueeze(0),
+            hidden_states_buffer=hidden_states_buffer,
+        )
+
+        self.assertIn("layer_0", hidden_states_buffer)
+        self.assertEqual(hidden_states_buffer["layer_0"].shape[1], token_count)
+
 
 if __name__ == "__main__":
     unittest.main()

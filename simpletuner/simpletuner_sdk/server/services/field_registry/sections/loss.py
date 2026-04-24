@@ -302,6 +302,47 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="crepa_feature_source",
+            arg_name="--crepa_feature_source",
+            ui_label="CREPA Feature Source",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="encoder",
+            choices=[
+                {"value": "encoder", "label": "External Encoder"},
+                {"value": "backbone", "label": "Backbone Layers"},
+                {"value": "self_flow", "label": "Self-Flow EMA Teacher"},
+            ],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Choose where CREPA teacher features come from: external encoder, internal backbone layers, or Self-Flow's EMA teacher view.",
+            tooltip="Use self_flow for Self-Flow training. It requires use_ema=true and an explicit CREPA teacher block.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=15.1,
+            documentation="OPTIONS.md#--crepa_feature_source",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_self_flow",
+            arg_name="--crepa_self_flow",
+            ui_label="CREPA: Self-Flow Legacy Alias",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Legacy boolean alias for Self-Flow mode. Prefer CREPA Feature Source = self_flow for new configs.",
+            tooltip="Kept so older Self-Flow configs can be viewed and edited. Do not combine with a conflicting CREPA Feature Source.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=15.2,
+            documentation="OPTIONS.md#--crepa_self_flow",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="crepa_teacher_block_index",
             arg_name="--crepa_teacher_block_index",
             ui_label="CREPA Teacher Block",
@@ -315,6 +356,28 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=16,
             documentation="OPTIONS.md#--crepa_teacher_block_index",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_self_flow_mask_ratio",
+            arg_name="--crepa_self_flow_mask_ratio",
+            ui_label="Self-Flow Mask Ratio",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.1,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 0.5"),
+                ValidationRule(ValidationRuleType.MAX, value=0.5, message="Must be between 0 and 0.5"),
+            ],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Fraction of image/video/audio tokens that receive the alternate timestep in Self-Flow mode.",
+            tooltip="The Self-Flow paper used 0.25. Keep this at or below 0.5 to avoid overwhelming the base generative objective.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=16.1,
+            documentation="OPTIONS.md#--crepa_self_flow_mask_ratio",
         )
     )
 

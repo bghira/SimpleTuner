@@ -257,7 +257,14 @@ class WanTimeTextImageEmbedding(nn.Module):
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
         timestep_sign: Optional[torch.Tensor] = None,
     ):
+        timestep_seq_len: Optional[int] = None
+        if timestep.ndim > 1:
+            timestep_seq_len = timestep.shape[1]
+            timestep = timestep.reshape(-1)
+
         timestep = self.timesteps_proj(timestep)
+        if timestep_seq_len is not None:
+            timestep = timestep.unflatten(0, (-1, timestep_seq_len))
 
         time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
         if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
@@ -270,7 +277,10 @@ class WanTimeTextImageEmbedding(nn.Module):
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
-            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+            sign_embedding = self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+            if timestep_seq_len is not None:
+                sign_embedding = sign_embedding.unflatten(0, (-1, timestep_seq_len))
+            temb = temb + sign_embedding
         timestep_proj = self.time_proj(self.act_fn(temb))
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
@@ -449,10 +459,23 @@ class WanTransformerBlock(nn.Module):
         self._ensure_module_dtype(hidden_states.device, hidden_states.dtype)
 
         temb = temb.to(device=self.scale_shift_table.device, dtype=self.scale_shift_table.dtype, non_blocking=True)
+        if temb.ndim == 3:
+            modulation = self.scale_shift_table + temb
+            chunk_dim = 1
+        elif temb.ndim == 4:
+            modulation = self.scale_shift_table.unsqueeze(1) + temb
+            chunk_dim = 2
+        else:
+            raise ValueError(f"WanTransformerBlock expected temb with 3 or 4 dims, got shape {tuple(temb.shape)}.")
 
-        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb).chunk(
-            6, dim=1
-        )
+        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = modulation.chunk(6, dim=chunk_dim)
+        if chunk_dim == 2:
+            shift_msa = shift_msa.squeeze(2)
+            scale_msa = scale_msa.squeeze(2)
+            gate_msa = gate_msa.squeeze(2)
+            c_shift_msa = c_shift_msa.squeeze(2)
+            c_scale_msa = c_scale_msa.squeeze(2)
+            c_gate_msa = c_gate_msa.squeeze(2)
 
         # 1. Self-attention
         norm_hidden_states = self.norm1(hidden_states)
@@ -799,16 +822,30 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
+        token_sequence_length = hidden_states.shape[1]
 
         if self.force_v2_1_time_embedding and timestep.dim() > 1:
             # Wan 2.1 uses a single timestep per batch entry. When forcing 2.1 behaviour with Wan 2.2
             # checkpoints we fall back to the first timestep value which matches the reference implementation.
             timestep = timestep[..., 0].contiguous()
+            if timestep_sign is not None and timestep_sign.dim() > 1:
+                timestep_sign = timestep_sign[..., 0].contiguous()
+        else:
+            if timestep.ndim > 1 and timestep.shape[1] != token_sequence_length:
+                raise ValueError(
+                    "WanTransformer3DModel received tokenwise timesteps with sequence length "
+                    f"{timestep.shape[1]}, but the latent token sequence length is {token_sequence_length}."
+                )
+            if timestep_sign is not None and timestep_sign.ndim > 1 and timestep_sign.shape[1] != token_sequence_length:
+                raise ValueError(
+                    "WanTransformer3DModel received tokenwise timestep_sign values with sequence length "
+                    f"{timestep_sign.shape[1]}, but the latent token sequence length is {token_sequence_length}."
+                )
 
         temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
             timestep, encoder_hidden_states, encoder_hidden_states_image, timestep_sign=timestep_sign
         )
-        timestep_proj = timestep_proj.unflatten(1, (6, -1))
+        timestep_proj = timestep_proj.unflatten(-1, (6, -1))
 
         if encoder_hidden_states_image is not None:
             encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
@@ -960,7 +997,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 musubi_manager.stream_out(block)
 
         # Output processing remains the same
-        shift, scale = (self.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
+        if temb.ndim == 2:
+            output_modulation = self.scale_shift_table + temb.unsqueeze(1)
+            shift, scale = output_modulation.chunk(2, dim=1)
+        elif temb.ndim == 3:
+            output_modulation = self.scale_shift_table.unsqueeze(1) + temb.unsqueeze(2)
+            shift, scale = output_modulation.chunk(2, dim=2)
+            shift = shift.squeeze(2)
+            scale = scale.squeeze(2)
+        else:
+            raise ValueError(f"WanTransformer3DModel expected temb with 2 or 3 dims, got shape {tuple(temb.shape)}.")
         shift = shift.to(hidden_states.device)
         scale = scale.to(hidden_states.device)
 

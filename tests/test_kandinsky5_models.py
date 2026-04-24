@@ -166,6 +166,9 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
         self.model.unwrap_model = lambda model=None: model or self.model
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=False)
 
+    def test_model_supports_crepa_self_flow(self):
+        self.assertTrue(self.model.supports_crepa_self_flow())
+
     def test_convert_text_embed_for_pipeline_generates_cu_seqlens(self):
         embeds = torch.randn(2, 3, 4)
         pooled = torch.randn(2, 4)
@@ -261,6 +264,63 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
         output = self.model.model_predict(prepared_batch)["model_prediction"]
 
         self.assertEqual(output.shape, (1, 16, 2, 2))
+
+    def test_prepare_crepa_self_flow_batch_builds_tokenwise_student_and_teacher_views(self):
+        model = Kandinsky5Image.__new__(Kandinsky5Image)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32, crepa_self_flow_mask_ratio=0.5)
+        model.model = MagicMock(config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model.unwrap_model = lambda model=None: model
+        model.sample_flow_sigmas = MagicMock(
+            return_value=(torch.tensor([0.8], dtype=torch.float32), torch.tensor([800.0], dtype=torch.float32))
+        )
+
+        batch = {
+            "latents": torch.zeros(1, 16, 4, 4, dtype=torch.float32),
+            "input_noise": torch.ones(1, 16, 4, 4, dtype=torch.float32),
+            "sigmas": torch.tensor([0.2], dtype=torch.float32),
+            "timesteps": torch.tensor([200.0], dtype=torch.float32),
+        }
+        fake_mask_rand = torch.tensor(
+            [[[0.2, 0.7], [0.9, 0.1]]],
+            dtype=torch.float32,
+        )
+
+        with patch("torch.rand", return_value=fake_mask_rand):
+            result = model._prepare_crepa_self_flow_batch(batch, state={})
+
+        self.assertEqual(result["timesteps"].shape, (1, 4))
+        self.assertEqual(result["sigmas"].shape, (1, 1, 4, 4))
+        self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
+        self.assertEqual(set(result["timesteps"].view(-1).tolist()), {200.0, 800.0})
+        self.assertEqual(result["crepa_teacher_timesteps"].item(), 200.0)
+        self.assertTrue(torch.equal(result["crepa_self_flow_mask"], fake_mask_rand < 0.5))
+
+    def test_model_predict_preserves_tokenwise_timesteps_for_self_flow_capture(self):
+        predicted = torch.randn(1, 1, 2, 2, 16)
+        captured = torch.randn(1, 1, 4, 12)
+        transformer = MagicMock(config=SimpleNamespace(visual_cond=False))
+        transformer.return_value = (predicted, captured)
+        self.model.model = transformer
+        self.model.crepa_regularizer = MagicMock(block_index=3, use_backbone_features=False)
+        self.model.crepa_regularizer.wants_hidden_states.return_value = True
+
+        tokenwise_timesteps = torch.tensor([[100.0, 900.0, 100.0, 900.0]], dtype=torch.float32)
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 16, 4, 4),
+            "encoder_hidden_states": torch.randn(1, 2, 8),
+            "timesteps": tokenwise_timesteps,
+            "added_cond_kwargs": {"text_embeds": torch.randn(1, 4)},
+            "crepa_capture_block_index": 7,
+        }
+
+        result = self.model.model_predict(prepared_batch)
+
+        self.assertIs(result["crepa_hidden_states"], captured)
+        transformer_kwargs = transformer.call_args.kwargs
+        self.assertTrue(torch.equal(transformer_kwargs["timestep"], tokenwise_timesteps))
+        self.assertEqual(transformer_kwargs["hidden_state_layer"], 7)
+        self.assertTrue(transformer_kwargs["output_hidden_states"])
 
     def test_i2i_prepare_latents_sets_condition_and_mask(self):
         pipeline = Kandinsky5I2IPipeline(
@@ -368,6 +428,9 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
         self.model.unwrap_model = lambda model=None: model or self.model
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=False)
 
+    def test_model_supports_crepa_self_flow(self):
+        self.assertTrue(self.model.supports_crepa_self_flow())
+
     def test_convert_text_embed_for_pipeline_video_builds_cu_seqlens(self):
         embeds = torch.randn(1, 2, 6)
         pooled = torch.randn(1, 4)
@@ -414,6 +477,130 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
         output = self.model.model_predict(prepared_batch)["model_prediction"]
 
         self.assertEqual(output.shape, (1, 16, 2, 2, 2))
+
+    def test_model_predict_uses_crepa_capture_block_override(self):
+        predicted = torch.randn(1, 2, 2, 2, 16)
+        captured = torch.randn(1, 2, 4, 12)
+        transformer = MagicMock(config=SimpleNamespace(visual_cond=False))
+        transformer.return_value = (predicted, captured)
+        self.model.model = transformer
+        self.model.crepa_regularizer = MagicMock(block_index=3, use_backbone_features=False)
+        self.model.crepa_regularizer.wants_hidden_states.return_value = True
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 16, 2, 2, 2),
+            "encoder_hidden_states": torch.randn(1, 2, 8),
+            "timesteps": torch.tensor([0.1]),
+            "added_cond_kwargs": {"text_embeds": torch.randn(1, 4)},
+            "crepa_capture_block_index": 7,
+        }
+
+        result = self.model.model_predict(prepared_batch)
+
+        self.assertIs(result["crepa_hidden_states"], captured)
+        transformer_kwargs = transformer.call_args.kwargs
+        self.assertEqual(transformer_kwargs["hidden_state_layer"], 7)
+        self.assertTrue(transformer_kwargs["output_hidden_states"])
+
+    def test_prepare_crepa_self_flow_batch_builds_tokenwise_student_and_teacher_views(self):
+        model = Kandinsky5Video.__new__(Kandinsky5Video)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32, crepa_self_flow_mask_ratio=0.5)
+        model.model = MagicMock(config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model.unwrap_model = lambda model=None, wrapped=None: model or wrapped
+        model.sample_flow_sigmas = MagicMock(
+            return_value=(torch.tensor([0.8], dtype=torch.float32), torch.tensor([800.0], dtype=torch.float32))
+        )
+
+        batch = {
+            "latents": torch.zeros(1, 16, 2, 4, 4, dtype=torch.float32),
+            "input_noise": torch.ones(1, 16, 2, 4, 4, dtype=torch.float32),
+            "sigmas": torch.tensor([0.2], dtype=torch.float32),
+            "timesteps": torch.tensor([200.0], dtype=torch.float32),
+        }
+        fake_mask_rand = torch.tensor(
+            [[[[0.2, 0.7], [0.9, 0.1]], [[0.4, 0.6], [0.8, 0.3]]]],
+            dtype=torch.float32,
+        )
+
+        with patch("torch.rand", return_value=fake_mask_rand):
+            result = model._prepare_crepa_self_flow_batch(batch, state={})
+
+        self.assertEqual(result["timesteps"].shape, (1, 8))
+        self.assertEqual(result["sigmas"].shape, (1, 1, 2, 4, 4))
+        self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
+        self.assertEqual(set(result["timesteps"].view(-1).tolist()), {200.0, 800.0})
+        self.assertEqual(result["crepa_teacher_timesteps"].item(), 200.0)
+        self.assertTrue(torch.equal(result["crepa_self_flow_mask"], fake_mask_rand < 0.5))
+
+    def test_model_predict_preserves_tokenwise_timesteps_for_self_flow_capture(self):
+        predicted = torch.randn(1, 2, 2, 2, 16)
+        captured = torch.randn(1, 2, 4, 12)
+        transformer = MagicMock(config=SimpleNamespace(visual_cond=False))
+        transformer.return_value = (predicted, captured)
+        self.model.model = transformer
+        self.model.crepa_regularizer = MagicMock(block_index=3, use_backbone_features=False)
+        self.model.crepa_regularizer.wants_hidden_states.return_value = True
+
+        tokenwise_timesteps = torch.tensor([[100.0, 900.0]], dtype=torch.float32)
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 16, 2, 2, 2),
+            "encoder_hidden_states": torch.randn(1, 2, 8),
+            "timesteps": tokenwise_timesteps,
+            "added_cond_kwargs": {"text_embeds": torch.randn(1, 4)},
+            "crepa_capture_block_index": 7,
+        }
+
+        result = self.model.model_predict(prepared_batch)
+
+        self.assertIs(result["crepa_hidden_states"], captured)
+        transformer_kwargs = transformer.call_args.kwargs
+        self.assertTrue(torch.equal(transformer_kwargs["timestep"], tokenwise_timesteps))
+        self.assertEqual(transformer_kwargs["hidden_state_layer"], 7)
+        self.assertTrue(transformer_kwargs["output_hidden_states"])
+
+    def test_transformer_accepts_tokenwise_timesteps(self):
+        transformer = make_tiny_kandinsky_transformer(visual_cond=False)
+        hidden_states = torch.randn(1, 2, 2, 2, 16)
+        encoder_hidden_states = torch.randn(1, 2, 8)
+        pooled_projections = torch.randn(1, 4)
+
+        output, captured = transformer(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=torch.tensor([[0.1, 0.9]], dtype=torch.float32),
+            pooled_projections=pooled_projections,
+            visual_rope_pos=(
+                torch.arange(2),
+                torch.arange(1),
+                torch.arange(1),
+            ),
+            text_rope_pos=torch.arange(2),
+            return_dict=False,
+            output_hidden_states=True,
+            hidden_state_layer=0,
+        )
+
+        self.assertEqual(output.shape, (1, 2, 2, 2, 16))
+        self.assertEqual(captured.shape, (1, 2, 1, 12))
+
+    def test_transformer_rejects_wrong_tokenwise_timestep_length(self):
+        transformer = make_tiny_kandinsky_transformer(visual_cond=False)
+
+        with self.assertRaisesRegex(ValueError, "does not match visual token count"):
+            transformer(
+                hidden_states=torch.randn(1, 2, 2, 2, 16),
+                encoder_hidden_states=torch.randn(1, 2, 8),
+                timestep=torch.tensor([[0.1, 0.9, 0.2]], dtype=torch.float32),
+                pooled_projections=torch.randn(1, 4),
+                visual_rope_pos=(
+                    torch.arange(2),
+                    torch.arange(1),
+                    torch.arange(1),
+                ),
+                text_rope_pos=torch.arange(2),
+                return_dict=False,
+            )
 
     def test_i2v_prepare_latents_sets_first_frame_conditioning(self):
         pipeline = Kandinsky5I2VPipeline(

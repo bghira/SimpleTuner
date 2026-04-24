@@ -131,6 +131,12 @@ class WanS2V(VideoModelFoundation):
         """Wan S2V accepts audio conditioning alongside text/video inputs."""
         return True
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
     def requires_s2v_validation_inputs(self) -> bool:
         """S2V validation requires audio inputs."""
         return True
@@ -352,6 +358,11 @@ class WanS2V(VideoModelFoundation):
         )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_block_index = prepared_batch.get(
+            "crepa_capture_block_index",
+            crepa.block_index if crepa is not None else None,
+        )
 
         # Build transformer kwargs
         wan_s2v_kwargs = {
@@ -369,10 +380,10 @@ class WanS2V(VideoModelFoundation):
         }
 
         # CREPA support
-        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        capture_hidden = bool(crepa and crepa.wants_hidden_states() and capture_block_index is not None)
         if capture_hidden:
             wan_s2v_kwargs["output_hidden_states"] = True
-            wan_s2v_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+            wan_s2v_kwargs["hidden_state_layer"] = capture_block_index
         if hidden_states_buffer is not None:
             wan_s2v_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
@@ -392,7 +403,7 @@ class WanS2V(VideoModelFoundation):
                 crepa_hidden = None
                 if capture_hidden:
                     logger.warning(
-                        f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                        f"CREPA requested hidden states from layer {capture_block_index} "
                         "but none were returned. Check that crepa_block_index is within the model's block count."
                     )
         else:

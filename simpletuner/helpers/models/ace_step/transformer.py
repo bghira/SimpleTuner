@@ -44,6 +44,22 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states
 
 
+def _acestep_apply_tokenwise_timestep_embed(
+    time_proj: Timesteps,
+    timestep_embedder: TimestepEmbedding,
+    timestep: torch.Tensor,
+    *,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if timestep.ndim != 2:
+        return timestep_embedder(time_proj(timestep).to(dtype=dtype))
+
+    batch_size, sequence_length = timestep.shape
+    timestep_proj = time_proj(timestep.reshape(-1)).to(dtype=dtype)
+    embedded = timestep_embedder(timestep_proj)
+    return embedded.view(batch_size, sequence_length, -1)
+
+
 def cross_norm(hidden_states, controlnet_input):
     # input N x T x c
     mean_hidden_states, std_hidden_states = hidden_states.mean(dim=(1, 2), keepdim=True), hidden_states.std(
@@ -143,7 +159,12 @@ class T2IFinalLayer(nn.Module):
         return output
 
     def forward(self, x, t, output_length):
-        shift, scale = (self.scale_shift_table[None] + t[:, None]).chunk(2, dim=1)
+        if t.ndim == 2:
+            shift, scale = (self.scale_shift_table[None] + t[:, None]).chunk(2, dim=1)
+        else:
+            shift, scale = (self.scale_shift_table[None, None] + t[:, :, None, :]).chunk(2, dim=2)
+            shift = shift.squeeze(2)
+            scale = scale.squeeze(2)
         x = t2i_modulate(self.norm_final(x), shift, scale)
         x = self.linear(x)
         # unpatchify
@@ -484,17 +505,54 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                 )
                 self._logged_dtype_mismatch = True
 
-        embedded_timestep = self.timestep_embedder(self.time_proj(timestep).to(dtype=hidden_states.dtype))
+        token_count = (hidden_states.shape[-2] // self.patch_size[0]) * (hidden_states.shape[-1] // self.patch_size[1])
+        if timestep.ndim == 2 and timestep.shape[1] != token_count:
+            raise ValueError(f"ACEStep tokenwise timesteps expected sequence length {token_count}, got {timestep.shape[1]}.")
+
+        embedded_timestep = _acestep_apply_tokenwise_timestep_embed(
+            self.time_proj,
+            self.timestep_embedder,
+            timestep,
+            dtype=hidden_states.dtype,
+        )
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
-            embedded_timestep = embedded_timestep + self.time_sign_embed(sign_idx).to(
-                dtype=embedded_timestep.dtype, device=hidden_states.device
-            )
+            sign_tensor = timestep_sign.to(device=hidden_states.device)
+            if timestep.ndim == 2:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(timestep.shape[0], timestep.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0])
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"ACEStep tokenwise timestep_sign expected 1 or {timestep.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, timestep.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != timestep.shape[1]:
+                        raise ValueError(
+                            f"ACEStep tokenwise timestep_sign expected sequence length {timestep.shape[1]}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(timestep.shape[0], -1)
+                    elif sign_tensor.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"ACEStep tokenwise timestep_sign expected batch size {timestep.shape[0]}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"ACEStep timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+            if timestep.ndim == 2:
+                sign_emb = sign_emb.view(timestep.shape[0], timestep.shape[1], -1)
+            embedded_timestep = embedded_timestep + sign_emb
         temb = self.t_block(embedded_timestep)
 
         hidden_states = self.proj_in(hidden_states)

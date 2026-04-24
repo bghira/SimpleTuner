@@ -304,6 +304,12 @@ class Wan(VideoModelFoundation):
     def requires_special_scheduler_setup(self) -> bool:
         return True
 
+    def supports_crepa_self_flow(self) -> bool:
+        return bool(getattr(self, "_wan_expand_timesteps", False))
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
         """Adjust frame count to satisfy frames % 8 == 1 constraint."""
@@ -1175,6 +1181,11 @@ class Wan(VideoModelFoundation):
         Modify the existing model_predict to support TREAD with masked training.
         """
         hidden_states_buffer = self._new_hidden_state_buffer()
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_block_index = prepared_batch.get(
+            "crepa_capture_block_index",
+            crepa.block_index if crepa is not None else None,
+        )
         wan_transformer_kwargs = {
             "hidden_states": prepared_batch["noisy_latents"].to(self.config.weight_dtype),
             "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(self.config.weight_dtype),
@@ -1185,10 +1196,10 @@ class Wan(VideoModelFoundation):
             "return_dict": False,
         }
 
-        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        capture_hidden = bool(crepa and crepa.wants_hidden_states() and capture_block_index is not None)
         if capture_hidden:
             wan_transformer_kwargs["output_hidden_states"] = True
-            wan_transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+            wan_transformer_kwargs["hidden_state_layer"] = capture_block_index
         if hidden_states_buffer is not None:
             wan_transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
@@ -1247,9 +1258,9 @@ class Wan(VideoModelFoundation):
             else:
                 model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
                 crepa_hidden = None
-            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
+            if crepa_hidden is None and not getattr(crepa, "use_backbone_features", False):
                 raise ValueError(
-                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    f"CREPA requested hidden states from layer {capture_block_index} "
                     "but none were returned. Check that crepa_block_index is within the model's block count."
                 )
         else:
