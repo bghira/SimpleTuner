@@ -4232,6 +4232,7 @@ class ModelFoundation(ABC):
         Collect TwinFlow hyperparameters with sensible defaults.
         Following the original TwinFlow paper, all loss components are enabled by default.
         """
+
         def _get_config_value(name: str, default):
             value = getattr(self.config, name, None)
             if value is None or value == "":
