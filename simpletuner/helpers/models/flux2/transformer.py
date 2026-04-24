@@ -666,12 +666,51 @@ class Flux2TimestepGuidanceEmbeddings(nn.Module):
             )
 
     def forward(self, timestep: torch.Tensor, guidance: Optional[torch.Tensor] = None) -> torch.Tensor:
-        timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(timesteps_proj.to(timestep.dtype))  # (N, D)
+        original_shape = timestep.shape
+        timestep_flat = timestep.reshape(-1)
+        timesteps_proj = self.time_proj(timestep_flat)
+        timesteps_emb = self.timestep_embedder(timesteps_proj.to(timestep_flat.dtype))
+        if timestep.ndim > 1:
+            timesteps_emb = timesteps_emb.view(*original_shape, -1)
 
         if guidance is not None and self.guidance_embedder is not None:
-            guidance_proj = self.time_proj(guidance)
-            guidance_emb = self.guidance_embedder(guidance_proj.to(guidance.dtype))  # (N, D)
+            if not torch.is_tensor(guidance):
+                guidance = torch.tensor(guidance, device=timestep.device, dtype=timestep.dtype)
+            else:
+                guidance = guidance.to(device=timestep.device, dtype=timestep.dtype)
+
+            if timestep.ndim == 2:
+                if guidance.ndim == 0:
+                    guidance = guidance.expand(timestep.shape[0], timestep.shape[1])
+                elif guidance.ndim == 1:
+                    if guidance.shape[0] == 1:
+                        guidance = guidance.expand(timestep.shape[0])
+                    elif guidance.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"Flux2 tokenwise guidance expected 1 or {timestep.shape[0]} batch values, got {guidance.shape[0]}."
+                        )
+                    guidance = guidance[:, None].expand(-1, timestep.shape[1])
+                elif guidance.ndim == 2:
+                    if guidance.shape[1] != timestep.shape[1]:
+                        raise ValueError(
+                            f"Flux2 tokenwise guidance expected sequence length {timestep.shape[1]}, got {guidance.shape[1]}."
+                        )
+                    if guidance.shape[0] == 1:
+                        guidance = guidance.expand(timestep.shape[0], -1)
+                    elif guidance.shape[0] != timestep.shape[0]:
+                        raise ValueError(
+                            f"Flux2 tokenwise guidance expected batch size {timestep.shape[0]}, got {guidance.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"Flux2 guidance expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(guidance.shape)}."
+                    )
+
+            guidance_flat = guidance.reshape(-1)
+            guidance_proj = self.time_proj(guidance_flat)
+            guidance_emb = self.guidance_embedder(guidance_proj.to(guidance_flat.dtype))
+            if guidance.ndim > 1:
+                guidance_emb = guidance_emb.view(*guidance.shape, -1)
             return timesteps_emb + guidance_emb
 
         return timesteps_emb
@@ -964,12 +1003,57 @@ class Flux2Transformer2DModel(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
-            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
+            sign_tensor = timestep_sign.to(device=hidden_states.device)
+            if temb.ndim == 3:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(temb.shape[0], temb.shape[1])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(temb.shape[0])
+                    elif sign_tensor.shape[0] != temb.shape[0]:
+                        raise ValueError(
+                            f"Flux2 tokenwise timestep_sign expected 1 or {temb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, temb.shape[1])
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != temb.shape[1]:
+                        raise ValueError(
+                            f"Flux2 tokenwise timestep_sign expected sequence length {temb.shape[1]}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(temb.shape[0], -1)
+                    elif sign_tensor.shape[0] != temb.shape[0]:
+                        raise ValueError(
+                            f"Flux2 tokenwise timestep_sign expected batch size {temb.shape[0]}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        f"Flux2 timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(sign_tensor.shape)}."
+                    )
+            sign_idx = (sign_tensor.reshape(-1) < 0).long()
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
+            if temb.ndim == 3:
+                sign_emb = sign_emb.view(temb.shape[0], temb.shape[1], -1)
+            temb = temb + sign_emb
 
-        double_stream_mod_img = self.double_stream_modulation_img(temb)
-        double_stream_mod_txt = self.double_stream_modulation_txt(temb)
-        single_stream_mod = self.single_stream_modulation(temb)[0]
+        if temb.ndim == 3:
+            temb_img = temb
+            temb_txt = temb.mean(dim=1)
+            temb_single = torch.cat(
+                [
+                    temb_txt.unsqueeze(1).expand(-1, num_txt_tokens, -1),
+                    temb_img,
+                ],
+                dim=1,
+            )
+        else:
+            temb_img = temb
+            temb_txt = temb
+            temb_single = temb
+
+        double_stream_mod_img = self.double_stream_modulation_img(temb_img)
+        double_stream_mod_txt = self.double_stream_modulation_txt(temb_txt)
+        single_stream_mod = self.single_stream_modulation(temb_single)[0]
 
         # 2. Input projection for image (hidden_states) and conditioning text (encoder_hidden_states)
         hidden_states = self.x_embedder(hidden_states)
@@ -1211,7 +1295,12 @@ class Flux2Transformer2DModel(
         hidden_states = hidden_states[:, num_txt_tokens:, ...]
 
         # 6. Output layers
-        hidden_states = self.norm_out(hidden_states, temb)
+        if temb_img.ndim == 3:
+            emb = self.norm_out.linear(self.norm_out.silu(temb_img).to(hidden_states.dtype))
+            scale, shift = torch.chunk(emb, 2, dim=-1)
+            hidden_states = self.norm_out.norm(hidden_states) * (1 + scale) + shift
+        else:
+            hidden_states = self.norm_out(hidden_states, temb_img)
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:

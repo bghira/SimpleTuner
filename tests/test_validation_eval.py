@@ -1,5 +1,8 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import torch
 
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Evaluation
@@ -382,6 +385,84 @@ class EvaluationDynamicEpochScheduleTests(unittest.TestCase):
         training_state["global_step"] = 518
         self.assertTrue(evaluator.would_evaluate(training_state))
         self.assertEqual(evaluator._epoch_intervals_completed, 10)
+
+
+class EvaluationTimestepOverrideTests(unittest.TestCase):
+    def setUp(self):
+        self._prev_args = StateTracker.get_args()
+        config = SimpleNamespace(
+            num_eval_images=None,
+            eval_timesteps=1,
+            weight_dtype=torch.float32,
+        )
+        StateTracker.set_args(config)
+        self.evaluator = Evaluation(accelerator=SimpleNamespace(is_main_process=True))
+        self.evaluator.config = config
+
+    def tearDown(self):
+        StateTracker.set_args(self._prev_args)
+
+    def test_eval_loss_uses_rebuilt_custom_timestep_batch(self):
+        prepared_batch = {
+            "latents": torch.zeros(1, 1, 1, 2),
+            "noisy_latents": torch.ones(1, 1, 1, 2),
+            "timesteps": torch.tensor([[900.0, 100.0]], dtype=torch.float32),
+        }
+
+        class _Predictor:
+            def __init__(self):
+                self.prediction_batches = []
+                self.loss_batches = []
+
+            def _prepare_custom_timestep_batch(self, batch, custom_timesteps):
+                rebuilt = dict(batch)
+                rebuilt["timesteps"] = custom_timesteps.clone()
+                rebuilt["noisy_latents"] = torch.full_like(batch["noisy_latents"], fill_value=float(custom_timesteps[0]))
+                return rebuilt
+
+            def model_predict(self, prepared_batch, custom_timesteps=None):
+                self.prediction_batches.append(
+                    {
+                        "timesteps": prepared_batch["timesteps"].clone(),
+                        "custom_timesteps": None if custom_timesteps is None else custom_timesteps.clone(),
+                    }
+                )
+                return {"model_prediction": prepared_batch["timesteps"].clone()}
+
+        predictor = _Predictor()
+
+        def calculate_loss(prepared_batch, model_output, apply_conditioning_mask=False):
+            predictor.loss_batches.append(
+                {
+                    "timesteps": prepared_batch["timesteps"].clone(),
+                    "prediction": model_output["model_prediction"].clone(),
+                }
+            )
+            return torch.tensor(0.0)
+
+        with (
+            patch.object(self.evaluator, "total_eval_batches", return_value=1),
+            patch.object(self.evaluator, "get_timestep_schedule", return_value=[250.0]),
+            patch("simpletuner.helpers.training.validation.retrieve_eval_images", return_value={"sample": 1}),
+            patch("simpletuner.helpers.training.validation.reset_eval_datasets"),
+        ):
+            accumulated = self.evaluator._evaluate_dataset_pass(
+                dataset_name="dummy",
+                prepare_batch=lambda batch: dict(prepared_batch),
+                model_predict=predictor.model_predict,
+                calculate_loss=calculate_loss,
+                get_prediction_target=None,
+                noise_scheduler=SimpleNamespace(),
+            )
+
+        self.assertIn(250.0, accumulated)
+        self.assertEqual(len(predictor.prediction_batches), 1)
+        self.assertIsNone(predictor.prediction_batches[0]["custom_timesteps"])
+        self.assertTrue(torch.equal(predictor.prediction_batches[0]["timesteps"], torch.tensor([250.0])))
+        self.assertEqual(len(predictor.loss_batches), 1)
+        self.assertTrue(torch.equal(predictor.loss_batches[0]["timesteps"], torch.tensor([250.0])))
+        self.assertTrue(torch.equal(predictor.loss_batches[0]["prediction"], torch.tensor([250.0])))
+        self.assertTrue(torch.equal(prepared_batch["timesteps"], torch.tensor([[900.0, 100.0]], dtype=torch.float32)))
 
 
 if __name__ == "__main__":

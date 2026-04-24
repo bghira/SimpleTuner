@@ -720,6 +720,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   - Requires the model to have an `IMG2IMG` or `IMG2VIDEO` pipeline registered
   - Can be combined with `--eval_dataset_id` to source images from a specific dataset
   - For i2v models, this allows using a simple image dataset for validation without requiring the complex conditioning dataset pairing setup used during training
+  - Flux Kontext does not use this flag for validation; leave it disabled and use `--eval_dataset_id` to pick the edit dataset while Kontext loads its paired reference dataset automatically
   - The denoising strength is controlled by the normal validation timestep settings
 
 ### `--eval_dataset_id`
@@ -732,6 +733,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   - The dataset ID must match a configured dataset in your dataloader config
   - Useful for keeping evaluation consistent by using a dedicated eval dataset
   - For conditioning models, the dataset's conditioning data (if any) will also be used
+  - For Flux Kontext, this is the correct way to select the validation dataset; do not enable `--validation_using_datasets`
 
 ---
 
@@ -747,6 +749,7 @@ Some models cannot function without conditioning inputs:
 - **ControlNet training**: Requires control signal images
 
 For these models, a conditioning dataset is mandatory. The WebUI will show conditioning options as required, and training will fail without them.
+Flux Kontext validation also stays in this conditioning-based path. Use `--eval_dataset_id` to choose the edit dataset for validation, and leave `--validation_using_datasets` disabled.
 
 ### 2. Models that SUPPORT Optional Conditioning
 
@@ -778,6 +781,8 @@ For these models, you CAN add conditioning datasets but don't have to. The WebUI
 - Use `--eval_dataset_id` to control which dataset provides inputs
 
 **I2V models with `--validation_using_datasets`**: For i2v video models (HunyuanVideo, WAN, Kandinsky5Video), enabling this flag allows you to use a simple image dataset for validation. The images are used as first-frame conditioning inputs to generate validation videos, without requiring the complex conditioning dataset pairing setup.
+
+**Flux Kontext with `--validation_using_datasets`**: Do not enable this flag. Kontext is edit-only and validates through its normal paired image + conditioning datasets. Use `--eval_dataset_id` to select the edit dataset instead.
 
 ### Conditioning Data Types
 
@@ -1103,11 +1108,32 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Why**: Avoids loading DINOv2 when the backbone already has a stronger semantic layer to supervise from.
 - **Default**: `false`
 
+### `--crepa_feature_source`
+
+- **What**: Selects where CREPA gets its teacher signal from.
+- **Why**: Use `encoder` for the classic external-encoder path, `backbone` for internal block-to-block alignment, or `self_flow` for the EMA cleaner-view teacher used by Self-Flow.
+- **Choices**: `encoder`, `backbone`, `self_flow`
+- **Default**: `encoder`
+
+### `--crepa_self_flow`
+
+- **What**: Legacy boolean alias that enables Self-Flow mode.
+- **Why**: Older configs may still use it, but new configs should prefer `crepa_feature_source=self_flow`.
+- **Default**: `false`
+- **Note**: Conflicts with `crepa_use_backbone_features` and with `crepa_feature_source` set to a different mode.
+
+### `--crepa_self_flow_mask_ratio`
+
+- **What**: Fraction of tokens that receive the alternate timestep in Self-Flow.
+- **Why**: Controls how much information asymmetry is introduced between cleaner and noisier tokens. Higher values strengthen the self-supervised signal but can destabilize training.
+- **Default**: `0.1`
+- **Range**: `0.0` to `0.5`
+
 ### `--crepa_teacher_block_index`
 
-- **What**: Teacher block index when using backbone features.
-- **Why**: Lets you align an earlier student block to a later teacher block without an external encoder. Falls back to the student block when unset.
-- **Default**: Uses `crepa_block_index` if not provided.
+- **What**: Teacher block index when using backbone features or Self-Flow.
+- **Why**: Lets you align an earlier student block to a later teacher block without an external encoder. Self-Flow requires it explicitly so the EMA teacher reads from a deeper semantic layer.
+- **Default**: Uses `crepa_block_index` if not provided in backbone mode; required in Self-Flow mode.
 
 ### `--crepa_encoder_image_size`
 

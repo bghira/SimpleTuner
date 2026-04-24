@@ -79,6 +79,12 @@ class Chroma(ImageModelFoundation):
         },
     }
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=2)
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # Chroma has 19 transformer_blocks + 38 single_transformer_blocks = 57 total blocks
@@ -271,6 +277,102 @@ class Chroma(ImageModelFoundation):
             "prompt_embeds": prompt_embeds,
             "attention_masks": attention_mask,
         }
+
+    @staticmethod
+    def _adjust_chroma_sigmas(sigmas: torch.Tensor) -> torch.Tensor:
+        return torch.where(
+            sigmas < 0.5,
+            sigmas.square(),
+            1 - (1 - sigmas).square(),
+        )
+
+    def _sigma_grid_to_token_timesteps(self, sigmas: torch.Tensor) -> torch.Tensor:
+        if sigmas.ndim == 1:
+            return sigmas * 1000.0
+
+        batch_size, _, height, width = sigmas.shape
+        token_height = max(height // 2, 1)
+        token_width = max(width // 2, 1)
+        token_sigmas = sigmas[:, 0].reshape(batch_size, token_height, 2, token_width, 2).mean(dim=(2, 4))
+        return token_sigmas.flatten(1) * 1000.0
+
+    def _apply_chroma_flow_schedule(self, batch: dict) -> dict:
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+
+        adjusted_sigmas = self._adjust_chroma_sigmas(batch["sigmas"].to(device=latents.device, dtype=latents.dtype))
+        batch["sigmas"] = adjusted_sigmas
+        batch["noisy_latents"] = (1 - adjusted_sigmas) * latents + adjusted_sigmas * input_noise
+
+        if "crepa_self_flow_mask" in batch:
+            batch["timesteps"] = self._sigma_grid_to_token_timesteps(adjusted_sigmas)
+        else:
+            batch["timesteps"] = adjusted_sigmas.reshape(adjusted_sigmas.shape[0], -1)[:, 0] * 1000.0
+
+        if "crepa_teacher_sigmas" in batch:
+            teacher_sigmas = self._adjust_chroma_sigmas(
+                batch["crepa_teacher_sigmas"].to(device=latents.device, dtype=latents.dtype)
+            )
+            batch["crepa_teacher_sigmas"] = teacher_sigmas
+            batch["crepa_teacher_timesteps"] = teacher_sigmas.reshape(teacher_sigmas.shape[0], -1)[:, 0] * 1000.0
+            batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
+
+        return batch
+
+    def _prepare_model_predict_timesteps(
+        self,
+        raw_timesteps,
+        *,
+        batch_size: int,
+        sequence_length: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=device, dtype=dtype)
+        else:
+            raw_timesteps = raw_timesteps.to(device=device, dtype=dtype)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Chroma expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Chroma expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Chroma expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Chroma expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return timesteps / self.noise_schedule.config.num_train_timesteps
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
     def collate_prompt_embeds(self, text_encoder_output: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         if not text_encoder_output:
@@ -478,9 +580,12 @@ class Chroma(ImageModelFoundation):
         if img_ids.dim() == 3:
             img_ids = img_ids[0]
 
-        timesteps = (
-            torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device).expand(batch_size)
-            / self.noise_schedule.config.num_train_timesteps
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=batch_size,
+            sequence_length=packed_noisy_latents.shape[1],
+            device=self.accelerator.device,
+            dtype=self.config.base_weight_dtype,
         )
 
         text_ids = torch.zeros(
@@ -555,15 +660,6 @@ class Chroma(ImageModelFoundation):
 
         model_pred = self.model(**transformer_kwargs)[0]
 
-        crepa_hidden = None
-        crepa_regularizer = getattr(self, "crepa_regularizer", None)
-        if (
-            hidden_states_buffer is not None
-            and crepa_regularizer is not None
-            and getattr(crepa_regularizer, "enabled", False)
-        ):
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa_regularizer.block_index}")
-
         return {
             "model_prediction": unpack_latents(
                 model_pred,
@@ -571,7 +667,7 @@ class Chroma(ImageModelFoundation):
                 width=prepared_batch["latents"].shape[3] * 8,
                 vae_scale_factor=16,
             ),
-            "crepa_hidden_states": crepa_hidden,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
 
@@ -608,9 +704,12 @@ class Chroma(ImageModelFoundation):
         if img_ids.dim() == 3:
             img_ids = img_ids[0]
 
-        timesteps = (
-            torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device).expand(batch_size)
-            / self.noise_schedule.config.num_train_timesteps
+        timesteps = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=batch_size,
+            sequence_length=packed_noisy_latents.shape[1],
+            device=self.accelerator.device,
+            dtype=self.config.base_weight_dtype,
         )
 
         text_ids = torch.zeros(
@@ -710,20 +809,7 @@ class Chroma(ImageModelFoundation):
             and not getattr(self.config, "flow_use_beta_schedule", False)
             and not getattr(self.config, "flow_use_uniform_schedule", False)
         ):
-            sigmas = batch["sigmas"]
-            if sigmas.dim() > 1:
-                sigmas = sigmas.view(sigmas.shape[0])
-            adjusted = torch.where(
-                sigmas < 0.5,
-                sigmas.square(),
-                1 - (1 - sigmas).square(),
-            )
-            batch["sigmas"] = adjusted
-            batch["timesteps"] = adjusted * 1000.0
-            batch["noisy_latents"] = (1 - adjusted).view(-1, 1, 1, 1) * batch["latents"] + adjusted.view(
-                -1, 1, 1, 1
-            ) * batch["input_noise"]
-            self.expand_sigmas(batch)
+            batch = self._apply_chroma_flow_schedule(batch)
         return batch
 
     def custom_model_card_schedule_info(self):

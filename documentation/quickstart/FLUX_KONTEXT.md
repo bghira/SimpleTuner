@@ -129,6 +129,7 @@ A prepared example [Kontext Max derived demo dataset](https://huggingface.co/dat
 ### Setting up a dedicated validation split
 
 Here's an example configuration that uses a training set with 200,000 samples and a validation set with just a few.
+Leave `validation_using_datasets` unset or `false` for Kontext. Validation already uses the paired reference dataset automatically; `eval_dataset_id` only selects which edit dataset provides validation samples.
 
 In your `config.json` you'll want to add:
 

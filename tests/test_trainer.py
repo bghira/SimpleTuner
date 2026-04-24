@@ -595,6 +595,7 @@ wandb_module.config = {}
 sys.modules.setdefault("wandb", wandb_module)
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.trainer import Trainer
 
@@ -696,6 +697,82 @@ class TestTrainer(unittest.TestCase):
         trainer.model.prepare_batch.assert_not_called()
         distiller.prepare_batch.assert_not_called()
         distiller.prepare_caption_batch.assert_called_once_with(batch, trainer.model, trainer.state)
+
+    def test_model_predict_applies_custom_flow_timesteps_to_batch(self):
+        trainer = object.__new__(Trainer)
+        captured = {}
+
+        class _FlowModel:
+            PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
+
+            def uses_noise_schedule(self):
+                return True
+
+            def model_predict(self, prepared_batch):
+                captured["timesteps"] = prepared_batch["timesteps"].clone()
+                captured["sigmas"] = prepared_batch["sigmas"].clone()
+                captured["noisy_latents"] = prepared_batch["noisy_latents"].clone()
+                return torch.zeros_like(prepared_batch["noisy_latents"])
+
+        trainer.model = _FlowModel()
+        trainer.config = SimpleNamespace(disable_accelerator=False, controlnet=False)
+        trainer._tlora_active = False
+        trainer.noise_scheduler = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
+
+        prepared_batch = {
+            "latents": torch.zeros(1, 1, 2, 2),
+            "noise": torch.ones(1, 1, 2, 2),
+            "input_noise": torch.ones(1, 1, 2, 2),
+            "timesteps": torch.tensor([[900.0, 100.0]]),
+            "sigmas": torch.zeros(1, 1, 2, 2),
+            "noisy_latents": torch.zeros(1, 1, 2, 2),
+        }
+
+        trainer.model_predict(prepared_batch, custom_timesteps=torch.tensor([250.0]))
+
+        torch.testing.assert_close(captured["timesteps"], torch.tensor([250.0]))
+        torch.testing.assert_close(captured["sigmas"], torch.full((1, 1, 2, 2), 0.25))
+        torch.testing.assert_close(captured["noisy_latents"], torch.full((1, 1, 2, 2), 0.25))
+        torch.testing.assert_close(prepared_batch["timesteps"], torch.tensor([[900.0, 100.0]]))
+
+    def test_model_predict_applies_custom_diffusion_timesteps_to_batch(self):
+        trainer = object.__new__(Trainer)
+        captured = {}
+
+        class _DiffusionModel:
+            PREDICTION_TYPE = PredictionTypes.EPSILON
+
+            def uses_noise_schedule(self):
+                return True
+
+            def model_predict(self, prepared_batch):
+                captured["timesteps"] = prepared_batch["timesteps"].clone()
+                captured["noisy_latents"] = prepared_batch["noisy_latents"].clone()
+                return torch.zeros_like(prepared_batch["noisy_latents"])
+
+        class _NoiseScheduler:
+            def add_noise(self, latents, noise, timesteps):
+                view = timesteps.float().view(-1, 1, 1, 1)
+                return latents + noise + view
+
+        trainer.model = _DiffusionModel()
+        trainer.config = SimpleNamespace(disable_accelerator=False, controlnet=False)
+        trainer._tlora_active = False
+        trainer.noise_scheduler = _NoiseScheduler()
+
+        prepared_batch = {
+            "latents": torch.zeros(2, 1, 1, 1),
+            "noise": torch.ones(2, 1, 1, 1),
+            "input_noise": torch.ones(2, 1, 1, 1),
+            "timesteps": torch.tensor([10, 20]),
+            "noisy_latents": torch.zeros(2, 1, 1, 1),
+        }
+
+        trainer.model_predict(prepared_batch, custom_timesteps=torch.tensor([3, 7], dtype=torch.float32))
+
+        torch.testing.assert_close(captured["timesteps"], torch.tensor([3, 7]))
+        torch.testing.assert_close(captured["noisy_latents"], torch.tensor([[[[4.0]]], [[[8.0]]]]))
+        torch.testing.assert_close(prepared_batch["timesteps"], torch.tensor([10, 20]))
 
     def test_run_trainer_job_aborts_promptly(self):
         from simpletuner.helpers.training import trainer as trainer_module

@@ -28,6 +28,7 @@ from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTra
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -86,6 +87,12 @@ class LongCatVideo(VideoModelFoundation):
         # LongCat-Video has 48 transformer blocks
         # Leave at least 1 block on GPU
         return 47
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
@@ -386,6 +393,17 @@ class LongCatVideo(VideoModelFoundation):
 
         cond_count = int(prepared_batch.get("conditioning_latent_count", 0) or 0)
         hidden_states_buffer = self._new_hidden_state_buffer()
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(getattr(self, "crepa_regularizer", None), "block_index", None),
+        )
+        created_capture_buffer = False
+        if capture_hidden and hidden_states_buffer is None:
+            hidden_states_buffer = HiddenStateBuffer()
+            created_capture_buffer = True
+        if created_capture_buffer and hidden_states_buffer is not None and capture_layer is not None:
+            hidden_states_buffer.capture_layers = {int(capture_layer)}
 
         model_pred = self.model(
             noisy_latents,
@@ -403,8 +421,25 @@ class LongCatVideo(VideoModelFoundation):
         if cond_count > 0 and model_pred.dim() == 5 and model_pred.shape[2] > cond_count:
             model_pred = model_pred[:, :, cond_count:, :, :]
 
+        crepa_hidden = None
+        if capture_hidden and capture_layer is not None and hidden_states_buffer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+            if crepa_hidden is not None and cond_count > 0:
+                total_frames = noisy_latents.shape[2]
+                if total_frames > 0 and crepa_hidden.ndim >= 2:
+                    spatial_tokens = crepa_hidden.shape[1] // total_frames
+                    cond_tokens = cond_count * spatial_tokens
+                    if 0 < cond_tokens < crepa_hidden.shape[1]:
+                        crepa_hidden = crepa_hidden[:, cond_tokens:, ...]
+            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {capture_layer} but none were stored. "
+                    "Check that crepa_block_index is within the model's block count."
+                )
+
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
 

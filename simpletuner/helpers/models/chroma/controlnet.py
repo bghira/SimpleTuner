@@ -302,20 +302,16 @@ class ChromaControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             txt_offset = img_offset + 6 * len(self.transformer_blocks)
             img_modulation = img_offset + 6 * index_block
             text_modulation = txt_offset + 6 * index_block
-            temb = torch.cat(
-                (
-                    pooled_temb[:, img_modulation : img_modulation + 6],
-                    pooled_temb[:, text_modulation : text_modulation + 6],
-                ),
-                dim=1,
-            )
+            image_temb = pooled_temb[:, img_modulation : img_modulation + 6]
+            text_temb = pooled_temb[:, text_modulation : text_modulation + 6]
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 current_encoder_states, current_hidden_states = self._gradient_checkpointing_func(
                     block,
                     current_hidden_states,
                     current_encoder_states,
-                    temb,
+                    image_temb,
+                    text_temb,
                     image_rotary_emb,
                     attention_mask,
                 )
@@ -323,7 +319,8 @@ class ChromaControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 current_encoder_states, current_hidden_states = block(
                     hidden_states=current_hidden_states,
                     encoder_hidden_states=current_encoder_states,
-                    temb=temb,
+                    image_temb=image_temb,
+                    text_temb=text_temb,
                     image_rotary_emb=image_rotary_emb,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,

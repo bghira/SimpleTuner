@@ -93,6 +93,12 @@ class LTXVideo(VideoModelFoundation):
         # Leave at least 1 block on GPU
         return 27
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
         # Common settings for memory optimization presets
@@ -340,7 +346,12 @@ class LTXVideo(VideoModelFoundation):
         # rope_interpolation_scale = [1 / 25, 32, 32]
 
         hidden_states_buffer = self._new_hidden_state_buffer()
-        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_block_index = prepared_batch.get(
+            "crepa_capture_block_index",
+            crepa.block_index if crepa is not None else None,
+        )
+        capture_hidden = bool(crepa and crepa.wants_hidden_states() and capture_block_index is not None)
         transformer_kwargs = {
             "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
             "encoder_attention_mask": prepared_batch["encoder_attention_mask"],
@@ -356,7 +367,7 @@ class LTXVideo(VideoModelFoundation):
         }
         if capture_hidden:
             transformer_kwargs["output_hidden_states"] = True
-            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+            transformer_kwargs["hidden_state_layer"] = capture_block_index
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
@@ -374,9 +385,9 @@ class LTXVideo(VideoModelFoundation):
             else:
                 model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
                 crepa_hidden = None
-            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
+            if crepa_hidden is None and not getattr(crepa, "use_backbone_features", False):
                 raise ValueError(
-                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    f"CREPA requested hidden states from layer {capture_block_index} "
                     "but none were returned. Check that crepa_block_index is within the model's block count."
                 )
         else:

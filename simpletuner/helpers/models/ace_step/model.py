@@ -118,6 +118,18 @@ class ACEStep(AudioModelFoundation):
     V15_SFT_GEN_PROMPT = ACE_STEP_V15_SFT_GEN_PROMPT
     SUPPORTS_LYRICS_EMBEDDER_TRAINING = True
 
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        if hidden_states_buffer is None:
+            return None
+        crepa = getattr(self, "crepa_regularizer", None)
+        block_idx = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if block_idx is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(block_idx)}")
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # ACE-Step has 28 transformer layers
@@ -1667,7 +1679,7 @@ class ACEStep(AudioModelFoundation):
         speaker_embeds = prepared_batch["speaker_embeds"]
         lyric_token_ids = prepared_batch["lyric_token_ids"]
         lyric_mask = prepared_batch["lyric_mask"]
-        timesteps = prepared_batch["timesteps"]
+        timesteps = prepared_batch["timesteps"].to(device=noise_latents.device, dtype=noise_latents.dtype)
         sigmas = prepared_batch["sigmas"]
         ssl_hidden_states = prepared_batch.get("ssl_hidden_states")
 
@@ -1698,6 +1710,7 @@ class ACEStep(AudioModelFoundation):
         return {
             "model_prediction": data_pred,
             "proj_losses": output.proj_losses,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
 

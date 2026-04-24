@@ -94,7 +94,7 @@
 </style>
 
 <div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
-     x-data="{...datasetWizardComponent(), activeSubTab: sessionStorage.getItem('dataset-viewer-subtab') || 'configuration'}"
+     x-data="datasetWizardComponent()"
      x-init="loadHints(); init()">
 
     <!-- Sub-tab navigation: Configuration | Viewer -->

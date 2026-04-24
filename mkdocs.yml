@@ -243,6 +243,7 @@ nav:
       - Cosmos2: quickstart/COSMOS2IMAGE.md
       - OmniGen: quickstart/OMNIGEN.md
       - Z-Image: quickstart/ZIMAGE.md
+      - ERNIE-Image: quickstart/ERNIE.md
       - Qwen Image: quickstart/QWEN_IMAGE.md
       - Qwen Edit: quickstart/QWEN_EDIT.md
       - Kandinsky 5 Image: quickstart/KANDINSKY5_IMAGE.md
@@ -326,6 +327,7 @@ nav:
     - Experimental:
       - Diff2Flow: experimental/DIFF2FLOW.md
       - LayerSync: experimental/LAYERSYNC.md
+      - Self-Flow: experimental/SELF_FLOW.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
       - T-LoRA: experimental/T_LORA.md
       - Video CREPA: experimental/VIDEO_CREPA.md

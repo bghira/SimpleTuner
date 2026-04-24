@@ -132,6 +132,34 @@ class TestSanaVideoModel(unittest.TestCase):
         self.assertTrue(torch.is_tensor(loss))
         self.assertEqual(loss.ndim, 0)
 
+    def test_supports_crepa_self_flow(self):
+        self.assertTrue(self.model.supports_crepa_self_flow())
+
+    def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
+        model = SanaVideo.__new__(SanaVideo)
+        model.accelerator = MagicMock(device=torch.device("cpu"))
+        model.config = MagicMock(weight_dtype=torch.float32, crepa_self_flow_mask_ratio=1.0)
+        model.sample_flow_sigmas = MagicMock(
+            return_value=(
+                torch.tensor([0.9], dtype=torch.float32),
+                torch.tensor([900.0], dtype=torch.float32),
+            )
+        )
+        model.model = MagicMock(config=MagicMock(patch_size=(1, 2, 2), patch_size_t=1))
+        model.unwrap_model = lambda wrapped=None, model=None: wrapped if wrapped is not None else model
+
+        batch = {
+            "latents": torch.zeros(1, 16, 2, 4, 4, dtype=torch.float32),
+            "input_noise": torch.ones(1, 16, 2, 4, 4, dtype=torch.float32),
+            "sigmas": torch.tensor([0.1], dtype=torch.float32),
+            "timesteps": torch.tensor([100.0], dtype=torch.float32),
+        }
+
+        result = model._prepare_crepa_self_flow_batch(batch, state={})
+
+        self.assertEqual(result["timesteps"].shape, (1, 8))
+        self.assertTrue(torch.equal(result["crepa_teacher_timesteps"], torch.tensor([100.0], dtype=torch.float32)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -335,6 +335,92 @@ class ZImage(ImageModelFoundation):
                 if default_weight_name is not None:
                     self.config.assistant_lora_weight_name = default_weight_name
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is None or not hasattr(transformer, "config"):
+            raise ValueError("Z-Image Self-Flow requires a loaded transformer config to determine patch size.")
+        patch_sizes = getattr(transformer.config, "all_patch_size", (2,))
+        patch_size = patch_sizes[0] if isinstance(patch_sizes, (tuple, list)) and patch_sizes else 2
+        if not isinstance(patch_size, (int, float)):
+            patch_size = 2
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=int(max(patch_size, 1)))
+
+    def _prepare_model_predict_timesteps(
+        self, raw_timesteps, batch_size: int, sequence_length: int | None = None
+    ) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
+        else:
+            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Z-Image expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if sequence_length is None:
+                raise ValueError("Z-Image tokenwise timesteps require an explicit sequence_length.")
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Z-Image expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Z-Image expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                f"Z-Image expected a scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return (1000.0 - timesteps) / 1000.0
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        if latent_tensor.dim() == 4:
+            _, _, height, width = latent_tensor.shape
+            frames = 1
+        elif latent_tensor.dim() == 5:
+            _, _, frames, height, width = latent_tensor.shape
+        else:
+            raise ValueError(f"Unexpected latent rank {latent_tensor.dim()} for Z-Image sequence length.")
+
+        config = getattr(self.unwrap_model(self.model), "config", None)
+        patch_sizes = getattr(config, "all_patch_size", (2,))
+        frame_patch_sizes = getattr(config, "all_f_patch_size", (1,))
+        patch_size = patch_sizes[0] if isinstance(patch_sizes, (tuple, list)) and patch_sizes else 2
+        frame_patch_size = frame_patch_sizes[0] if isinstance(frame_patch_sizes, (tuple, list)) and frame_patch_sizes else 1
+        if not isinstance(patch_size, (int, float)):
+            patch_size = 2
+        if not isinstance(frame_patch_size, (int, float)):
+            frame_patch_size = 1
+        patch_size = int(max(patch_size, 1))
+        frame_patch_size = int(max(frame_patch_size, 1))
+        return max((frames // frame_patch_size) * (height // patch_size) * (width // patch_size), 1)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if hidden_states_buffer is None or capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
+
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
         latents = prepared_batch["noisy_latents"]
         if latents.dim() == 4:
@@ -355,12 +441,11 @@ class ZImage(ImageModelFoundation):
 
         latent_list = [sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype) for sample in latents]
 
-        timesteps = prepared_batch["timesteps"]
-        if not torch.is_tensor(timesteps):
-            timesteps = torch.tensor(timesteps, device=self.accelerator.device, dtype=torch.float32)
-        else:
-            timesteps = timesteps.to(device=self.accelerator.device, dtype=torch.float32)
-        normalized_t = (1000.0 - timesteps) / 1000.0
+        normalized_t = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size,
+            sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
+        )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         call_kwargs = {}
@@ -380,14 +465,9 @@ class ZImage(ImageModelFoundation):
             noise_pred = noise_pred.squeeze(2)
         noise_pred = -noise_pred
 
-        crepa_hidden = None
-        crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
-
         return {
             "model_prediction": noise_pred,
-            "crepa_hidden_states": crepa_hidden,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
 

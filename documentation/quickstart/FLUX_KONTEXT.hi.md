@@ -129,6 +129,7 @@ Edit dataset में `conditioning_data` field को reference dataset की
 ### Dedicated validation split सेट करना
 
 यहाँ एक उदाहरण कॉन्फ़िगरेशन है जिसमें 200,000 samples का training set और कुछ samples का validation set है।
+Kontext के लिए `validation_using_datasets` को unset या `false` ही रखें। Validation पहले से paired reference dataset को अपने आप use करती है; `eval_dataset_id` केवल यह चुनता है कि validation samples किस edit dataset से आएँगे।
 
 अपने `config.json` में यह जोड़ें:
 

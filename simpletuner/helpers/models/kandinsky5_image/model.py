@@ -86,6 +86,22 @@ class Kandinsky5Image(ImageModelFoundation):
         },
     }
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        patch_size = getattr(getattr(self.unwrap_model(self.model), "config", None), "patch_size", (1, 2, 2))
+        if isinstance(patch_size, int):
+            image_patch_size = (int(max(patch_size, 1)), int(max(patch_size, 1)))
+        elif isinstance(patch_size, (tuple, list)) and len(patch_size) == 3:
+            image_patch_size = (
+                int(max(patch_size[1], 1)),
+                int(max(patch_size[2], 1)),
+            )
+        else:
+            raise ValueError(f"Unexpected Kandinsky5Image patch size for Self-Flow: {patch_size!r}")
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=image_patch_size)
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # Kandinsky5 Image has 2 text + 32 visual = 34 transformer blocks
@@ -460,25 +476,55 @@ class Kandinsky5Image(ImageModelFoundation):
         if raw_force_keep is not None and getattr(self.config, "tread_config", None):
             force_keep_mask = self._prepare_force_keep_mask(latents, raw_force_keep)
 
-        model_pred = self.model(
-            hidden_states=latents.to(dtype),
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(dtype),
-            pooled_projections=pooled.to(dtype),
-            timestep=timesteps,
-            timestep_sign=(
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        transformer_kwargs = {
+            "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(dtype),
+            "pooled_projections": pooled.to(dtype),
+            "timestep": timesteps,
+            "timestep_sign": (
                 prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
             ),
-            visual_rope_pos=visual_rope_pos,
-            text_rope_pos=text_rope_pos,
-            scale_factor=(1, 2, 2),
-            sparse_params=None,
-            return_dict=True,
-            force_keep_mask=force_keep_mask,
-        ).sample
+            "visual_rope_pos": visual_rope_pos,
+            "text_rope_pos": text_rope_pos,
+            "scale_factor": (1, 2, 2),
+            "sparse_params": None,
+            "return_dict": not capture_hidden,
+            "force_keep_mask": force_keep_mask,
+        }
+        if capture_hidden:
+            transformer_kwargs["output_hidden_states"] = True
+            transformer_kwargs["hidden_state_layer"] = prepared_batch.get(
+                "crepa_capture_block_index",
+                self.crepa_regularizer.block_index,
+            )
+        if hidden_states_buffer is not None:
+            transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+
+        model_output = self.model(
+            hidden_states=latents.to(dtype),
+            **transformer_kwargs,
+        )
+
+        if capture_hidden:
+            model_pred = model_output[0]
+            crepa_hidden = model_output[1]
+            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    "but none were returned. Check that crepa_block_index is within the model's block count."
+                )
+        else:
+            model_pred = model_output.sample
+            crepa_hidden = None
 
         model_pred = model_pred.squeeze(1).permute(0, 3, 1, 2)  # back to (B, C, H, W)
 
-        return {"model_prediction": model_pred}
+        return {
+            "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def _prepare_force_keep_mask(self, latents: torch.Tensor, mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         """

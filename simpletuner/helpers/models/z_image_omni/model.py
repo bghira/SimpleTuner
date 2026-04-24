@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import torch
 from diffusers import AutoencoderKL
-from transformers import AutoModelForCausalLM, AutoTokenizer, Siglip2ImageProcessorFast, Siglip2VisionModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, Siglip2ImageProcessor, Siglip2VisionModel
 
 from simpletuner.helpers.acceleration import (
     AccelerationBackend,
@@ -172,6 +172,9 @@ class ZImageOmni(ImageModelFoundation):
         super().__init__(config, accelerator)
         self._conditioning_image_embedder = None
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
         if "low_cpu_mem_usage" not in args:
@@ -261,7 +264,7 @@ class ZImageOmni(ImageModelFoundation):
         return True
 
     class _SiglipConditioningImageEmbedder:
-        def __init__(self, siglip: Siglip2VisionModel, processor: Siglip2ImageProcessorFast, device, dtype):
+        def __init__(self, siglip: Siglip2VisionModel, processor: Siglip2ImageProcessor, device, dtype):
             self.siglip = siglip
             self.processor = processor
             self.device = device
@@ -316,7 +319,7 @@ class ZImageOmni(ImageModelFoundation):
             subfolder=siglip_subfolder,
             revision=siglip_revision,
         )
-        siglip_processor = Siglip2ImageProcessorFast.from_pretrained(
+        siglip_processor = Siglip2ImageProcessor.from_pretrained(
             repo_id,
             subfolder=siglip_processor_subfolder,
             revision=siglip_processor_revision,
@@ -449,6 +452,60 @@ class ZImageOmni(ImageModelFoundation):
             timesteps = timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         return (1000.0 - timesteps) / 1000.0
 
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is None or not hasattr(transformer, "config"):
+            raise ValueError("Z-Image Omni Self-Flow requires a loaded transformer config to determine patch size.")
+        patch_sizes = getattr(transformer.config, "all_patch_size", (2,))
+        if not isinstance(patch_sizes, (tuple, list)) or len(patch_sizes) == 0:
+            raise ValueError(f"Unexpected Z-Image Omni patch size config: {patch_sizes!r}")
+        patch_size = int(max(patch_sizes[0], 1))
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=patch_size)
+
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        patch_sizes = getattr(getattr(transformer, "config", None), "all_patch_size", (2,))
+        patch_size = int(max((patch_sizes[0] if isinstance(patch_sizes, (tuple, list)) and len(patch_sizes) > 0 else 2), 1))
+        return max((latent_tensor.shape[-2] // patch_size) * (latent_tensor.shape[-1] // patch_size), 1)
+
+    def _prepare_model_predict_timesteps(self, raw_timesteps, batch_size: int, sequence_length: int) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
+        else:
+            raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
+
+        if raw_timesteps.ndim == 0:
+            timesteps = raw_timesteps.expand(batch_size)
+        elif raw_timesteps.ndim == 1:
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Z-Image Omni expected 1 timestep or {batch_size} per-batch timesteps, got {raw_timesteps.shape[0]}."
+                )
+        elif raw_timesteps.ndim == 2:
+            if raw_timesteps.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Z-Image Omni expected tokenwise timesteps with sequence length {sequence_length}, got {raw_timesteps.shape[1]}."
+                )
+            if raw_timesteps.shape[0] == 1:
+                timesteps = raw_timesteps.expand(batch_size, -1)
+            elif raw_timesteps.shape[0] == batch_size:
+                timesteps = raw_timesteps
+            else:
+                raise ValueError(
+                    f"Z-Image Omni expected tokenwise timesteps for batch size {batch_size}, got {raw_timesteps.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                "Z-Image Omni expected a scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                f"got shape {tuple(raw_timesteps.shape)}."
+            )
+
+        return (1000.0 - timesteps) / 1000.0
+
     def model_predict(self, prepared_batch, custom_timesteps: Optional[list] = None):
         latents = self._normalize_latents(prepared_batch["noisy_latents"])
         batch_size = latents.shape[0]
@@ -460,7 +517,11 @@ class ZImageOmni(ImageModelFoundation):
         cond_latent_list = self._prepare_conditioning_latents(prepared_batch.get("conditioning_latents"), batch_size)
         siglip_feats = self._prepare_siglip_features(prepared_batch, cond_latent_list, batch_size)
 
-        normalized_t = self._normalize_timesteps(prepared_batch["timesteps"])
+        normalized_t = self._prepare_model_predict_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=batch_size,
+            sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
+        )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         model_out_list = self.model(
@@ -469,6 +530,9 @@ class ZImageOmni(ImageModelFoundation):
             prompt_list,
             cond_latent_list,
             siglip_feats,
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
         )[0]
@@ -480,8 +544,12 @@ class ZImageOmni(ImageModelFoundation):
 
         crepa_hidden = None
         crepa = getattr(self, "crepa_regularizer", None)
-        if crepa and crepa.enabled and hidden_states_buffer is not None:
-            crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if crepa and crepa.enabled and hidden_states_buffer is not None and capture_layer is not None:
+            crepa_hidden = hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
         return {
             "model_prediction": noise_pred,

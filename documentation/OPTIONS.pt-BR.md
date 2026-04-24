@@ -711,6 +711,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - Requer que o modelo tenha um pipeline `IMG2IMG` ou `IMG2VIDEO` registrado
   - Pode ser combinado com `--eval_dataset_id` para obter imagens de um dataset especifico
   - Para modelos i2v, permite usar um dataset de imagens simples para validacao sem a configuracao complexa de pareamento de datasets de conditioning usada durante o treinamento
+  - Flux Kontext nao usa este flag para validacao; deixe-o desativado e use `--eval_dataset_id` para escolher o dataset de edicao enquanto o Kontext carrega automaticamente o dataset de referencia pareado
   - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
 
 ### `--eval_dataset_id`
@@ -723,6 +724,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - O ID do dataset deve corresponder a um dataset configurado no seu config do dataloader
   - Util para manter avaliacao consistente usando um dataset de eval dedicado
   - Para modelos de conditioning, os dados de conditioning do dataset (se houver) tambem serao usados
+  - Para Flux Kontext, esta e a forma correta de selecionar o dataset de validacao; nao habilite `--validation_using_datasets`
 
 ---
 
@@ -738,6 +740,7 @@ Alguns modelos nao funcionam sem entradas de conditioning:
 - **Treinamento ControlNet**: Requer imagens de sinal de controle
 
 Para estes modelos, um dataset de conditioning e obrigatorio. A WebUI mostrara opcoes de conditioning como obrigatorias, e o treinamento falhara sem elas.
+A validacao do Flux Kontext tambem permanece nesse caminho baseado em conditioning. Use `--eval_dataset_id` para escolher o dataset de edicao para validacao e deixe `--validation_using_datasets` desativado.
 
 ### 2. Modelos que SUPORTAM Conditioning Opcional
 
@@ -769,6 +772,8 @@ Para estes modelos, voce PODE adicionar datasets de conditioning mas nao e obrig
 - Use `--eval_dataset_id` para controlar qual dataset fornece entradas
 
 **Modelos I2V com `--validation_using_datasets`**: Para modelos de video i2v (HunyuanVideo, WAN, Kandinsky5Video), habilitar este flag permite usar um dataset de imagens simples para validacao. As imagens sao usadas como entradas de conditioning de primeiro frame para gerar videos de validacao, sem precisar da configuracao complexa de pareamento de datasets de conditioning.
+
+**Flux Kontext com `--validation_using_datasets`**: Nao habilite este flag. Kontext e somente edicao e valida pelo caminho normal de datasets pareados de imagem + conditioning. Use `--eval_dataset_id` para selecionar o dataset de edicao.
 
 ### Tipos de Dados de Conditioning
 
@@ -1094,11 +1099,32 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 - **Por que**: Evita carregar DINOv2 quando o backbone ja tem uma camada semantica mais forte para supervisionar.
 - **Padrao**: `false`
 
+### `--crepa_feature_source`
+
+- **O que**: Seleciona de onde o CREPA obtem o sinal de professor.
+- **Por que**: Use `encoder` para o caminho classico com encoder externo, `backbone` para alinhamento interno bloco a bloco, ou `self_flow` para o professor EMA com visao mais limpa usado no Self-Flow.
+- **Opcoes**: `encoder`, `backbone`, `self_flow`
+- **Padrao**: `encoder`
+
+### `--crepa_self_flow`
+
+- **O que**: Alias booleano legado que ativa o modo Self-Flow.
+- **Por que**: Configs antigas ainda podem usa-lo, mas configs novas devem preferir `crepa_feature_source=self_flow`.
+- **Padrao**: `false`
+- **Nota**: Entra em conflito com `crepa_use_backbone_features` e com `crepa_feature_source` apontando para outro modo.
+
+### `--crepa_self_flow_mask_ratio`
+
+- **O que**: Fracao de tokens que recebe o timestep alternativo no Self-Flow.
+- **Por que**: Controla quanta assimetria de informacao existe entre tokens mais limpos e mais ruidosos. Valores altos fortalecem o sinal auto-supervisionado, mas podem desestabilizar o treino.
+- **Padrao**: `0.1`
+- **Faixa**: `0.0` a `0.5`
+
 ### `--crepa_teacher_block_index`
 
-- **O que**: Indice do bloco professor ao usar features do backbone.
-- **Por que**: Permite alinhar um bloco estudante mais cedo a um bloco professor mais profundo sem encoder externo. Usa o bloco estudante quando nao definido.
-- **Padrao**: Usa `crepa_block_index` se nao for fornecido.
+- **O que**: Indice do bloco professor ao usar features do backbone ou Self-Flow.
+- **Por que**: Permite alinhar um bloco estudante mais cedo a um bloco professor mais profundo sem encoder externo. No Self-Flow ele e exigido explicitamente para que o professor EMA leia uma camada semantica mais profunda.
+- **Padrao**: Usa `crepa_block_index` se nao for fornecido no modo backbone; e obrigatorio no modo Self-Flow.
 
 ### `--crepa_encoder_image_size`
 

@@ -52,6 +52,14 @@
 
     [:octicons-arrow-right-24: Guías de modelos](quickstart/index.md)
 
+-   :material-flask-outline:{ .lg .middle } __Métodos experimentales__
+
+    ---
+
+    Funciones de investigación como Self-Flow, LayerSync, Diff2Flow y Video CREPA
+
+    [:octicons-arrow-right-24: Self-Flow](experimental/SELF_FLOW.md)
+
 </div>
 
 ## Funcionalidades

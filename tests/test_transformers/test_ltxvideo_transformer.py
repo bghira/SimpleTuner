@@ -929,6 +929,31 @@ class TestLTXVideoTransformer3DModel(TransformerBaseTest):
 
         self.assert_tensor_shape(output_tensor, (2, seq_len, self.model_config["out_channels"]))
 
+    def test_forward_pass_with_tokenwise_timesteps(self):
+        """Tokenwise timestep sequences should reshape back to per-token modulation."""
+        model = LTXVideoTransformer3DModel(**self.model_config)
+
+        seq_len = 16
+        hidden_states = torch.randn(2, seq_len, self.model_config["in_channels"])
+        encoder_hidden_states = torch.randn(2, 77, self.model_config["caption_channels"])
+        timestep = torch.randint(0, 1000, (2, seq_len))
+        encoder_attention_mask = torch.ones(2, 77)
+
+        with torch.no_grad():
+            output = model.forward(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep=timestep,
+                encoder_attention_mask=encoder_attention_mask,
+                num_frames=4,
+                height=2,
+                width=2,
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        self.assert_tensor_shape(output_tensor, (2, seq_len, self.model_config["out_channels"]))
+        self.assert_no_nan_or_inf(output_tensor)
+
     @patch("simpletuner.helpers.training.tread.TREADRouter")
     def test_tread_router_integration(self, mock_tread_router_class):
         """Test TREAD router integration for token reduction."""

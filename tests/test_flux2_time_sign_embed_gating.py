@@ -39,6 +39,40 @@ class Flux2TimeSignEmbedGatingTestCase(unittest.TestCase):
         self.assertTrue(isinstance(model.time_sign_embed, torch.nn.Embedding))
         self.assertIn("time_sign_embed.weight", model.state_dict())
 
+    def test_forward_accepts_tokenwise_timesteps(self):
+        model = _tiny_flux2_transformer()
+        hidden_states = torch.randn(1, 4, 4)
+        encoder_hidden_states = torch.randn(1, 2, 16)
+        timestep = torch.tensor([[0.1, 0.3, 0.5, 0.7]], dtype=torch.float32)
+        img_ids = torch.tensor(
+            [
+                [0, 0, 0, 0],
+                [0, 0, 1, 0],
+                [0, 1, 0, 0],
+                [0, 1, 1, 0],
+            ],
+            dtype=torch.int64,
+        )
+        txt_ids = torch.tensor(
+            [
+                [0, 0, 0, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=torch.int64,
+        )
+
+        output = model(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=timestep,
+            img_ids=img_ids,
+            txt_ids=txt_ids,
+            guidance=torch.tensor([1.0], dtype=torch.float32),
+            return_dict=False,
+        )[0]
+
+        self.assertEqual(output.shape, (1, 4, 4))
+
 
 if __name__ == "__main__":
     unittest.main()

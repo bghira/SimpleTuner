@@ -95,6 +95,12 @@ class SanaVideo(VideoModelFoundation):
         # Leave at least 1 block on GPU
         return 19
 
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
         # Common settings for memory optimization presets
@@ -307,7 +313,10 @@ class SanaVideo(VideoModelFoundation):
         }
         if capture_hidden:
             transformer_kwargs["output_hidden_states"] = True
-            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+            transformer_kwargs["hidden_state_layer"] = prepared_batch.get(
+                "crepa_capture_block_index",
+                self.crepa_regularizer.block_index,
+            )
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 

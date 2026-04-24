@@ -43,17 +43,186 @@ class TimestepEmbeddings(nn.Module):
             nn.init.zeros_(self.time_sign_embed.weight)
 
     def forward(self, timestep, hidden_dtype, timestep_sign: Optional[torch.Tensor] = None):
-        timesteps_proj = self.time_proj(timestep)
-        temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        if timestep.ndim == 2:
+            batch_size, sequence_length = timestep.shape
+            flat_timestep = timestep.reshape(-1)
+            timesteps_proj = self.time_proj(flat_timestep)
+            temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype)).view(batch_size, sequence_length, -1)
+        else:
+            timesteps_proj = self.time_proj(timestep)
+            temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
                     "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
                     "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
                 )
-            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
-            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+            sign_tensor = timestep_sign.to(device=temb.device)
+            if timestep.ndim == 2:
+                batch_size, sequence_length = timestep.shape
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(batch_size, sequence_length)
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"LongCat-Image tokenwise timestep_sign expected 1 or {batch_size} batch values, got {sign_tensor.shape[0]}."
+                        )
+                    sign_tensor = sign_tensor[:, None].expand(-1, sequence_length)
+                elif sign_tensor.ndim == 2:
+                    if sign_tensor.shape[1] != sequence_length:
+                        raise ValueError(
+                            f"LongCat-Image tokenwise timestep_sign expected sequence length {sequence_length}, got {sign_tensor.shape[1]}."
+                        )
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(batch_size, -1)
+                    elif sign_tensor.shape[0] != batch_size:
+                        raise ValueError(
+                            f"LongCat-Image tokenwise timestep_sign expected batch size {batch_size}, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        "LongCat-Image timestep_sign expected scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                        f"got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=temb.device)
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+                temb = temb + sign_emb.view(batch_size, sequence_length, -1)
+            else:
+                if sign_tensor.ndim == 0:
+                    sign_tensor = sign_tensor.expand(temb.shape[0])
+                elif sign_tensor.ndim == 1:
+                    if sign_tensor.shape[0] == 1:
+                        sign_tensor = sign_tensor.expand(temb.shape[0])
+                    elif sign_tensor.shape[0] != temb.shape[0]:
+                        raise ValueError(
+                            f"LongCat-Image timestep_sign expected 1 or {temb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                        )
+                else:
+                    raise ValueError(
+                        "LongCat-Image timestep_sign expected scalar or 1D batch tensor for batchwise timesteps, "
+                        f"got shape {tuple(sign_tensor.shape)}."
+                    )
+                sign_idx = (sign_tensor.view(-1) < 0).long().to(device=temb.device)
+                temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
         return temb
+
+
+def _longcat_apply_ada_layer_norm_zero(norm, hidden_states: torch.Tensor, emb: torch.Tensor):
+    if emb.ndim == 2:
+        return norm(hidden_states, emb=emb)
+
+    modulation = norm.linear(norm.silu(emb))
+    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = modulation.chunk(6, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
+def _longcat_apply_ada_layer_norm_zero_single(norm, hidden_states: torch.Tensor, emb: torch.Tensor):
+    if emb.ndim == 2:
+        return norm(hidden_states, emb=emb)
+
+    modulation = norm.linear(norm.silu(emb))
+    shift_msa, scale_msa, gate_msa = modulation.chunk(3, dim=-1)
+    hidden_states = norm.norm(hidden_states) * (1 + scale_msa) + shift_msa
+    return hidden_states, gate_msa
+
+
+def _longcat_apply_ada_layer_norm_continuous(norm, hidden_states: torch.Tensor, conditioning_embedding: torch.Tensor):
+    if conditioning_embedding.ndim == 2:
+        return norm(hidden_states, conditioning_embedding)
+
+    emb = norm.linear(norm.silu(conditioning_embedding).to(hidden_states.dtype))
+    scale, shift = torch.chunk(emb, 2, dim=-1)
+    return norm.norm(hidden_states) * (1 + scale) + shift
+
+
+def _run_longcat_transformer_block(
+    block: FluxTransformerBlock,
+    hidden_states: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+    temb: torch.Tensor,
+    context_temb: torch.Tensor,
+    image_rotary_emb,
+):
+    norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _longcat_apply_ada_layer_norm_zero(
+        block.norm1, hidden_states, temb
+    )
+    norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = _longcat_apply_ada_layer_norm_zero(
+        block.norm1_context, encoder_hidden_states, context_temb
+    )
+
+    attention_outputs = block.attn(
+        hidden_states=norm_hidden_states,
+        encoder_hidden_states=norm_encoder_hidden_states,
+        image_rotary_emb=image_rotary_emb,
+    )
+    if len(attention_outputs) == 2:
+        attn_output, context_attn_output = attention_outputs
+    elif len(attention_outputs) == 3:
+        attn_output, context_attn_output, ip_attn_output = attention_outputs
+
+    if gate_msa.ndim == 2:
+        gate_msa = gate_msa.unsqueeze(1)
+    hidden_states = hidden_states + gate_msa * attn_output
+
+    norm_hidden_states = block.norm2(hidden_states)
+    if scale_mlp.ndim == 2:
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+    else:
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+    ff_output = block.ff(norm_hidden_states)
+    if gate_mlp.ndim == 2:
+        gate_mlp = gate_mlp.unsqueeze(1)
+    hidden_states = hidden_states + gate_mlp * ff_output
+    if len(attention_outputs) == 3:
+        hidden_states = hidden_states + ip_attn_output
+
+    if c_gate_msa.ndim == 2:
+        c_gate_msa = c_gate_msa.unsqueeze(1)
+    encoder_hidden_states = encoder_hidden_states + c_gate_msa * context_attn_output
+
+    norm_encoder_hidden_states = block.norm2_context(encoder_hidden_states)
+    if c_scale_mlp.ndim == 2:
+        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+    else:
+        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
+    context_ff_output = block.ff_context(norm_encoder_hidden_states)
+    if c_gate_mlp.ndim == 2:
+        c_gate_mlp = c_gate_mlp.unsqueeze(1)
+    encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
+
+    if encoder_hidden_states.dtype == torch.float16:
+        encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+    return encoder_hidden_states, hidden_states
+
+
+def _run_longcat_single_transformer_block(
+    block: FluxSingleTransformerBlock,
+    hidden_states: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+    temb: torch.Tensor,
+    image_rotary_emb,
+):
+    text_seq_len = encoder_hidden_states.shape[1]
+    hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+
+    residual = hidden_states
+    norm_hidden_states, gate = _longcat_apply_ada_layer_norm_zero_single(block.norm, hidden_states, temb)
+    mlp_hidden_states = block.act_mlp(block.proj_mlp(norm_hidden_states))
+    attn_output = block.attn(hidden_states=norm_hidden_states, image_rotary_emb=image_rotary_emb)
+
+    hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
+    if gate.ndim == 2:
+        gate = gate.unsqueeze(1)
+    hidden_states = gate * block.proj_out(hidden_states)
+    hidden_states = residual + hidden_states
+    if hidden_states.dtype == torch.float16:
+        hidden_states = hidden_states.clip(-65504, 65504)
+
+    encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
+    return encoder_hidden_states, hidden_states
 
 
 class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
@@ -162,12 +331,50 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 Whether to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a tuple.
         """
         hidden_states = self.x_embedder(hidden_states)
+        batch_size, num_img_tokens, _ = hidden_states.shape
 
-        timestep = timestep.to(hidden_states.dtype) * 1000
+        timestep = timestep.to(device=hidden_states.device, dtype=hidden_states.dtype)
+        if timestep.ndim == 0:
+            timestep = timestep.expand(batch_size)
+        elif timestep.ndim == 1:
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(batch_size)
+            elif timestep.shape[0] != batch_size:
+                raise ValueError(
+                    f"LongCat-Image expected 1 timestep or {batch_size} per-batch timesteps, got {timestep.shape[0]}."
+                )
+        elif timestep.ndim == 2:
+            if timestep.shape[1] != num_img_tokens:
+                raise ValueError(
+                    f"LongCat-Image expected tokenwise timesteps with sequence length {num_img_tokens}, got {timestep.shape[1]}."
+                )
+            if timestep.shape[0] == 1:
+                timestep = timestep.expand(batch_size, -1)
+            elif timestep.shape[0] != batch_size:
+                raise ValueError(
+                    f"LongCat-Image expected tokenwise timesteps for batch size {batch_size}, got {timestep.shape[0]}."
+                )
+        else:
+            raise ValueError(
+                "LongCat-Image expected a scalar, 1D batch tensor, or 2D tokenwise tensor, "
+                f"got shape {tuple(timestep.shape)}."
+            )
+
+        timestep = timestep * 1000
         guidance = guidance.to(hidden_states.dtype) * 1000 if guidance is not None else None
 
         temb = self.time_embed(timestep, hidden_states.dtype, timestep_sign=timestep_sign)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
+        txt_len = encoder_hidden_states.shape[1]
+
+        if timestep.ndim == 2:
+            temb_img = temb
+            temb_txt = temb.mean(dim=1)
+            temb_single = torch.cat([temb_txt.unsqueeze(1).expand(-1, txt_len, -1), temb_img], dim=1)
+        else:
+            temb_img = temb
+            temb_txt = temb
+            temb_single = temb
 
         if txt_ids.ndim == 3:
             logger.warning(
@@ -197,18 +404,22 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_checkpoint[index_block]:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                    _run_longcat_transformer_block,
                     block,
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
+                    temb_img,
+                    temb_txt,
                     image_rotary_emb,
                 )
             else:
-                encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
+                encoder_hidden_states, hidden_states = _run_longcat_transformer_block(
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb_img,
+                    temb_txt,
+                    image_rotary_emb,
                 )
             if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
                 musubi_manager.stream_out(block)
@@ -220,25 +431,27 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_single_checkpoint[index_block]:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                    _run_longcat_single_transformer_block,
                     block,
                     hidden_states,
                     encoder_hidden_states,
-                    temb,
+                    temb_single,
                     image_rotary_emb,
                 )
             else:
-                encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
+                encoder_hidden_states, hidden_states = _run_longcat_single_transformer_block(
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb_single,
+                    image_rotary_emb,
                 )
             if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
                 musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
 
-        hidden_states = self.norm_out(hidden_states, temb)
+        hidden_states = _longcat_apply_ada_layer_norm_continuous(self.norm_out, hidden_states, temb_img)
         output = self.proj_out(hidden_states)
 
         if not return_dict:

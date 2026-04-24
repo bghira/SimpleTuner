@@ -129,7 +129,7 @@ configs/
 │   └── multidatabackend-DataBackend-Name.json
 ```
 
-<img width="788" height="465" alt="image" src="https://github.com/user-attachments/assets/656aa287-3b59-476d-ac45-6ede325fe858" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/4be22081-f13d-4aed-a87c-2313ddefc8a4" />
 
 ##### 从命令行使用迁移
 
@@ -137,14 +137,14 @@ configs/
 
 对于新用户，配置和数据集的默认位置将是 `~/.simpletuner/`，建议将您的数据集移动到有更多空间的地方：
 
-<img width="775" height="454" alt="image" src="https://github.com/user-attachments/assets/39238810-da26-4bde-8fc9-1002251f778a" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/c5b3ab53-654e-4a9b-8e2d-7951f11619ef" />
 
 
 #### 多 GPU 选择和配置
 
-配置默认路径后，您将到达可以配置多 GPU 的步骤（在 Macbook 上的截图）
+配置默认路径后，您将到达可以配置多 GPU 的步骤（在 NVIDIA 系统上的截图）
 
-<img width="755" height="646" alt="image" src="https://github.com/user-attachments/assets/de43a09d-06a7-45c0-8111-7a0b014499c8" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/61d5a7bc-0a02-4a0a-8df0-207cce4b7bc1" />
 
 如果您有多个 GPU，只想使用第二个，这里就是您可以进行设置的地方。
 
@@ -154,7 +154,7 @@ configs/
 
 如果在您的 `configs_dir` 中没有找到任何现有配置，您将被要求创建**您的第一个训练环境**：
 
-<img width="750" height="1381" alt="image" src="https://github.com/user-attachments/assets/4a3ee88f-c70f-416c-ae5d-6593deb9ca35" />
+<img width="500" height="640" alt="image" src="https://github.com/user-attachments/assets/2110287a-16fd-4f87-893b-86d2a555a10f" />
 
 使用**从示例引导**选择一个示例配置作为起点，或者只需输入一个描述性名称并创建一个随机环境，如果您更喜欢使用设置向导。
 
@@ -164,7 +164,7 @@ configs/
 
 否则，我们在引导过程中刚创建的选项将已被选中并激活。
 
-<img width="965" height="449" alt="image" src="https://github.com/user-attachments/assets/d8c73cef-ecbb-4229-ad54-9ccd55f8175a" />
+<img width="448" height="225" alt="image" src="https://github.com/user-attachments/assets/66fef6a9-2040-47fd-b22d-918470677992" />
 
 使用**管理配置**进入 `环境` 标签页，在那里可以找到您的环境、数据加载器和其他配置的列表。
 
@@ -172,11 +172,11 @@ configs/
 
 我努力提供了一个全面的设置向导，帮助您以简洁的方式配置一些最重要的设置以开始使用。
 
-<img width="394" height="286" alt="image" src="https://github.com/user-attachments/assets/21e99854-1d75-4ba9-8be6-15e715d77f4e" />
+<img width="470" height="358" alt="image" src="https://github.com/user-attachments/assets/e4bf1a4e-716c-4101-b753-e9e24bb42d8a" />
 
 在左上角导航菜单中，向导按钮将带您进入选择对话框：
 
-<img width="1186" height="1756" alt="image" src="https://github.com/user-attachments/assets/f6d4ac57-e3f6-4060-a4d3-b7f0829d7350" />
+<img width="448" height="440" alt="image" src="https://github.com/user-attachments/assets/68324fa8-3ca9-45b1-b947-1e7738fd1d8c" />
 
 然后提供所有内置模型变体。每个变体将预先启用所需的设置，如注意力遮罩或扩展标记限制。
 
@@ -188,7 +188,7 @@ configs/
 
 一些小型模型如 Cosmos2、Sana 和 PixArt 真的不喜欢被量化。
 
-<img width="1106" height="1464" alt="image" src="https://github.com/user-attachments/assets/0284d987-6060-4692-934a-0905ef2d5ca1" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/c2e721f2-b4da-4cd0-84fd-7ac81993e87c" />
 
 #### 全秩训练
 
@@ -198,14 +198,14 @@ configs/
 
 支持 FSDP2，但在此向导中不可配置。只需保持 DeepSpeed 禁用，如果您希望使用它，稍后手动配置 FSDP2
 
-<img width="1097" height="1278" alt="image" src="https://github.com/user-attachments/assets/60475318-facd-4da1-a2a1-67cecff18e04" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/88438f1c-b0a2-4249-afd0-7878aa1abada" />
 
 
 #### 您想训练多长时间？
 
 您需要决定是以 epochs 还是 steps 来衡量训练时间。最终结果都差不多，尽管有些人会对其中一种方式产生偏好。
 
-<img width="1136" height="1091" alt="image" src="https://github.com/user-attachments/assets/9146cdcd-f277-45e5-92cb-f74f23039d51" />
+<img width="508" height="475" alt="image" src="https://github.com/user-attachments/assets/dcb54279-0ce7-4c66-a9ab-4dd26f87278c" />
 
 #### 通过 Hugging Face Hub 分享您的模型
 
@@ -213,7 +213,19 @@ configs/
 
 如果您选择发布模型，请注意选择 `私有仓库`，如果您不希望您的模型被公众访问。
 
-<img width="1090" height="859" alt="image" src="https://github.com/user-attachments/assets/d1f86b6b-b0d5-4caa-b3ff-6bd106928094" />
+<img width="508" height="370" alt="image" src="https://github.com/user-attachments/assets/8d2d282b-e66f-48a8-a40e-4e4ecc2d280b" />
+
+#### 检查点频率
+
+训练时，您的模型会定期保存到磁盘。保留更多检查点需要更多磁盘空间。
+
+检查点允许稍后恢复训练，而无需重复所有步骤。保留几个检查点可以让您测试模型的多个版本，并保留最适合您的版本。
+
+建议每 10% 保存一个检查点，不过这取决于您的训练数据量。对于小型数据集，您会希望更频繁地保存检查点，以确保没有过拟合。
+
+极大型数据集适合使用更长的检查点间隔，以避免浪费时间写入磁盘。
+
+<img width="508" height="485" alt="image" src="https://github.com/user-attachments/assets/c7b1cd0b-a1b9-47ec-87f9-1ecac2e0841a" />
 
 #### 模型验证
 
@@ -241,7 +253,7 @@ Flux 专用示例：`simpletuner/examples/external-validation/fal_post_upload.py
 
 本地 GPU 示例：`simpletuner/examples/external-validation/use_second_gpu.py` 在另一个 GPU 上运行 Flux LoRA 推理（默认为 `cuda:1`），即使没有上传发生也可以使用。
 
-<img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 
 #### 记录训练统计
 
@@ -249,35 +261,33 @@ Flux 专用示例：`simpletuner/examples/external-validation/fal_post_upload.py
 
 注意：您的任何个人数据、训练日志、标题或数据都**永远不会**发送给 SimpleTuner 项目开发者。您的数据控制权在**您**手中。
 
-<img width="1099" height="1067" alt="image" src="https://github.com/user-attachments/assets/c9be9a20-12ad-402a-9605-66ba5771e630" />
+<img width="508" height="438" alt="image" src="https://github.com/user-attachments/assets/0f8d15c5-456f-4637-af7e-c2f5f31cb968" />
 
 #### 数据集配置
 
 此时，您可以决定是保留任何现有数据集，还是通过数据集创建向导创建新配置（保留任何其他配置不变），点击后将出现向导。
 
-<img width="1103" height="877" alt="image" src="https://github.com/user-attachments/assets/3d3cc391-52ed-422e-a4a1-676ca342df10" />
+<img width="508" height="290" alt="image" src="https://github.com/user-attachments/assets/b5a7f883-e180-4662-b84c-fff609c6b1df" />
 
 ##### 数据集向导
 
 如果您选择创建新数据集，您将看到以下向导，它将引导您完成添加本地或云数据集的过程。
 
-<img width="1110" height="857" alt="image" src="https://github.com/user-attachments/assets/3719e0f5-774e-461d-be02-902e08a679f6" />
+<img width="508" height="332" alt="image" src="https://github.com/user-attachments/assets/c523930b-563e-4b5d-b104-8e7ce4658b2c" />
 
-<img width="1082" height="1255" alt="image" src="https://github.com/user-attachments/assets/ac38a3de-364a-447f-a734-cab2bdd5338d" />
+<img width="508" height="508" alt="image" src="https://github.com/user-attachments/assets/c263f58e-fd85-437e-811a-967b94e309fd" />
 
 对于本地数据集，您可以使用**浏览目录**按钮访问数据集浏览器模态框。
 
-<img width="1201" height="1160" alt="image" src="https://github.com/user-attachments/assets/66a333d0-30fa-45d1-a5b2-1e859d789677" />
+<img width="396" height="576" alt="image" src="https://github.com/user-attachments/assets/14c51685-3559-4d16-be59-ed4b0959ca32" />
 
 如果您在引导过程中正确指向了数据集目录，您将在这里看到您的内容。
 
 点击您希望添加的目录，然后点击**选择目录**。
 
-<img width="907" height="709" alt="image" src="https://github.com/user-attachments/assets/1d482655-158a-4e3f-93b7-ef158396813c" />
+<img width="454" height="356" alt="image" src="https://github.com/user-attachments/assets/1d482655-158a-4e3f-93b7-ef158396813c" />
 
 之后，您将被引导配置分辨率值和裁剪。
-
-**注意**：SimpleTuner 不会*放大*图像，因此请确保它们至少与您配置的分辨率一样大。
 
 当您到达配置标题的步骤时，请**仔细考虑**哪个选项是正确的。
 

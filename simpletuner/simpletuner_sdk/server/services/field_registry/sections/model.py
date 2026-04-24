@@ -714,6 +714,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
                     values=[
                         "auraflow",
                         "cosmos2image",
+                        "ernie",
                         "flux",
                         "flux2",
                         "hidream",
@@ -734,6 +735,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             model_specific=[
                 "auraflow",
                 "cosmos2image",
+                "ernie",
                 "flux",
                 "flux2",
                 "hidream",

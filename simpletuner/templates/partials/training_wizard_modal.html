@@ -14,7 +14,7 @@
         <!-- Header with title and close button -->
         <div class="modal-header">
             <h5 class="modal-title">
-                🧙 <span x-text="currentStep.title"></span>
+                🧙 <span x-text="currentStepTitle"></span>
             </h5>
             <button type="button" class="btn-close" aria-label="Close" @click="closeWizard()"></button>
         </div>
@@ -668,7 +668,7 @@
                 </div>
             </div>
 
-            <!-- Step 5: Publishing -->
+            <!-- Step 6: Publishing -->
             <div x-show="currentStep.id === 'publishing'" class="wizard-step-content">
                 <h6 class="wizard-question">Do you want to publish your model to Hugging Face Hub?</h6>
                 <p class="text-muted mb-4">Automatically upload your trained model when complete.</p>
@@ -753,7 +753,7 @@
                 </div>
             </div>
 
-            <!-- Step 6: Checkpoint Frequency -->
+            <!-- Step 7: Checkpoint Frequency -->
             <div x-show="currentStep.id === 'checkpoints'" class="wizard-step-content">
                 <h6 class="wizard-question">How often should checkpoints be saved?</h6>
                 <p class="text-muted mb-4">Checkpoints let you resume training and pick the best model version.</p>
@@ -805,7 +805,7 @@
                 </div>
             </div>
 
-            <!-- Step 7: Validations -->
+            <!-- Step 8: Validations -->
             <div x-show="currentStep.id === 'validations-enable'" class="wizard-step-content">
                 <h6 class="wizard-question">Do you want to run validations during training?</h6>
                 <p class="text-muted mb-4">Validations generate sample images to monitor training progress.</p>
@@ -938,7 +938,7 @@
                 </div>
             </div>
 
-            <!-- Step 8: Logging Platform -->
+            <!-- Step 9: Logging Platform -->
             <div x-show="currentStep.id === 'logging'" class="wizard-step-content">
                 <h6 class="wizard-question">Enable logging to external platform?</h6>
                 <p class="text-muted mb-4">Track metrics, losses, and generated images externally (optional).</p>
@@ -994,7 +994,7 @@
                 </div>
             </div>
 
-            <!-- Step 9: Dataset Configuration -->
+            <!-- Step 10: Dataset Configuration -->
             <div x-show="currentStep.id === 'dataset'" class="wizard-step-content">
                 <h6 class="wizard-question">Configure your training dataset</h6>
 
@@ -1019,7 +1019,7 @@
                 </div>
             </div>
 
-            <!-- Step 10: Advanced Settings -->
+            <!-- Step 11: Advanced Settings -->
             <div x-show="currentStep.id === 'advanced'" class="wizard-step-content">
                 <h6 class="wizard-question">Configure learning rate and optimizer?</h6>
                 <p class="text-muted mb-4">Pick a preset tailored to your training mode or adjust the values manually.</p>

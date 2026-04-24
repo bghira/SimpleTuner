@@ -52,6 +52,14 @@
 
     [:octicons-arrow-right-24: 模型指南](quickstart/index.md)
 
+-   :material-flask-outline:{ .lg .middle } __实验方法__
+
+    ---
+
+    Self-Flow、LayerSync、Diff2Flow、Video CREPA 等研究功能
+
+    [:octicons-arrow-right-24: Self-Flow](experimental/SELF_FLOW.md)
+
 </div>
 
 ## 功能特性
