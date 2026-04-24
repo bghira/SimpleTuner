@@ -70,6 +70,7 @@
             wizardStep: 1,
             wizardTitle: 'Create Dataset - Step 1',
             saving: false,
+            activeSubTab: sessionStorage.getItem('dataset-viewer-subtab') || 'configuration',
 
             // Dataset blueprints from API
             blueprints: [],
