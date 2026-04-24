@@ -118,57 +118,6 @@ class ACEStep(AudioModelFoundation):
     V15_SFT_GEN_PROMPT = ACE_STEP_V15_SFT_GEN_PROMPT
     SUPPORTS_LYRICS_EMBEDDER_TRAINING = True
 
-    def supports_crepa_self_flow(self) -> bool:
-        return True
-
-    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
-        latents = batch["latents"]
-        input_noise = batch["input_noise"]
-        base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype)
-        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype)
-        alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
-        alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
-        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
-
-        patch_size = getattr(getattr(self.get_trained_component(), "config", None), "patch_size", [16, 1])
-        if isinstance(patch_size, int):
-            p_h = p_w = int(max(patch_size, 1))
-        elif isinstance(patch_size, (tuple, list)) and len(patch_size) == 2:
-            p_h = int(max(patch_size[0], 1))
-            p_w = int(max(patch_size[1], 1))
-        else:
-            raise ValueError(f"Unexpected ACEStep Self-Flow patch size: {patch_size!r}")
-
-        _, _, height, width = latents.shape
-        token_height = max(height // p_h, 1)
-        token_width = max(width // p_w, 1)
-        mask_ratio = float(getattr(self.config, "crepa_self_flow_mask_ratio", 0.1) or 0.0)
-        token_mask = (
-            torch.rand(latents.shape[0], token_height, token_width, device=latents.device, dtype=latents.dtype) < mask_ratio
-        )
-
-        base_sigma_view = base_sigmas.view(-1, 1, 1)
-        alt_sigma_view = alt_sigmas.view(-1, 1, 1)
-        student_token_sigmas = torch.where(token_mask, alt_sigma_view, base_sigma_view)
-        student_sigma_grid = student_token_sigmas.repeat_interleave(p_h, dim=1).repeat_interleave(p_w, dim=2)
-        student_sigma_grid = student_sigma_grid[:, None, :height, :width]
-
-        base_timestep_view = base_timesteps.view(-1, 1, 1)
-        alt_timestep_view = alt_timesteps.view(-1, 1, 1)
-        student_token_timesteps = torch.where(token_mask, alt_timestep_view, base_timestep_view)
-
-        teacher_sigmas = torch.minimum(base_sigmas, alt_sigmas).view(-1, 1, 1, 1)
-        teacher_timesteps = torch.minimum(base_timesteps, alt_timesteps)
-
-        batch["sigmas"] = student_sigma_grid.to(dtype=latents.dtype)
-        batch["timesteps"] = student_token_timesteps.flatten(1)
-        batch["noisy_latents"] = (1 - student_sigma_grid) * latents + student_sigma_grid * input_noise
-        batch["crepa_teacher_sigmas"] = teacher_sigmas.to(dtype=latents.dtype)
-        batch["crepa_teacher_timesteps"] = teacher_timesteps.to(dtype=latents.dtype)
-        batch["crepa_teacher_noisy_latents"] = (1 - teacher_sigmas) * latents + teacher_sigmas * input_noise
-        batch["crepa_self_flow_mask"] = token_mask
-        return batch
-
     def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
         if hidden_states_buffer is None:
             return None
