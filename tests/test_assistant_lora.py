@@ -7,6 +7,7 @@ import torch
 from simpletuner.helpers import assistant_lora
 from simpletuner.helpers.assistant_lora import build_adapter_stack
 from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.models.ernie.model import Ernie
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.z_image.model import ZImage
 
@@ -226,6 +227,26 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         config.pretrained_unet_subfolder = None
         return config
 
+    def _build_ernie_config(self, flavour: str):
+        config = MagicMock()
+        config.model_family = "ernie"
+        config.model_flavour = flavour
+        config.model_type = "lora"
+        config.assistant_lora_path = None
+        config.disable_assistant_lora = False
+        config.assistant_lora_weight_name = None
+        config.weight_dtype = torch.float32
+        config.pretrained_model_name_or_path = Ernie.HUGGINGFACE_PATHS[flavour]
+        config.revision = None
+        config.variant = None
+        config.vae_path = None
+        config.controlnet = False
+        config.pretrained_transformer_model_name_or_path = None
+        config.pretrained_unet_model_name_or_path = None
+        config.pretrained_transformer_subfolder = None
+        config.pretrained_unet_subfolder = None
+        return config
+
     def test_flux_schnell_sets_default_assistant_path(self):
         config = MagicMock()
         config.model_family = "flux"
@@ -305,6 +326,18 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
             model = ZImage(config, self.mock_accelerator)
         # Should not raise even without assistant_lora_path when disabled.
         model.check_user_config()
+
+    def test_ernie_turbo_sets_only_weight_default(self):
+        config = self._build_ernie_config("turbo")
+
+        with (
+            patch.object(Ernie, "setup_model_flavour", lambda self: None),
+            patch.object(Ernie, "setup_training_noise_schedule", lambda self: None),
+        ):
+            model = Ernie(config, self.mock_accelerator)
+        model.check_user_config()
+        self.assertIsNone(config.assistant_lora_path)
+        self.assertEqual(config.assistant_lora_weight_name, Ernie.ASSISTANT_LORA_WEIGHT_NAME)
 
     def test_zimage_de_turbo_overrides_transformer_path(self):
         config = self._build_zimage_config("ostris-de-turbo")

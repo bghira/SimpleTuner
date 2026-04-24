@@ -22,6 +22,7 @@ class TestAudioCollate(unittest.TestCase):
         self.mock_args.vae_cache_ondemand = False
         self.mock_args.vae_cache_disable = False
         self.mock_args.conditioning_multidataset_sampling = "random"
+        self.mock_args.max_grounding_entities = 0
         self.mock_state_tracker.get_args.return_value = self.mock_args
         self.mock_state_tracker.get_model_family.return_value = "ace_step"
         self.mock_state_tracker.get_weight_dtype.return_value = torch.float32

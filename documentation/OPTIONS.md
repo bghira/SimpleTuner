@@ -80,6 +80,13 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - On multi-node setups, only local-rank 0 on each node performs the deletion. Deletion failures are silently ignored to handle race conditions on shared network storage.
   - This does **not** affect saved training checkpoints — only the pre-trained base model cache.
 
+### `--trust_remote_code`
+
+- **What**: Allows Transformers and tokenizers to execute custom Python code from the model repository when a checkpoint depends on upstream custom classes.
+- **Default**: `False`
+- **Why**: Required for ACE-Step v1.5 checkpoints, which ship custom `AutoModel` and tokenizer code in the upstream repository.
+- **Warning**: Enable this only for model repositories you trust.
+
 ### `--enable_group_offload`
 
 - **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.
@@ -201,6 +208,19 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Path to the pretrained Gemma model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training Gemma-based models (for example LTX-2, Sana, or Lumina2), you can point at a shared Gemma checkpoint without changing the base diffusion model path.
+
+### `--max_grounding_entities`
+
+- **What**: Maximum number of grounding entities per image for GLIGEN-style spatial annotations.
+- **Default**: `0` (disabled)
+- **Why**: When set to a value greater than 0, the grounding pipeline is enabled. Each sample is padded to this number of entity slots. Typical values are 4-16.
+- **Notes**: Requires `.bbox` sidecar files alongside images or a `bbox_column` in parquet/HuggingFace datasets. See [DATALOADER.md](DATALOADER.md#grounding-spatial-annotations) for details.
+
+### `--pretrained_grounding_model_name_or_path`
+
+- **What**: Optional pretrained model for per-entity image feature extraction (e.g., `facebook/dinov2-large`).
+- **Default**: None (disabled)
+- **Why**: When set, entity crops are encoded through the specified vision model to produce per-entity image features alongside text embeddings and bounding box coordinates.
 
 ### `--custom_text_encoder_intermediary_layers`
 
@@ -450,6 +470,8 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
   - Visible in external model viewers (ComfyUI, model info tools)
   - Accepts a string or array of strings (joined with newlines)
   - Supports `{env:VAR_NAME}` placeholders for environment variable substitution
+  - Supports `{current_step}`, `{current_epoch}`, and `{timestamp}` placeholders when metadata is written
+  - `{timestamp}` uses a UTC ISO 8601 value
   - Each checkpoint uses the current config value at save time
 
 **Example (string)**:
@@ -476,6 +498,9 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 
 - **What**: Path to your SimpleTuner dataset configuration.
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
+- **Notes**:
+  - String values loaded from `config.json` and `config.toml` support `{env:VAR_NAME}`
+  - String values inside the referenced `multidatabackend.json` also support `{env:VAR_NAME}`
 - **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](DATALOADER.md) for more information on configuring the data loader.
 
 ### `--override_dataset_config`
@@ -695,6 +720,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   - Requires the model to have an `IMG2IMG` or `IMG2VIDEO` pipeline registered
   - Can be combined with `--eval_dataset_id` to source images from a specific dataset
   - For i2v models, this allows using a simple image dataset for validation without requiring the complex conditioning dataset pairing setup used during training
+  - Flux Kontext does not use this flag for validation; leave it disabled and use `--eval_dataset_id` to pick the edit dataset while Kontext loads its paired reference dataset automatically
   - The denoising strength is controlled by the normal validation timestep settings
 
 ### `--eval_dataset_id`
@@ -707,6 +733,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   - The dataset ID must match a configured dataset in your dataloader config
   - Useful for keeping evaluation consistent by using a dedicated eval dataset
   - For conditioning models, the dataset's conditioning data (if any) will also be used
+  - For Flux Kontext, this is the correct way to select the validation dataset; do not enable `--validation_using_datasets`
 
 ---
 
@@ -722,6 +749,7 @@ Some models cannot function without conditioning inputs:
 - **ControlNet training**: Requires control signal images
 
 For these models, a conditioning dataset is mandatory. The WebUI will show conditioning options as required, and training will fail without them.
+Flux Kontext validation also stays in this conditioning-based path. Use `--eval_dataset_id` to choose the edit dataset for validation, and leave `--validation_using_datasets` disabled.
 
 ### 2. Models that SUPPORT Optional Conditioning
 
@@ -753,6 +781,8 @@ For these models, you CAN add conditioning datasets but don't have to. The WebUI
 - Use `--eval_dataset_id` to control which dataset provides inputs
 
 **I2V models with `--validation_using_datasets`**: For i2v video models (HunyuanVideo, WAN, Kandinsky5Video), enabling this flag allows you to use a simple image dataset for validation. The images are used as first-frame conditioning inputs to generate validation videos, without requiring the complex conditioning dataset pairing setup.
+
+**Flux Kontext with `--validation_using_datasets`**: Do not enable this flag. Kontext is edit-only and validates through its normal paired image + conditioning datasets. Use `--eval_dataset_id` to select the edit dataset instead.
 
 ### Conditioning Data Types
 
@@ -964,7 +994,7 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 ### `--scheduled_sampling_sampler`
 
 - **What**: The solver used for the rollout generation steps.
-- **Choices**: `unipc`, `euler`, `dpm`, `rk4`.
+- **Choices**: `unipc`, `euler`, `dpm`.
 - **Default**: `unipc`.
 
 ### `--scheduled_sampling_order`
@@ -1695,10 +1725,15 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        ACE-Step flavours are `base`, `v15-turbo`,
+                        `v15-base`, and `v15-sft`. The v1.5 flavours support
+                        training and built-in validation audio generation, and
+                        require `--trust_remote_code` for the upstream
+                        repository.
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

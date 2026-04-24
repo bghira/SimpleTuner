@@ -80,6 +80,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - Em setups multi-node, apenas local-rank 0 em cada node executa a delecao. Falhas sao ignoradas silenciosamente para lidar com race conditions em storage compartilhado.
   - Isso **nao** afeta checkpoints salvos — apenas o cache do modelo base pre-treinado.
 
+### `--trust_remote_code`
+
+- **O que**: Permite que Transformers e tokenizers executem codigo Python personalizado do repositorio do modelo quando o checkpoint depende de classes customizadas upstream.
+- **Padrao**: `False`
+- **Por que**: Necessario para checkpoints ACE-Step v1.5, que trazem codigo personalizado de `AutoModel` e tokenizer no repositorio upstream.
+- **Aviso**: Ative isso apenas para repositorios de modelo em que voce confia.
+
 ### `--enable_group_offload`
 
 - **O que**: Habilita offload de modulos em grupo do diffusers para que blocos do modelo possam ser estagiados na CPU (ou disco) entre forward passes.
@@ -201,6 +208,12 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 - **O que**: Caminho para o modelo Gemma pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Ao treinar modelos baseados em Gemma (por exemplo LTX-2, Sana ou Lumina2), voce pode apontar para um checkpoint Gemma compartilhado sem mudar o caminho do modelo base de difusao.
+
+### `--max_grounding_entities`
+- Numero maximo de entidades de grounding por imagem para anotacoes espaciais no estilo GLIGEN. Padrao: 0 (desabilitado). Valores tipicos: 4-16.
+
+### `--pretrained_grounding_model_name_or_path`
+- Modelo pre-treinado opcional para extracao de features de imagem por entidade. Padrao: None.
 
 ### `--custom_text_encoder_intermediary_layers`
 
@@ -449,6 +462,8 @@ Isso e util para ferramentas de monitoramento que recebem webhooks de varios tre
   - Visivel em visualizadores de modelo externos (ComfyUI, ferramentas de info de modelo)
   - Aceita uma string ou array de strings (unidas com quebras de linha)
   - Suporta placeholders `{env:VAR_NAME}` para substituicao de variaveis de ambiente
+  - Suporta `{current_step}`, `{current_epoch}` e `{timestamp}` quando o metadata e gravado
+  - `{timestamp}` usa um valor UTC em formato ISO 8601
   - Cada checkpoint usa o valor de configuracao atual no momento do salvamento
 
 **Exemplo (string)**:
@@ -475,6 +490,9 @@ Isso e util para ferramentas de monitoramento que recebem webhooks de varios tre
 
 - **O que**: Caminho para sua configuracao de dataset do SimpleTuner.
 - **Por que**: Multiplos datasets em midias diferentes podem ser combinados em uma unica sessao de treinamento.
+- **Notas**:
+  - Valores de string carregados de `config.json` e `config.toml` suportam `{env:VAR_NAME}`
+  - Valores de string dentro do `multidatabackend.json` referenciado tambem suportam `{env:VAR_NAME}`
 - **Exemplo**: Veja [multidatabackend.json.example](/multidatabackend.json.example) para um exemplo de configuracao e [este documento](DATALOADER.md) para mais informacoes sobre o data loader.
 
 ### `--override_dataset_config`
@@ -693,6 +711,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - Requer que o modelo tenha um pipeline `IMG2IMG` ou `IMG2VIDEO` registrado
   - Pode ser combinado com `--eval_dataset_id` para obter imagens de um dataset especifico
   - Para modelos i2v, permite usar um dataset de imagens simples para validacao sem a configuracao complexa de pareamento de datasets de conditioning usada durante o treinamento
+  - Flux Kontext nao usa este flag para validacao; deixe-o desativado e use `--eval_dataset_id` para escolher o dataset de edicao enquanto o Kontext carrega automaticamente o dataset de referencia pareado
   - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
 
 ### `--eval_dataset_id`
@@ -705,6 +724,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - O ID do dataset deve corresponder a um dataset configurado no seu config do dataloader
   - Util para manter avaliacao consistente usando um dataset de eval dedicado
   - Para modelos de conditioning, os dados de conditioning do dataset (se houver) tambem serao usados
+  - Para Flux Kontext, esta e a forma correta de selecionar o dataset de validacao; nao habilite `--validation_using_datasets`
 
 ---
 
@@ -720,6 +740,7 @@ Alguns modelos nao funcionam sem entradas de conditioning:
 - **Treinamento ControlNet**: Requer imagens de sinal de controle
 
 Para estes modelos, um dataset de conditioning e obrigatorio. A WebUI mostrara opcoes de conditioning como obrigatorias, e o treinamento falhara sem elas.
+A validacao do Flux Kontext tambem permanece nesse caminho baseado em conditioning. Use `--eval_dataset_id` para escolher o dataset de edicao para validacao e deixe `--validation_using_datasets` desativado.
 
 ### 2. Modelos que SUPORTAM Conditioning Opcional
 
@@ -751,6 +772,8 @@ Para estes modelos, voce PODE adicionar datasets de conditioning mas nao e obrig
 - Use `--eval_dataset_id` para controlar qual dataset fornece entradas
 
 **Modelos I2V com `--validation_using_datasets`**: Para modelos de video i2v (HunyuanVideo, WAN, Kandinsky5Video), habilitar este flag permite usar um dataset de imagens simples para validacao. As imagens sao usadas como entradas de conditioning de primeiro frame para gerar videos de validacao, sem precisar da configuracao complexa de pareamento de datasets de conditioning.
+
+**Flux Kontext com `--validation_using_datasets`**: Nao habilite este flag. Kontext e somente edicao e valida pelo caminho normal de datasets pareados de imagem + conditioning. Use `--eval_dataset_id` para selecionar o dataset de edicao.
 
 ### Tipos de Dados de Conditioning
 
@@ -962,7 +985,7 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 ### `--scheduled_sampling_sampler`
 
 - **O que**: Solver usado para os passos de rollout.
-- **Opcoes**: `unipc`, `euler`, `dpm`, `rk4`.
+- **Opcoes**: `unipc`, `euler`, `dpm`.
 - **Padrao**: `unipc`.
 
 ### `--scheduled_sampling_order`
@@ -1693,10 +1716,14 @@ The following SimpleTuner command-line options are available:
 
 options:
   -h, --help            show this help message and exit
-  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
+  --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
                         The base model architecture family to train
   --model_flavour MODEL_FLAVOUR
-                        Specific variant of the selected model family
+                        Specific variant of the selected model family.
+                        Os flavours de ACE-Step são `base`, `v15-turbo`,
+                        `v15-base` e `v15-sft`. Os flavours v1.5 suportam
+                        treinamento e validacao de audio integrada, e exigem
+                        `--trust_remote_code` para o repositorio upstream.
   --controlnet [CONTROLNET]
                         Train ControlNet (full or LoRA) branches alongside the
                         primary network.

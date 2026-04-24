@@ -27,6 +27,7 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from torch import nn
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -568,6 +569,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        grounding_kwargs: dict | None = None,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -659,6 +661,13 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         encoder_hidden_states = self.caption_norm(encoder_hidden_states)
 
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (attention_kwargs or {}).get("_grounding_kwargs")
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         # transformer blocks
         use_reentrant = is_torch_version("<=", "1.11.0")
         ckpt_kwargs = {"use_reentrant": use_reentrant} if is_torch_version(">=", "1.11.0") else {}
@@ -743,6 +752,9 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 )
 
             hidden_states = self._coerce_module_output(hidden_states)
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             if mask_info is not None and router is not None:
                 hidden_states = router.end_route(hidden_states, mask_info, original_x=original_hidden_states)

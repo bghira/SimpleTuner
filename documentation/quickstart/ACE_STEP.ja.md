@@ -1,10 +1,13 @@
 # ACE-Step クイックスタート
 
-この例では、ACE-Step v1 3.5B の音声生成モデルをトレーニングします。
+この例では、ACE-Step の音声生成モデルをトレーニングします。SimpleTuner は現在、元の ACE-Step v1 3.5B の学習経路と、ACE-Step v1.5 バンドル向けの forward-compatible な LoRA 学習をサポートしています。
 
 ## 概要
 
-ACE-Step は 3.5B パラメータの transformer ベースのフローマッチングモデルで、高品質な音声合成向けに設計されています。text-to-audio 生成をサポートし、歌詞による条件付けも可能です。
+ACE-Step は高品質な音声合成向けの transformer ベースのフローマッチング音声モデルです。SimpleTuner では次の flavour を使えます。
+
+- `base`: 元の ACE-Step v1 3.5B の学習経路
+- `v15-turbo`、`v15-base`、`v15-sft`: `ACE-Step/Ace-Step1.5` から読み込む ACE-Step v1.5 バンドルの各バリアント
 
 ## ハードウェア要件
 
@@ -40,6 +43,22 @@ mkdir -p config/acestep-training-demo
 
 ### 重要な設定
 
+SimpleTuner で使える ACE-Step flavour は次のとおりです。
+
+- `base`: 元の ACE-Step v1 3.5B
+- `v15-turbo`、`v15-base`、`v15-sft`: ACE-Step v1.5 バンドルの各バリアント
+
+目的のバリアントに合わせて設定を選んでください。
+
+すぐに使える example preset は次の場所にあります。
+
+- `simpletuner/examples/ace_step-v1-0.peft-lora`
+- `simpletuner/examples/ace_step-v1-5.peft-lora`
+
+`simpletuner train example=ace_step-v1-0.peft-lora` または `simpletuner train example=ace_step-v1-5.peft-lora` で直接起動できます。
+
+#### ACE-Step v1 の例
+
 以下の内容で `config/acestep-training-demo/config.json` を作成します:
 
 <details>
@@ -59,6 +78,28 @@ mkdir -p config/acestep-training-demo
 ```
 </details>
 
+#### ACE-Step v1.5 の例
+
+ACE-Step v1.5 では `model_family: "ace_step"` を維持したまま、v1.5 flavour を選び、チェックポイントのルートを共有 v1.5 バンドルに向けます。
+
+<details>
+<summary>設定例を表示</summary>
+
+```json
+{
+  "model_family": "ace_step",
+  "model_type": "lora",
+  "model_flavour": "v15-base",
+  "pretrained_model_name_or_path": "ACE-Step/Ace-Step1.5",
+  "trust_remote_code": true,
+  "resolution": 0,
+  "mixed_precision": "bf16",
+  "base_model_precision": "int8-quanto",
+  "data_backend_config": "config/acestep-training-demo/multidatabackend.json"
+}
+```
+</details>
+
 ### 検証設定
 
 進捗を確認するため、以下を `config.json` に追加します:
@@ -68,6 +109,8 @@ mkdir -p config/acestep-training-demo
 - **`validation_audio_duration`**: 検証クリップの秒数（デフォルト: 30.0）。
 - **`validation_guidance`**: ガイダンススケール（デフォルト: 約 3.0〜5.0）。
 - **`validation_step_interval`**: サンプル生成の間隔（例: 100 ステップごと）。
+
+> ℹ️ **ACE-Step v1.5 メモ:** SimpleTuner は prompt と任意の歌詞条件による v1.5 の内蔵バリデーション生成をサポートするようになりました。upstream の v1.5 リポジトリを読み込むには引き続き `trust_remote_code: true` が必要で、より高度な upstream の編集/推論ワークフローはまだ SimpleTuner のバリデーションパイプラインには公開されていません。
 
 ### 高度な実験的機能
 
@@ -205,6 +248,8 @@ simpletuner train env=acestep-training-demo
 > ```
 
 ### Lyrics Embedder のトレーニング（上流準拠）
+
+> ℹ️ **バージョン注意:** `lyrics_embedder_train` は現在 ACE-Step v1 の学習経路にのみ適用されます。SimpleTuner の v1.5 forward-compatible LoRA 経路は decoder-only です。
 
 上流の ACE-Step トレーナーは、デノイザと一緒に歌詞埋め込み器を微調整します。SimpleTuner で同様の挙動にするには（full または standard LoRA のみ）:
 

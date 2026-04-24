@@ -58,7 +58,7 @@ Scheduled Sampling（Rollout）の対象になる確率（0.0〜1.0）。
 #### `scheduled_sampling_sampler`（String）
 **既定:** `unipc`
 ロールアウト生成に使うソルバ。
-*   **選択肢:** `unipc`（推奨・高速・高精度）、`euler`、`dpm`、`rk4`。
+*   **選択肢:** `unipc`（推奨・高速・高精度）、`euler`、`dpm`。
 *   `unipc` は短いサンプリングにおける速度と精度のバランスが最も良い傾向です。
 
 ### Flow Matching + ReflexFlow

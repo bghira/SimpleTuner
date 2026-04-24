@@ -1114,6 +1114,31 @@ def start_training_job(
 
     from .local_gpu_allocator import get_gpu_allocator
 
+    # Check for active cache or scan jobs that hold GPU resources
+    try:
+        from .cache_job_service import get_cache_service
+
+        if get_cache_service().get_active_status():
+            return TrainingJobResult(
+                job_id=None,
+                status="rejected",
+                reason="A cache job is in progress. Wait for it to finish first.",
+            )
+    except ImportError:
+        pass
+
+    try:
+        from .dataset_scan_service import get_scan_service
+
+        if get_scan_service().get_active_status():
+            return TrainingJobResult(
+                job_id=None,
+                status="rejected",
+                reason="A dataset scan is in progress. Wait for it to finish first.",
+            )
+    except ImportError:
+        pass
+
     job_id = str(uuid.uuid4())[:8]
 
     # Extract GPU requirements

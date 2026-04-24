@@ -114,8 +114,12 @@ upstream_config_sources = {
 }
 
 
+def _path_has_suffix(model_path: Any, suffixes: tuple[str, ...]) -> bool:
+    return isinstance(model_path, str) and model_path.lower().endswith(suffixes)
+
+
 def get_model_config_path(model_family: str, model_path: str):
-    if model_path is not None and model_path.endswith((".safetensors", ".gguf")):
+    if _path_has_suffix(model_path, (".safetensors", ".gguf")):
         if model_family in upstream_config_sources:
             return upstream_config_sources[model_family]
         else:
@@ -141,7 +145,7 @@ def get_hf_cache_repo_path(model_path: str) -> Optional[str]:
         return None
 
     # Skip single-file checkpoints
-    if isinstance(model_path, str) and model_path.endswith((".safetensors", ".gguf")):
+    if _path_has_suffix(model_path, (".safetensors", ".gguf")):
         return None
 
     # Skip local paths
@@ -452,6 +456,8 @@ class ModelFoundation(ABC):
     ]
     SLIDER_LORA_TARGET = DEFAULT_SLIDER_LORA_TARGET
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    GLIGEN_LORA_TARGET = ["position_net", "fuser"]
+    GLIGEN_LYCORIS_TARGET = ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
@@ -460,6 +466,9 @@ class ModelFoundation(ABC):
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
+
+    # Attention kwarg name used by the model's pipeline (for grounding tunneling)
+    ATTENTION_KWARG_NAME: str = "joint_attention_kwargs"
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -485,6 +494,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self._single_file_component_cache = None
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
         self._validation_preview_decoder_failed = False
@@ -794,6 +804,7 @@ class ModelFoundation(ABC):
         has_images: bool = False,
         has_video: bool = False,
         has_audio: bool = False,
+        has_grounding: bool = False,
     ) -> None:
         """
         Configure data type signals from the dataloader.
@@ -807,10 +818,12 @@ class ModelFoundation(ABC):
             has_images: Whether image data is present
             has_video: Whether video data is present
             has_audio: Whether audio data is present
+            has_grounding: Whether grounding annotations are present
         """
         self._data_has_images = has_images
         self._data_has_video = has_video
         self._data_has_audio = has_audio
+        self._data_has_grounding = has_grounding
 
     def _get_additional_lora_targets(self) -> list[str]:
         """
@@ -863,6 +876,13 @@ class ModelFoundation(ABC):
             return manual_targets
 
         lora_type = getattr(self.config, "lora_type", "standard")
+
+        # GLIGEN: only target the injected grounding layers, freeze base model.
+        if getattr(self, "_data_has_grounding", False) and self.supports_grounding():
+            if lora_type.lower() == "lycoris":
+                return self.GLIGEN_LYCORIS_TARGET
+            return self.GLIGEN_LORA_TARGET
+
         base_targets = None
         if lora_type.lower() == "standard":
             if getattr(self.config, "slider_lora_target", False):
@@ -1159,6 +1179,174 @@ class ModelFoundation(ABC):
         DeepFloyd (stage1 → super-resolution), or SDXL (base → refiner).
         """
         return False
+
+    def supports_grounding(self) -> bool:
+        """Returns True when the model supports spatial grounding annotations."""
+        val = getattr(self.config, "max_grounding_entities", 0)
+        return isinstance(val, int) and val > 0
+
+    @property
+    def gligen(self) -> bool:
+        """Convenience: True when GLIGEN grounding is active."""
+        return self.supports_grounding()
+
+    def _build_gligen_cross_attention_kwargs(self, grounding_batch) -> dict | None:
+        """Build ``cross_attention_kwargs`` dict for the UNet from a ``GroundingBatch``.
+
+        Used by UNet-based models (SD1.x, SDXL, Kolors) where grounding is
+        passed via ``cross_attention_kwargs["gligen"]``.
+        """
+        if grounding_batch is None:
+            return None
+
+        # Detect whether position_net was built in text-image or text-only mode.
+        component = self.get_trained_component(base_model=True)
+        position_net = getattr(component, "position_net", None) if component else None
+        text_image_mode = position_net is not None and hasattr(position_net, "null_text_feature")
+
+        if grounding_batch.image_embeds is not None or text_image_mode:
+            image_embeds = grounding_batch.image_embeds
+            image_masks = grounding_batch.image_masks
+            if image_embeds is None:
+                image_embeds = torch.zeros_like(grounding_batch.text_embeds)
+                image_masks = torch.zeros_like(grounding_batch.text_masks)
+            return {
+                "gligen": {
+                    "boxes": grounding_batch.boxes,
+                    "masks": grounding_batch.validity_mask,
+                    "phrases_masks": grounding_batch.text_masks,
+                    "image_masks": image_masks,
+                    "phrases_embeddings": grounding_batch.text_embeds,
+                    "image_embeddings": image_embeds,
+                }
+            }
+        return {
+            "gligen": {
+                "boxes": grounding_batch.boxes,
+                "masks": grounding_batch.validity_mask,
+                "positive_embeddings": grounding_batch.text_embeds,
+            }
+        }
+
+    def _build_grounding_position_net_kwargs(self, grounding_batch, flatten_temporal: bool = True) -> dict | None:
+        """Build kwargs for ``position_net.forward()`` from a ``GroundingBatch``.
+
+        Used by transformer-based models where grounding is called explicitly
+        in the transformer forward (not via ``cross_attention_kwargs``).
+
+        When ``flatten_temporal`` is True and the batch has ``num_frames > 1``,
+        temporal dimensions are flattened: ``(B, T, N, ...) -> (B*T, N, ...)``.
+        """
+        if grounding_batch is None:
+            return None
+
+        # Detect whether position_net was built in text-image or text-only mode.
+        component = self.get_trained_component(base_model=True)
+        position_net = getattr(component, "position_net", None) if component else None
+        text_image_mode = position_net is not None and hasattr(position_net, "null_text_feature")
+
+        boxes = grounding_batch.boxes
+        masks = grounding_batch.validity_mask
+
+        def _text_image_kwargs(b, m, text_masks, image_masks, text_embeds, image_embeds):
+            ie = image_embeds
+            im = image_masks
+            if ie is None:
+                ie = torch.zeros_like(text_embeds)
+                im = torch.zeros_like(text_masks)
+            return {
+                "boxes": b,
+                "masks": m,
+                "phrases_masks": text_masks,
+                "image_masks": im,
+                "phrases_embeddings": text_embeds,
+                "image_embeddings": ie,
+            }
+
+        def _text_only_kwargs(b, m, text_embeds):
+            return {"boxes": b, "masks": m, "positive_embeddings": text_embeds}
+
+        use_text_image = grounding_batch.image_embeds is not None or text_image_mode
+        num_frames = getattr(grounding_batch, "num_frames", 1)
+
+        # Flatten temporal dims for video: (B, T, N, ...) -> (B*T, N, ...)
+        if flatten_temporal and num_frames > 1:
+
+            def _flatten_bt(t):
+                if t is None:
+                    return None
+                return t.flatten(0, 1)
+
+            boxes = _flatten_bt(boxes)
+            masks = _flatten_bt(masks)
+
+            if use_text_image:
+                return _text_image_kwargs(
+                    boxes,
+                    masks,
+                    _flatten_bt(grounding_batch.text_masks),
+                    _flatten_bt(grounding_batch.image_masks),
+                    _flatten_bt(grounding_batch.text_embeds),
+                    _flatten_bt(grounding_batch.image_embeds),
+                )
+            return _text_only_kwargs(boxes, masks, _flatten_bt(grounding_batch.text_embeds))
+
+        # Image path (num_frames == 1): shapes are (B, N, ...)
+        if use_text_image:
+            return _text_image_kwargs(
+                boxes,
+                masks,
+                grounding_batch.text_masks,
+                grounding_batch.image_masks,
+                grounding_batch.text_embeds,
+                grounding_batch.image_embeds,
+            )
+        return _text_only_kwargs(boxes, masks, grounding_batch.text_embeds)
+
+    @staticmethod
+    def _cfg_double_gligen_dict(gligen_dict: dict) -> dict:
+        """Double gligen tensors for classifier-free guidance.
+
+        Concatenates each tensor along the batch dimension and zeros the
+        masks for the unconditional (first) half so that the unconditional
+        denoising pass receives no grounding signal.
+        """
+        doubled = {}
+        for key, val in gligen_dict.items():
+            if isinstance(val, torch.Tensor):
+                doubled[key] = torch.cat([val] * 2)
+            else:
+                doubled[key] = val
+        # Zero unconditional half's masks so grounding has no effect there.
+        batch = doubled["masks"].shape[0]
+        uncond_half = batch // 2
+        doubled["masks"][:uncond_half] = 0
+        if "phrases_masks" in doubled:
+            doubled["phrases_masks"][:uncond_half] = 0
+        if "image_masks" in doubled:
+            doubled["image_masks"][:uncond_half] = 0
+        return doubled
+
+    def _build_validation_grounding_pipeline_kwargs(self, grounding_batch, do_cfg: bool = False) -> dict:
+        """Build pipeline kwargs that carry grounding data through to the model.
+
+        For UNet models: returns ``{"cross_attention_kwargs": {"gligen": {...}}}``.
+        For transformer models: returns ``{<ATTENTION_KWARG_NAME>: {"_grounding_kwargs": {...}}}``.
+
+        When ``do_cfg`` is True, all grounding tensors are doubled along the
+        batch dimension and the unconditional half's masks are zeroed, matching
+        the original GLIGEN pipeline's CFG handling.
+        """
+        if self.MODEL_TYPE is ModelTypes.UNET:
+            ca_kwargs = self._build_gligen_cross_attention_kwargs(grounding_batch)
+            if do_cfg and ca_kwargs is not None:
+                ca_kwargs["gligen"] = self._cfg_double_gligen_dict(ca_kwargs["gligen"])
+            return {"cross_attention_kwargs": ca_kwargs}
+
+        position_net_kwargs = self._build_grounding_position_net_kwargs(grounding_batch)
+        if do_cfg and position_net_kwargs is not None:
+            position_net_kwargs = self._cfg_double_gligen_dict(position_net_kwargs)
+        return {self.ATTENTION_KWARG_NAME: {"_grounding_kwargs": position_net_kwargs}}
 
     def supports_audio_inputs(self) -> bool:
         return False
@@ -1619,6 +1807,59 @@ class ModelFoundation(ABC):
             model_path=self.config.pretrained_model_name_or_path,
         )
 
+    def _single_file_checkpoint_path(self) -> Optional[str]:
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if _path_has_suffix(model_path, (".safetensors",)):
+            return model_path
+        return None
+
+    def _load_single_file_pipeline_component_cache(self) -> Optional[dict]:
+        if self._single_file_component_cache is not None:
+            return self._single_file_component_cache
+
+        checkpoint_path = self._single_file_checkpoint_path()
+        if checkpoint_path is None:
+            return None
+
+        pipeline_class = getattr(self, "PIPELINE_CLASSES", {}).get(PipelineTypes.TEXT2IMG)
+        if pipeline_class is None or not hasattr(pipeline_class, "from_single_file"):
+            return None
+
+        logger.info(
+            "Loading preprocessing components from single-file checkpoint %s using %s.",
+            checkpoint_path,
+            pipeline_class.__name__,
+        )
+        pipeline_kwargs = {
+            "config": self._model_config_path(),
+            "torch_dtype": self.config.weight_dtype,
+        }
+        pipeline_init_signature = inspect.signature(pipeline_class.__init__)
+        if "add_watermarker" in pipeline_init_signature.parameters:
+            pipeline_kwargs["add_watermarker"] = False
+        if getattr(self.config, "revision", None) is not None:
+            pipeline_kwargs["revision"] = self.config.revision
+        if getattr(self.config, "local_files_only", None) is not None:
+            pipeline_kwargs["local_files_only"] = self.config.local_files_only
+
+        pipeline = pipeline_class.from_single_file(checkpoint_path, **pipeline_kwargs)
+
+        text_encoders = []
+        tokenizers = []
+        text_encoder_configuration = getattr(self, "TEXT_ENCODER_CONFIGURATION", {}) or {}
+        for text_encoder_attr in text_encoder_configuration.keys():
+            text_encoders.append(getattr(pipeline, text_encoder_attr, None))
+            tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
+            tokenizers.append(getattr(pipeline, tokenizer_attr, None))
+
+        self._single_file_component_cache = {
+            "vae": getattr(pipeline, "vae", None),
+            "text_encoders": text_encoders,
+            "tokenizers": tokenizers,
+        }
+
+        return self._single_file_component_cache
+
     def unwrap_model(self, model=None):
         if self.config.controlnet and model is None:
             if self.controlnet is None:
@@ -1928,19 +2169,25 @@ class ModelFoundation(ABC):
                 logger.info(f"load_vae: registered VAE cache path: {cache_repo_path}")
 
         self.vae = None
-        self.config.vae_kwargs = {
-            "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
-            "subfolder": "vae",
-            "revision": self.config.revision,
-            "force_upcast": False,
-            "variant": self.config.variant,
-        }
-        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            try:
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
-            except Exception as e:
-                self.config.vae_kwargs["subfolder"] = None
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+        checkpoint_path = self._single_file_checkpoint_path()
+        use_single_file_vae = checkpoint_path is not None and self.config.vae_path == checkpoint_path
+        if use_single_file_vae:
+            cached_components = self._load_single_file_pipeline_component_cache() or {}
+            self.vae = cached_components.get("vae")
+        else:
+            self.config.vae_kwargs = {
+                "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
+                "subfolder": "vae",
+                "revision": self.config.revision,
+                "force_upcast": False,
+                "variant": self.config.variant,
+            }
+            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+                try:
+                    self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+                except Exception as e:
+                    self.config.vae_kwargs["subfolder"] = None
+                    self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
         if self.vae is None:
             raise ValueError("Could not load VAE. Please check the model path and ensure the VAE is compatible.")
         if self.config.vae_enable_tiling:
@@ -2074,6 +2321,17 @@ class ModelFoundation(ABC):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
         self.tokenizers = []
+        cached_components = self._load_single_file_pipeline_component_cache()
+        expected_count = len(self.TEXT_ENCODER_CONFIGURATION)
+        cached_tokenizers = (cached_components or {}).get("tokenizers", [])
+        if len(cached_tokenizers) >= expected_count and all(
+            tokenizer is not None for tokenizer in cached_tokenizers[:expected_count]
+        ):
+            for tokenizer_idx, tokenizer in enumerate(cached_tokenizers[:expected_count], start=1):
+                self.tokenizers.append(tokenizer)
+                setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
+            return
+
         tokenizer_kwargs = {
             "subfolder": "tokenizer",
             "revision": self.config.revision,
@@ -2098,6 +2356,35 @@ class ModelFoundation(ABC):
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
         self.load_text_tokenizer()
+
+        cached_components = self._load_single_file_pipeline_component_cache()
+        expected_count = len(self.TEXT_ENCODER_CONFIGURATION)
+        cached_text_encoders = (cached_components or {}).get("text_encoders", [])
+        if len(cached_text_encoders) >= expected_count and all(
+            text_encoder is not None for text_encoder in cached_text_encoders[:expected_count]
+        ):
+            for text_encoder_idx, (attr_name, _text_encoder_config) in enumerate(
+                self.TEXT_ENCODER_CONFIGURATION.items(),
+                start=1,
+            ):
+                text_encoder = cached_text_encoders[text_encoder_idx - 1]
+                if move_to_device and not self._ramtorch_text_encoders_requested():
+                    precision_attr = f"text_encoder_{text_encoder_idx}_precision"
+                    text_encoder_precision = getattr(
+                        self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
+                    )
+                    if text_encoder_precision in ["no_change", None]:
+                        text_encoder.to(
+                            self.accelerator.device,
+                            dtype=self.config.weight_dtype,
+                        )
+                if hasattr(text_encoder, "eval"):
+                    text_encoder.eval()
+                text_encoder.requires_grad_(False)
+                self.text_encoders.append(text_encoder)
+                setattr(self, attr_name, text_encoder)
+                setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
+            return
 
         # Track if we should store cache paths for text encoder deletion
         should_track_for_deletion = getattr(self.config, "delete_model_after_load", False)
@@ -2517,11 +2804,9 @@ class ModelFoundation(ABC):
                 StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
                 logger.info(f"load_model: registered {component_key} cache path: {cache_repo_path}")
 
-        is_safetensors = isinstance(model_path, str) and model_path.endswith(".safetensors")
-        is_gguf = isinstance(model_path, str) and model_path.endswith(".gguf")
-        if isinstance(self.config.pretrained_model_name_or_path, str) and self.config.pretrained_model_name_or_path.endswith(
-            (".safetensors", ".gguf")
-        ):
+        is_safetensors = _path_has_suffix(model_path, (".safetensors",))
+        is_gguf = _path_has_suffix(model_path, (".gguf",))
+        if _path_has_suffix(self.config.pretrained_model_name_or_path, (".safetensors", ".gguf")):
             self.config.pretrained_model_name_or_path = get_model_config_path(self.config.model_family, model_path)
         if is_safetensors or is_gguf:
             loader_fn = self.MODEL_CLASS.from_single_file
@@ -3550,6 +3835,46 @@ class ModelFoundation(ABC):
         if isinstance(conditioning_embeds, list) and len(conditioning_embeds) > 0:
             if not isinstance(conditioning_embeds[0], dict):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
+
+        # Move grounding batch tensors to device, with 10% CFG null drop.
+        # CFG null-drop zeroes the validity masks rather than removing the
+        # grounding batch entirely so that position_net/fusers are still
+        # invoked and gradients flow through their (possibly trainable) params.
+        grounding_batch = batch.get("grounding_batch")
+        if grounding_batch is not None:
+            from simpletuner.helpers.training.grounding.types import GroundingBatch
+
+            device = self.accelerator.device
+            dtype = self.config.weight_dtype
+            null_drop = random.random() < 0.1
+            batch["grounding_batch"] = GroundingBatch(
+                boxes=grounding_batch.boxes.to(device=device, dtype=dtype),
+                validity_mask=(
+                    torch.zeros_like(grounding_batch.validity_mask).to(device=device, dtype=dtype)
+                    if null_drop
+                    else grounding_batch.validity_mask.to(device=device, dtype=dtype)
+                ),
+                spatial_masks=grounding_batch.spatial_masks.to(device=device, dtype=dtype),
+                text_embeds=grounding_batch.text_embeds.to(device=device, dtype=dtype),
+                image_embeds=(
+                    grounding_batch.image_embeds.to(device=device, dtype=dtype)
+                    if grounding_batch.image_embeds is not None
+                    else None
+                ),
+                text_masks=(
+                    torch.zeros_like(grounding_batch.text_masks).to(device=device, dtype=dtype)
+                    if null_drop
+                    else grounding_batch.text_masks.to(device=device, dtype=dtype)
+                ),
+                image_masks=(
+                    torch.zeros_like(grounding_batch.image_masks).to(device=device, dtype=dtype)
+                    if null_drop
+                    else grounding_batch.image_masks.to(device=device, dtype=dtype)
+                ),
+                max_entities=grounding_batch.max_entities,
+                num_frames=grounding_batch.num_frames,
+            )
+
         return batch
 
     def _get_patch_size_for_dynamic_shift(self, noise_scheduler):
@@ -3907,18 +4232,24 @@ class ModelFoundation(ABC):
         Collect TwinFlow hyperparameters with sensible defaults.
         Following the original TwinFlow paper, all loss components are enabled by default.
         """
+        def _get_config_value(name: str, default):
+            value = getattr(self.config, name, None)
+            if value is None or value == "":
+                return default
+            return value
+
         return {
-            "estimate_order": max(1, int(getattr(self.config, "twinflow_estimate_order", 2) or 2)),
-            "enhanced_ratio": float(getattr(self.config, "twinflow_enhanced_ratio", 0.5) or 0.5),
-            "target_step_count": max(1, int(getattr(self.config, "twinflow_target_step_count", 1) or 1)),
-            "delta_t": float(getattr(self.config, "twinflow_delta_t", 0.01) or 0.01),
-            "clamp_target": float(getattr(self.config, "twinflow_target_clamp", 1.0) or 1.0),
+            "estimate_order": max(1, int(_get_config_value("twinflow_estimate_order", 2))),
+            "enhanced_ratio": float(_get_config_value("twinflow_enhanced_ratio", 0.5)),
+            "target_step_count": max(1, int(_get_config_value("twinflow_target_step_count", 1))),
+            "delta_t": float(_get_config_value("twinflow_delta_t", 0.01)),
+            "clamp_target": float(_get_config_value("twinflow_target_clamp", 1.0)),
             "require_ema": bool(getattr(self.config, "twinflow_require_ema", True)),
             "use_rng_state": True,
             # Adversarial branch settings (L_adv + L_rectify)
             "adversarial_enabled": bool(getattr(self.config, "twinflow_adversarial_enabled", False)),
-            "adversarial_weight": float(getattr(self.config, "twinflow_adversarial_weight", 1.0) or 1.0),
-            "rectify_weight": float(getattr(self.config, "twinflow_rectify_weight", 1.0) or 1.0),
+            "adversarial_weight": float(_get_config_value("twinflow_adversarial_weight", 1.0)),
+            "rectify_weight": float(_get_config_value("twinflow_rectify_weight", 1.0)),
         }
 
     @staticmethod
@@ -4657,10 +4988,14 @@ class ModelFoundation(ABC):
 
         elif huber_schedule == "snr":
             # SNR-based scheduling
-            snr = compute_snr(timesteps, self.noise_schedule)
-            sigmas = (
-                (1.0 - self.noise_schedule.alphas_cumprod[timesteps]) / self.noise_schedule.alphas_cumprod[timesteps]
-            ) ** 0.5
+            if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+                sigmas = timesteps / 1000
+                sigmas = ((1.0 - sigmas) / (sigmas + 0.0001)) ** 0.5
+            else:
+                snr = compute_snr(timesteps, self.noise_schedule)
+                sigmas = (
+                    (1.0 - self.noise_schedule.alphas_cumprod[timesteps]) / self.noise_schedule.alphas_cumprod[timesteps]
+                ) ** 0.5
             huber_c = (1 - base_huber_c) / (1 + sigmas) ** 2 + base_huber_c
             return huber_c
 
@@ -4700,8 +5035,43 @@ class ModelFoundation(ABC):
                 raise ValueError("Flow target is None while diff2flow_loss is enabled.")
             loss = F.mse_loss(flow_pred.float(), flow_target.float(), reduction="none")
         elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
-            # Flow matching always uses L2 loss
-            loss = (model_pred.float() - target.float()) ** 2
+            # Check if we're using Huber or smooth L1 loss
+            if loss_type in ["huber", "smooth_l1"]:
+                # Get timesteps for the batch
+                timesteps = prepared_batch["timesteps"]
+
+                # For scheduled huber, we compute per-sample then average
+                if getattr(self.config, "huber_schedule", "constant") != "constant":
+                    batch_size = model_pred.shape[0]
+                    losses = []
+
+                    for i in range(batch_size):
+                        # Get scheduled huber_c for this timestep
+                        huber_c = self.compute_scheduled_huber_c(timesteps[i : i + 1]).item()
+
+                        # Compute loss for this sample
+                        sample_loss = self.conditional_loss(
+                            model_pred[i : i + 1].float(),
+                            target[i : i + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                        losses.append(sample_loss)
+
+                    loss = torch.cat(losses, dim=0)
+                else:
+                    # Constant huber_c - can be computed all at once
+                    huber_c = getattr(self.config, "huber_c", 0.1)
+                    loss = self.conditional_loss(
+                        model_pred.float(),
+                        target.float(),
+                        reduction="none",
+                        loss_type=loss_type,
+                        huber_c=huber_c,
+                    )
+            else:
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
             if getattr(self.config, "scheduled_sampling_reflexflow", False):
                 clean_pred = prepared_batch.get("_reflexflow_clean_pred")
                 biased_pred = prepared_batch.get("_reflexflow_biased_pred")

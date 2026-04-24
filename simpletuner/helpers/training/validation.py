@@ -681,6 +681,34 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 "key": shortname,
             }
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
+            if entry.bbox_entities:
+                entity_records = []
+                for idx, entity in enumerate(entry.bbox_entities):
+                    entity_key = f"__grounding_val_{shortname}__bbox_{idx}"
+                    entity_records.append({"prompt": entity["label"], "key": entity_key})
+                embed_cache.compute_embeddings_for_prompts(
+                    entity_records,
+                    return_concat=False,
+                    is_validation=True,
+                    load_from_cache=False,
+                )
+            if entry.bbox_keyframes:
+                seen_labels: set[str] = set()
+                for kf in entry.bbox_keyframes:
+                    for entity in kf.get("entities", []):
+                        label = entity.get("label", "")
+                        if label and label not in seen_labels:
+                            seen_labels.add(label)
+                if seen_labels:
+                    kf_records = [
+                        {"prompt": label, "key": f"__grounding_val_{shortname}__kf_{label}"} for label in sorted(seen_labels)
+                    ]
+                    embed_cache.compute_embeddings_for_prompts(
+                        kf_records,
+                        return_concat=False,
+                        is_validation=True,
+                        load_from_cache=False,
+                    )
             validation_prompts.append(entry)
             validation_shortnames.append(shortname)
     if allow_prompt_library and args.validation_prompt is not None and args.validation_prompt != "None":
@@ -1017,6 +1045,268 @@ def _stitch_single_pair(left_image, right_image, separator_width=5, labels=None)
     return new_image
 
 
+def _build_validation_grounding_batch(
+    *,
+    embed_cache,
+    max_entities: int,
+    vae_scale_factor: int,
+    # Sidecar path (existing):
+    image_path: str | None = None,
+    data_backend_id: str | None = None,
+    # Inline path (new):
+    bbox_entities: list[dict] | None = None,
+    shortname: str | None = None,
+    target_size: tuple[int, int] | None = None,
+    grounding_image_cache=None,
+):
+    """Build a single-sample ``GroundingBatch`` for validation inference.
+
+    Two modes:
+
+    *Sidecar*: provide ``image_path`` + ``data_backend_id``.  Reads a ``.bbox``
+    sidecar file and delegates to ``GroundingCollate.build_batch``.
+
+    *Inline*: provide ``bbox_entities`` + ``shortname`` + ``target_size``.
+    Builds the batch directly from pre-cached entity embeds without needing
+    a real dataset backend.
+
+    Returns ``None`` when no grounding data is available.
+    """
+    if bbox_entities and shortname:
+        return _build_inline_grounding_batch(
+            embed_cache=embed_cache,
+            max_entities=max_entities,
+            vae_scale_factor=vae_scale_factor,
+            bbox_entities=bbox_entities,
+            shortname=shortname,
+            target_size=target_size or (512, 512),
+        )
+
+    if not image_path or not data_backend_id:
+        return None
+
+    from simpletuner.helpers.training.grounding.collate import GroundingCollate
+    from simpletuner.helpers.training.grounding.metadata import BboxMetadata
+
+    # Locate the .bbox sidecar file next to the image
+    sidecar_path = Path(image_path).with_suffix(".bbox")
+    if not sidecar_path.exists():
+        return None
+
+    try:
+        entities = BboxMetadata.from_file(str(sidecar_path))
+    except Exception:
+        logger.debug(f"Failed to parse bbox sidecar for validation: {sidecar_path}")
+        return None
+
+    if not entities:
+        return None
+
+    # Build a single-sample examples list matching the collate interface
+    metadata = StateTracker.get_metadata_by_filepath(str(image_path), data_backend_id) or {}
+    file_target_size = metadata.get("target_size", (512, 512))
+    entity_dicts = [{"label": e.label, "bbox": list(e.bbox)} for e in entities]
+    example = {
+        "image_path": str(image_path),
+        "target_size": file_target_size,
+        "bbox_entities": entity_dicts,
+    }
+
+    collate = GroundingCollate(max_entities=max_entities, vae_scale_factor=vae_scale_factor)
+    grounding_batch = collate.build_batch(
+        examples=[example],
+        data_backend_id=data_backend_id,
+        text_embed_cache=embed_cache,
+        grounding_image_cache=grounding_image_cache,
+    )
+
+    if grounding_batch is None:
+        return None
+
+    return _disable_random_feature_drop(grounding_batch)
+
+
+def _disable_random_feature_drop(grounding_batch):
+    """Replace random-drop masks with full validity for deterministic inference."""
+    return type(grounding_batch)(
+        boxes=grounding_batch.boxes,
+        validity_mask=grounding_batch.validity_mask,
+        spatial_masks=grounding_batch.spatial_masks,
+        text_embeds=grounding_batch.text_embeds,
+        image_embeds=grounding_batch.image_embeds,
+        text_masks=grounding_batch.validity_mask.clone(),
+        image_masks=(
+            grounding_batch.validity_mask.clone()
+            if grounding_batch.image_embeds is not None
+            else grounding_batch.image_masks
+        ),
+        max_entities=grounding_batch.max_entities,
+        num_frames=grounding_batch.num_frames,
+    )
+
+
+def _build_inline_grounding_batch(
+    *,
+    embed_cache,
+    max_entities: int,
+    vae_scale_factor: int,
+    bbox_entities: list[dict],
+    shortname: str,
+    target_size: tuple[int, int],
+):
+    """Build a ``GroundingBatch`` from inline bbox_entities + pre-cached embeds."""
+    import torch
+
+    from simpletuner.helpers.training.grounding.collate import GroundingCollate
+    from simpletuner.helpers.training.grounding.types import GroundingBatch
+
+    target_w, target_h = target_size
+    latent_h = target_h // vae_scale_factor
+    latent_w = target_w // vae_scale_factor
+    N = max_entities
+
+    collate = GroundingCollate(max_entities=N, vae_scale_factor=vae_scale_factor)
+
+    sample_boxes = []
+    sample_validity = []
+    sample_masks = []
+    sample_text_embeds = []
+
+    for ent_idx in range(N):
+        if ent_idx < len(bbox_entities):
+            entity = bbox_entities[ent_idx]
+            bbox = entity.get("bbox", [0, 0, 0, 0])
+            x1, y1, x2, y2 = bbox
+            sample_boxes.append([x1, y1, x2, y2])
+            sample_validity.append(1.0)
+            mask = collate._bbox_to_mask(x1, y1, x2, y2, latent_h, latent_w)
+            sample_masks.append(mask)
+
+            entity_key = f"__grounding_val_{shortname}__bbox_{ent_idx}"
+            text_encoder_output = embed_cache.compute_prompt_embeddings_with_model(
+                prompt_records=[{"prompt": "", "key": entity_key, "metadata": {}}],
+            )
+            embed = GroundingCollate._pool_text_encoder_output(text_encoder_output)
+            sample_text_embeds.append(embed)
+        else:
+            sample_boxes.append([0.0, 0.0, 0.0, 0.0])
+            sample_validity.append(0.0)
+            sample_masks.append(torch.zeros(latent_h, latent_w))
+            text_dim = sample_text_embeds[0].shape[-1] if sample_text_embeds else 768
+            sample_text_embeds.append(torch.zeros(text_dim))
+
+    boxes = torch.stack([torch.tensor(sample_boxes, dtype=torch.float32)])
+    validity_mask = torch.stack([torch.tensor(sample_validity, dtype=torch.float32)])
+    spatial_masks = torch.stack([torch.stack(sample_masks)])
+    text_embeds = torch.stack([torch.stack(sample_text_embeds)])
+
+    grounding_batch = GroundingBatch(
+        boxes=boxes,
+        validity_mask=validity_mask,
+        spatial_masks=spatial_masks,
+        text_embeds=text_embeds,
+        image_embeds=None,
+        text_masks=validity_mask.clone(),
+        image_masks=torch.zeros_like(validity_mask),
+        max_entities=N,
+    )
+
+    return _disable_random_feature_drop(grounding_batch)
+
+
+def _build_video_keyframe_grounding_batch(
+    *,
+    embed_cache,
+    max_entities: int,
+    vae_scale_factor: int,
+    per_frame_entities: list[list[dict]],
+    shortname: str,
+    target_size: tuple[int, int],
+):
+    """Build a per-frame GroundingBatch from interpolated keyframe entities.
+
+    Each frame has its own set of bbox positions (entities matched by label),
+    producing (1, T, N, ...) tensors rather than broadcasting a single frame.
+    """
+    import torch
+
+    from simpletuner.helpers.training.grounding.collate import GroundingCollate
+    from simpletuner.helpers.training.grounding.types import GroundingBatch
+
+    target_w, target_h = target_size
+    latent_h = target_h // vae_scale_factor
+    latent_w = target_w // vae_scale_factor
+    N = max_entities
+    T = len(per_frame_entities)
+
+    collate = GroundingCollate(max_entities=N, vae_scale_factor=vae_scale_factor)
+
+    # Cache text embeddings per unique label
+    label_embed_cache: dict[str, "torch.Tensor"] = {}
+
+    all_frame_boxes = []
+    all_frame_validity = []
+    all_frame_masks = []
+    all_frame_text_embeds = []
+
+    for t in range(T):
+        entities = per_frame_entities[t]
+        frame_boxes = []
+        frame_validity = []
+        frame_masks = []
+        frame_text_embeds = []
+
+        for ent_idx in range(N):
+            if ent_idx < len(entities):
+                entity = entities[ent_idx]
+                bbox = entity.get("bbox", [0, 0, 0, 0])
+                label = entity.get("label", "")
+                x1, y1, x2, y2 = bbox
+                frame_boxes.append([x1, y1, x2, y2])
+                frame_validity.append(1.0)
+                mask = collate._bbox_to_mask(x1, y1, x2, y2, latent_h, latent_w)
+                frame_masks.append(mask)
+
+                if label not in label_embed_cache:
+                    entity_key = f"__grounding_val_{shortname}__kf_{label}"
+                    text_encoder_output = embed_cache.compute_prompt_embeddings_with_model(
+                        prompt_records=[{"prompt": "", "key": entity_key, "metadata": {}}],
+                    )
+                    label_embed_cache[label] = GroundingCollate._pool_text_encoder_output(text_encoder_output)
+                frame_text_embeds.append(label_embed_cache[label])
+            else:
+                frame_boxes.append([0.0, 0.0, 0.0, 0.0])
+                frame_validity.append(0.0)
+                frame_masks.append(torch.zeros(latent_h, latent_w))
+                text_dim = next(iter(label_embed_cache.values())).shape[-1] if label_embed_cache else 768
+                frame_text_embeds.append(torch.zeros(text_dim))
+
+        all_frame_boxes.append(torch.tensor(frame_boxes, dtype=torch.float32))
+        all_frame_validity.append(torch.tensor(frame_validity, dtype=torch.float32))
+        all_frame_masks.append(torch.stack(frame_masks))
+        all_frame_text_embeds.append(torch.stack(frame_text_embeds))
+
+    # Stack: (T, N, ...) then unsqueeze to (1, T, N, ...)
+    boxes = torch.stack(all_frame_boxes).unsqueeze(0)
+    validity_mask = torch.stack(all_frame_validity).unsqueeze(0)
+    spatial_masks = torch.stack(all_frame_masks)  # (T, N, H, W) - kept as-is for spatial
+    text_embeds = torch.stack(all_frame_text_embeds).unsqueeze(0)
+
+    grounding_batch = GroundingBatch(
+        boxes=boxes,
+        validity_mask=validity_mask,
+        spatial_masks=spatial_masks,
+        text_embeds=text_embeds,
+        image_embeds=None,
+        text_masks=validity_mask.clone(),
+        image_masks=torch.zeros_like(validity_mask),
+        max_entities=N,
+        num_frames=T,
+    )
+
+    return _disable_random_feature_drop(grounding_batch)
+
+
 @dataclass(frozen=True)
 class _ValidationWorkItem:
     index: int
@@ -1024,6 +1314,10 @@ class _ValidationWorkItem:
     prompt: str
     conditioning: Any
     adapter_strength: float | None
+    image_path: str | None = None
+    data_backend_id: str | None = None
+    bbox_entities: list[dict] | None = None
+    bbox_keyframes: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -1233,6 +1527,12 @@ class ValidationAbortedException(Exception):
     pass
 
 
+class ValidationCheckpointUnavailableError(ValueError):
+    """Raised when external validation requires a checkpoint before one exists."""
+
+    pass
+
+
 class Validation:
     def __init__(
         self,
@@ -1345,7 +1645,7 @@ class Validation:
         checkpoint_manager = CheckpointManager(self.config.output_dir)
         latest_checkpoint = checkpoint_manager.get_latest_checkpoint()
         if latest_checkpoint is None:
-            raise ValueError(
+            raise ValidationCheckpointUnavailableError(
                 "validation_external_script requires {local_checkpoint_path}, but no checkpoints exist in output_dir."
             )
         checkpoint_path = os.path.join(self.config.output_dir, latest_checkpoint)
@@ -1389,8 +1689,17 @@ class Validation:
 
         return build_script_command(script_template, _resolver)
 
-    def _run_external_validation(self, validation_type: str | None, step: int):
-        command = self._build_external_validation_command()
+    def _run_external_validation(self, validation_type: str | None, step: int) -> bool:
+        try:
+            command = self._build_external_validation_command()
+        except ValidationCheckpointUnavailableError as exc:
+            logger.warning(
+                "Skipping external validation for %s at step %s: %s",
+                validation_type or "validation",
+                step,
+                exc,
+            )
+            return False
         background = bool(getattr(self.config, "validation_external_background", False))
         logger.info(
             "Running external validation command for %s (step=%s, background=%s): %s",
@@ -1401,8 +1710,9 @@ class Validation:
         )
         if background:
             subprocess.Popen(command)
-            return
+            return True
         subprocess.run(command, check=True)
+        return True
 
     def _validation_multigpu_mode(self) -> str:
         """
@@ -1794,7 +2104,7 @@ class Validation:
         skip_execution: bool = False,
     ):
         self._update_state()
-        validation_method = self._validation_method()
+        configured_validation_method = self._validation_method()
         if self.validation_prompt_metadata is None:
             return self
         content = self.validation_prompt_metadata.get("validation_prompts", None)
@@ -1812,6 +2122,13 @@ class Validation:
         current_validation_will_execute = has_validation_prompts and (
             current_step_aligns_with_interval or is_base_model_benchmark
         )
+        validation_method = configured_validation_method
+        if validation_method == "external-script" and is_base_model_benchmark:
+            logger.info(
+                "Using built-in validation pipeline for base model benchmark; external-script is not used at step 0 "
+                "because the benchmark runs before checkpoints are available."
+            )
+            validation_method = "simpletuner-local"
         logger.debug(
             f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
@@ -1851,7 +2168,16 @@ class Validation:
                 self.validation_video_paths.clear()
                 self.eval_scores = {}
                 self.evaluation_result = None
-                self._run_external_validation(validation_type=validation_type, step=step)
+                external_validation_ran = self._run_external_validation(validation_type=validation_type, step=step)
+                if not external_validation_ran:
+                    if should_notify:
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key="validation",
+                            stage_label="Running Validation",
+                            stage_status="skipped",
+                            message="Validation skipped because no checkpoint is available yet.",
+                        )
+                    return self
                 if should_notify:
                     webhook_handler.send_lifecycle_stage(
                         stage_key="validation",
@@ -2527,9 +2853,14 @@ class Validation:
             conditioning: Any = None
             shortname: str | None = None
             adapter_strength: float | None = None
+            image_path: str | None = None
+            bbox_entities: list[dict] | None = None
+            bbox_keyframes: list[dict] | None = None
             if isinstance(entry, PromptLibraryEntry):
                 prompt_text = entry.prompt
                 adapter_strength = entry.adapter_strength
+                bbox_entities = entry.bbox_entities
+                bbox_keyframes = entry.bbox_keyframes
             elif isinstance(entry, dict) and "prompt" in entry:
                 prompt_text = entry.get("prompt")
                 try:
@@ -2546,7 +2877,7 @@ class Validation:
                 elif len(entry) == 3 and isinstance(entry[2], Image.Image):
                     shortname, prompt_text, conditioning = entry
                 elif len(entry) == 4 and isinstance(entry[3], Image.Image):
-                    shortname, prompt_text, _, conditioning = entry
+                    shortname, prompt_text, image_path, conditioning = entry
                 else:
                     candidate_shortname = entry[0] if len(entry) > 0 else None
                     candidate_prompt = entry[1] if len(entry) > 1 else prompt_text
@@ -2559,6 +2890,10 @@ class Validation:
                     shortname = f"validation_{idx}"
             if not isinstance(prompt_text, str):
                 prompt_text = str(prompt_text)
+            # Derive data_backend_id from the shortname prefix (format: "{backend_id}_{idx}")
+            data_backend_id = None
+            if image_path is not None and shortname and "_" in shortname:
+                data_backend_id = shortname.rsplit("_", 1)[0]
             work_items.append(
                 _ValidationWorkItem(
                     index=idx,
@@ -2566,6 +2901,10 @@ class Validation:
                     prompt=prompt_text,
                     conditioning=conditioning,
                     adapter_strength=adapter_strength,
+                    image_path=str(image_path) if image_path is not None else None,
+                    data_backend_id=data_backend_id,
+                    bbox_entities=bbox_entities,
+                    bbox_keyframes=bbox_keyframes,
                 )
             )
         return work_items
@@ -2654,6 +2993,10 @@ class Validation:
             validation_type,
             adapter_strength=item.adapter_strength,
             cache_shortname=item.shortname,
+            image_path=item.image_path,
+            data_backend_id=item.data_backend_id,
+            bbox_entities=item.bbox_entities,
+            bbox_keyframes=item.bbox_keyframes,
         )
         return {
             "index": item.index,
@@ -3167,6 +3510,10 @@ class Validation:
         validation_type=None,
         adapter_strength: float | None = None,
         cache_shortname: str | None = None,
+        image_path: str | None = None,
+        data_backend_id: str | None = None,
+        bbox_entities: list[dict] | None = None,
+        bbox_keyframes: list[dict] | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -3415,6 +3762,51 @@ class Validation:
                 if self.config.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = self.config.sana_complex_human_instruction
 
+                # GLIGEN grounding: build grounding kwargs and fuser scheduling callback
+                _grounding_active = False
+                if self.model.supports_grounding():
+                    grounding_batch = None
+                    if bbox_keyframes and self.model.is_video_model():
+                        from simpletuner.helpers.training.grounding.interpolation import interpolate_bbox_keyframes
+
+                        num_video_frames = getattr(self.config, "validation_num_video_frames", 25) or 25
+                        per_frame_entities = interpolate_bbox_keyframes(bbox_keyframes, num_video_frames)
+                        grounding_batch = _build_video_keyframe_grounding_batch(
+                            embed_cache=self.embed_cache,
+                            max_entities=getattr(self.config, "max_grounding_entities", 4),
+                            vae_scale_factor=8,
+                            per_frame_entities=per_frame_entities,
+                            shortname=cache_key,
+                            target_size=(int(validation_resolution_width), int(validation_resolution_height)),
+                        )
+                    elif bbox_entities:
+                        grounding_batch = _build_validation_grounding_batch(
+                            embed_cache=self.embed_cache,
+                            max_entities=getattr(self.config, "max_grounding_entities", 4),
+                            vae_scale_factor=8,
+                            bbox_entities=bbox_entities,
+                            shortname=cache_key,
+                            target_size=(int(validation_resolution_width), int(validation_resolution_height)),
+                        )
+                    elif image_path and data_backend_id:
+                        grounding_batch = _build_validation_grounding_batch(
+                            embed_cache=self.embed_cache,
+                            max_entities=getattr(self.config, "max_grounding_entities", 4),
+                            vae_scale_factor=8,
+                            image_path=image_path,
+                            data_backend_id=data_backend_id,
+                        )
+                    if grounding_batch is not None:
+                        grounding_batch = grounding_batch.to(
+                            device=self.inference_device,
+                            dtype=self.config.weight_dtype,
+                        )
+                        grounding_pipeline_kwargs = self.model._build_validation_grounding_pipeline_kwargs(
+                            grounding_batch, do_cfg=(guidance_scale > 1.0)
+                        )
+                        pipeline_kwargs.update(grounding_pipeline_kwargs)
+                        _grounding_active = True
+
                 validation_types = self._validation_types()
                 all_validation_type_results = {}
                 all_validation_type_audio = {}
@@ -3442,6 +3834,19 @@ class Validation:
                         pipeline_kwargs["num_videos_per_prompt"] = pipeline_kwargs.pop("num_images_per_prompt")
                     logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
 
+                    # Set up grounding fuser scheduling + enable fusers before each run
+                    if _grounding_active:
+                        from simpletuner.helpers.training.grounding.gligen_layers import (
+                            enable_all_fusers,
+                            make_grounding_step_callback,
+                        )
+
+                        denoiser = getattr(self.model.pipeline, "transformer", None) or getattr(
+                            self.model.pipeline, "unet", None
+                        )
+                        if denoiser is not None:
+                            enable_all_fusers(denoiser, enabled=True)
+
                     # Add abort checking callback for pipeline execution
                     if "callback_on_step_end" in call_kwargs:
 
@@ -3449,8 +3854,19 @@ class Validation:
                             self._check_abort()
                             return callback_kwargs
 
-                        # Only set callback if not already provided
-                        if "callback_on_step_end" not in pipeline_kwargs:
+                        # Build combined callback: grounding scheduling + abort check
+                        if _grounding_active and denoiser is not None:
+                            _grounding_cb = make_grounding_step_callback(
+                                denoiser, num_inference_steps, scheduled_sampling_beta=0.3
+                            )
+
+                            def _combined_callback(pipe, step_index, timestep, callback_kwargs):
+                                callback_kwargs = _grounding_cb(pipe, step_index, timestep, callback_kwargs)
+                                self._check_abort()
+                                return callback_kwargs
+
+                            pipeline_kwargs["callback_on_step_end"] = _combined_callback
+                        elif "callback_on_step_end" not in pipeline_kwargs:
                             pipeline_kwargs["callback_on_step_end"] = abort_check_callback
 
                     # remove any kwargs that are not in the pipeline call
@@ -3521,6 +3937,10 @@ class Validation:
                                 all_validation_type_audio[current_validation_type] = audio_results
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
+
+                    # Re-enable fusers after pipeline completes (may have been disabled by scheduled sampling)
+                    if _grounding_active and denoiser is not None:
+                        enable_all_fusers(denoiser, enabled=True)
 
                     # Check for abort after pipeline completes
                     self._check_abort()

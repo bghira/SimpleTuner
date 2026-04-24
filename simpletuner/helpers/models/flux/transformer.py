@@ -35,6 +35,7 @@ except:
 
 from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -734,6 +735,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         controlnet_blocks_repeat: bool = False,
         force_keep_mask=None,
         hidden_states_buffer: Optional[dict] = None,
+        grounding_kwargs: dict | None = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`FluxTransformer2DModel`] forward method.
@@ -895,6 +897,13 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 for r in routes
             ]
 
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (joint_attention_kwargs or {}).get("_grounding_kwargs")
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
@@ -969,6 +978,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             # controlnet residual
             if controlnet_block_samples is not None:
@@ -1082,6 +1094,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs, txt_len=txt_len)
 
             # controlnet residual
             if controlnet_single_block_samples is not None:

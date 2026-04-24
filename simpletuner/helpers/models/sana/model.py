@@ -42,6 +42,7 @@ class Sana(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderDC
     LATENT_CHANNEL_COUNT = 32
     # The safe diffusers default value for LoRA training targets.
@@ -170,6 +171,7 @@ class Sana(ImageModelFoundation):
             batch_size=prepared_batch["noisy_latents"].shape[0],
             sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
         )
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         model_pred = self.model(
             hidden_states=prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -184,6 +186,7 @@ class Sana(ImageModelFoundation):
             ),
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            grounding_kwargs=grounding_kwargs,
         )[0]
 
         return {

@@ -18,6 +18,7 @@
 | **Lumina2** | 2B | [Lumina2 指南](LUMINA2.md) |
 | **HiDream** | 17B MoE | [HiDream 指南](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image 指南](ZIMAGE.md) |
+| **ERNIE-Image** | - | [ERNIE 指南](ERNIE.md) |
 
 ### DiT / Transformer
 
@@ -60,9 +61,9 @@
 
 ## 音频模型
 
-| 模型 | 参数 | 指南 |
-|-------|------------|-------|
-| **ACE-Step** | 3.5B | [ACE-Step 指南](ACE_STEP.md) |
+| 模型 | 规模 / 版本 | 指南 |
+|-------|--------------|-------|
+| **ACE-Step** | 3.5B / 1.5 | [ACE-Step 指南](ACE_STEP.md) |
 | **HeartMuLa** | 3B | [HeartMuLa 指南](HEARTMULA.md) |
 
 ## 选择模型
@@ -85,5 +86,5 @@
 **特定场景:**
 
 - 图像编辑/条件控制可选 **Flux Kontext**
-- 文本到音乐可选 **ACE-Step**
+- 文生音乐 LoRA 训练可选 **ACE-Step**（v1 与 v1.5）
 - 自回归文本到音频可选 **HeartMuLa**

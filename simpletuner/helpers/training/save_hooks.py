@@ -17,6 +17,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from tqdm import tqdm
 
+from simpletuner.helpers.configuration.template_vars import build_modelspec_template_values, render_modelspec_comment
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
@@ -337,7 +338,9 @@ class SaveHookManager:
 
         comment = getattr(self.args, "modelspec_comment", None)
         if comment:
-            metadata["modelspec.comment"] = str(comment)
+            rendered_comment = render_modelspec_comment(comment, variables=build_modelspec_template_values())
+            if rendered_comment:
+                metadata["modelspec.comment"] = rendered_comment
 
         return {k: str(v) for k, v in metadata.items() if v is not None}
 

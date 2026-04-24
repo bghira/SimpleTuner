@@ -24,6 +24,7 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import AttentionBackendController
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -715,6 +716,7 @@ class ChromaTransformer2DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
         skip_layers: Optional[List[int]] = None,
+        grounding_kwargs: dict | None = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -819,6 +821,13 @@ class ChromaTransformer2DModel(
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (joint_attention_kwargs or {}).get("_grounding_kwargs")
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         for index_block, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
@@ -914,6 +923,9 @@ class ChromaTransformer2DModel(
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             if controlnet_block_samples is not None:
                 interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
@@ -1067,6 +1079,9 @@ class ChromaTransformer2DModel(
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs, txt_len=txt_len)
 
             if controlnet_single_block_samples is not None:
                 interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)

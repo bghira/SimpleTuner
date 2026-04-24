@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -60,6 +62,72 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertTrue(torch.equal(result.cpu(), latents))
         self.assertEqual(result.dtype, torch.float32)
 
+    def test_resolve_ltx23_flavour(self):
+        self.model.config.model_flavour = "2.3-distilled"
+        self.assertEqual(self.model._resolve_ltx2_version(), "2.3")
+        self.assertEqual(self.model._resolve_ltx2_combined_filename(), "ltx-2.3-22b-distilled.safetensors")
+
+    def test_model_config_path_uses_ltx23_dev_repo_for_single_file(self):
+        self.model.config.model_flavour = "2.3-dev"
+        self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-dev.safetensors"
+
+        self.assertEqual(self.model._model_config_path(), "dg845/LTX-2.3-Diffusers")
+
+    def test_model_config_path_uses_ltx23_distilled_repo_for_single_file(self):
+        self.model.config.model_flavour = "2.3-distilled"
+        self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-distilled.safetensors"
+
+        self.assertEqual(self.model._model_config_path(), "dg845/LTX-2.3-Distilled-Diffusers")
+
+    def test_legacy_ltx23_aliases_are_rejected(self):
+        for flavour in ("2.3", "distilled"):
+            with self.subTest(flavour=flavour):
+                self.model.config.model_flavour = flavour
+                with self.assertRaisesRegex(ValueError, "Unsupported LTX-2 model flavour"):
+                    self.model._resolve_ltx2_version()
+
+    def test_load_video_vae_from_diffusers_repo_uses_corrected_ltx23_config(self):
+        self.model.config.model_flavour = "2.3-dev"
+        self.model.config.pretrained_model_name_or_path = "dg845/LTX-2.3-Diffusers"
+        self.model.config.pretrained_vae_model_name_or_path = "dg845/LTX-2.3-Diffusers"
+        state_dict = {"dummy": torch.zeros(1)}
+        fake_vae = MagicMock()
+
+        with (
+            patch("simpletuner.helpers.models.ltxvideo2.model.hf_hub_download", return_value="/tmp/vae.safetensors"),
+            patch("simpletuner.helpers.models.ltxvideo2.model.safetensors.torch.load_file", return_value=state_dict),
+            patch.object(self.model.AUTOENCODER_CLASS, "from_config", return_value=fake_vae) as mock_from_config,
+        ):
+            self.model._load_video_vae_from_diffusers_repo()
+
+        self.assertEqual(
+            mock_from_config.call_args.args[0]["upsample_type"],
+            ("spatial", "temporal", "spatiotemporal", "spatiotemporal"),
+        )
+        self.assertEqual(
+            mock_from_config.call_args.args[0]["upsample_residual"],
+            (True, True, True, True),
+        )
+        self.assertEqual(
+            mock_from_config.call_args.args[0]["decoder_spatial_padding_mode"],
+            "reflect",
+        )
+        fake_vae.load_state_dict.assert_called_once_with(state_dict, strict=True, assign=True)
+        fake_vae.register_to_config.assert_called_once_with(_name_or_path="dg845/LTX-2.3-Diffusers")
+        self.assertIs(self.model.vae, fake_vae)
+
+
+class TestLTXVideo2Metadata(unittest.TestCase):
+    def test_model_metadata_exposes_only_named_ltx23_flavours(self):
+        metadata_path = Path(__file__).parent.parent.parent / "simpletuner/helpers/models/model_metadata.json"
+        with open(metadata_path) as handle:
+            metadata = json.load(handle)
+
+        self.assertEqual(
+            metadata["ltxvideo2"]["flavour_choices"],
+            ["dev", "dev-fp4", "dev-fp8", "2.3-dev", "2.3-distilled"],
+        )
+
 
 class TestLTXVideo2TransformerLoading(unittest.TestCase):
     """Test LTXVideo2 transformer can be imported and configured."""
@@ -97,6 +165,46 @@ class TestLTXVideo2TransformerLoading(unittest.TestCase):
         sig = inspect.signature(LTX2VideoTransformer3DModel.__init__)
         params = list(sig.parameters.keys())
         self.assertIn("enable_time_sign_embed", params)
+
+    def test_transformer_supports_ltx23_flags(self):
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        transformer = LTX2VideoTransformer3DModel(
+            in_channels=4,
+            out_channels=4,
+            patch_size=1,
+            patch_size_t=1,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            cross_attention_dim=16,
+            vae_scale_factors=(1, 1, 1),
+            pos_embed_max_pos=4,
+            base_height=32,
+            base_width=32,
+            gated_attn=True,
+            cross_attn_mod=True,
+            audio_in_channels=4,
+            audio_out_channels=4,
+            audio_patch_size=1,
+            audio_patch_size_t=1,
+            audio_num_attention_heads=2,
+            audio_attention_head_dim=4,
+            audio_cross_attention_dim=8,
+            audio_scale_factor=1,
+            audio_pos_embed_max_pos=4,
+            audio_gated_attn=True,
+            audio_cross_attn_mod=True,
+            num_layers=1,
+            caption_channels=16,
+            use_prompt_embeddings=False,
+            perturbed_attn=True,
+        )
+
+        self.assertFalse(hasattr(transformer, "caption_projection"))
+        self.assertTrue(transformer.prompt_modulation)
+        self.assertIsNotNone(transformer.prompt_adaln)
+        self.assertIsNotNone(transformer.audio_prompt_adaln)
+        self.assertIsNotNone(transformer.transformer_blocks[0].attn1.to_gate_logits)
 
 
 if __name__ == "__main__":

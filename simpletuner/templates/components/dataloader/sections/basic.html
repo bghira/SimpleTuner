@@ -85,39 +85,39 @@
                     </select>
                 </div>
                 <div class="dataset-inline-field">
-                    <label class="form-label mb-1">Min Size</label>
+                    <label class="form-label mb-1">Min Size <span class="text-muted">(optional)</span></label>
                     <input type="number" class="form-control form-control-sm"
                            x-model.number.lazy="dataset.minimum_image_size"
                            min="0"
                            step="1"
                            @input="markAsUnsaved()"
-                           placeholder="0 (disabled)">
+                           placeholder="Leave empty for no minimum">
                     <div class="form-text">
-                        Skip smaller images
+                        Optional. Skip smaller images.
                     </div>
                 </div>
                 <div class="dataset-inline-field">
-                    <label class="form-label mb-1">Max Size</label>
+                    <label class="form-label mb-1">Max Size <span class="text-muted">(optional)</span></label>
                     <input type="number" class="form-control form-control-sm"
                            x-model.number.lazy="dataset.maximum_image_size"
                            min="0"
                            step="1"
                            @input="markAsUnsaved()"
-                           placeholder="0 (disabled)">
+                           placeholder="Leave empty for no maximum">
                     <div class="form-text">
-                        Downsample larger images to the target size
+                        Optional. Clamp larger images before cropping.
                     </div>
                 </div>
                 <div class="dataset-inline-field">
-                    <label class="form-label mb-1">Downsample Target</label>
+                    <label class="form-label mb-1">Downsample Target <span class="text-muted">(optional)</span></label>
                     <input type="number" class="form-control form-control-sm"
                            x-model.number.lazy="dataset.target_downsample_size"
                            min="0"
                            step="1"
                            @input="markAsUnsaved()"
-                           placeholder="Auto">
+                           placeholder="Leave empty to keep original size">
                     <div class="form-text">
-                        Target size used when downsampling larger images
+                        Optional. Used with Max Size when downsampling larger images.
                     </div>
                 </div>
             </div>

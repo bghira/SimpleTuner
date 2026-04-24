@@ -58,7 +58,7 @@
 #### `scheduled_sampling_sampler`（String）
 **默认：** `unipc`
 rollout 生成步骤使用的求解器。
-*   **可选项：** `unipc`（推荐，快且准）、`euler`、`dpm`、`rk4`。
+*   **可选项：** `unipc`（推荐，快且准）、`euler`、`dpm`。
 *   `unipc` 通常在这些短采样中速度/精度平衡最好。
 
 ### Flow Matching + ReflexFlow

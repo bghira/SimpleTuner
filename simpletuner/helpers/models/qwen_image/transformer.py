@@ -627,46 +627,115 @@ class QwenDoubleStreamAttnProcessor2_0:
             txt_query = apply_rotary_emb_qwen(txt_query, txt_freqs, use_real=False)
             txt_key = apply_rotary_emb_qwen(txt_key, txt_freqs, use_real=False)
 
-        # Concatenate for joint attention
-        # Order: [text, image]
-        joint_query = torch.cat([txt_query, img_query], dim=1)
-        joint_key = torch.cat([txt_key, img_key], dim=1)
-        joint_value = torch.cat([txt_value, img_value], dim=1)
+        # Route between per-sample split attention (B>1, variable text length)
+        # and joint attention (B==1 or no mask).
+        batch_size_attn = img_query.shape[0]
+        per_sample_mask = attention_mask if attention_mask is None else None  # unused sentinel
+        # Retrieve the raw encoder_hidden_states_mask forwarded via attention_mask kwarg
+        # (when batch>1, forward() sets block_attention_kwargs["encoder_hidden_states_mask"])
+        raw_enc_mask = encoder_hidden_states_mask  # may be None
 
-        # Compute joint attention
-        publish_attention_max_logits(
-            joint_query.transpose(1, 2),
-            joint_key.transpose(1, 2),
-            attention_mask,
-            getattr(attn, "to_q", None) and attn.to_q.weight,
-            getattr(attn, "to_k", None) and attn.to_k.weight,
-        )
-        joint_hidden_states = attention_with_oom_fallback(
-            joint_query,
-            joint_key,
-            joint_value,
-            attn_mask=attention_mask,
-            dropout_p=0.0,
-            is_causal=False,
-            backend=self._attention_backend,
-        )
+        if raw_enc_mask is not None and batch_size_attn > 1:
+            # Per-sample split attention: each sample uses its own true text length.
+            # This prevents padding tokens from being attended to across the batch.
+            img_attn_outputs = []
+            txt_attn_outputs = []
 
-        # Reshape back
-        joint_hidden_states = joint_hidden_states.flatten(2, 3)
-        joint_hidden_states = joint_hidden_states.to(joint_query.dtype)
+            for s in range(batch_size_attn):
+                # Determine true text length for this sample
+                true_txt_len = int(raw_enc_mask[s].sum().item())
+                true_txt_len = max(true_txt_len, 1)  # at least 1 to avoid empty attn
 
-        # Split attention outputs back
-        txt_attn_output = joint_hidden_states[:, :seq_txt, :]  # Text part
-        img_attn_output = joint_hidden_states[:, seq_txt:, :]  # Image part
+                # Slice text QKV to actual length (no padding tokens)
+                s_txt_q = txt_query[s : s + 1, :true_txt_len, :]
+                s_txt_k = txt_key[s : s + 1, :true_txt_len, :]
+                s_txt_v = txt_value[s : s + 1, :true_txt_len, :]
+                s_img_q = img_query[s : s + 1]
+                s_img_k = img_key[s : s + 1]
+                s_img_v = img_value[s : s + 1]
 
-        # Apply output projections
-        img_attn_output = attn.to_out[0](img_attn_output)
-        if len(attn.to_out) > 1:
-            img_attn_output = attn.to_out[1](img_attn_output)  # dropout
+                # Joint concat for this sample only
+                s_joint_q = torch.cat([s_txt_q, s_img_q], dim=1)
+                s_joint_k = torch.cat([s_txt_k, s_img_k], dim=1)
+                s_joint_v = torch.cat([s_txt_v, s_img_v], dim=1)
 
-        txt_attn_output = attn.to_add_out(txt_attn_output)
+                # Run attention without mask (text is already sliced to true length)
+                s_joint_out = attention_with_oom_fallback(
+                    s_joint_q,
+                    s_joint_k,
+                    s_joint_v,
+                    attn_mask=None,
+                    dropout_p=0.0,
+                    is_causal=False,
+                    backend=self._attention_backend,
+                )
+                s_joint_out = s_joint_out.flatten(2, 3).to(s_joint_q.dtype)
 
-        return img_attn_output, txt_attn_output
+                # Split back into text and image parts
+                s_txt_out = s_joint_out[:, :true_txt_len, :]
+                s_img_out = s_joint_out[:, true_txt_len:, :]
+
+                # Zero-pad text output back to seq_txt (the padded batch width)
+                if true_txt_len < seq_txt:
+                    pad = torch.zeros(
+                        1, seq_txt - true_txt_len, s_txt_out.shape[-1], dtype=s_txt_out.dtype, device=s_txt_out.device
+                    )
+                    s_txt_out = torch.cat([s_txt_out, pad], dim=1)
+
+                img_attn_outputs.append(s_img_out)
+                txt_attn_outputs.append(s_txt_out)
+
+            joint_img = torch.cat(img_attn_outputs, dim=0)
+            txt_attn_output = torch.cat(txt_attn_outputs, dim=0)
+            txt_attn_output = attn.to_add_out(txt_attn_output)
+
+            # Apply output projection to image part (linear then dropout)
+            # IMPORTANT: project first, then dropout. Reversing this causes loss=70.
+            img_attn_output = attn.to_out[0](joint_img)
+            if len(attn.to_out) > 1:
+                img_attn_output = attn.to_out[1](img_attn_output)  # dropout
+
+            return img_attn_output, txt_attn_output
+
+        else:
+            # Single sample or no mask: use efficient joint attention path
+            joint_query = torch.cat([txt_query, img_query], dim=1)
+            joint_key = torch.cat([txt_key, img_key], dim=1)
+            joint_value = torch.cat([txt_value, img_value], dim=1)
+
+            publish_attention_max_logits(
+                joint_query.transpose(1, 2),
+                joint_key.transpose(1, 2),
+                attention_mask,
+                getattr(attn, "to_q", None) and attn.to_q.weight,
+                getattr(attn, "to_k", None) and attn.to_k.weight,
+            )
+            joint_hidden_states = attention_with_oom_fallback(
+                joint_query,
+                joint_key,
+                joint_value,
+                attn_mask=attention_mask,
+                dropout_p=0.0,
+                is_causal=False,
+                backend=self._attention_backend,
+            )
+
+            # Reshape back
+            joint_hidden_states = joint_hidden_states.flatten(2, 3)
+            joint_hidden_states = joint_hidden_states.to(joint_query.dtype)
+
+            # Split attention outputs back
+            txt_attn_output = joint_hidden_states[:, :seq_txt, :]  # Text part
+            img_attn_output = joint_hidden_states[:, seq_txt:, :]  # Image part
+
+            # Apply output projections
+            img_attn_output = attn.to_out[0](img_attn_output)
+            if len(attn.to_out) > 1:
+                img_attn_output = attn.to_out[1](img_attn_output)  # dropout
+
+            txt_attn_output = attn.to_add_out(txt_attn_output)
+
+            return img_attn_output, txt_attn_output
 
 
 @maybe_allow_in_graph
@@ -804,7 +873,11 @@ class QwenImageTransformerBlock(PatchableModule):
         # 2. Applies QK normalization and RoPE
         # 3. Concatenates and runs joint attention
         # 4. Splits results back to separate streams
-        joint_attention_kwargs = joint_attention_kwargs or {}
+        joint_attention_kwargs = dict(joint_attention_kwargs or {})
+        if encoder_hidden_states_mask is None:
+            encoder_hidden_states_mask = joint_attention_kwargs.pop("encoder_hidden_states_mask", None)
+        else:
+            joint_attention_kwargs.pop("encoder_hidden_states_mask", None)
         attn_output = self.attn(
             hidden_states=img_modulated,  # Image stream (will be processed as "sample")
             encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
@@ -1175,15 +1248,20 @@ class QwenImageTransformer2DModel(
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
-        # Construct joint attention mask once to avoid reconstructing in every block
-        # This eliminates 60 GPU syncs during training while maintaining torch.compile compatibility
+        # Construct attention mask for blocks.
+        # For batch_size==1: build a joint bool mask [text_mask, all_ones_for_image] once
+        # to avoid reconstructing per-block (eliminates 60 GPU syncs, torch.compile safe).
+        # For batch_size>1 with variable text lengths: the block forwards
+        # encoder_hidden_states_mask explicitly to Attention.forward, so only
+        # the single-sample joint attention_mask belongs in joint_attention_kwargs.
         block_attention_kwargs = attention_kwargs.copy() if attention_kwargs is not None else {}
         if encoder_hidden_states_mask is not None:
-            # Build joint mask: [text_mask, all_ones_for_image]
             batch_size, image_seq_len = hidden_states.shape[:2]
-            image_mask = torch.ones((batch_size, image_seq_len), dtype=torch.bool, device=hidden_states.device)
-            joint_attention_mask = torch.cat([encoder_hidden_states_mask, image_mask], dim=1)
-            block_attention_kwargs["attention_mask"] = joint_attention_mask
+            if batch_size == 1:
+                # Single sample: joint mask is safe and efficient
+                image_mask = torch.ones((batch_size, image_seq_len), dtype=torch.bool, device=hidden_states.device)
+                joint_attention_mask = torch.cat([encoder_hidden_states_mask, image_mask], dim=1)
+                block_attention_kwargs["attention_mask"] = joint_attention_mask
 
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
@@ -1240,7 +1318,7 @@ class QwenImageTransformer2DModel(
                     create_custom_forward(block, modulate_index),
                     hidden_states,
                     encoder_hidden_states,
-                    None,  # Don't pass encoder_hidden_states_mask (using attention_mask instead)
+                    encoder_hidden_states_mask,  # Pass mask; processor routes joint vs split
                     temb,
                     image_rotary_emb,
                 )
@@ -1249,7 +1327,7 @@ class QwenImageTransformer2DModel(
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_mask=None,  # Don't pass (using attention_mask instead)
+                    encoder_hidden_states_mask=encoder_hidden_states_mask,  # Pass mask; processor routes
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     joint_attention_kwargs=block_attention_kwargs,

@@ -129,6 +129,7 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
 ### 设置专用验证集划分
 
 以下配置示例使用 200,000 样本作为训练集、少量样本作为验证集。
+对 Kontext 请保持 `validation_using_datasets` 未设置或为 `false`。验证会自动使用配对的参考数据集；`eval_dataset_id` 仅用于选择哪个编辑数据集提供验证样本。
 
 在 `config.json` 中添加:
 

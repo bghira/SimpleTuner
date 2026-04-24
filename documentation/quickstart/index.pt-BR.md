@@ -18,6 +18,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | **Lumina2** | 2B | [Guia Lumina2](LUMINA2.md) |
 | **HiDream** | 17B MoE | [Guia HiDream](HIDREAM.md) |
 | **Z-Image** | - | [Guia Z-Image](ZIMAGE.md) |
+| **ERNIE-Image** | - | [Guia ERNIE](ERNIE.md) |
 
 ### DiT / Transformador
 
@@ -60,9 +61,9 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 
 ## Modelos de Áudio
 
-| Modelo | Parâmetros | Guia |
-|-------|------------|------|
-| **ACE-Step** | 3.5B | [Guia ACE-Step](ACE_STEP.md) |
+| Modelo | Tamanho / Versão | Guia |
+|-------|-------------------|------|
+| **ACE-Step** | 3.5B / 1.5 | [Guia ACE-Step](ACE_STEP.md) |
 | **HeartMuLa** | 3B | [Guia HeartMuLa](HEARTMULA.md) |
 
 ## Como escolher um modelo
@@ -85,5 +86,5 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 **Para casos específicos:**
 
 - **Flux Kontext** para edição/condicionamento de imagens
-- **ACE-Step** para texto-para-música
+- **ACE-Step** para treinamento LoRA de texto-para-música (v1 e v1.5)
 - **HeartMuLa** para texto-para-audio autoregressivo

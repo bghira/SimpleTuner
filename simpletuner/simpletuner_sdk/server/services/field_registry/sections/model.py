@@ -77,7 +77,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             choices=[],  # Dynamic based on model_family
             dependencies=[FieldDependency(field="model_family", operator="not_equals", value="")],
-            help_text="Specific variant of the selected model family",
+            help_text="Specific variant of the selected model family. ACE-Step flavours are `base`, `v15-turbo`, `v15-base`, and `v15-sft`; the v1.5 flavours support training and built-in validation audio generation, and require --trust_remote_code for the upstream repository.",
             tooltip="Some models have multiple variants with different sizes or capabilities",
             importance=ImportanceLevel.IMPORTANT,
             order=3,
@@ -520,6 +520,24 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="trust_remote_code",
+            arg_name="--trust_remote_code",
+            ui_label="Trust Remote Code",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_config",
+            subsection="advanced_paths",
+            default_value=False,
+            help_text="Allow model and tokenizer loaders to execute custom code from the model repository when required",
+            tooltip="Required for ACE-Step v1.5 upstream checkpoints because they ship custom Transformers classes. Enable this only for model repositories you trust.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            documentation="OPTIONS.md#--trust_remote_code",
+        )
+    )
+
     # Quantize Via
     registry._add_field(
         ConfigField(
@@ -696,6 +714,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
                     values=[
                         "auraflow",
                         "cosmos2image",
+                        "ernie",
                         "flux",
                         "flux2",
                         "hidream",
@@ -716,6 +735,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             model_specific=[
                 "auraflow",
                 "cosmos2image",
+                "ernie",
                 "flux",
                 "flux2",
                 "hidream",
@@ -967,5 +987,44 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             model_specific=["flux2"],
             order=34,
             documentation="OPTIONS.md#--custom_text_encoder_intermediary_layers",
+        )
+    )
+
+    # Grounding: max entities per image
+    registry._add_field(
+        ConfigField(
+            name="max_grounding_entities",
+            arg_name="--max_grounding_entities",
+            ui_label="Max Grounding Entities",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=0,
+            help_text="Maximum number of grounding entities per image for GLIGEN-style spatial annotations. Set to 0 to disable grounding.",
+            tooltip="When > 0, enables the grounding pipeline. Each entity is padded to this count per sample. Typical values: 4-16.",
+            importance=ImportanceLevel.ADVANCED,
+            order=35,
+            documentation="OPTIONS.md#--max_grounding_entities",
+        )
+    )
+
+    # Grounding: pretrained feature extractor model
+    registry._add_field(
+        ConfigField(
+            name="pretrained_grounding_model_name_or_path",
+            arg_name="--pretrained_grounding_model_name_or_path",
+            ui_label="Grounding Feature Model",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=None,
+            placeholder="florence-community/Florence-2-large",
+            help_text="Optional Florence-2 (or compatible) model for per-entity image feature extraction. When unset, only text embeddings and bbox coordinates are used for GLIGEN grounding.",
+            tooltip="Provide a HuggingFace model ID (e.g., 'florence-community/Florence-2-large') for visual entity features from cropped bbox regions.",
+            importance=ImportanceLevel.ADVANCED,
+            order=36,
+            documentation="OPTIONS.md#--pretrained_grounding_model_name_or_path",
         )
     )

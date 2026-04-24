@@ -5,9 +5,16 @@ import unittest
 import safetensors.torch
 import torch
 
+from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
 from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
     _apply_remap_rules,
+    _convert_ltx2_3_vocoder_upsamplers,
     _extract_audio_vae_config_from_metadata,
+    _get_ltx2_connectors_config,
+    _get_ltx2_transformer_config,
+    _get_ltx2_video_vae_config,
+    _get_ltx2_vocoder_config,
+    get_model_state_dict_from_combined_ckpt,
     load_ltx2_state_dict_from_checkpoint,
 )
 
@@ -85,6 +92,8 @@ class TestLTX2CheckpointLoader(unittest.TestCase):
                 "model.diffusion_model.block.weight": torch.zeros(1),
                 "model.diffusion_model.block.bias": torch.ones(1),
                 "text_embedding_projection.aggregate_embed.weight": torch.full((1,), 2.0),
+                "text_embedding_projection.video_aggregate_embed.weight": torch.full((1,), 4.0),
+                "text_embedding_projection.audio_aggregate_embed.weight": torch.full((1,), 5.0),
                 "unrelated.weight": torch.full((1,), 3.0),
             }
             safetensors.torch.save_file(state_dict, ckpt_path)
@@ -94,7 +103,75 @@ class TestLTX2CheckpointLoader(unittest.TestCase):
         self.assertIn("block.weight", loaded)
         self.assertIn("block.bias", loaded)
         self.assertIn("text_embedding_projection.aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.video_aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.audio_aggregate_embed.weight", loaded)
         self.assertNotIn("unrelated.weight", loaded)
+
+    def test_get_model_state_dict_from_combined_ckpt_includes_all_text_projection_keys(self):
+        combined_ckpt = {
+            "model.diffusion_model.block.weight": torch.zeros(1),
+            "text_embedding_projection.aggregate_embed.weight": torch.ones(1),
+            "text_embedding_projection.video_aggregate_embed.weight": torch.full((1,), 2.0),
+            "text_embedding_projection.audio_aggregate_embed.weight": torch.full((1,), 3.0),
+        }
+
+        loaded = get_model_state_dict_from_combined_ckpt(combined_ckpt, "model.diffusion_model")
+
+        self.assertIn("block.weight", loaded)
+        self.assertIn("text_embedding_projection.aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.video_aggregate_embed.weight", loaded)
+        self.assertIn("text_embedding_projection.audio_aggregate_embed.weight", loaded)
+
+    def test_ltx2_3_configs_expose_required_flags(self):
+        transformer_config = _get_ltx2_transformer_config("2.3")
+        connectors_config = _get_ltx2_connectors_config("2.3")
+        vocoder_config = _get_ltx2_vocoder_config("2.3")
+
+        self.assertTrue(transformer_config["gated_attn"])
+        self.assertTrue(transformer_config["cross_attn_mod"])
+        self.assertFalse(transformer_config["use_prompt_embeddings"])
+        self.assertTrue(connectors_config["per_modality_projections"])
+        self.assertTrue(connectors_config["video_gated_attn"])
+        self.assertEqual(vocoder_config["output_sampling_rate"], 48000)
+        self.assertEqual(vocoder_config["bwe_hidden_channels"], 512)
+
+    def test_ltx2_3_video_vae_config_matches_decoder_checkpoint_layout(self):
+        config = _get_ltx2_video_vae_config("2.3")
+        vae = AutoencoderKLLTX2Video.from_config(config)
+
+        self.assertEqual(config["upsample_type"], ("spatial", "temporal", "spatiotemporal", "spatiotemporal"))
+        self.assertEqual(config["upsample_residual"], (True, True, True, True))
+        self.assertEqual(config["decoder_spatial_padding_mode"], "reflect")
+        self.assertEqual(
+            [block.upsamplers[0].stride for block in vae.decoder.up_blocks],
+            [(2, 2, 2), (2, 2, 2), (2, 1, 1), (1, 2, 2)],
+        )
+        self.assertEqual(
+            [block.upsamplers[0].residual for block in vae.decoder.up_blocks],
+            [True, True, True, True],
+        )
+        self.assertEqual(
+            [tuple(block.upsamplers[0].conv.conv.weight.shape) for block in vae.decoder.up_blocks],
+            [
+                (4096, 1024, 3, 3, 3),
+                (4096, 512, 3, 3, 3),
+                (512, 512, 3, 3, 3),
+                (512, 256, 3, 3, 3),
+            ],
+        )
+
+    def test_vocoder_upsampler_remap_handles_root_level_keys(self):
+        state_dict = {
+            "ups.0.weight": torch.ones(1),
+            "ups.0.bias": torch.zeros(1),
+        }
+
+        _apply_remap_rules(state_dict, rename_dict={}, special_keys_remap={"ups.": _convert_ltx2_3_vocoder_upsamplers})
+
+        self.assertIn("upsamplers.0.weight", state_dict)
+        self.assertIn("upsamplers.0.bias", state_dict)
+        self.assertNotIn("ups.0.weight", state_dict)
+        self.assertNotIn("ups.0.bias", state_dict)
 
 
 if __name__ == "__main__":

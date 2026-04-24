@@ -705,6 +705,8 @@ class Flux(ImageModelFoundation):
         lat_in = torch.cat([packed_noisy_latents, cond_seq], dim=1) if use_cond else packed_noisy_latents
         id_in = torch.cat([img_ids, cond_ids], dim=1) if use_cond else img_ids
 
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+
         flux_transformer_kwargs = {
             "hidden_states": lat_in,
             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
@@ -728,6 +730,8 @@ class Flux(ImageModelFoundation):
         }
         if hidden_states_buffer is not None:
             flux_transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        if grounding_kwargs is not None:
+            flux_transformer_kwargs["grounding_kwargs"] = grounding_kwargs
         if self.config.flux_attention_masked_training:
             attention_mask = prepared_batch["encoder_attention_mask"]
             if attention_mask is None:
@@ -1010,6 +1014,12 @@ class Flux(ImageModelFoundation):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline
         ):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
+        if self.config.model_flavour == "kontext" and getattr(self.config, "validation_using_datasets", False):
+            logger.warning(
+                "Flux Kontext validation uses its standard conditioning path, not --validation_using_datasets. "
+                "Disabling --validation_using_datasets and using --eval_dataset_id to select the validation dataset."
+            )
+            self.config.validation_using_datasets = False
 
         if self.config.model_flavour == "libreflux":
             if self.config.validation_num_inference_steps < 28:

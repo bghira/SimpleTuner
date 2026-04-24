@@ -84,6 +84,13 @@
                     <span>Conditioning</span>
                 </button>
                 <button type="button"
+                        :class="{'active': modalTab === 'grounding'}"
+                        x-show="editingDataset.dataset_type === 'image' || editingDataset.dataset_type === 'video'"
+                        @click="modalTab = 'grounding'">
+                    <i class="fas fa-vector-square"></i>
+                    <span>Grounding</span>
+                </button>
+                <button type="button"
                         :class="{'active': modalTab === 'advanced'}"
                         @click="modalTab = 'advanced'"
                         x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
@@ -129,6 +136,11 @@
                 <!-- Conditioning Tab -->
                 <div x-show="modalTab === 'conditioning'" x-cloak>
                     {% include 'components/dataloader/sections/conditioning_body.html' %}
+                </div>
+
+                <!-- Grounding Tab -->
+                <div x-show="modalTab === 'grounding'" x-cloak>
+                    {% include 'components/dataloader/sections/grounding_body.html' %}
                 </div>
 
                 <!-- Caching Tab -->

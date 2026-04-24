@@ -182,6 +182,6 @@ U-REPAの場合は、`urepa_` プレフィックスを使用します：
 
 ## 参考文献
 
-- [REPA論文](https://arxiv.org/abs/2402.17750) - 生成のための表現アラインメント
-- [U-REPA論文](https://arxiv.org/abs/2410.xxxxx) - UNetアーキテクチャ向けユニバーサルREPA（NeurIPS 2025）
-- [DINOv2](https://github.com/facebookresearch/dinov2) - 自己教師あり視覚エンコーダ
+- [REPA論文](https://github.com/sihyun-yu/REPA) - 生成のための表現アラインメント
+- [U-REPA論文](https://github.com/YuchuanTian/U-REPA) - UNetアーキテクチャ向けユニバーサルREPA（NeurIPS 2025）
+- [DINOv2](https://github.com/facebookresearch/dinov3) - 自己教師あり視覚エンコーダ

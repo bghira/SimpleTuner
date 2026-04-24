@@ -44,6 +44,7 @@ class Kandinsky5Video(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLHunyuanVideoOptimized
     LATENT_CHANNEL_COUNT = 16
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
@@ -547,6 +548,10 @@ class Kandinsky5Video(VideoModelFoundation):
             )
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            transformer_kwargs["grounding_kwargs"] = grounding_kwargs
 
         model_output = self.model(
             hidden_states=latents.to(dtype),

@@ -18,6 +18,7 @@
 | **Lumina2** | 2B | [Lumina2 ガイド](LUMINA2.md) |
 | **HiDream** | 17B MoE | [HiDream ガイド](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image ガイド](ZIMAGE.md) |
+| **ERNIE-Image** | - | [ERNIE ガイド](ERNIE.md) |
 
 ### DiT / Transformer
 
@@ -60,9 +61,9 @@
 
 ## 音声モデル
 
-| モデル | パラメータ | ガイド |
-|-------|------------|-------|
-| **ACE-Step** | 3.5B | [ACE-Step ガイド](ACE_STEP.md) |
+| モデル | サイズ / バージョン | ガイド |
+|-------|------------------------|-------|
+| **ACE-Step** | 3.5B / 1.5 | [ACE-Step ガイド](ACE_STEP.md) |
 | **HeartMuLa** | 3B | [HeartMuLa ガイド](HEARTMULA.md) |
 
 ## モデルの選び方
@@ -85,5 +86,5 @@
 **用途別:**
 
 - 画像編集/コンディショニングには **Flux Kontext**
-- テキストから音楽には **ACE-Step**
+- テキストから音楽の LoRA 学習には **ACE-Step**（v1 / v1.5）
 - 自己回帰のテキストから音声には **HeartMuLa**

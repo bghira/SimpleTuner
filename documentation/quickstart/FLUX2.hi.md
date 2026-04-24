@@ -25,6 +25,8 @@ FLUX.2 तीन वेरिएंट में आता है:
 }
 ```
 
+> **महत्वपूर्ण**: `klein-4b` और `klein-9b` के लिए `pretrained_text_encoder_model_name_or_path` को unset छोड़ें, जब तक कि आप bundled Qwen3 text encoder को जानबूझकर बदलना न चाहते हों। इस field को सेट करने पर Klein का default override हो जाता है और किसी दूसरे text encoder का download शुरू हो सकता है।
+
 ## मॉडल ओवरव्यू
 
 FLUX.2-dev, FLUX.1 से बड़े आर्किटेक्चरल बदलाव लाता है:

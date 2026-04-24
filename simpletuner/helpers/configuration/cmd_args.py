@@ -17,6 +17,7 @@ from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
+from simpletuner.helpers.configuration.template_vars import render_modelspec_comment
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import (
     AttentionBackendMode,
@@ -212,35 +213,7 @@ def _parse_json_like_option(raw_value, option_name: str):
 
 def _process_modelspec_comment(value) -> str | None:
     """Process modelspec_comment: handle array, JSON string, env placeholders."""
-    if value is None:
-        return None
-
-    # If it's a string that looks like JSON array, parse it first
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            try:
-                parsed = json.loads(stripped)
-                if isinstance(parsed, list):
-                    value = parsed
-            except (json.JSONDecodeError, ValueError):
-                pass  # Not valid JSON, treat as regular string
-
-    if isinstance(value, list):
-        value = "\n".join(str(item) for item in value)
-    elif not isinstance(value, str):
-        value = str(value)
-
-    value = value.strip()
-    if not value:
-        return None
-
-    def replace_env(match):
-        var_name = match.group(1)
-        return os.environ.get(var_name, "")
-
-    value = re.sub(r"\{env:([^}]+)\}", replace_env, value)
-    return value or None
+    return render_modelspec_comment(value)
 
 
 def _contains_ast_markers(candidate: str) -> bool:
@@ -1260,8 +1233,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             strength = float(strength_value)
         except (TypeError, ValueError):
             raise ValueError(f"Invalid --validation_adapter_strength value: {strength_value}") from None
-        if strength <= 0:
-            raise ValueError("--validation_adapter_strength must be greater than 0.")
+        if strength == 0:
+            raise ValueError("--validation_adapter_strength must not be 0.")
         args.validation_adapter_strength = strength
 
     mode_value = getattr(args, "validation_adapter_mode", None)

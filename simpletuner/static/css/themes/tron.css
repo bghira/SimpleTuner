@@ -150,5 +150,6 @@ body[data-theme="tron"],
   --slate-border-hover: var(--colors-slate-border-hover);
   --modal-backdrop: var(--colors-modal-backdrop);
   --modal-surface: var(--colors-modal-surface);
+  --modal-header-bg: var(--colors-modal-header-bg);
   --modal-border: var(--colors-modal-border);
 }

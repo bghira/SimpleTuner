@@ -3,7 +3,9 @@ import os
 import threading
 from typing import Optional, Sequence
 
+import safetensors.torch
 import torch
+from accelerate import init_empty_weights
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
@@ -19,6 +21,7 @@ from simpletuner.helpers.models.ltxvideo2 import (
 from simpletuner.helpers.models.ltxvideo2.audio_autoencoder import AutoencoderKLLTX2Audio
 from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
 from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
+    _get_ltx2_video_vae_config,
     convert_ltx2_audio_vae,
     convert_ltx2_connectors,
     convert_ltx2_transformer,
@@ -31,7 +34,7 @@ from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
-from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder
+from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -49,6 +52,8 @@ LTX2_FLAVOUR_FILENAMES = {
     "dev-fp8": "ltx-2-19b-dev-fp8.safetensors",
     "2.0": "ltx-2-19b-dev.safetensors",
     "2": "ltx-2-19b-dev.safetensors",
+    "2.3-dev": "ltx-2.3-22b-dev.safetensors",
+    "2.3-distilled": "ltx-2.3-22b-distilled.safetensors",
 }
 LTX2_TRANSFORMER_PREFIX = "model.diffusion_model."
 LTX2_VIDEO_VAE_PREFIX = "vae."
@@ -63,6 +68,7 @@ class LTXVideo2(VideoModelFoundation):
     DEFAULT_AUDIO_CHANNELS = 2
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLLTX2Video
     LATENT_CHANNEL_COUNT = 128
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
@@ -104,6 +110,8 @@ class LTXVideo2(VideoModelFoundation):
         "dev": "Lightricks/LTX-2",
         "dev-fp4": "Lightricks/LTX-2",
         "dev-fp8": "Lightricks/LTX-2",
+        "2.3-dev": "dg845/LTX-2.3-Diffusers",
+        "2.3-distilled": "dg845/LTX-2.3-Distilled-Diffusers",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -375,6 +383,8 @@ class LTXVideo2(VideoModelFoundation):
         flavour_value = str(flavour).strip().lower()
         if flavour_value in {"2", "2.0", "dev", "dev-fp4", "dev-fp8"}:
             return "2.0"
+        if flavour_value in {"2.3-dev", "2.3-distilled"}:
+            return "2.3"
         if flavour_value == "test":
             return "test"
         raise ValueError(f"Unsupported LTX-2 model flavour '{flavour}'.")
@@ -424,6 +434,14 @@ class LTXVideo2(VideoModelFoundation):
         self._combined_checkpoint_path = hf_hub_download(repo_id=model_path, filename=filename)
         return self._combined_checkpoint_path
 
+    def _model_config_path(self):
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if isinstance(model_path, str) and model_path.endswith((".safetensors", ".sft", ".gguf")):
+            flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+            flavour_key = str(flavour).strip().lower()
+            return self.HUGGINGFACE_PATHS.get(flavour_key, self.HUGGINGFACE_PATHS.get("dev"))
+        return super()._model_config_path()
+
     def _build_transformer_config_overrides(self) -> dict:
         overrides = apply_musubi_pretrained_defaults(self.config, {})
         if getattr(self.config, "twinflow_enabled", False):
@@ -434,15 +452,17 @@ class LTXVideo2(VideoModelFoundation):
         shift = getattr(self.config, "flow_schedule_shift", None)
         if shift is None:
             shift = 1.0
+        flavour_value = str(getattr(self.config, "model_flavour", "") or "").strip().lower()
+        is_distilled = "distilled" in flavour_value
         return FlowMatchEulerDiscreteScheduler(
             num_train_timesteps=1000,
             shift=float(shift),
-            use_dynamic_shifting=True,
+            use_dynamic_shifting=not is_distilled,
             base_shift=0.95,
             max_shift=2.05,
             base_image_seq_len=1024,
             max_image_seq_len=4096,
-            shift_terminal=0.1,
+            shift_terminal=None if is_distilled else 0.1,
         )
 
     def _load_audio_vae(self, move_to_device: bool = True):
@@ -545,7 +565,8 @@ class LTXVideo2(VideoModelFoundation):
             else:
                 model_path = self._model_config_path()
                 logger.info("Loading LTX-2 vocoder from %s", model_path)
-                vocoder = LTX2Vocoder.from_pretrained(
+                vocoder_cls = LTX2VocoderWithBWE if self._resolve_ltx2_version() == "2.3" else LTX2Vocoder
+                vocoder = vocoder_cls.from_pretrained(
                     model_path,
                     subfolder="vocoder",
                     torch_dtype=self.config.weight_dtype,
@@ -569,6 +590,66 @@ class LTXVideo2(VideoModelFoundation):
         state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_VIDEO_VAE_PREFIX)
         self.vae = convert_ltx2_video_vae(state_dict, version=self._resolve_ltx2_version())
         del state_dict
+
+    def _resolve_diffusers_component_file(self, base_path: str, component_subfolder: str, filename: str) -> str:
+        if os.path.isdir(base_path):
+            candidates = (
+                os.path.join(base_path, component_subfolder, filename),
+                os.path.join(base_path, filename),
+            )
+            for candidate in candidates:
+                if os.path.isfile(candidate):
+                    return candidate
+            raise ValueError(f"Could not find {component_subfolder}/{filename} under {base_path}.")
+
+        return hf_hub_download(
+            repo_id=base_path,
+            filename=f"{component_subfolder}/{filename}",
+            revision=self.config.revision,
+        )
+
+    def _resolve_diffusers_component_weight_file(self, base_path: str, component_subfolder: str) -> str:
+        variant = getattr(self.config, "variant", None)
+        filenames = []
+        if variant:
+            filenames.append(f"diffusion_pytorch_model.{variant}.safetensors")
+        filenames.append("diffusion_pytorch_model.safetensors")
+
+        last_error = None
+        for filename in filenames:
+            try:
+                return self._resolve_diffusers_component_file(base_path, component_subfolder, filename)
+            except (EntryNotFoundError, ValueError) as exc:
+                last_error = exc
+
+        raise ValueError(f"Could not resolve {component_subfolder} weights for {base_path}.") from last_error
+
+    def _load_video_vae_from_diffusers_repo(self):
+        if self.vae is not None:
+            return
+
+        vae_path = (
+            getattr(self.config, "pretrained_vae_model_name_or_path", None) or self.config.pretrained_model_name_or_path
+        )
+        if vae_path is None:
+            raise ValueError("Unable to resolve video VAE path for LTX-2.")
+
+        logger.info("Loading LTX-2 video VAE from Diffusers source %s with corrected 2.3 config", vae_path)
+        weight_path = self._resolve_diffusers_component_weight_file(vae_path, "vae")
+        state_dict = safetensors.torch.load_file(weight_path, device="cpu")
+        diffusers_config = _get_ltx2_video_vae_config("2.3")
+        with init_empty_weights():
+            vae = self.AUTOENCODER_CLASS.from_config(diffusers_config)
+        vae.load_state_dict(state_dict, strict=True, assign=True)
+        vae.register_to_config(_name_or_path=vae_path)
+        self.vae = vae
+        self.config.vae_kwargs = {
+            "pretrained_model_name_or_path": vae_path,
+            "subfolder": "vae",
+            "revision": self.config.revision,
+            "force_upcast": False,
+            "variant": self.config.variant,
+        }
 
     def _configure_video_vae_settings(self, move_to_device: bool = True):
         if self.vae is None:
@@ -612,6 +693,10 @@ class LTXVideo2(VideoModelFoundation):
     def load_vae(self, move_to_device: bool = True):
         if self._uses_combined_checkpoint():
             self._load_video_vae_from_combined()
+            self._configure_video_vae_settings(move_to_device=move_to_device)
+            self.post_vae_load_setup()
+        elif self._resolve_ltx2_version() == "2.3":
+            self._load_video_vae_from_diffusers_repo()
             self._configure_video_vae_settings(move_to_device=move_to_device)
             self.post_vae_load_setup()
         else:
@@ -1512,6 +1597,10 @@ class LTXVideo2(VideoModelFoundation):
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if is_audio_only:
             transformer_kwargs["audio_only"] = True
+
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+        if grounding_kwargs is not None:
+            transformer_kwargs["grounding_kwargs"] = grounding_kwargs
 
         model_output = self.model(**transformer_kwargs)
         if capture_hidden:

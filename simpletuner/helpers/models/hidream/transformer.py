@@ -14,6 +14,7 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import repeat
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
@@ -1303,6 +1304,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        grounding_kwargs: dict | None = None,
     ):
         """
         Forward pass for the HiDreamImageTransformer2DModel.
@@ -1544,6 +1546,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             ids = torch.cat((img_ids, txt_ids), dim=1)
             rope = self.pe_embedder(ids)
 
+        # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
+        if grounding_kwargs is None:
+            grounding_kwargs = (joint_attention_kwargs or {}).get("_grounding_kwargs")
+        grounding_objs = None
+        if hasattr(self, "position_net") and grounding_kwargs is not None:
+            grounding_objs = self.position_net(**grounding_kwargs)
+
         # 5. Process through transformer blocks
         block_id = 0
 
@@ -1641,6 +1650,9 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                     adaln_input=adaln_input,
                     rope=rope,
                 )
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             # Keep consistent encoder states length
             initial_encoder_hidden_states = initial_encoder_hidden_states[:, :initial_encoder_hidden_states_seq_len]
@@ -1773,6 +1785,9 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
             # Maintain consistent hidden state length
             hidden_states = hidden_states[:, :hidden_states_seq_len]
+
+            if grounding_objs is not None and hasattr(block, "fuser"):
+                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
             # TREAD end routing for single stream layers
             if use_routing:

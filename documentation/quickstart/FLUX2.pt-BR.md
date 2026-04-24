@@ -25,6 +25,8 @@ Para selecionar uma variante, defina `model_flavour` na sua configuração:
 }
 ```
 
+> **Importante**: Para `klein-4b` e `klein-9b`, deixe `pretrained_text_encoder_model_name_or_path` sem definir, a menos que você realmente queira substituir o encoder Qwen3 incluído. Ao definir esse campo, você sobrescreve o padrão do Klein e pode disparar o download de outro encoder de texto.
+
 ## Visão geral do modelo
 
 O FLUX.2-dev introduz mudanças arquiteturais significativas em relação ao FLUX.1:

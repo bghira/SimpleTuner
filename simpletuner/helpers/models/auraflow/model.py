@@ -36,6 +36,7 @@ class Auraflow(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")
@@ -294,6 +295,7 @@ class Auraflow(ImageModelFoundation):
         )
 
         timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -307,6 +309,7 @@ class Auraflow(ImageModelFoundation):
             timestep_sign=timestep_sign,
             return_dict=True,
             hidden_states_buffer=hidden_states_buffer,
+            grounding_kwargs=grounding_kwargs,
         ).sample
 
         return {

@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import torch
 from diffusers import AutoencoderKL
-from transformers import AutoModelForCausalLM, AutoTokenizer, Siglip2ImageProcessorFast, Siglip2VisionModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, Siglip2ImageProcessor, Siglip2VisionModel
 
 from simpletuner.helpers.acceleration import (
     AccelerationBackend,
@@ -264,7 +264,7 @@ class ZImageOmni(ImageModelFoundation):
         return True
 
     class _SiglipConditioningImageEmbedder:
-        def __init__(self, siglip: Siglip2VisionModel, processor: Siglip2ImageProcessorFast, device, dtype):
+        def __init__(self, siglip: Siglip2VisionModel, processor: Siglip2ImageProcessor, device, dtype):
             self.siglip = siglip
             self.processor = processor
             self.device = device
@@ -319,7 +319,7 @@ class ZImageOmni(ImageModelFoundation):
             subfolder=siglip_subfolder,
             revision=siglip_revision,
         )
-        siglip_processor = Siglip2ImageProcessorFast.from_pretrained(
+        siglip_processor = Siglip2ImageProcessor.from_pretrained(
             repo_id,
             subfolder=siglip_processor_subfolder,
             revision=siglip_processor_revision,

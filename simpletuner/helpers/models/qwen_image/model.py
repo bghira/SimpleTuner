@@ -90,6 +90,10 @@ class QwenImage(ImageModelFoundation):
     }
     MODEL_LICENSE = "other"
 
+    ASSISTANT_LORA_FLAVOURS = ["v2.0"]
+    ASSISTANT_LORA_PATH = ""
+    ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
+
     # Qwen Image uses a different text encoder configuration
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -332,6 +336,42 @@ class QwenImage(ImageModelFoundation):
         )
 
         logger.info("TREAD training is enabled")
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._maybe_load_assistant_lora()
+
+    def _assistant_lora_weight_for_flavour(self):
+        weight_map = getattr(self, "ASSISTANT_LORA_WEIGHT_NAMES", None) or {}
+        flavour = getattr(self.config, "model_flavour", None)
+        if isinstance(weight_map, dict) and flavour in weight_map:
+            return weight_map.get(flavour)
+        return getattr(self, "ASSISTANT_LORA_WEIGHT_NAME", None)
+
+    def _maybe_load_assistant_lora(self):
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not self.supports_assistant_lora(self.config):
+            return
+        if getattr(self.config, "model_type", "").lower() != "lora":
+            return
+
+        assistant_path = getattr(self.config, "assistant_lora_path", None) or self.ASSISTANT_LORA_PATH
+        if not assistant_path:
+            return
+
+        from simpletuner.helpers.assistant_lora import load_assistant_adapter
+
+        weight_name = getattr(self.config, "assistant_lora_weight_name", None) or self._assistant_lora_weight_for_flavour()
+        loaded = load_assistant_adapter(
+            transformer=self.unwrap_model(model=self.model),
+            pipeline_cls=QwenImagePipeline,
+            lora_path=assistant_path,
+            adapter_name=self.assistant_adapter_name,
+            low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+            weight_name=weight_name,
+        )
+        self.assistant_lora_loaded = loaded
 
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
@@ -733,6 +773,38 @@ class QwenImage(ImageModelFoundation):
                 if mask.dim() == 1:
                     mask = mask.unsqueeze(0)
                 masks.append(mask)
+
+        # Pad all embeds and masks to the maximum sequence length in the batch
+        # before torch.cat. Without this, samples with different prompt lengths
+        # produce tensors of mismatched shape and torch.cat raises a RuntimeError.
+        if len(embeds) > 1:
+            max_seq_len = max(e.shape[1] for e in embeds)
+            hidden_dim = embeds[0].shape[2]
+            padded_embeds = []
+            padded_masks = []
+            for i, embed in enumerate(embeds):
+                seq_len = embed.shape[1]
+                if seq_len < max_seq_len:
+                    pad_len = max_seq_len - seq_len
+                    # Zero-pad the hidden dimension tail
+                    pad = torch.zeros(embed.shape[0], pad_len, hidden_dim, dtype=embed.dtype, device=embed.device)
+                    embed = torch.cat([embed, pad], dim=1)
+                padded_embeds.append(embed)
+
+                if masks:
+                    mask = masks[i] if i < len(masks) else None
+                    if mask is not None:
+                        m_seq = mask.shape[1]
+                        if m_seq < max_seq_len:
+                            pad_len = max_seq_len - m_seq
+                            mask_pad = torch.zeros(mask.shape[0], pad_len, dtype=mask.dtype, device=mask.device)
+                            mask = torch.cat([mask, mask_pad], dim=1)
+                        padded_masks.append(mask)
+
+            return {
+                "prompt_embeds": torch.cat(padded_embeds, dim=0),
+                "attention_masks": torch.cat(padded_masks, dim=0) if padded_masks else None,
+            }
 
         return {
             "prompt_embeds": torch.cat(embeds, dim=0),

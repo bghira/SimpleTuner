@@ -621,6 +621,8 @@ class Chroma(ImageModelFoundation):
             dim=1,
         )
 
+        grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
+
         transformer_kwargs = {
             "hidden_states": packed_noisy_latents,
             "timestep": timesteps,
@@ -637,6 +639,8 @@ class Chroma(ImageModelFoundation):
         }
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        if grounding_kwargs is not None:
+            transformer_kwargs["grounding_kwargs"] = grounding_kwargs
 
         if (
             getattr(self.config, "tread_config", None) is not None
