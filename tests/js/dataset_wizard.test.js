@@ -102,6 +102,7 @@ describe('datasetWizardComponent', () => {
             expect(component.wizardOpen).toBe(false);
             expect(component.wizardStep).toBe(1);
             expect(component.saving).toBe(false);
+            expect(component.activeSubTab).toBe('configuration');
 
             // New folder state
             expect(component.showNewFolderInput).toBe(false);
@@ -126,6 +127,7 @@ describe('datasetWizardComponent', () => {
 
         test('has all required fields for Alpine state management', () => {
             const requiredFields = [
+                'activeSubTab',
                 'showNewFolderInput',
                 'newFolderName',
                 'newFolderError',

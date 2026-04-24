@@ -1263,15 +1263,27 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             # Dismiss any visible toast that might block the button
             trainer_page.dismiss_toast()
 
-            trainer_page.wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Add a dataset to the current configuration']"))
-            ).click()
-
             trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
+            opened = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
+                if (!comp) {
+                    done(false);
+                    return;
+                }
+                Promise.resolve(comp.openWizard())
+                    .then(() => done(true))
+                    .catch((err) => done(String(err)));
+                """
+            )
+            self.assertTrue(opened)
 
             state = driver.execute_script(
                 """
-                const comp = window.datasetWizardComponentInstance;
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
                 if (!comp) { return { ready: false }; }
                 try {
                     comp.openNewFolderDialog();
@@ -1280,7 +1292,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                     comp.openUploadModal();
                     const uploadOpen = comp.uploadModalOpen === true;
                     comp.closeUploadModal();
-                    const hasFields = ['showNewFolderInput','newFolderName','newFolderError','uploadModalOpen','selectedUploadFiles','captionModalOpen','captionStatus','pendingCaptions']
+                    const hasFields = ['activeSubTab','showNewFolderInput','newFolderName','newFolderError','uploadModalOpen','selectedUploadFiles','captionModalOpen','captionStatus','pendingCaptions']
                         .every(key => key in comp && typeof comp[key] !== 'undefined');
                     return { ready: true, hasFields, showNewFolder, uploadOpen };
                 } catch (err) {
@@ -1296,7 +1308,8 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
 
             step_ready = driver.execute_script(
                 """
-                const comp = window.datasetWizardComponentInstance;
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
                 if (!comp) { return null; }
                 const captionsStep = comp.getStepNumber('captions');
                 if (!captionsStep) { return null; }
@@ -1348,6 +1361,87 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertNotIn("is not defined", message)
 
         self.for_each_browser("test_dataset_wizard_initializes_modal_state", scenario)
+
+    def test_dataset_wizard_name_step_enables_next_after_typing(self) -> None:
+        """The Name step should react to Dataset ID input when no primary dataset exists yet."""
+        datasets_root = self.home_path / "datasets"
+        datasets_root.mkdir(parents=True, exist_ok=True)
+        self.seed_defaults(datasets_dir=datasets_root)
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            trainer_page.dismiss_toast()
+
+            trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
+            opened = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
+                if (!comp) {
+                    done(false);
+                    return;
+                }
+                Promise.resolve(comp.openWizard())
+                    .then(() => done(true))
+                    .catch((err) => done(String(err)));
+                """
+            )
+            self.assertTrue(opened)
+
+            next_button = trainer_page.wait.until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, ".dataset-wizard-modal button[aria-label='Continue to next step']")
+                )
+            )
+            self.assertFalse(next_button.is_enabled())
+
+            trainer_page.wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".dataset-wizard-modal input[x-model='currentDataset.id']"))
+            )
+            driver.execute_script(
+                """
+                const input = document.querySelector(".dataset-wizard-modal input[x-model='currentDataset.id']");
+                input.value = 'primary-images';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                """
+            )
+
+            trainer_page.wait.until(
+                lambda d: d.execute_script(
+                    """
+                    const button = document.querySelector(".dataset-wizard-modal button[aria-label='Continue to next step']");
+                    return button && !button.disabled;
+                    """
+                )
+            )
+
+            state = driver.execute_script(
+                """
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
+                return {
+                    canProceed: comp ? comp.canProceed === true : null,
+                    hasPrimaryDatasetAvailable: comp ? comp.hasPrimaryDatasetAvailable === true : null,
+                    regularisationChecked: !!document.querySelector('#regularisationDatasetToggle')?.checked,
+                    infoVisible: (() => {
+                        const alert = document.querySelector('.dataset-wizard-modal .alert-info');
+                        if (!alert) { return null; }
+                        return window.getComputedStyle(alert).display !== 'none';
+                    })()
+                };
+                """
+            )
+            self.assertTrue(state.get("canProceed"), state)
+            self.assertFalse(state.get("hasPrimaryDatasetAvailable"), state)
+            self.assertFalse(state.get("regularisationChecked"), state)
+            self.assertTrue(state.get("infoVisible"), state)
+
+        self.for_each_browser("test_dataset_wizard_name_step_enables_next_after_typing", scenario)
 
 
 class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
