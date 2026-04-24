@@ -129,7 +129,7 @@ configs/
 │   └── multidatabackend-DataBackend-Name.json
 ```
 
-<img width="788" height="465" alt="image" src="https://github.com/user-attachments/assets/656aa287-3b59-476d-ac45-6ede325fe858" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/4be22081-f13d-4aed-a87c-2313ddefc8a4" />
 
 ##### Migrating from command-line usage
 
@@ -137,14 +137,14 @@ If you've been using SimpleTuner before without a WebUI, you can point to your e
 
 For new users, the default location of your configs and datasets will `~/.simpletuner/` and it's recommended to move your datasets somewhere with more space:
 
-<img width="775" height="454" alt="image" src="https://github.com/user-attachments/assets/39238810-da26-4bde-8fc9-1002251f778a" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/c5b3ab53-654e-4a9b-8e2d-7951f11619ef" />
 
 
 #### (Multi-)GPU selection and configuration
 
-After configuring the default paths, you'll reach a step where multi-GPU can be configured (pictured on a Macbook)
+After configuring the default paths, you'll reach a step where multi-GPU can be configured (pictured on a NVIDIA system)
 
-<img width="755" height="646" alt="image" src="https://github.com/user-attachments/assets/de43a09d-06a7-45c0-8111-7a0b014499c8" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/61d5a7bc-0a02-4a0a-8df0-207cce4b7bc1" />
 
 If you've got multiple GPUs and would like to just use the second one, this is where you can do that.
 
@@ -154,7 +154,7 @@ If you've got multiple GPUs and would like to just use the second one, this is w
 
 If you did not have any pre-existing configurations found in your `configs_dir`, you'll be asked to create **your first training environment**:
 
-<img width="750" height="1381" alt="image" src="https://github.com/user-attachments/assets/4a3ee88f-c70f-416c-ae5d-6593deb9ca35" />
+<img width="500" height="640" alt="image" src="https://github.com/user-attachments/assets/2110287a-16fd-4f87-893b-86d2a555a10f" />
 
 Use **Bootstrap From Example** to select an example config to start from, or simply enter a descriptive name and create a random environment if you prefer to use a setup wizard instead.
 
@@ -164,7 +164,7 @@ If you had any pre-existing configuration environments, they will show up in thi
 
 Otherwise, the option we just created while onboarding will be selected and active already.
 
-<img width="965" height="449" alt="image" src="https://github.com/user-attachments/assets/d8c73cef-ecbb-4229-ad54-9ccd55f8175a" />
+<img width="448" height="225" alt="image" src="https://github.com/user-attachments/assets/66fef6a9-2040-47fd-b22d-918470677992" />
 
 Use **Manage Configs** to get to the `Environment` tab where a list of your environments, dataloader and other configurations can be found.
 
@@ -172,11 +172,11 @@ Use **Manage Configs** to get to the `Environment` tab where a list of your envi
 
 I've worked hard to provide a comprehensive setup wizard that will help you configure some of the most important settings in a no-nonsense bootstrap to get started.
 
-<img width="394" height="286" alt="image" src="https://github.com/user-attachments/assets/21e99854-1d75-4ba9-8be6-15e715d77f4e" />
+<img width="470" height="358" alt="image" src="https://github.com/user-attachments/assets/e4bf1a4e-716c-4101-b753-e9e24bb42d8a" />
 
 In the upper left navigation menu, the Wizard button will bring you to a selection dialogue:
 
-<img width="1186" height="1756" alt="image" src="https://github.com/user-attachments/assets/f6d4ac57-e3f6-4060-a4d3-b7f0829d7350" />
+<img width="448" height="440" alt="image" src="https://github.com/user-attachments/assets/68324fa8-3ca9-45b1-b947-1e7738fd1d8c" />
 
 And then all built-in model variants are offered. Each variant will pre-enable required settings like Attention Masking or extended token limits.
 
@@ -188,7 +188,7 @@ In general, unless you're training a Stable Diffusion type model, int8-quanto is
 
 Some small models like Cosmos2, Sana, and PixArt, really do not like being quantised.
 
-<img width="1106" height="1464" alt="image" src="https://github.com/user-attachments/assets/0284d987-6060-4692-934a-0905ef2d5ca1" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/c2e721f2-b4da-4cd0-84fd-7ac81993e87c" />
 
 #### Full-rank training
 
@@ -198,14 +198,13 @@ However, if you do wish to train a full checkpoint, you're able to configure Dee
 
 FSDP2 is supported, but not configurable in this wizard. Simply leave DeepSpeed disabled and manually configure FSDP2 later if you wish to use it
 
-<img width="1097" height="1278" alt="image" src="https://github.com/user-attachments/assets/60475318-facd-4da1-a2a1-67cecff18e04" />
-
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/88438f1c-b0a2-4249-afd0-7878aa1abada" />
 
 #### How long do you want to train for?
 
 You'll have to decide whether you wish to measure training time in epochs or steps. It all is pretty much equal in the end, though some people develop a preference one way or the other.
 
-<img width="1136" height="1091" alt="image" src="https://github.com/user-attachments/assets/9146cdcd-f277-45e5-92cb-f74f23039d51" />
+<img width="508" height="475" alt="image" src="https://github.com/user-attachments/assets/dcb54279-0ce7-4c66-a9ab-4dd26f87278c" />
 
 #### Sharing your model via Hugging Face Hub
 
@@ -213,7 +212,20 @@ Optionally, you can publish your final *and* intermediate checkpoints to [Huggin
 
 If you do select to publish your model, be mindful to select `Private repo` if you don't want your model to be accessible to the broader public.
 
-<img width="1090" height="859" alt="image" src="https://github.com/user-attachments/assets/d1f86b6b-b0d5-4caa-b3ff-6bd106928094" />
+<img width="508" height="370" alt="image" src="https://github.com/user-attachments/assets/8d2d282b-e66f-48a8-a40e-4e4ecc2d280b" />
+
+#### Checkpoint frequency
+
+When training, your model will be saved periodically to disk. Keeping more checkpoints requires greater disk space.
+
+Checkpoints allow resuming training later without having to repeat all of the steps. Keeping a handful of checkpoints allows testing multiple versions of your model to keep the one that works the best for you.
+
+It's recommended to keep a checkpoint every 10% though it depends on how much data you're training on. With a small dataset, you'll want to checkpoint often to ensure you're not overfitting.
+
+Extremely large datasets will benefit from longer checkpoint intervals to avoid wasting time writing them to disk.
+
+<img width="508" height="485" alt="image" src="https://github.com/user-attachments/assets/c7b1cd0b-a1b9-47ec-87f9-1ecac2e0841a" />
+
 
 #### Model validations
 
@@ -241,7 +253,8 @@ Flux-focused sample: `simpletuner/examples/external-validation/fal_post_upload.p
 
 Local GPU sample: `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on another GPU (defaults to `cuda:1`) and can be used even when no uploads occur.
 
-<img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
+
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 
 #### Logging training statistics
 
@@ -249,35 +262,33 @@ SimpleTuner has support for multiple target APIs if you wish to send your traini
 
 Note: None of your personal data, training logs, captions, or data are **ever** sent to SimpleTuner project developers. Control of your data is in **your** hands.
 
-<img width="1099" height="1067" alt="image" src="https://github.com/user-attachments/assets/c9be9a20-12ad-402a-9605-66ba5771e630" />
+<img width="508" height="438" alt="image" src="https://github.com/user-attachments/assets/0f8d15c5-456f-4637-af7e-c2f5f31cb968" />
 
 #### Dataset Configuration
 
 At this point, you can decide whether to keep any existing dataset, or create a new configuration (leaving any others untouched) through the Dataset Creation Wizard, which will appear upon clicking.
 
-<img width="1103" height="877" alt="image" src="https://github.com/user-attachments/assets/3d3cc391-52ed-422e-a4a1-676ca342df10" />
+<img width="508" height="290" alt="image" src="https://github.com/user-attachments/assets/b5a7f883-e180-4662-b84c-fff609c6b1df" />
 
 ##### Dataset Wizard
 
 If you elected to create a new dataset, you'll see the following wizard, which will walk you through the adding of a local or cloud dataset.
 
-<img width="1110" height="857" alt="image" src="https://github.com/user-attachments/assets/3719e0f5-774e-461d-be02-902e08a679f6" />
+<img width="508" height="332" alt="image" src="https://github.com/user-attachments/assets/c523930b-563e-4b5d-b104-8e7ce4658b2c" />
 
-<img width="1082" height="1255" alt="image" src="https://github.com/user-attachments/assets/ac38a3de-364a-447f-a734-cab2bdd5338d" />
+<img width="508" height="508" alt="image" src="https://github.com/user-attachments/assets/c263f58e-fd85-437e-811a-967b94e309fd" />
 
 For a local dataset, you'll be able to use the **Browse directories** button to access a dataset browser modal.
 
-<img width="1201" height="1160" alt="image" src="https://github.com/user-attachments/assets/66a333d0-30fa-45d1-a5b2-1e859d789677" />
+<img width="396" height="576" alt="image" src="https://github.com/user-attachments/assets/14c51685-3559-4d16-be59-ed4b0959ca32" />
 
 If you've pointed the datasets directory correctly during onboarding, you'll see your stuff here.
 
 Click the directory you wish to add, and then **Select Directory**.
 
-<img width="907" height="709" alt="image" src="https://github.com/user-attachments/assets/1d482655-158a-4e3f-93b7-ef158396813c" />
+<img width="454" height="356" alt="image" src="https://github.com/user-attachments/assets/1d482655-158a-4e3f-93b7-ef158396813c" />
 
 After this, you'll be guided through configuring resolution values and cropping.
-
-**NOTE**: SimpleTuner doesn't *upscale* images, so ensure they are at least as large as your configured resolution.
 
 When you reach the step to configure your captions, **carefully consider** which option is correct.
 

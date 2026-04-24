@@ -129,7 +129,7 @@ configs/
 │   └── multidatabackend-DataBackend-Name.json
 ```
 
-<img width="788" height="465" alt="image" src="https://github.com/user-attachments/assets/656aa287-3b59-476d-ac45-6ede325fe858" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/4be22081-f13d-4aed-a87c-2313ddefc8a4" />
 
 ##### Migrar desde uso en línea de comandos
 
@@ -137,14 +137,14 @@ Si antes usabas SimpleTuner sin WebUI, puedes apuntar a tu carpeta config/ exist
 
 Para usuarios nuevos, la ubicación predeterminada de tus configs y datasets será `~/.simpletuner/` y se recomienda mover tus datasets a un lugar con más espacio:
 
-<img width="775" height="454" alt="image" src="https://github.com/user-attachments/assets/39238810-da26-4bde-8fc9-1002251f778a" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/c5b3ab53-654e-4a9b-8e2d-7951f11619ef" />
 
 
 #### Selección y configuración de (multi-)GPU
 
-Después de configurar las rutas predeterminadas, llegarás a un paso donde se puede configurar multi-GPU (en la imagen, un Macbook)
+Después de configurar las rutas predeterminadas, llegarás a un paso donde se puede configurar multi-GPU (en la imagen, un sistema NVIDIA)
 
-<img width="755" height="646" alt="image" src="https://github.com/user-attachments/assets/de43a09d-06a7-45c0-8111-7a0b014499c8" />
+<img width="429" height="640" alt="image" src="https://github.com/user-attachments/assets/61d5a7bc-0a02-4a0a-8df0-207cce4b7bc1" />
 
 Si tienes varias GPUs y quieres usar solo la segunda, aquí es donde puedes hacerlo.
 
@@ -154,7 +154,7 @@ Si tienes varias GPUs y quieres usar solo la segunda, aquí es donde puedes hace
 
 Si no se encontraron configuraciones previas en tu `configs_dir`, se te pedirá crear **tu primer entorno de entrenamiento**:
 
-<img width="750" height="1381" alt="image" src="https://github.com/user-attachments/assets/4a3ee88f-c70f-416c-ae5d-6593deb9ca35" />
+<img width="500" height="640" alt="image" src="https://github.com/user-attachments/assets/2110287a-16fd-4f87-893b-86d2a555a10f" />
 
 Usa **Bootstrap From Example** para seleccionar un ejemplo de configuración como base, o simplemente ingresa un nombre descriptivo y crea un entorno aleatorio si prefieres usar un asistente de configuración.
 
@@ -164,7 +164,7 @@ Si tenías entornos de configuración preexistentes, aparecerán en este menú d
 
 De lo contrario, la opción que creamos durante el onboarding ya estará seleccionada y activa.
 
-<img width="965" height="449" alt="image" src="https://github.com/user-attachments/assets/d8c73cef-ecbb-4229-ad54-9ccd55f8175a" />
+<img width="448" height="225" alt="image" src="https://github.com/user-attachments/assets/66fef6a9-2040-47fd-b22d-918470677992" />
 
 Usa **Manage Configs** para ir a la pestaña `Environment`, donde encontrarás una lista de tus entornos, configuraciones de dataloader y otras.
 
@@ -172,11 +172,11 @@ Usa **Manage Configs** para ir a la pestaña `Environment`, donde encontrarás u
 
 He trabajado para ofrecer un asistente de configuración completo que te ayudará a configurar algunos de los ajustes más importantes con un arranque directo y sin rodeos.
 
-<img width="394" height="286" alt="image" src="https://github.com/user-attachments/assets/21e99854-1d75-4ba9-8be6-15e715d77f4e" />
+<img width="470" height="358" alt="image" src="https://github.com/user-attachments/assets/e4bf1a4e-716c-4101-b753-e9e24bb42d8a" />
 
 En el menú de navegación superior izquierdo, el botón Wizard te llevará a un diálogo de selección:
 
-<img width="1186" height="1756" alt="image" src="https://github.com/user-attachments/assets/f6d4ac57-e3f6-4060-a4d3-b7f0829d7350" />
+<img width="448" height="440" alt="image" src="https://github.com/user-attachments/assets/68324fa8-3ca9-45b1-b947-1e7738fd1d8c" />
 
 Luego se ofrecen todas las variantes de modelos integradas. Cada variante prehabilitará ajustes necesarios como Attention Masking o límites de tokens extendidos.
 
@@ -188,7 +188,7 @@ En general, salvo que estés entrenando un modelo tipo Stable Diffusion, se reco
 
 Algunos modelos pequeños como Cosmos2, Sana y PixArt no se llevan bien con la cuantización.
 
-<img width="1106" height="1464" alt="image" src="https://github.com/user-attachments/assets/0284d987-6060-4692-934a-0905ef2d5ca1" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/c2e721f2-b4da-4cd0-84fd-7ac81993e87c" />
 
 #### Entrenamiento full-rank
 
@@ -198,14 +198,14 @@ Sin embargo, si deseas entrenar un checkpoint completo, puedes configurar aquí 
 
 FSDP2 es compatible, pero no configurable en este asistente. Simplemente deja DeepSpeed deshabilitado y configura FSDP2 manualmente después si deseas usarlo.
 
-<img width="1097" height="1278" alt="image" src="https://github.com/user-attachments/assets/60475318-facd-4da1-a2a1-67cecff18e04" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/88438f1c-b0a2-4249-afd0-7878aa1abada" />
 
 
 #### ¿Cuánto tiempo deseas entrenar?
 
 Tendrás que decidir si deseas medir el tiempo de entrenamiento en épocas o pasos. Al final, es prácticamente lo mismo, aunque algunas personas desarrollan una preferencia por uno u otro.
 
-<img width="1136" height="1091" alt="image" src="https://github.com/user-attachments/assets/9146cdcd-f277-45e5-92cb-f74f23039d51" />
+<img width="508" height="475" alt="image" src="https://github.com/user-attachments/assets/dcb54279-0ce7-4c66-a9ab-4dd26f87278c" />
 
 #### Compartir tu modelo vía Hugging Face Hub
 
@@ -213,7 +213,19 @@ Opcionalmente, puedes publicar tus checkpoints finales *y* intermedios en [Huggi
 
 Si seleccionas publicar tu modelo, recuerda elegir `Private repo` si no quieres que tu modelo sea accesible al público en general.
 
-<img width="1090" height="859" alt="image" src="https://github.com/user-attachments/assets/d1f86b6b-b0d5-4caa-b3ff-6bd106928094" />
+<img width="508" height="370" alt="image" src="https://github.com/user-attachments/assets/8d2d282b-e66f-48a8-a40e-4e4ecc2d280b" />
+
+#### Frecuencia de checkpoints
+
+Durante el entrenamiento, tu modelo se guardará periódicamente en disco. Conservar más checkpoints requiere más espacio en disco.
+
+Los checkpoints permiten reanudar el entrenamiento más adelante sin repetir todos los pasos. Conservar varios checkpoints te permite probar distintas versiones del modelo y quedarte con la que mejor funcione.
+
+Se recomienda guardar un checkpoint cada 10%, aunque depende de la cantidad de datos con la que entrenes. Con un dataset pequeño, conviene guardar con frecuencia para asegurarte de no estar sobreajustando.
+
+Los datasets extremadamente grandes se benefician de intervalos de checkpoint más largos para evitar perder tiempo escribiéndolos en disco.
+
+<img width="508" height="485" alt="image" src="https://github.com/user-attachments/assets/c7b1cd0b-a1b9-47ec-87f9-1ecac2e0841a" />
 
 #### Validaciones del modelo
 
@@ -241,7 +253,7 @@ Ejemplo enfocado en Flux: `simpletuner/examples/external-validation/fal_post_upl
 
 Ejemplo de GPU local: `simpletuner/examples/external-validation/use_second_gpu.py` ejecuta inferencia de Flux LoRA en otra GPU (por defecto `cuda:1`) y puede usarse incluso cuando no ocurren subidas.
 
-<img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
+<img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 
 #### Registro de estadísticas de entrenamiento
 
@@ -249,35 +261,33 @@ SimpleTuner admite múltiples APIs destino si deseas enviar tus estadísticas de
 
 Nota: Ninguno de tus datos personales, logs de entrenamiento, captions o datos se envía **jamás** a los desarrolladores del proyecto SimpleTuner. El control de tus datos está en **tus** manos.
 
-<img width="1099" height="1067" alt="image" src="https://github.com/user-attachments/assets/c9be9a20-12ad-402a-9605-66ba5771e630" />
+<img width="508" height="438" alt="image" src="https://github.com/user-attachments/assets/0f8d15c5-456f-4637-af7e-c2f5f31cb968" />
 
 #### Configuración de datasets
 
 En este punto, puedes decidir si conservar algún dataset existente o crear una nueva configuración (dejando las demás intactas) mediante el Asistente de Creación de Datasets, que aparecerá al hacer clic.
 
-<img width="1103" height="877" alt="image" src="https://github.com/user-attachments/assets/3d3cc391-52ed-422e-a4a1-676ca342df10" />
+<img width="508" height="290" alt="image" src="https://github.com/user-attachments/assets/b5a7f883-e180-4662-b84c-fff609c6b1df" />
 
 ##### Asistente de datasets
 
 Si elegiste crear un nuevo dataset, verás el siguiente asistente, que te guiará para agregar un dataset local o en la nube.
 
-<img width="1110" height="857" alt="image" src="https://github.com/user-attachments/assets/3719e0f5-774e-461d-be02-902e08a679f6" />
+<img width="508" height="332" alt="image" src="https://github.com/user-attachments/assets/c523930b-563e-4b5d-b104-8e7ce4658b2c" />
 
-<img width="1082" height="1255" alt="image" src="https://github.com/user-attachments/assets/ac38a3de-364a-447f-a734-cab2bdd5338d" />
+<img width="508" height="508" alt="image" src="https://github.com/user-attachments/assets/c263f58e-fd85-437e-811a-967b94e309fd" />
 
 Para un dataset local, podrás usar el botón **Browse directories** para acceder a un modal de navegador de datasets.
 
-<img width="1201" height="1160" alt="image" src="https://github.com/user-attachments/assets/66a333d0-30fa-45d1-a5b2-1e859d789677" />
+<img width="396" height="576" alt="image" src="https://github.com/user-attachments/assets/14c51685-3559-4d16-be59-ed4b0959ca32" />
 
 Si configuraste correctamente el directorio de datasets durante el onboarding, verás tu contenido aquí.
 
 Haz clic en el directorio que deseas agregar y luego en **Select Directory**.
 
-<img width="907" height="709" alt="image" src="https://github.com/user-attachments/assets/1d482655-158a-4e3f-93b7-ef158396813c" />
+<img width="454" height="356" alt="image" src="https://github.com/user-attachments/assets/1d482655-158a-4e3f-93b7-ef158396813c" />
 
 Después de esto, se te guiará para configurar valores de resolución y recorte.
-
-**NOTA**: SimpleTuner no *hace upscaling* de imágenes, así que asegúrate de que sean al menos tan grandes como tu resolución configurada.
 
 Cuando llegues al paso para configurar tus captions, **considera cuidadosamente** qué opción es la correcta.
 
