@@ -204,7 +204,7 @@ function trainingWizardComponent() {
             {
                 id: 'publishing',
                 label: 'Publishing',
-                title: 'Training Configuration Wizard - Step 5: Publishing',
+                title: 'Training Configuration Wizard - Step 6: Publishing',
                 required: false,
                 validate: function() {
                     if (this.answers.push_to_hub) {
@@ -216,7 +216,7 @@ function trainingWizardComponent() {
             {
                 id: 'checkpoints',
                 label: 'Checkpoints',
-                title: 'Training Configuration Wizard - Step 6: Checkpoints',
+                title: 'Training Configuration Wizard - Step 7: Checkpoints',
                 required: true,
                 validate: function() {
                     const stepRaw = this.answers.checkpoint_step_interval;
@@ -235,7 +235,7 @@ function trainingWizardComponent() {
             {
                 id: 'validations-enable',
                 label: 'Validations',
-                title: 'Training Configuration Wizard - Step 7: Validations',
+                title: 'Training Configuration Wizard - Step 8: Validations',
                 required: true,
                 validate: function() {
                     if (this.answers.enable_validations === null) {
@@ -256,7 +256,7 @@ function trainingWizardComponent() {
             {
                 id: 'logging',
                 label: 'Logging',
-                title: 'Training Configuration Wizard - Step 8: Logging',
+                title: 'Training Configuration Wizard - Step 9: Logging',
                 required: false,
                 validate: function() {
                     if (this.answers.report_to === 'custom-tracker') {
@@ -269,14 +269,14 @@ function trainingWizardComponent() {
             {
                 id: 'dataset',
                 label: 'Dataset',
-                title: 'Training Configuration Wizard - Step 9: Dataset',
+                title: 'Training Configuration Wizard - Step 10: Dataset',
                 required: true,
                 validate: function() { return this.hasExistingDataset || this.datasetConfigured; }
             },
             {
                 id: 'advanced',
                 label: 'Advanced',
-                title: 'Training Configuration Wizard - Step 10: Advanced Settings',
+                title: 'Training Configuration Wizard - Step 11: Advanced Settings',
                 required: false,
                 validate: function() {
                     if (this.advancedMode === 'manual') {
@@ -306,6 +306,24 @@ function trainingWizardComponent() {
             const visibleSteps = this.visibleSteps;
             const step = visibleSteps[this.currentStepIndex] || visibleSteps[0] || this.steps[0];
             return step;
+        },
+
+        get currentStepTitle() {
+            const visibleSteps = this.visibleSteps;
+            const step = this.currentStep;
+            if (!step) {
+                return 'Training Configuration Wizard';
+            }
+            if (step.id === 'review') {
+                return step.title || 'Training Configuration Wizard - Review Configuration';
+            }
+            const visibleIndex = visibleSteps.findIndex(visibleStep => visibleStep.id === step.id);
+            const stepNumber = visibleIndex >= 0 ? visibleIndex + 1 : this.currentStepIndex + 1;
+            const rawTitle = step.title || step.label || '';
+            const titleLabel = rawTitle.includes(':')
+                ? rawTitle.slice(rawTitle.indexOf(':') + 1).trim()
+                : (step.label || rawTitle);
+            return `Training Configuration Wizard - Step ${stepNumber}: ${titleLabel}`;
         },
 
         get canProceed() {
