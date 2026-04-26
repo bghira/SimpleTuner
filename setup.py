@@ -274,7 +274,7 @@ def _collect_package_files(*directories: str):
 # Base dependencies (minimal, works on all platforms)
 base_deps = [
     "diffusers>=0.36.0",
-    "transformers>=5.0.0",
+    "transformers>=5.6.0",
     "hf_transfer>=0.1.0",
     "datasets>=3.0.1",
     "wandb>=0.21.0",
@@ -336,6 +336,7 @@ _is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "bui
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
+    "captioning": ["caption-flow[vllm]>=0.5.2"],
     "dev": [
         "selenium>=4.0.0",
         "coverage>=7.0.0",
@@ -443,3 +444,4 @@ if __name__ == "__main__":
     print("  pip install '.[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1   # ROCm")
     print("  pip install '.[apple]'                                                              # macOS")
     print("  pip install '.[cpu]'                                                                # CPU only")
+    print("  pip install '.[captioning]'                                                         # CaptionFlow integration")
