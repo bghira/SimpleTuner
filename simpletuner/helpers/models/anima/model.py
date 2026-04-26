@@ -231,7 +231,12 @@ class Anima(ImageModelFoundation):
             proxies=getattr(self.config, "proxies", None),
         )
 
-    def _uses_diffusers_repo_layout(self, model_path: Optional[str] = None) -> bool:
+    def _uses_diffusers_repo_layout(
+        self,
+        model_path: Optional[str] = None,
+        *,
+        component_subfolder: str = "transformer",
+    ) -> bool:
         path_was_provided = model_path is not None
         if model_path is None:
             model_path = getattr(self.config, "pretrained_model_name_or_path", None)
@@ -240,14 +245,19 @@ class Anima(ImageModelFoundation):
             if normalized_path in self.DIFFUSERS_LAYOUT_PATHS:
                 return True
             model_dir = Path(model_path)
-            if (model_dir / "transformer" / "config.json").is_file():
+            if (model_dir / component_subfolder / "config.json").is_file():
                 return True
 
-        if path_was_provided:
+        if path_was_provided or model_path is not None:
             return False
 
         flavour = getattr(self.config, "model_flavour", None)
         return flavour in self.HUGGINGFACE_PATHS and self.HUGGINGFACE_PATHS[flavour] in self.DIFFUSERS_LAYOUT_PATHS
+
+    def _add_hf_token_kwarg(self, load_kwargs: dict) -> None:
+        token = getattr(self.config, "token", None)
+        if token not in (None, False):
+            load_kwargs["token"] = token
 
     def load_model(self, move_to_device: bool = True):
         self.MODEL_SUBFOLDER = (
@@ -297,7 +307,7 @@ class Anima(ImageModelFoundation):
             execution_device=self.accelerator.device.type,
         )
         load_device = self.accelerator.device.type if move_to_device else "cpu"
-        if self._uses_diffusers_repo_layout(model_path):
+        if self._uses_diffusers_repo_layout(model_path, component_subfolder="text_encoder"):
             load_kwargs = {
                 "pretrained_model_name_or_path": model_path,
                 "subfolder": "text_encoder",
@@ -307,9 +317,7 @@ class Anima(ImageModelFoundation):
                 "cache_dir": getattr(self.config, "cache_dir", None),
                 "force_download": bool(getattr(self.config, "force_download", False)),
             }
-            token = getattr(self.config, "token", None)
-            if token is not None:
-                load_kwargs["token"] = token
+            self._add_hf_token_kwarg(load_kwargs)
             text_encoder = Qwen3Model.from_pretrained(**load_kwargs)
             text_encoder.eval().requires_grad_(False)
             text_encoder.to(device=load_device, dtype=dtype)
@@ -351,7 +359,7 @@ class Anima(ImageModelFoundation):
         model_path = self.config.pretrained_model_name_or_path
         revision = getattr(self.config, "revision", None)
         load_device = self.accelerator.device.type if move_to_device else "cpu"
-        if self._uses_diffusers_repo_layout(model_path):
+        if self._uses_diffusers_repo_layout(model_path, component_subfolder="vae"):
             load_kwargs = {
                 "pretrained_model_name_or_path": model_path,
                 "subfolder": "vae",
@@ -361,9 +369,7 @@ class Anima(ImageModelFoundation):
                 "cache_dir": getattr(self.config, "cache_dir", None),
                 "force_download": bool(getattr(self.config, "force_download", False)),
             }
-            token = getattr(self.config, "token", None)
-            if token is not None:
-                load_kwargs["token"] = token
+            self._add_hf_token_kwarg(load_kwargs)
             self.vae = self.AUTOENCODER_CLASS.from_pretrained(**load_kwargs)
             self.vae.eval().requires_grad_(False)
             self.vae.to(device=load_device, dtype=self.config.weight_dtype)
