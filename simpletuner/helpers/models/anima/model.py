@@ -63,12 +63,16 @@ class Anima(ImageModelFoundation):
 
     MODEL_CLASS = AnimaTransformerModel
     MODEL_SUBFOLDER = "split_files/diffusion_models"
+    DIFFUSERS_MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: AnimaPipeline}
 
-    DEFAULT_MODEL_FLAVOUR = "preview"
+    DEFAULT_MODEL_FLAVOUR = "preview-3"
     HUGGINGFACE_PATHS = {
-        "preview": "circlestone-labs/Anima",
+        "preview-3": "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
+        "preview-2": "CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
+        "preview": "CalamitousFelicitousness/Anima-sdnext-diffusers",
     }
+    DIFFUSERS_LAYOUT_PATHS = set(HUGGINGFACE_PATHS.values())
     MODEL_LICENSE = "other"
 
     TEXT_ENCODER_CONFIGURATION = {
@@ -102,10 +106,12 @@ class Anima(ImageModelFoundation):
         latents = batch["latents"]
         input_noise = batch["input_noise"]
         base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype).view(-1)
-        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        base_timesteps = self._to_sigma_space_timesteps(
+            batch["timesteps"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        )
         alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
         alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
-        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = self._to_sigma_space_timesteps(alt_timesteps.to(device=latents.device, dtype=latents.dtype))
 
         _, _, num_frames, height, width = latents.shape
         p_t, p_h, p_w = self._crepa_self_flow_patch_size()
@@ -227,14 +233,54 @@ class Anima(ImageModelFoundation):
             proxies=getattr(self.config, "proxies", None),
         )
 
+    def _uses_diffusers_repo_layout(
+        self,
+        model_path: Optional[str] = None,
+        *,
+        component_subfolder: str = "transformer",
+    ) -> bool:
+        path_was_provided = model_path is not None
+        if model_path is None:
+            model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if isinstance(model_path, str):
+            normalized_path = model_path.rstrip("/")
+            if normalized_path in self.DIFFUSERS_LAYOUT_PATHS:
+                return True
+            model_dir = Path(model_path)
+            if (model_dir / component_subfolder / "config.json").is_file():
+                return True
+
+        if path_was_provided or model_path is not None:
+            return False
+
+        flavour = getattr(self.config, "model_flavour", None)
+        return flavour in self.HUGGINGFACE_PATHS and self.HUGGINGFACE_PATHS[flavour] in self.DIFFUSERS_LAYOUT_PATHS
+
+    def _add_hf_token_kwarg(self, load_kwargs: dict) -> None:
+        token = getattr(self.config, "token", None)
+        if token not in (None, False):
+            load_kwargs["token"] = token
+
+    def load_model(self, move_to_device: bool = True):
+        self.MODEL_SUBFOLDER = (
+            self.DIFFUSERS_MODEL_SUBFOLDER if self._uses_diffusers_repo_layout() else "split_files/diffusion_models"
+        )
+        return super().load_model(move_to_device=move_to_device)
+
     def _prompt_tokenizer_sources(self) -> tuple[str, str]:
         model_path = getattr(self.config, "pretrained_model_name_or_path", None)
         if isinstance(model_path, str):
             model_dir = Path(model_path)
+            qwen_dir = model_dir / "tokenizer"
+            t5_dir = model_dir / "t5_tokenizer"
+            if qwen_dir.is_dir() and t5_dir.is_dir():
+                return str(qwen_dir), str(t5_dir)
             qwen_dir = model_dir / "prompt_tokenizer_qwen"
             t5_dir = model_dir / "prompt_tokenizer_t5"
             if qwen_dir.is_dir() and t5_dir.is_dir():
                 return str(qwen_dir), str(t5_dir)
+            if self._uses_diffusers_repo_layout():
+                return f"{model_path}::tokenizer", f"{model_path}::t5_tokenizer"
         return _QWEN_TOKENIZER_SOURCE, _T5_TOKENIZER_SOURCE
 
     def load_text_tokenizer(self):
@@ -257,18 +303,41 @@ class Anima(ImageModelFoundation):
             or self.config.pretrained_model_name_or_path
         )
         revision = getattr(self.config, "text_encoder_revision", None) or getattr(self.config, "revision", None)
-        weight_path = _resolve_weight_path(
-            model_path,
-            filename=DEFAULT_ANIMA_TEXT_ENCODER_FILENAME,
-            subfolder="split_files/text_encoders",
-            revision=revision,
-        )
         dtype = resolve_text_encoder_dtype(
             model_dtype=self.config.weight_dtype,
             text_encoder_dtype="auto",
             execution_device=self.accelerator.device.type,
         )
         load_device = self.accelerator.device.type if move_to_device else "cpu"
+        if self._uses_diffusers_repo_layout(model_path, component_subfolder="text_encoder"):
+            load_kwargs = {
+                "pretrained_model_name_or_path": model_path,
+                "subfolder": "text_encoder",
+                "revision": revision,
+                "torch_dtype": dtype,
+                "local_files_only": bool(getattr(self.config, "local_files_only", False)),
+                "cache_dir": getattr(self.config, "cache_dir", None),
+                "force_download": bool(getattr(self.config, "force_download", False)),
+            }
+            self._add_hf_token_kwarg(load_kwargs)
+            text_encoder = Qwen3Model.from_pretrained(**load_kwargs)
+            text_encoder.eval().requires_grad_(False)
+            text_encoder.to(device=load_device, dtype=dtype)
+            self.text_encoders = [text_encoder]
+            self.text_encoder = text_encoder
+            self.text_encoder_1 = text_encoder
+            if not move_to_device:
+                text_encoder.to("cpu")
+            if getattr(self, "prompt_tokenizer", None) is None:
+                self.load_text_tokenizer()
+            return
+
+        weight_path = _resolve_weight_path(
+            model_path,
+            filename=DEFAULT_ANIMA_TEXT_ENCODER_FILENAME,
+            subfolder="split_files/text_encoders",
+            revision=revision,
+        )
         text_encoder = load_text_encoder_single_file(
             file_path=weight_path,
             device=load_device,
@@ -291,13 +360,32 @@ class Anima(ImageModelFoundation):
     def load_vae(self, move_to_device: bool = True):
         model_path = self.config.pretrained_model_name_or_path
         revision = getattr(self.config, "revision", None)
+        load_device = self.accelerator.device.type if move_to_device else "cpu"
+        if self._uses_diffusers_repo_layout(model_path, component_subfolder="vae"):
+            load_kwargs = {
+                "pretrained_model_name_or_path": model_path,
+                "subfolder": "vae",
+                "revision": revision,
+                "torch_dtype": self.config.weight_dtype,
+                "local_files_only": bool(getattr(self.config, "local_files_only", False)),
+                "cache_dir": getattr(self.config, "cache_dir", None),
+                "force_download": bool(getattr(self.config, "force_download", False)),
+            }
+            self._add_hf_token_kwarg(load_kwargs)
+            self.vae = self.AUTOENCODER_CLASS.from_pretrained(**load_kwargs)
+            self.vae.eval().requires_grad_(False)
+            self.vae.to(device=load_device, dtype=self.config.weight_dtype)
+            self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+            if not move_to_device:
+                self.vae.to("cpu")
+            return
+
         weight_path = _resolve_weight_path(
             model_path,
             filename=DEFAULT_ANIMA_VAE_FILENAME,
             subfolder="split_files/vae",
             revision=revision,
         )
-        load_device = self.accelerator.device.type if move_to_device else "cpu"
         self.vae = load_vae_single_file(
             weight_path,
             device=load_device,
@@ -306,6 +394,16 @@ class Anima(ImageModelFoundation):
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
         if not move_to_device:
             self.vae.to("cpu")
+
+    def _ensure_pipeline_components(self, *, load_base_model: bool) -> None:
+        if load_base_model and self.model is None:
+            self.load_model(move_to_device=True)
+        if self.vae is None:
+            self.load_vae(move_to_device=True)
+        if load_base_model and (self.text_encoders is None or len(self.text_encoders) == 0):
+            self.load_text_encoder(move_to_device=True)
+        if load_base_model and getattr(self, "prompt_tokenizer", None) is None:
+            self.load_text_tokenizer()
 
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         active_pipelines = getattr(self, "pipelines", {})
@@ -318,20 +416,17 @@ class Anima(ImageModelFoundation):
         if pipeline_type not in self.PIPELINE_CLASSES:
             raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
 
-        if load_base_model:
-            if self.model is None:
-                self.load_model(move_to_device=True)
-            if self.vae is None:
-                self.load_vae(move_to_device=True)
-            if self.text_encoders is None:
-                self.load_text_encoder(move_to_device=True)
-            if getattr(self, "prompt_tokenizer", None) is None:
-                self.load_text_tokenizer()
+        self._ensure_pipeline_components(load_base_model=load_base_model)
 
         transformer = self.unwrap_model(self.model)
         text_encoder = self.text_encoders[0] if self.text_encoders else None
-        if transformer is None or text_encoder is None or self.vae is None:
-            raise RuntimeError("Anima pipeline requires transformer, text_encoder, and vae to be loaded.")
+        if transformer is None or self.vae is None:
+            missing_components = []
+            if transformer is None:
+                missing_components.append("transformer")
+            if self.vae is None:
+                missing_components.append("vae")
+            raise RuntimeError(f"Anima pipeline requires loaded components: {', '.join(missing_components)}.")
 
         scheduler = getattr(self, "noise_schedule", None)
         if scheduler is None:
@@ -343,7 +438,7 @@ class Anima(ImageModelFoundation):
         else:
             scheduler = coerce_anima_scheduler(scheduler.__class__.from_config(scheduler.config))
 
-        text_encoder_dtype = next(text_encoder.parameters()).dtype
+        text_encoder_dtype = next(text_encoder.parameters()).dtype if text_encoder is not None else self.config.weight_dtype
         pipeline_instance = self.PIPELINE_CLASSES[pipeline_type](
             transformer=transformer,
             vae=self.get_vae(),
@@ -367,6 +462,14 @@ class Anima(ImageModelFoundation):
         if latents.ndim == 4:
             return latents.unsqueeze(2)
         return latents
+
+    def expand_sigmas(self, batch: dict) -> dict:
+        sigmas = batch.get("sigmas")
+        latents = batch.get("latents")
+        if sigmas is None or latents is None:
+            return batch
+        batch["sigmas"] = sigmas.view(sigmas.shape[0], *([1] * (latents.ndim - 1)))
+        return batch
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         del is_negative_prompt
@@ -392,6 +495,70 @@ class Anima(ImageModelFoundation):
     def _format_text_embedding(self, text_embedding):
         return text_embedding
 
+    def collate_prompt_embeds(self, text_encoder_output: list[dict]) -> dict:
+        if not text_encoder_output:
+            return {}
+
+        def _normalize_batch_dim(key: str, tensor: torch.Tensor) -> torch.Tensor:
+            if key == "t5xxl_ids":
+                if tensor.dim() == 1:
+                    return tensor.unsqueeze(0)
+                if tensor.dim() == 2:
+                    return tensor
+            elif key == "t5xxl_weights":
+                if tensor.dim() == 1:
+                    return tensor.unsqueeze(0).unsqueeze(-1)
+                if tensor.dim() == 2:
+                    if tensor.shape[-1] == 1:
+                        return tensor.unsqueeze(0)
+                    return tensor.unsqueeze(-1)
+                if tensor.dim() == 3:
+                    return tensor
+            else:
+                if tensor.dim() == 2:
+                    return tensor.unsqueeze(0)
+                if tensor.dim() == 3:
+                    return tensor
+            raise ValueError(f"Unexpected Anima text embedding tensor dimension for {key}: {tensor.dim()}.")
+
+        def _pad_and_cat_tensors(key: str, tensors: list[torch.Tensor]) -> torch.Tensor:
+            normalized = [_normalize_batch_dim(key, tensor) for tensor in tensors]
+            max_length = max(tensor.shape[1] for tensor in normalized)
+            padded = []
+            for tensor in normalized:
+                if tensor.shape[1] == max_length:
+                    padded.append(tensor)
+                    continue
+                pad_shape = list(tensor.shape)
+                pad_shape[1] = max_length - tensor.shape[1]
+                pad_value = 0
+                if key == "t5xxl_ids":
+                    pad_value = 0
+                pad_tensor = torch.full(
+                    pad_shape,
+                    pad_value,
+                    device=tensor.device,
+                    dtype=tensor.dtype,
+                )
+                padded.append(torch.cat([tensor, pad_tensor], dim=1))
+            return torch.cat(padded, dim=0)
+
+        def _collate(key: str):
+            values = [entry[key] for entry in text_encoder_output if key in entry and entry[key] is not None]
+            if len(values) != len(text_encoder_output):
+                return None
+            first = values[0]
+            if not torch.is_tensor(first):
+                return values
+            return _pad_and_cat_tensors(key, values)
+
+        collated = {}
+        for key in ("prompt_embeds", "t5xxl_ids", "t5xxl_weights"):
+            value = _collate(key)
+            if value is not None:
+                collated[key] = value
+        return collated
+
     def _build_pipeline_condition(self, text_embedding: dict) -> torch.Tensor:
         if self.model is None:
             self.load_model(move_to_device=True)
@@ -410,16 +577,41 @@ class Anima(ImageModelFoundation):
 
     def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         return {
-            "prompt_embeds": self._build_pipeline_condition(text_embedding),
+            "prompt_embeds": text_embedding["prompt_embeds"],
+            "prompt_t5xxl_ids": text_embedding["t5xxl_ids"],
+            "prompt_t5xxl_weights": text_embedding["t5xxl_weights"],
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         return {
-            "negative_prompt_embeds": self._build_pipeline_condition(text_embedding),
+            "negative_prompt_embeds": text_embedding["prompt_embeds"],
+            "negative_prompt_t5xxl_ids": text_embedding["t5xxl_ids"],
+            "negative_prompt_t5xxl_weights": text_embedding["t5xxl_weights"],
         }
+
+    def _to_sigma_space_timesteps(self, timesteps: torch.Tensor) -> torch.Tensor:
+        if timesteps.numel() == 0 or torch.max(timesteps.detach().float()) <= 1.0:
+            return timesteps
+        max_timestep = float(
+            getattr(getattr(getattr(self, "noise_schedule", None), "config", None), "num_train_timesteps", 1000) or 1000
+        )
+        return timesteps / max_timestep
+
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        sigmas, timesteps = super().sample_flow_sigmas(batch=batch, state=state)
+        return sigmas, self._to_sigma_space_timesteps(timesteps)
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch(batch, state)
+        text_encoder_output = batch.get("text_encoder_output")
+        if isinstance(text_encoder_output, dict):
+            batch.setdefault("t5xxl_ids", text_encoder_output.get("t5xxl_ids"))
+            batch.setdefault("t5xxl_weights", text_encoder_output.get("t5xxl_weights"))
+        if batch.get("t5xxl_ids") is None or batch.get("t5xxl_weights") is None:
+            raise ValueError(
+                "Anima training requires text embedding cache entries with t5xxl_ids and t5xxl_weights. "
+                "Clear and rebuild the text embedding cache."
+            )
         if batch.get("t5xxl_ids") is not None:
             batch["t5xxl_ids"] = batch["t5xxl_ids"].to(device=self.accelerator.device, dtype=torch.int32)
         if batch.get("t5xxl_weights") is not None:
@@ -439,6 +631,7 @@ class Anima(ImageModelFoundation):
             device=self.accelerator.device,
             dtype=torch.float32,
         )
+        timesteps = self._to_sigma_space_timesteps(timesteps)
         hidden_states_buffer = self._new_hidden_state_buffer()
 
         noise_pred = self.model(
@@ -453,7 +646,13 @@ class Anima(ImageModelFoundation):
             noise_pred = noise_pred.sample
         elif isinstance(noise_pred, tuple):
             noise_pred = noise_pred[0]
-        if noise_pred.dim() == 5 and noise_pred.shape[2] == 1:
+        target_latents = prepared_batch.get("latents")
+        if (
+            noise_pred.dim() == 5
+            and noise_pred.shape[2] == 1
+            and torch.is_tensor(target_latents)
+            and target_latents.dim() == 4
+        ):
             noise_pred = noise_pred.squeeze(2)
         return {
             "model_prediction": noise_pred.float(),

@@ -38,6 +38,8 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
+WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "sanavideo", "anima")
+
 
 def prepare_sample(
     image: Image.Image = None,
@@ -688,7 +690,7 @@ class VAECache(WebhookMixin):
             }
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
+        elif StateTracker.get_model_family() in WAN_STYLE_LATENT_MODEL_FAMILIES:
             logger.debug(
                 "Shape for Wan VAE encode: %s with latents_mean: %s and latents_std: %s",
                 latents_uncached.shape,
@@ -699,6 +701,11 @@ class VAECache(WebhookMixin):
                 target_mu_channels = latents_uncached.shape[1] // 2
                 latents_mean = getattr(self.vae, "latents_mean", None)
                 latents_std = getattr(self.vae, "latents_std", None)
+                vae_config = getattr(self.vae, "config", None)
+                if latents_mean is None and vae_config is not None:
+                    latents_mean = getattr(vae_config, "latents_mean", None)
+                if latents_std is None and vae_config is not None:
+                    latents_std = getattr(vae_config, "latents_std", None)
 
                 if latents_mean is None or latents_std is None or target_mu_channels <= 0:
                     raise ValueError("Missing latent stats for WAN VAE.")
@@ -706,7 +713,9 @@ class VAECache(WebhookMixin):
                 latents_mean_t = torch.as_tensor(latents_mean, device=latents_uncached.device).flatten()
                 latents_std_t = torch.as_tensor(latents_std, device=latents_uncached.device).flatten()
 
-                config_mu_channels = getattr(self.vae, "z_dim", None) or target_mu_channels
+                config_mu_channels = (
+                    getattr(self.vae, "z_dim", None) or getattr(vae_config, "z_dim", None) or target_mu_channels
+                )
                 if config_mu_channels != target_mu_channels:
                     logger.warning(
                         "Latent stats mismatch for %s VAE: config z_dim=%s but latents supply %s channels. "
@@ -833,7 +842,7 @@ class VAECache(WebhookMixin):
                 )
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
-                if StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
+                if StateTracker.get_model_family() in WAN_STYLE_LATENT_MODEL_FAMILIES:
                     if hasattr(latents_uncached, "latent_dist"):
                         if self.dataset_type_enum is DatasetType.AUDIO:
                             debug_filepaths = [filepaths[i] for i in uncached_image_indices]

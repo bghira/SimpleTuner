@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import numbers
 import os
 import re
@@ -21,6 +22,8 @@ from safetensors.torch import load_file
 from torch import nn
 
 DEFAULT_ANIMA_TRANSFORMER_FILENAME = "anima-preview.safetensors"
+DIFFUSERS_LLM_ADAPTER_FILENAME = "llm_adapter/diffusion_pytorch_model.safetensors"
+DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME = "llm_adapter/config.json"
 
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -131,6 +134,20 @@ def _patch_diffusers_rmsnorm_to_anima(module: nn.Module) -> None:
             setattr(module, child_name, _AnimaRMSNorm.from_diffusers(child))
             continue
         _patch_diffusers_rmsnorm_to_anima(child)
+
+
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor) -> None:
+    if buffer is None:
+        return
+    capture_layers = getattr(buffer, "capture_layers", None)
+    if capture_layers is not None:
+        try:
+            layer_idx = int(key.rsplit("_", maxsplit=1)[-1])
+        except ValueError:
+            layer_idx = None
+        if layer_idx is not None and layer_idx not in capture_layers:
+            return
+    buffer[key] = hidden_states
 
 
 class _RotaryEmbedding(nn.Module):
@@ -285,6 +302,9 @@ class _LLMAdapter(nn.Module):
 
 
 class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
+    _supports_gradient_checkpointing = True
+    _no_split_modules = ["CosmosTransformerBlock"]
+
     @register_to_config
     def __init__(
         self,
@@ -364,14 +384,30 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             # CosmosTransformer3DModel internally repeats this per batch, so keep batch=1 here.
             padding_mask = _default_padding_mask(hidden_states)
 
-        sample = self.core(
-            hidden_states=hidden_states,
-            timestep=timestep,
-            encoder_hidden_states=encoder_hidden_states,
-            padding_mask=padding_mask,
-            hidden_states_buffer=hidden_states_buffer,
-            return_dict=False,
-        )[0]
+        hook_handles = []
+        if hidden_states_buffer is not None:
+            for block_idx, block in enumerate(getattr(self.core, "transformer_blocks", [])):
+                hook_handles.append(
+                    block.register_forward_hook(
+                        lambda _module, _inputs, output, idx=block_idx: _store_hidden_state(
+                            hidden_states_buffer,
+                            f"layer_{idx}",
+                            output[0] if isinstance(output, tuple) else output,
+                        )
+                    )
+                )
+
+        try:
+            sample = self.core(
+                hidden_states=hidden_states,
+                timestep=timestep,
+                encoder_hidden_states=encoder_hidden_states,
+                padding_mask=padding_mask,
+                return_dict=False,
+            )[0]
+        finally:
+            for handle in hook_handles:
+                handle.remove()
 
         if not return_dict:
             return (sample,)
@@ -415,7 +451,16 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 os.path.join(pretrained_model_name_or_path, subfolder) if subfolder else pretrained_model_name_or_path
             )
         if resolved_dir and os.path.isfile(os.path.join(resolved_dir, "config.json")):
-            return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            core = CosmosTransformer3DModel.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            return cls._from_diffusers_components(core, pretrained_model_name_or_path, **kwargs)
+
+        if subfolder == "transformer":
+            try:
+                core = CosmosTransformer3DModel.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            except (OSError, ValueError):
+                pass
+            else:
+                return cls._from_diffusers_components(core, pretrained_model_name_or_path, **kwargs)
 
         return cls.from_single_file(
             pretrained_model_name_or_path,
@@ -424,6 +469,155 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             revision=kwargs.pop("revision", None),
             torch_dtype=kwargs.pop("torch_dtype", None),
         )
+
+    @staticmethod
+    def _diffusers_repo_root(pretrained_model_name_or_path: str, subfolder: Optional[str] = None) -> str:
+        if not os.path.isdir(pretrained_model_name_or_path):
+            return pretrained_model_name_or_path
+        if subfolder:
+            return pretrained_model_name_or_path
+        normalized_path = os.path.abspath(pretrained_model_name_or_path)
+        if os.path.basename(normalized_path) == "transformer" and os.path.isfile(
+            os.path.join(normalized_path, "config.json")
+        ):
+            return os.path.dirname(normalized_path)
+        return pretrained_model_name_or_path
+
+    @staticmethod
+    def _resolve_diffusers_llm_adapter_path(
+        pretrained_model_name_or_path: str,
+        *,
+        subfolder: Optional[str] = None,
+        revision: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        force_download: bool = False,
+        local_files_only: bool = False,
+        token: str | bool | None = None,
+    ) -> str:
+        if os.path.isdir(pretrained_model_name_or_path):
+            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
+            return os.path.join(repo_root, DIFFUSERS_LLM_ADAPTER_FILENAME)
+        normalized_token = None if token is False else token
+        return hf_hub_download(
+            pretrained_model_name_or_path,
+            filename=DIFFUSERS_LLM_ADAPTER_FILENAME,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            local_files_only=local_files_only,
+            token=normalized_token,
+        )
+
+    @staticmethod
+    def _resolve_diffusers_llm_adapter_config_path(
+        pretrained_model_name_or_path: str,
+        *,
+        subfolder: Optional[str] = None,
+        revision: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        force_download: bool = False,
+        local_files_only: bool = False,
+        token: str | bool | None = None,
+    ) -> str:
+        if os.path.isdir(pretrained_model_name_or_path):
+            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
+            return os.path.join(repo_root, DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME)
+        normalized_token = None if token is False else token
+        return hf_hub_download(
+            pretrained_model_name_or_path,
+            filename=DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            local_files_only=local_files_only,
+            token=normalized_token,
+        )
+
+    @classmethod
+    def _load_diffusers_llm_adapter_config(
+        cls,
+        pretrained_model_name_or_path: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        config_path = cls._resolve_diffusers_llm_adapter_config_path(
+            pretrained_model_name_or_path,
+            subfolder=kwargs.get("subfolder"),
+            revision=kwargs.get("revision"),
+            cache_dir=kwargs.get("cache_dir"),
+            force_download=bool(kwargs.get("force_download", False)),
+            local_files_only=bool(kwargs.get("local_files_only", False)),
+            token=kwargs.get("token"),
+        )
+        with open(config_path, encoding="utf-8") as handle:
+            adapter_config = json.load(handle)
+
+        model_dim = int(adapter_config["model_dim"])
+        if (
+            int(adapter_config.get("source_dim", model_dim)) != model_dim
+            or int(adapter_config.get("target_dim", model_dim)) != model_dim
+        ):
+            raise ValueError("Anima llm_adapter source_dim, target_dim, and model_dim must match.")
+        return adapter_config
+
+    @classmethod
+    def _from_diffusers_components(
+        cls,
+        core: CosmosTransformer3DModel,
+        pretrained_model_name_or_path: str,
+        **kwargs: Any,
+    ) -> "AnimaTransformerModel":
+        adapter_config = cls._load_diffusers_llm_adapter_config(pretrained_model_name_or_path, **kwargs)
+        config = core.config
+        transformer = cls(
+            in_channels=int(config.in_channels),
+            out_channels=int(config.out_channels),
+            num_attention_heads=int(config.num_attention_heads),
+            attention_head_dim=int(config.attention_head_dim),
+            num_layers=int(config.num_layers),
+            mlp_ratio=float(config.mlp_ratio),
+            text_embed_dim=int(config.text_embed_dim),
+            adaln_lora_dim=int(config.adaln_lora_dim),
+            max_size=tuple(config.max_size),
+            patch_size=tuple(config.patch_size),
+            rope_scale=tuple(config.rope_scale),
+            adapter_vocab_size=int(adapter_config["vocab_size"]),
+            adapter_dim=int(adapter_config["model_dim"]),
+            adapter_layers=int(adapter_config["num_layers"]),
+            adapter_heads=int(adapter_config["num_heads"]),
+        )
+        _patch_diffusers_rmsnorm_to_anima(core)
+        transformer.core = core
+        cls._load_diffusers_llm_adapter(transformer, pretrained_model_name_or_path, **kwargs)
+        torch_dtype = kwargs.get("torch_dtype")
+        if isinstance(torch_dtype, torch.dtype):
+            transformer.to(dtype=torch_dtype)
+        return transformer
+
+    @classmethod
+    def _load_diffusers_llm_adapter(
+        cls,
+        transformer: "AnimaTransformerModel",
+        pretrained_model_name_or_path: str,
+        **kwargs: Any,
+    ) -> None:
+        adapter_path = cls._resolve_diffusers_llm_adapter_path(
+            pretrained_model_name_or_path,
+            subfolder=kwargs.get("subfolder"),
+            revision=kwargs.get("revision"),
+            cache_dir=kwargs.get("cache_dir"),
+            force_download=bool(kwargs.get("force_download", False)),
+            local_files_only=bool(kwargs.get("local_files_only", False)),
+            token=kwargs.get("token"),
+        )
+        state_dict = load_file(adapter_path, device="cpu")
+        if all(key.startswith("llm_adapter.") for key in state_dict):
+            state_dict = {key.removeprefix("llm_adapter."): value for key, value in state_dict.items()}
+        missing, unexpected = transformer.llm_adapter.load_state_dict(state_dict, strict=True)
+        if missing or unexpected:
+            raise RuntimeError(
+                "Anima Diffusers-format llm_adapter weights do not match expected architecture. "
+                f"Missing: {len(missing)}, Unexpected: {len(unexpected)}"
+            )
 
     @classmethod
     def from_single_file(

@@ -157,6 +157,10 @@ _LORA_PARAM_SUFFIXES = (
     "lora_up.weight",
     "lora_down.bias",
     "lora_up.bias",
+    "lora.down.weight",
+    "lora.up.weight",
+    "lora.down.bias",
+    "lora.up.bias",
     "alpha",
 )
 
@@ -292,12 +296,17 @@ def _write_down_up_lora_payload(
     payload: dict[str, torch.Tensor | float],
     converted: dict[str, torch.Tensor],
 ) -> bool:
-    has_down_up = "lora_down.weight" in payload or "lora_up.weight" in payload
+    has_down_up = (
+        "lora_down.weight" in payload
+        or "lora_up.weight" in payload
+        or "lora.down.weight" in payload
+        or "lora.up.weight" in payload
+    )
     if not has_down_up:
         return False
 
-    down_weight = payload.get("lora_down.weight")
-    up_weight = payload.get("lora_up.weight")
+    down_weight = payload.get("lora_down.weight", payload.get("lora.down.weight"))
+    up_weight = payload.get("lora_up.weight", payload.get("lora.up.weight"))
     if down_weight is None or up_weight is None:
         raise ValueError(f"LoRA down/up keys must be paired for module '{module_path}', but one side is missing.")
     if not torch.is_tensor(down_weight) or not torch.is_tensor(up_weight):
@@ -314,8 +323,8 @@ def _write_down_up_lora_payload(
         converted[f"transformer.{module_path}.lora_A.weight"] = down_weight * scale_down
         converted[f"transformer.{module_path}.lora_B.weight"] = up_weight * scale_up
 
-    down_bias = payload.get("lora_down.bias")
-    up_bias = payload.get("lora_up.bias")
+    down_bias = payload.get("lora_down.bias", payload.get("lora.down.bias"))
+    up_bias = payload.get("lora_up.bias", payload.get("lora.up.bias"))
     if down_bias is not None:
         if not torch.is_tensor(down_bias):
             raise ValueError(f"Invalid LoRA tensor payload for module '{module_path}.lora_down.bias'.")
@@ -333,7 +342,12 @@ def _convert_single_lora_module_payload(
     payload: dict[str, torch.Tensor | float],
     converted: dict[str, torch.Tensor],
 ) -> None:
-    has_down_up_keys = "lora_down.weight" in payload or "lora_up.weight" in payload
+    has_down_up_keys = (
+        "lora_down.weight" in payload
+        or "lora_up.weight" in payload
+        or "lora.down.weight" in payload
+        or "lora.up.weight" in payload
+    )
     wrote_direct = _write_direct_lora_payload(
         module_path=module_path,
         payload=payload,
@@ -374,6 +388,15 @@ def _convert_non_diffusers_anima_lora_to_diffusers(
     if len(converted) == 0:
         raise ValueError("No loadable LoRA weights were found in the provided state dict.")
     return converted
+
+
+def _is_diffusers_anima_lora_state_dict(state_dict: dict[str, torch.Tensor]) -> bool:
+    if not state_dict:
+        return False
+    lora_keys = [key for key in state_dict if "lora" in key and "dora_scale" not in key]
+    if not lora_keys:
+        return False
+    return all(key.startswith("transformer.") and ".lora." in key for key in lora_keys)
 
 
 class AnimaLoraLoaderMixin(LoraBaseMixin):
@@ -417,7 +440,10 @@ class AnimaLoraLoaderMixin(LoraBaseMixin):
             allow_pickle=allow_pickle,
         )
 
-        converted_state_dict = _convert_non_diffusers_anima_lora_to_diffusers(state_dict)
+        if _is_diffusers_anima_lora_state_dict(state_dict):
+            converted_state_dict = state_dict
+        else:
+            converted_state_dict = _convert_non_diffusers_anima_lora_to_diffusers(state_dict)
         if return_lora_metadata:
             return converted_state_dict, metadata
         return converted_state_dict
