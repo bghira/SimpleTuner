@@ -15,7 +15,91 @@ class TestAnimaModel(unittest.TestCase):
 
         self.assertIsNotNone(Anima)
         self.assertEqual(Anima.NAME, "Anima")
-        self.assertEqual(Anima.DEFAULT_MODEL_FLAVOUR, "preview")
+        self.assertEqual(Anima.DEFAULT_MODEL_FLAVOUR, "preview-3")
+
+    def test_model_flavours_use_converted_diffusers_repos(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        self.assertEqual(
+            Anima.HUGGINGFACE_PATHS["preview-3"],
+            "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
+        )
+        self.assertEqual(
+            Anima.HUGGINGFACE_PATHS["preview-2"],
+            "CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
+        )
+        self.assertEqual(
+            Anima.HUGGINGFACE_PATHS["preview"],
+            "CalamitousFelicitousness/Anima-sdnext-diffusers",
+        )
+
+    def test_diffusers_layout_switches_component_sources(self):
+        from simpletuner.helpers.models.anima.model import Anima
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        model = Anima.__new__(Anima)
+        model.config = SimpleNamespace(
+            pretrained_model_name_or_path="CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
+            model_flavour="preview-3",
+        )
+
+        self.assertTrue(model._uses_diffusers_repo_layout())
+        self.assertEqual(
+            model._prompt_tokenizer_sources(),
+            (
+                "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers::tokenizer",
+                "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers::t5_tokenizer",
+            ),
+        )
+
+        with patch.object(ImageModelFoundation, "load_model", return_value="loaded") as mock_load_model:
+            self.assertEqual(model.load_model(move_to_device=False), "loaded")
+
+        self.assertEqual(model.MODEL_SUBFOLDER, "transformer")
+        mock_load_model.assert_called_once_with(move_to_device=False)
+
+    def test_diffusers_layout_loads_text_encoder_and_vae_from_standard_subfolders(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(
+            pretrained_model_name_or_path="CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
+            pretrained_text_encoder_model_name_or_path=None,
+            model_flavour="preview-2",
+            revision=None,
+            text_encoder_revision=None,
+            weight_dtype=torch.float32,
+            local_files_only=True,
+            cache_dir=None,
+            force_download=False,
+            token=None,
+        )
+        model.prompt_tokenizer = object()
+        model.text_encoders = None
+        text_encoder = MagicMock()
+        text_encoder.eval.return_value = text_encoder
+        text_encoder.requires_grad_.return_value = text_encoder
+        vae = MagicMock(config=SimpleNamespace(scaling_factor=0.18215))
+        vae.eval.return_value = vae
+        vae.requires_grad_.return_value = vae
+        fake_autoencoder = SimpleNamespace(from_pretrained=MagicMock(return_value=vae))
+
+        with (
+            patch(
+                "simpletuner.helpers.models.anima.model.Qwen3Model.from_pretrained", return_value=text_encoder
+            ) as mock_text_encoder,
+            patch.object(Anima, "AUTOENCODER_CLASS", fake_autoencoder),
+        ):
+            model.load_text_encoder(move_to_device=False)
+            model.load_vae(move_to_device=False)
+
+        mock_text_encoder.assert_called_once()
+        self.assertEqual(mock_text_encoder.call_args.kwargs["subfolder"], "text_encoder")
+        fake_autoencoder.from_pretrained.assert_called_once()
+        self.assertEqual(fake_autoencoder.from_pretrained.call_args.kwargs["subfolder"], "vae")
+        self.assertIs(model.text_encoder, text_encoder)
+        self.assertIs(model.vae, vae)
 
     def test_transformer_import(self):
         from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel

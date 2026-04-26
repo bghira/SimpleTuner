@@ -63,12 +63,16 @@ class Anima(ImageModelFoundation):
 
     MODEL_CLASS = AnimaTransformerModel
     MODEL_SUBFOLDER = "split_files/diffusion_models"
+    DIFFUSERS_MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: AnimaPipeline}
 
-    DEFAULT_MODEL_FLAVOUR = "preview"
+    DEFAULT_MODEL_FLAVOUR = "preview-3"
     HUGGINGFACE_PATHS = {
-        "preview": "circlestone-labs/Anima",
+        "preview-3": "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
+        "preview-2": "CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
+        "preview": "CalamitousFelicitousness/Anima-sdnext-diffusers",
     }
+    DIFFUSERS_LAYOUT_PATHS = set(HUGGINGFACE_PATHS.values())
     MODEL_LICENSE = "other"
 
     TEXT_ENCODER_CONFIGURATION = {
@@ -227,14 +231,39 @@ class Anima(ImageModelFoundation):
             proxies=getattr(self.config, "proxies", None),
         )
 
+    def _uses_diffusers_repo_layout(self) -> bool:
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if isinstance(model_path, str):
+            normalized_path = model_path.rstrip("/")
+            if normalized_path in self.DIFFUSERS_LAYOUT_PATHS:
+                return True
+            model_dir = Path(model_path)
+            if (model_dir / "transformer" / "config.json").is_file():
+                return True
+
+        flavour = getattr(self.config, "model_flavour", None)
+        return flavour in self.HUGGINGFACE_PATHS and self.HUGGINGFACE_PATHS[flavour] in self.DIFFUSERS_LAYOUT_PATHS
+
+    def load_model(self, move_to_device: bool = True):
+        self.MODEL_SUBFOLDER = (
+            self.DIFFUSERS_MODEL_SUBFOLDER if self._uses_diffusers_repo_layout() else "split_files/diffusion_models"
+        )
+        return super().load_model(move_to_device=move_to_device)
+
     def _prompt_tokenizer_sources(self) -> tuple[str, str]:
         model_path = getattr(self.config, "pretrained_model_name_or_path", None)
         if isinstance(model_path, str):
             model_dir = Path(model_path)
+            qwen_dir = model_dir / "tokenizer"
+            t5_dir = model_dir / "t5_tokenizer"
+            if qwen_dir.is_dir() and t5_dir.is_dir():
+                return str(qwen_dir), str(t5_dir)
             qwen_dir = model_dir / "prompt_tokenizer_qwen"
             t5_dir = model_dir / "prompt_tokenizer_t5"
             if qwen_dir.is_dir() and t5_dir.is_dir():
                 return str(qwen_dir), str(t5_dir)
+            if self._uses_diffusers_repo_layout():
+                return f"{model_path}::tokenizer", f"{model_path}::t5_tokenizer"
         return _QWEN_TOKENIZER_SOURCE, _T5_TOKENIZER_SOURCE
 
     def load_text_tokenizer(self):
@@ -257,18 +286,43 @@ class Anima(ImageModelFoundation):
             or self.config.pretrained_model_name_or_path
         )
         revision = getattr(self.config, "text_encoder_revision", None) or getattr(self.config, "revision", None)
-        weight_path = _resolve_weight_path(
-            model_path,
-            filename=DEFAULT_ANIMA_TEXT_ENCODER_FILENAME,
-            subfolder="split_files/text_encoders",
-            revision=revision,
-        )
         dtype = resolve_text_encoder_dtype(
             model_dtype=self.config.weight_dtype,
             text_encoder_dtype="auto",
             execution_device=self.accelerator.device.type,
         )
         load_device = self.accelerator.device.type if move_to_device else "cpu"
+        if self._uses_diffusers_repo_layout():
+            load_kwargs = {
+                "pretrained_model_name_or_path": model_path,
+                "subfolder": "text_encoder",
+                "revision": revision,
+                "torch_dtype": dtype,
+                "local_files_only": bool(getattr(self.config, "local_files_only", False)),
+                "cache_dir": getattr(self.config, "cache_dir", None),
+                "force_download": bool(getattr(self.config, "force_download", False)),
+            }
+            token = getattr(self.config, "token", None)
+            if token is not None:
+                load_kwargs["token"] = token
+            text_encoder = Qwen3Model.from_pretrained(**load_kwargs)
+            text_encoder.eval().requires_grad_(False)
+            text_encoder.to(device=load_device, dtype=dtype)
+            self.text_encoders = [text_encoder]
+            self.text_encoder = text_encoder
+            self.text_encoder_1 = text_encoder
+            if not move_to_device:
+                text_encoder.to("cpu")
+            if getattr(self, "prompt_tokenizer", None) is None:
+                self.load_text_tokenizer()
+            return
+
+        weight_path = _resolve_weight_path(
+            model_path,
+            filename=DEFAULT_ANIMA_TEXT_ENCODER_FILENAME,
+            subfolder="split_files/text_encoders",
+            revision=revision,
+        )
         text_encoder = load_text_encoder_single_file(
             file_path=weight_path,
             device=load_device,
@@ -291,13 +345,34 @@ class Anima(ImageModelFoundation):
     def load_vae(self, move_to_device: bool = True):
         model_path = self.config.pretrained_model_name_or_path
         revision = getattr(self.config, "revision", None)
+        load_device = self.accelerator.device.type if move_to_device else "cpu"
+        if self._uses_diffusers_repo_layout():
+            load_kwargs = {
+                "pretrained_model_name_or_path": model_path,
+                "subfolder": "vae",
+                "revision": revision,
+                "torch_dtype": self.config.weight_dtype,
+                "local_files_only": bool(getattr(self.config, "local_files_only", False)),
+                "cache_dir": getattr(self.config, "cache_dir", None),
+                "force_download": bool(getattr(self.config, "force_download", False)),
+            }
+            token = getattr(self.config, "token", None)
+            if token is not None:
+                load_kwargs["token"] = token
+            self.vae = self.AUTOENCODER_CLASS.from_pretrained(**load_kwargs)
+            self.vae.eval().requires_grad_(False)
+            self.vae.to(device=load_device, dtype=self.config.weight_dtype)
+            self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+            if not move_to_device:
+                self.vae.to("cpu")
+            return
+
         weight_path = _resolve_weight_path(
             model_path,
             filename=DEFAULT_ANIMA_VAE_FILENAME,
             subfolder="split_files/vae",
             revision=revision,
         )
-        load_device = self.accelerator.device.type if move_to_device else "cpu"
         self.vae = load_vae_single_file(
             weight_path,
             device=load_device,
