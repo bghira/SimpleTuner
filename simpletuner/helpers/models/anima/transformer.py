@@ -417,6 +417,12 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         if resolved_dir and os.path.isfile(os.path.join(resolved_dir, "config.json")):
             return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
+        if subfolder == "transformer":
+            try:
+                return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            except (OSError, ValueError):
+                pass
+
         return cls.from_single_file(
             pretrained_model_name_or_path,
             filename=kwargs.pop("filename", DEFAULT_ANIMA_TRANSFORMER_FILENAME),
