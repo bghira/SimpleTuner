@@ -106,10 +106,12 @@ class Anima(ImageModelFoundation):
         latents = batch["latents"]
         input_noise = batch["input_noise"]
         base_sigmas = batch["sigmas"].to(device=latents.device, dtype=latents.dtype).view(-1)
-        base_timesteps = batch["timesteps"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        base_timesteps = self._to_sigma_space_timesteps(
+            batch["timesteps"].to(device=latents.device, dtype=latents.dtype).view(-1)
+        )
         alt_sigmas, alt_timesteps = self.sample_flow_sigmas(batch=batch, state=state)
         alt_sigmas = alt_sigmas.to(device=latents.device, dtype=latents.dtype)
-        alt_timesteps = alt_timesteps.to(device=latents.device, dtype=latents.dtype)
+        alt_timesteps = self._to_sigma_space_timesteps(alt_timesteps.to(device=latents.device, dtype=latents.dtype))
 
         _, _, num_frames, height, width = latents.shape
         p_t, p_h, p_w = self._crepa_self_flow_patch_size()
@@ -587,6 +589,18 @@ class Anima(ImageModelFoundation):
             "negative_prompt_t5xxl_weights": text_embedding["t5xxl_weights"],
         }
 
+    def _to_sigma_space_timesteps(self, timesteps: torch.Tensor) -> torch.Tensor:
+        if timesteps.numel() == 0 or torch.max(timesteps.detach().float()) <= 1.0:
+            return timesteps
+        max_timestep = float(
+            getattr(getattr(getattr(self, "noise_schedule", None), "config", None), "num_train_timesteps", 1000) or 1000
+        )
+        return timesteps / max_timestep
+
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        sigmas, timesteps = super().sample_flow_sigmas(batch=batch, state=state)
+        return sigmas, self._to_sigma_space_timesteps(timesteps)
+
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch(batch, state)
         text_encoder_output = batch.get("text_encoder_output")
@@ -617,6 +631,7 @@ class Anima(ImageModelFoundation):
             device=self.accelerator.device,
             dtype=torch.float32,
         )
+        timesteps = self._to_sigma_space_timesteps(timesteps)
         hidden_states_buffer = self._new_hidden_state_buffer()
 
         noise_pred = self.model(
