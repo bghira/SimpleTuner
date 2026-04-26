@@ -388,6 +388,36 @@ class TestAnimaModel(unittest.TestCase):
 
         self.assertNotIn("proxies", mock_download.call_args.kwargs)
 
+    def test_lora_state_dict_preserves_diffusers_peft_checkpoint_keys(self):
+        from simpletuner.helpers.models.anima.lora_pipeline import AnimaLoraLoaderMixin
+
+        down = torch.randn(4, 8)
+        up = torch.randn(8, 4)
+        state_dict = {
+            "transformer.core.transformer_blocks.0.attn1.to_k.lora.down.weight": down,
+            "transformer.core.transformer_blocks.0.attn1.to_k.lora.up.weight": up,
+        }
+
+        loaded = AnimaLoraLoaderMixin.lora_state_dict(state_dict)
+
+        self.assertIs(loaded["transformer.core.transformer_blocks.0.attn1.to_k.lora.down.weight"], down)
+        self.assertIs(loaded["transformer.core.transformer_blocks.0.attn1.to_k.lora.up.weight"], up)
+
+    def test_lora_converter_accepts_peft_down_up_suffixes(self):
+        from simpletuner.helpers.models.anima.lora_pipeline import _convert_non_diffusers_anima_lora_to_diffusers
+
+        down = torch.randn(4, 8)
+        up = torch.randn(8, 4)
+        converted = _convert_non_diffusers_anima_lora_to_diffusers(
+            {
+                "blocks.0.self_attn.k_proj.lora.down.weight": down,
+                "blocks.0.self_attn.k_proj.lora.up.weight": up,
+            }
+        )
+
+        self.assertIs(converted["transformer.core.transformer_blocks.0.attn1.to_k.lora_A.weight"], down)
+        self.assertIs(converted["transformer.core.transformer_blocks.0.attn1.to_k.lora_B.weight"], up)
+
     def test_transformer_validation_guards(self):
         from simpletuner.helpers.models.anima.transformer import _AdapterAttention, _RotaryEmbedding
 
@@ -429,7 +459,7 @@ class TestAnimaModel(unittest.TestCase):
         self.assertEqual(result["sigmas"].shape, (1, 1, 1, 4, 4))
         self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
         unique_timesteps = torch.unique(result["timesteps"].view(-1)).cpu()
-        torch.testing.assert_close(unique_timesteps, torch.tensor([200.0, 800.0], dtype=torch.float32))
+        torch.testing.assert_close(unique_timesteps, torch.tensor([0.2, 0.8], dtype=torch.float32))
         self.assertTrue(torch.equal(result["crepa_self_flow_mask"], fake_mask_rand < 0.5))
 
     def test_model_predict_preserves_tokenwise_timesteps_and_capture_override(self):
@@ -442,7 +472,7 @@ class TestAnimaModel(unittest.TestCase):
 
         def _forward(hidden_states, timestep, encoder_hidden_states, **kwargs):
             kwargs["hidden_states_buffer"]["layer_7"] = captured
-            self.assertTrue(torch.equal(timestep, torch.tensor([[100.0, 900.0, 100.0, 900.0]], dtype=torch.float32)))
+            torch.testing.assert_close(timestep, torch.tensor([[0.1, 0.9, 0.1, 0.9]], dtype=torch.float32))
             return (torch.randn(1, 16, 1, 4, 4),)
 
         model.model = MagicMock(side_effect=_forward, config=SimpleNamespace(patch_size=(1, 2, 2)))
@@ -464,6 +494,22 @@ class TestAnimaModel(unittest.TestCase):
         self.assertIs(result["crepa_hidden_states"], captured)
         self.assertIs(result["hidden_states_buffer"], model._new_hidden_state_buffer.return_value)
         self.assertEqual(result["model_prediction"].shape, (1, 16, 1, 4, 4))
+
+    def test_sample_flow_sigmas_returns_sigma_space_model_timesteps(self):
+        from simpletuner.helpers.models.anima.model import Anima
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        model = Anima.__new__(Anima)
+        model.noise_schedule = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
+        with patch.object(
+            ImageModelFoundation,
+            "sample_flow_sigmas",
+            return_value=(torch.tensor([0.25, 0.75]), torch.tensor([250.0, 750.0])),
+        ):
+            sigmas, timesteps = model.sample_flow_sigmas(batch={}, state={})
+
+        torch.testing.assert_close(sigmas, torch.tensor([0.25, 0.75]))
+        torch.testing.assert_close(timesteps, torch.tensor([0.25, 0.75]))
 
     def test_model_predict_preserves_frame_axis_to_match_flow_target(self):
         from simpletuner.helpers.models.anima.model import Anima
