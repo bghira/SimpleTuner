@@ -991,6 +991,82 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_add_and_remove_dataset", scenario)
 
 
+class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
+    """Dataset Captioning sub-tab should initialize without Alpine wiring errors."""
+
+    MAX_BROWSERS = 1
+
+    def test_captioning_subtab_initializes(self) -> None:
+        dataset_dir = self.home_path / "caption-images"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        default_env_dir = self.config_dir / "default"
+        (default_env_dir / "multidatabackend.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "caption-smoke",
+                        "type": "local",
+                        "dataset_type": "image",
+                        "instance_data_dir": str(dataset_dir),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            captioning_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class, 'dataset-subtab-btn') and contains(., 'Captioning')]")
+                )
+            )
+            captioning_button.click()
+
+            def captioning_panel_ready(active_driver):
+                return active_driver.execute_script(
+                    """
+                    const root = document.querySelector('[x-data="datasetCaptioningComponent()"]');
+                    if (!root) return false;
+                    const text = root.innerText || '';
+                    return text.includes('Captioning')
+                        && (
+                            text.includes("pip install 'simpletuner[captioning]'")
+                            || text.includes('No image datasets are available')
+                            || !!root.querySelector('button[type="submit"]')
+                        );
+                    """
+                )
+
+            self.assertTrue(
+                WebDriverWait(driver, 10).until(captioning_panel_ready),
+                "Captioning sub-tab did not initialize",
+            )
+
+            raw_buttons = [
+                button
+                for button in driver.find_elements(By.XPATH, "//button[contains(., 'Raw Config')]")
+                if button.is_displayed()
+            ]
+            if raw_buttons:
+                raw_buttons[0].click()
+                WebDriverWait(driver, 5).until(
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, 'textarea[x-model="rawConfig"]')),
+                    message="Captioning raw config textarea did not become visible",
+                )
+            else:
+                self.assertIn("pip install 'simpletuner[captioning]'", driver.page_source)
+
+        self.for_each_browser("test_captioning_subtab_initializes", scenario)
+
+
 class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
     """Test tab navigation functionality."""
 
