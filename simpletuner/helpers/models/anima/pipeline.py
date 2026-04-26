@@ -99,18 +99,22 @@ def _prepare_prompt_embedding_inputs(
     prompt: list[str],
     negative_prompt: list[str],
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if pipe.text_encoder is None:
+        raise RuntimeError(
+            "AnimaPipeline requires a text_encoder to encode raw prompts. "
+            "Pass prompt_embeds and negative_prompt_embeds when using cached text embeddings."
+        )
+    if pipe.prompt_tokenizer is None:
+        raise RuntimeError(
+            "AnimaPipeline requires a prompt_tokenizer to encode raw prompts. "
+            "Pass prompt_embeds and negative_prompt_embeds when using cached text embeddings."
+        )
     with _module_execution_context(
         pipe.text_encoder,
         execution_device=pipe.execution_device,
         execution_dtype=pipe.text_encoder_dtype,
         enable_offload=pipe.use_module_cpu_offload,
     ):
-        if pipe.prompt_tokenizer is None:
-            raise RuntimeError(
-                "AnimaPipeline requires a prompt_tokenizer. "
-                "Load the pipeline via from_pretrained or from_single_file to ensure "
-                "the tokenizer is initialised automatically."
-            )
         pos_hidden, pos_t5_ids, pos_t5_weights = prepare_condition_inputs(
             pipe.prompt_tokenizer,
             pipe.text_encoder,
@@ -483,7 +487,7 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
     transformer: AnimaTransformerModel
     vae: AutoencoderKLQwenImage
     scheduler: AnimaFlowMatchEulerDiscreteScheduler
-    text_encoder: PreTrainedModel
+    text_encoder: PreTrainedModel | None
     prompt_tokenizer: AnimaPromptTokenizer | None
     execution_device: str
     model_dtype: torch.dtype
@@ -503,7 +507,7 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
         transformer: AnimaTransformerModel,
         vae: AutoencoderKLQwenImage,
         scheduler: FlowMatchEulerDiscreteScheduler,
-        text_encoder: PreTrainedModel,
+        text_encoder: PreTrainedModel | None,
         prompt_tokenizer: AnimaPromptTokenizer | None = None,
         execution_device: str = "auto",
         model_dtype: torch.dtype = torch.float32,

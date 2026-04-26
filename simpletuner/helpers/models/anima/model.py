@@ -393,6 +393,16 @@ class Anima(ImageModelFoundation):
         if not move_to_device:
             self.vae.to("cpu")
 
+    def _ensure_pipeline_components(self, *, load_base_model: bool) -> None:
+        if load_base_model and self.model is None:
+            self.load_model(move_to_device=True)
+        if self.vae is None:
+            self.load_vae(move_to_device=True)
+        if load_base_model and (self.text_encoders is None or len(self.text_encoders) == 0):
+            self.load_text_encoder(move_to_device=True)
+        if load_base_model and getattr(self, "prompt_tokenizer", None) is None:
+            self.load_text_tokenizer()
+
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
@@ -404,20 +414,17 @@ class Anima(ImageModelFoundation):
         if pipeline_type not in self.PIPELINE_CLASSES:
             raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
 
-        if load_base_model:
-            if self.model is None:
-                self.load_model(move_to_device=True)
-            if self.vae is None:
-                self.load_vae(move_to_device=True)
-            if self.text_encoders is None:
-                self.load_text_encoder(move_to_device=True)
-            if getattr(self, "prompt_tokenizer", None) is None:
-                self.load_text_tokenizer()
+        self._ensure_pipeline_components(load_base_model=load_base_model)
 
         transformer = self.unwrap_model(self.model)
         text_encoder = self.text_encoders[0] if self.text_encoders else None
-        if transformer is None or text_encoder is None or self.vae is None:
-            raise RuntimeError("Anima pipeline requires transformer, text_encoder, and vae to be loaded.")
+        if transformer is None or self.vae is None:
+            missing_components = []
+            if transformer is None:
+                missing_components.append("transformer")
+            if self.vae is None:
+                missing_components.append("vae")
+            raise RuntimeError(f"Anima pipeline requires loaded components: {', '.join(missing_components)}.")
 
         scheduler = getattr(self, "noise_schedule", None)
         if scheduler is None:
@@ -429,7 +436,7 @@ class Anima(ImageModelFoundation):
         else:
             scheduler = coerce_anima_scheduler(scheduler.__class__.from_config(scheduler.config))
 
-        text_encoder_dtype = next(text_encoder.parameters()).dtype
+        text_encoder_dtype = next(text_encoder.parameters()).dtype if text_encoder is not None else self.config.weight_dtype
         pipeline_instance = self.PIPELINE_CLASSES[pipeline_type](
             transformer=transformer,
             vae=self.get_vae(),

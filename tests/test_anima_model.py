@@ -173,6 +173,42 @@ class TestAnimaModel(unittest.TestCase):
         self.assertEqual(mock_from_single_file.call_args.args[0], "circlestone-labs/Anima")
         self.assertEqual(mock_from_single_file.call_args.kwargs["subfolder"], "transformer")
 
+    def test_pipeline_load_without_base_model_uses_cached_embed_components_only(self):
+        from simpletuner.helpers.models.anima.model import Anima
+        from simpletuner.helpers.models.common import PipelineTypes
+
+        class DummyPipeline:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        model = Anima.__new__(Anima)
+        model.model = object()
+        model.vae = None
+        model.text_encoders = None
+        model.prompt_tokenizer = None
+        model.pipelines = {}
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32)
+        model.PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: DummyPipeline}
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model.get_vae = lambda: model.vae
+        model.load_model = MagicMock()
+
+        model.load_vae = MagicMock(side_effect=lambda move_to_device=True: setattr(model, "vae", object()))
+        model.load_text_encoder = MagicMock()
+        model.load_text_tokenizer = MagicMock()
+
+        pipeline = model._load_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+
+        model.load_model.assert_not_called()
+        model.load_vae.assert_called_once_with(move_to_device=True)
+        model.load_text_encoder.assert_not_called()
+        model.load_text_tokenizer.assert_not_called()
+        self.assertIs(pipeline.transformer, model.model)
+        self.assertIs(pipeline.vae, model.vae)
+        self.assertIsNone(pipeline.text_encoder)
+        self.assertIsNone(pipeline.prompt_tokenizer)
+
     def test_transformer_import(self):
         from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel
 
