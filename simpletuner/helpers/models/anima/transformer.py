@@ -552,9 +552,10 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             adapter_config = json.load(handle)
 
         model_dim = int(adapter_config["model_dim"])
-        if int(adapter_config.get("source_dim", model_dim)) != model_dim or int(
-            adapter_config.get("target_dim", model_dim)
-        ) != model_dim:
+        if (
+            int(adapter_config.get("source_dim", model_dim)) != model_dim
+            or int(adapter_config.get("target_dim", model_dim)) != model_dim
+        ):
             raise ValueError("Anima llm_adapter source_dim, target_dim, and model_dim must match.")
         return adapter_config
 
