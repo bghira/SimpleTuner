@@ -111,9 +111,20 @@ def build_triton_wheel_url(version: str, base_url: str) -> str:
     return f"triton @ {base_url}/{filename}"
 
 
+def build_vllm_cuda13_wheel_url() -> str:
+    """Build a direct wheel URL for vLLM's CUDA 13 release wheel."""
+    version = os.environ.get("SIMPLETUNER_VLLM_CUDA13_VERSION", "0.19.1")
+    cpu_arch = os.environ.get("SIMPLETUNER_VLLM_CUDA13_ARCH", platform.machine())
+    if cpu_arch == "AMD64":
+        cpu_arch = "x86_64"
+    platform_tag = os.environ.get("SIMPLETUNER_VLLM_CUDA13_PLATFORM_TAG", f"manylinux_2_35_{cpu_arch}")
+    filename = f"vllm-{version}%2Bcu130-cp38-abi3-{platform_tag}.whl"
+    return f"vllm @ https://github.com/vllm-project/vllm/releases/download/v{version}/{filename}"
+
+
 def get_cuda13_dependencies():
     """Get CUDA 13 specific dependencies (use --extra-index-url https://download.pytorch.org/whl/cu130)."""
-    return [
+    dependencies = [
         "torch>=2.10.0",
         "torchvision>=0.25.0",
         "torchaudio>=2.10.0",
@@ -127,6 +138,9 @@ def get_cuda13_dependencies():
         "lm-eval>=0.4.4",
         "ramtorch",
     ]
+    if not _is_building_dist:
+        dependencies.append(build_vllm_cuda13_wheel_url())
+    return dependencies
 
 
 def get_cuda_nightly_dependencies():
@@ -225,6 +239,20 @@ def get_cpu_dependencies():
     ]
 
 
+def get_captioning_cuda13_dependencies():
+    """CaptionFlow dependencies with the vLLM CUDA 13 wheel selected explicitly."""
+    dependencies = [
+        "caption-flow>=0.5.2",
+        "numpy>=2.2.0,<2.3.0",
+        "transformers>=5.5.1,<6.0.0",
+    ]
+    if not _is_building_dist:
+        dependencies.append(build_vllm_cuda13_wheel_url())
+    else:
+        dependencies.append("vllm>=0.19.1,<0.20.0")
+    return dependencies
+
+
 PLATFORM_DEPENDENCIES = {
     "cuda": get_cuda_dependencies(),
     "rocm": get_rocm_dependencies(),
@@ -289,7 +317,7 @@ base_deps = [
     "boto3>=1.35.83",
     "pandas>=2.2.3",
     "botocore>=1.35.83",
-    "skrample==0.6.0",
+    "skrample>=0.5.3,<0.6.0",
     "urllib3<1.27",
     "torchsde>=0.2.6",
     "torchmetrics>=1.1.1",
@@ -329,14 +357,16 @@ base_deps = [
     "psutil>=5.9.0",
 ]
 
-# Nightly extras contain direct URLs that PyPI rejects, so only include them
+# CUDA-specific extras contain direct URLs that PyPI rejects, so only include them
 # for editable / local installs, not when building distributable wheels / sdists.
-_is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "build", "egg_info"))
+_is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "build"))
 
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
     "captioning": ["caption-flow[vllm]>=0.5.2"],
+    "captioning-cuda13": get_captioning_cuda13_dependencies(),
+    "cuda13-captioning": get_captioning_cuda13_dependencies(),
     "dev": [
         "selenium>=4.0.0",
         "coverage>=7.0.0",
@@ -445,3 +475,6 @@ if __name__ == "__main__":
     print("  pip install '.[apple]'                                                              # macOS")
     print("  pip install '.[cpu]'                                                                # CPU only")
     print("  pip install '.[captioning]'                                                         # CaptionFlow integration")
+    print(
+        "  pip install '.[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu130  # CUDA 13 + CaptionFlow"
+    )
