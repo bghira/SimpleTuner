@@ -714,9 +714,7 @@ class VAECache(WebhookMixin):
                 latents_std_t = torch.as_tensor(latents_std, device=latents_uncached.device).flatten()
 
                 config_mu_channels = (
-                    getattr(self.vae, "z_dim", None)
-                    or getattr(vae_config, "z_dim", None)
-                    or target_mu_channels
+                    getattr(self.vae, "z_dim", None) or getattr(vae_config, "z_dim", None) or target_mu_channels
                 )
                 if config_mu_channels != target_mu_channels:
                     logger.warning(

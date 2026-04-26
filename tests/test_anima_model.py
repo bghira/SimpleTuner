@@ -463,6 +463,48 @@ class TestAnimaModel(unittest.TestCase):
 
         self.assertIs(result["crepa_hidden_states"], captured)
         self.assertIs(result["hidden_states_buffer"], model._new_hidden_state_buffer.return_value)
+        self.assertEqual(result["model_prediction"].shape, (1, 16, 1, 4, 4))
+
+    def test_model_predict_preserves_frame_axis_to_match_flow_target(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32)
+        prediction = torch.randn(1, 16, 1, 4, 4)
+        model.model = MagicMock(return_value=(prediction,), config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model.crepa_regularizer = None
+
+        prepared_batch = {
+            "latents": torch.randn(1, 16, 1, 4, 4),
+            "noise": torch.randn(1, 16, 1, 4, 4),
+            "noisy_latents": torch.randn(1, 16, 1, 4, 4),
+            "timesteps": torch.tensor([500.0], dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(1, 3, 8),
+            "t5xxl_ids": None,
+            "t5xxl_weights": None,
+        }
+
+        result = model.model_predict(prepared_batch)
+        target = model.get_prediction_target(prepared_batch)
+
+        self.assertEqual(result["model_prediction"].shape, target.shape)
+        self.assertEqual((result["model_prediction"] - target).shape, target.shape)
+
+    def test_expand_sigmas_matches_anima_latent_rank(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        batch = {
+            "latents": torch.zeros(2, 16, 1, 4, 4),
+            "sigmas": torch.tensor([0.25, 0.75], dtype=torch.float32),
+        }
+
+        result = model.expand_sigmas(batch)
+
+        self.assertEqual(result["sigmas"].shape, (2, 1, 1, 1, 1))
 
     def test_collate_prompt_embeds_preserves_anima_adapter_inputs(self):
         from simpletuner.helpers.models.anima.model import Anima

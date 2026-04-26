@@ -461,6 +461,14 @@ class Anima(ImageModelFoundation):
             return latents.unsqueeze(2)
         return latents
 
+    def expand_sigmas(self, batch: dict) -> dict:
+        sigmas = batch.get("sigmas")
+        latents = batch.get("latents")
+        if sigmas is None or latents is None:
+            return batch
+        batch["sigmas"] = sigmas.view(sigmas.shape[0], *([1] * (latents.ndim - 1)))
+        return batch
+
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         del is_negative_prompt
         if self.text_encoders is None or len(self.text_encoders) == 0:
@@ -623,7 +631,13 @@ class Anima(ImageModelFoundation):
             noise_pred = noise_pred.sample
         elif isinstance(noise_pred, tuple):
             noise_pred = noise_pred[0]
-        if noise_pred.dim() == 5 and noise_pred.shape[2] == 1:
+        target_latents = prepared_batch.get("latents")
+        if (
+            noise_pred.dim() == 5
+            and noise_pred.shape[2] == 1
+            and torch.is_tensor(target_latents)
+            and target_latents.dim() == 4
+        ):
             noise_pred = noise_pred.squeeze(2)
         return {
             "model_prediction": noise_pred.float(),
