@@ -225,6 +225,19 @@ class SingleFileAction(BaseModel):
     file_path: str
 
 
+def _captioning_install_command() -> str:
+    try:
+        import torch
+
+        cuda_version = str(getattr(torch.version, "cuda", "") or "")
+    except Exception:
+        cuda_version = ""
+
+    if cuda_version.startswith("13"):
+        return "pip install 'simpletuner[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu130"
+    return "pip install 'simpletuner[captioning]'"
+
+
 class CaptioningCapabilities(BaseModel):
     """CaptionFlow integration availability for the dataset captioning UI."""
 
@@ -234,7 +247,7 @@ class CaptioningCapabilities(BaseModel):
     module: str = "caption_flow"
     version: Optional[str] = None
     required_version: str = "0.5.0"
-    install_command: str = "pip install 'simpletuner[captioning]'"
+    install_command: str = Field(default_factory=_captioning_install_command)
 
 
 class CaptioningJobRequest(BaseModel):

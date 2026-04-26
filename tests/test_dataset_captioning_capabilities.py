@@ -33,7 +33,8 @@ class DatasetCaptioningCapabilitiesTestCase(APITestCase, unittest.TestCase):
         data = response.json()
         self.assertFalse(data["installed"])
         self.assertFalse(data["ready"])
-        self.assertEqual(data["install_command"], "pip install 'simpletuner[captioning]'")
+        self.assertIn("simpletuner[", data["install_command"])
+        self.assertIn("captioning", data["install_command"])
         self.assertEqual(data["required_version"], "0.5.0")
 
     def test_capabilities_reports_installed_captionflow(self) -> None:
