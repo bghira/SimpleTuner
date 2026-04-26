@@ -485,6 +485,70 @@ class Anima(ImageModelFoundation):
     def _format_text_embedding(self, text_embedding):
         return text_embedding
 
+    def collate_prompt_embeds(self, text_encoder_output: list[dict]) -> dict:
+        if not text_encoder_output:
+            return {}
+
+        def _normalize_batch_dim(key: str, tensor: torch.Tensor) -> torch.Tensor:
+            if key == "t5xxl_ids":
+                if tensor.dim() == 1:
+                    return tensor.unsqueeze(0)
+                if tensor.dim() == 2:
+                    return tensor
+            elif key == "t5xxl_weights":
+                if tensor.dim() == 1:
+                    return tensor.unsqueeze(0).unsqueeze(-1)
+                if tensor.dim() == 2:
+                    if tensor.shape[-1] == 1:
+                        return tensor.unsqueeze(0)
+                    return tensor.unsqueeze(-1)
+                if tensor.dim() == 3:
+                    return tensor
+            else:
+                if tensor.dim() == 2:
+                    return tensor.unsqueeze(0)
+                if tensor.dim() == 3:
+                    return tensor
+            raise ValueError(f"Unexpected Anima text embedding tensor dimension for {key}: {tensor.dim()}.")
+
+        def _pad_and_cat_tensors(key: str, tensors: list[torch.Tensor]) -> torch.Tensor:
+            normalized = [_normalize_batch_dim(key, tensor) for tensor in tensors]
+            max_length = max(tensor.shape[1] for tensor in normalized)
+            padded = []
+            for tensor in normalized:
+                if tensor.shape[1] == max_length:
+                    padded.append(tensor)
+                    continue
+                pad_shape = list(tensor.shape)
+                pad_shape[1] = max_length - tensor.shape[1]
+                pad_value = 0
+                if key == "t5xxl_ids":
+                    pad_value = 0
+                pad_tensor = torch.full(
+                    pad_shape,
+                    pad_value,
+                    device=tensor.device,
+                    dtype=tensor.dtype,
+                )
+                padded.append(torch.cat([tensor, pad_tensor], dim=1))
+            return torch.cat(padded, dim=0)
+
+        def _collate(key: str):
+            values = [entry[key] for entry in text_encoder_output if key in entry and entry[key] is not None]
+            if len(values) != len(text_encoder_output):
+                return None
+            first = values[0]
+            if not torch.is_tensor(first):
+                return values
+            return _pad_and_cat_tensors(key, values)
+
+        collated = {}
+        for key in ("prompt_embeds", "t5xxl_ids", "t5xxl_weights"):
+            value = _collate(key)
+            if value is not None:
+                collated[key] = value
+        return collated
+
     def _build_pipeline_condition(self, text_embedding: dict) -> torch.Tensor:
         if self.model is None:
             self.load_model(move_to_device=True)
@@ -503,16 +567,29 @@ class Anima(ImageModelFoundation):
 
     def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         return {
-            "prompt_embeds": self._build_pipeline_condition(text_embedding),
+            "prompt_embeds": text_embedding["prompt_embeds"],
+            "prompt_t5xxl_ids": text_embedding["t5xxl_ids"],
+            "prompt_t5xxl_weights": text_embedding["t5xxl_weights"],
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         return {
-            "negative_prompt_embeds": self._build_pipeline_condition(text_embedding),
+            "negative_prompt_embeds": text_embedding["prompt_embeds"],
+            "negative_prompt_t5xxl_ids": text_embedding["t5xxl_ids"],
+            "negative_prompt_t5xxl_weights": text_embedding["t5xxl_weights"],
         }
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch(batch, state)
+        text_encoder_output = batch.get("text_encoder_output")
+        if isinstance(text_encoder_output, dict):
+            batch.setdefault("t5xxl_ids", text_encoder_output.get("t5xxl_ids"))
+            batch.setdefault("t5xxl_weights", text_encoder_output.get("t5xxl_weights"))
+        if batch.get("t5xxl_ids") is None or batch.get("t5xxl_weights") is None:
+            raise ValueError(
+                "Anima training requires text embedding cache entries with t5xxl_ids and t5xxl_weights. "
+                "Clear and rebuild the text embedding cache."
+            )
         if batch.get("t5xxl_ids") is not None:
             batch["t5xxl_ids"] = batch["t5xxl_ids"].to(device=self.accelerator.device, dtype=torch.int32)
         if batch.get("t5xxl_weights") is not None:

@@ -105,6 +105,34 @@ class TestVaeCache(unittest.TestCase):
             generated = vae_cache.generate_vae_cache_filename(filepath)[0]
             self.assertEqual(generated, expected, f"Test {i} failed: {generated} != {expected}")
 
+    @patch("simpletuner.helpers.caching.vae.StateTracker.get_model_family", return_value="anima")
+    def test_anima_process_video_latents_uses_wan_style_config_stats(self, _mock_model_family):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.vae = SimpleNamespace(
+            config=SimpleNamespace(
+                latents_mean=[1.0, 2.0],
+                latents_std=[2.0, 4.0],
+                z_dim=2,
+            )
+        )
+
+        posterior_parameters = torch.tensor(
+            [
+                [
+                    [[[3.0]]],
+                    [[[10.0]]],
+                    [[[0.0]]],
+                    [[[0.0]]],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+
+        latents = vae_cache.process_video_latents(posterior_parameters)
+
+        expected = torch.tensor([[[[[1.0]]], [[[2.0]]]]], dtype=torch.float32)
+        torch.testing.assert_close(latents, expected)
+
 
 class DummyAccelerator:
     def __init__(self):

@@ -216,6 +216,122 @@ class TestAnimaModel(unittest.TestCase):
         self.assertTrue(hasattr(AnimaTransformerModel, "from_pretrained"))
         self.assertTrue(hasattr(AnimaTransformerModel, "from_single_file"))
 
+    def test_transformer_forward_captures_hidden_states(self):
+        from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel
+
+        model = AnimaTransformerModel(
+            in_channels=2,
+            out_channels=2,
+            num_attention_heads=2,
+            attention_head_dim=4,
+            num_layers=1,
+            mlp_ratio=2.0,
+            text_embed_dim=8,
+            adaln_lora_dim=8,
+            max_size=(2, 4, 4),
+            patch_size=(1, 2, 2),
+            adapter_dim=8,
+            adapter_layers=1,
+            adapter_heads=2,
+        )
+        hidden_states = torch.randn(1, 2, 1, 4, 4)
+        encoder_hidden_states = torch.randn(1, 3, 8)
+        hidden_states_buffer = {}
+
+        with torch.no_grad():
+            output = model(
+                hidden_states=hidden_states,
+                timestep=torch.tensor([100.0]),
+                encoder_hidden_states=encoder_hidden_states,
+                return_dict=False,
+                hidden_states_buffer=hidden_states_buffer,
+            )
+
+        self.assertEqual(output[0].shape, hidden_states.shape)
+        self.assertIn("layer_0", hidden_states_buffer)
+        self.assertEqual(hidden_states_buffer["layer_0"].shape, (1, 4, 8))
+
+    def test_transformer_gradient_checkpointing_controls_core(self):
+        from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel
+
+        model = AnimaTransformerModel(
+            in_channels=2,
+            out_channels=2,
+            num_attention_heads=2,
+            attention_head_dim=4,
+            num_layers=1,
+            mlp_ratio=2.0,
+            text_embed_dim=8,
+            adaln_lora_dim=8,
+            max_size=(2, 4, 4),
+            patch_size=(1, 2, 2),
+            adapter_dim=8,
+            adapter_layers=1,
+            adapter_heads=2,
+        )
+
+        self.assertFalse(model.core.gradient_checkpointing)
+        model.enable_gradient_checkpointing()
+        self.assertTrue(model.core.gradient_checkpointing)
+        model.disable_gradient_checkpointing()
+        self.assertFalse(model.core.gradient_checkpointing)
+
+    def test_diffusers_transformer_loads_sibling_llm_adapter(self):
+        from tempfile import TemporaryDirectory
+
+        from safetensors.torch import save_file
+
+        from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel
+
+        source = AnimaTransformerModel(
+            in_channels=2,
+            out_channels=2,
+            num_attention_heads=2,
+            attention_head_dim=4,
+            num_layers=1,
+            mlp_ratio=2.0,
+            text_embed_dim=8,
+            adaln_lora_dim=8,
+            max_size=(2, 4, 4),
+            patch_size=(1, 2, 2),
+            adapter_dim=8,
+            adapter_layers=1,
+            adapter_heads=2,
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            transformer_path = repo_path / "transformer"
+            adapter_dir = repo_path / "llm_adapter"
+            adapter_dir.mkdir()
+            source.core.save_pretrained(str(transformer_path), safe_serialization=True)
+            with open(adapter_dir / "config.json", "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "source_dim": 8,
+                        "target_dim": 8,
+                        "model_dim": 8,
+                        "num_layers": 1,
+                        "num_heads": 2,
+                        "vocab_size": 32128,
+                    },
+                    handle,
+                )
+            adapter_path = adapter_dir / "diffusion_pytorch_model.safetensors"
+            save_file(source.llm_adapter.state_dict(), str(adapter_path))
+
+            loaded = AnimaTransformerModel.from_pretrained(
+                str(repo_path),
+                subfolder="transformer",
+                local_files_only=True,
+                token=False,
+            )
+
+        for name, parameter in loaded.core.state_dict().items():
+            torch.testing.assert_close(parameter, source.core.state_dict()[name])
+        for name, parameter in loaded.llm_adapter.state_dict().items():
+            torch.testing.assert_close(parameter, source.llm_adapter.state_dict()[name])
+
     def test_pipeline_import(self):
         from simpletuner.helpers.models.anima.pipeline import AnimaPipeline
 
@@ -347,6 +463,147 @@ class TestAnimaModel(unittest.TestCase):
 
         self.assertIs(result["crepa_hidden_states"], captured)
         self.assertIs(result["hidden_states_buffer"], model._new_hidden_state_buffer.return_value)
+
+    def test_collate_prompt_embeds_preserves_anima_adapter_inputs(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        text_encoder_output = [
+            {
+                "prompt_embeds": torch.ones(1, 3, 8),
+                "t5xxl_ids": torch.tensor([1, 2, 3], dtype=torch.long),
+                "t5xxl_weights": torch.tensor([1.0, 0.5, 1.0]),
+            },
+            {
+                "prompt_embeds": torch.zeros(1, 3, 8),
+                "t5xxl_ids": torch.tensor([4, 5, 6], dtype=torch.long),
+                "t5xxl_weights": torch.tensor([0.25, 1.0, 0.75]),
+            },
+        ]
+
+        collated = model.collate_prompt_embeds(text_encoder_output)
+
+        self.assertEqual(collated["prompt_embeds"].shape, (2, 3, 8))
+        torch.testing.assert_close(collated["t5xxl_ids"], torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.long))
+        torch.testing.assert_close(
+            collated["t5xxl_weights"],
+            torch.tensor([[[1.0], [0.5], [1.0]], [[0.25], [1.0], [0.75]]]),
+        )
+
+    def test_collate_prompt_embeds_pads_variable_length_anima_adapter_inputs(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        text_encoder_output = [
+            {
+                "prompt_embeds": torch.ones(1, 2, 8),
+                "t5xxl_ids": torch.tensor([[1, 2]], dtype=torch.int32),
+                "t5xxl_weights": torch.tensor([[[1.0], [0.5]]]),
+            },
+            {
+                "prompt_embeds": torch.zeros(1, 3, 8),
+                "t5xxl_ids": torch.tensor([[4, 5, 6]], dtype=torch.int32),
+                "t5xxl_weights": torch.tensor([[[0.25], [1.0], [0.75]]]),
+            },
+        ]
+
+        collated = model.collate_prompt_embeds(text_encoder_output)
+
+        self.assertEqual(collated["prompt_embeds"].shape, (2, 3, 8))
+        self.assertEqual(collated["t5xxl_ids"].shape, (2, 3))
+        self.assertEqual(collated["t5xxl_weights"].shape, (2, 3, 1))
+        torch.testing.assert_close(collated["t5xxl_ids"][0], torch.tensor([1, 2, 0], dtype=torch.int32))
+        torch.testing.assert_close(collated["t5xxl_weights"][0], torch.tensor([[1.0], [0.5], [0.0]]))
+
+    def test_convert_text_embed_for_pipeline_passes_raw_anima_adapter_inputs(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        prompt_embeds = torch.randn(1, 3, 8)
+        t5xxl_ids = torch.tensor([[1, 2, 3]], dtype=torch.int32)
+        t5xxl_weights = torch.ones(1, 3, 1)
+
+        converted = model.convert_text_embed_for_pipeline(
+            {
+                "prompt_embeds": prompt_embeds,
+                "t5xxl_ids": t5xxl_ids,
+                "t5xxl_weights": t5xxl_weights,
+            }
+        )
+        negative = model.convert_negative_text_embed_for_pipeline(
+            {
+                "prompt_embeds": prompt_embeds,
+                "t5xxl_ids": t5xxl_ids,
+                "t5xxl_weights": t5xxl_weights,
+            }
+        )
+
+        self.assertIs(converted["prompt_embeds"], prompt_embeds)
+        self.assertIs(converted["prompt_t5xxl_ids"], t5xxl_ids)
+        self.assertIs(converted["prompt_t5xxl_weights"], t5xxl_weights)
+        self.assertIs(negative["negative_prompt_embeds"], prompt_embeds)
+        self.assertIs(negative["negative_prompt_t5xxl_ids"], t5xxl_ids)
+        self.assertIs(negative["negative_prompt_t5xxl_weights"], t5xxl_weights)
+
+    def test_pipeline_accepts_raw_cached_anima_adapter_inputs(self):
+        from simpletuner.helpers.models.anima.pipeline import AnimaPipeline
+
+        pipe = AnimaPipeline.__new__(AnimaPipeline)
+        pipe.vae_scale_factor = 8
+        pipe.patch_size = 2
+        prompt_embeds = torch.randn(1, 3, 8)
+        negative_prompt_embeds = torch.randn(1, 3, 8)
+        t5xxl_ids = torch.tensor([[1, 2, 3]], dtype=torch.int32)
+        t5xxl_weights = torch.ones(1, 3, 1)
+
+        pipe.check_inputs(
+            prompt=None,
+            negative_prompt=None,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            prompt_t5xxl_ids=t5xxl_ids,
+            prompt_t5xxl_weights=t5xxl_weights,
+            negative_prompt_t5xxl_ids=t5xxl_ids,
+            negative_prompt_t5xxl_weights=t5xxl_weights,
+            image=None,
+            mask_image=None,
+            strength=1.0,
+            width=512,
+            height=512,
+            num_inference_steps=1,
+            num_images_per_prompt=1,
+            generator=None,
+            sampler="euler_a_rf",
+            sigma_schedule="beta",
+            cfg_batch_mode="split",
+            output_type="latent",
+            callback_on_step_end_tensor_inputs=["latents"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "raw cached prompt embeds require"):
+            pipe.check_inputs(
+                prompt=None,
+                negative_prompt=None,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                prompt_t5xxl_ids=t5xxl_ids,
+                prompt_t5xxl_weights=None,
+                negative_prompt_t5xxl_ids=t5xxl_ids,
+                negative_prompt_t5xxl_weights=t5xxl_weights,
+                image=None,
+                mask_image=None,
+                strength=1.0,
+                width=512,
+                height=512,
+                num_inference_steps=1,
+                num_images_per_prompt=1,
+                generator=None,
+                sampler="euler_a_rf",
+                sigma_schedule="beta",
+                cfg_batch_mode="split",
+                output_type="latent",
+                callback_on_step_end_tensor_inputs=["latents"],
+            )
 
 
 if __name__ == "__main__":
