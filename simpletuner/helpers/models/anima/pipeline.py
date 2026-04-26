@@ -152,15 +152,15 @@ def _build_cfg_conditions_from_embeddings(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     pos_cond = build_condition(
         pipe.transformer,
-        qwen_hidden=pos_hidden,
-        t5_ids=pos_t5_ids,
-        t5_weights=pos_t5_weights,
+        qwen_hidden=pos_hidden.to(device=pipe.execution_device, dtype=pipe.model_dtype),
+        t5_ids=pos_t5_ids.to(device=pipe.execution_device, dtype=torch.int32),
+        t5_weights=pos_t5_weights.to(device=pipe.execution_device, dtype=torch.float32),
     )
     neg_cond = build_condition(
         pipe.transformer,
-        qwen_hidden=neg_hidden,
-        t5_ids=neg_t5_ids,
-        t5_weights=neg_t5_weights,
+        qwen_hidden=neg_hidden.to(device=pipe.execution_device, dtype=pipe.model_dtype),
+        t5_ids=neg_t5_ids.to(device=pipe.execution_device, dtype=torch.int32),
+        t5_weights=neg_t5_weights.to(device=pipe.execution_device, dtype=torch.float32),
     )
     return pos_cond, neg_cond
 
@@ -243,6 +243,10 @@ def _generate_image(
     negative_prompt: PromptInput | None = None,
     prompt_embeds: torch.Tensor | None = None,
     negative_prompt_embeds: torch.Tensor | None = None,
+    prompt_t5xxl_ids: torch.Tensor | None = None,
+    prompt_t5xxl_weights: torch.Tensor | None = None,
+    negative_prompt_t5xxl_ids: torch.Tensor | None = None,
+    negative_prompt_t5xxl_weights: torch.Tensor | None = None,
     image: ImageBatchInput | None = None,
     mask_image: ImageBatchInput | None = None,
     strength: float = 1.0,
@@ -268,8 +272,16 @@ def _generate_image(
         raise ValueError("num_inference_steps must be >= 1")
     if prompt_embeds is not None:
         batch_size = prompt_embeds.shape[0]
-        pos_hidden = pos_t5_ids = pos_t5_weights = None
-        neg_hidden = neg_t5_ids = neg_t5_weights = None
+        if prompt_t5xxl_ids is not None:
+            pos_hidden = prompt_embeds
+            pos_t5_ids = prompt_t5xxl_ids
+            pos_t5_weights = prompt_t5xxl_weights
+            neg_hidden = negative_prompt_embeds
+            neg_t5_ids = negative_prompt_t5xxl_ids
+            neg_t5_weights = negative_prompt_t5xxl_weights
+        else:
+            pos_hidden = pos_t5_ids = pos_t5_weights = None
+            neg_hidden = neg_t5_ids = neg_t5_weights = None
     else:
         prompts, negative_prompts = _resolve_prompt_batches(
             prompt=prompt,
@@ -398,7 +410,7 @@ def _generate_image(
         execution_dtype=pipe.model_dtype,
         enable_offload=pipe.use_module_cpu_offload,
     ):
-        if prompt_embeds is not None:
+        if prompt_embeds is not None and prompt_t5xxl_ids is None:
             pos_cond = prompt_embeds.to(device=pipe.execution_device, dtype=pipe.model_dtype)
             neg_cond = negative_prompt_embeds.to(  # type: ignore[union-attr]
                 device=pipe.execution_device, dtype=pipe.model_dtype
@@ -584,6 +596,10 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
         negative_prompt: PromptInput | None,
         prompt_embeds: torch.Tensor | None = None,
         negative_prompt_embeds: torch.Tensor | None = None,
+        prompt_t5xxl_ids: torch.Tensor | None = None,
+        prompt_t5xxl_weights: torch.Tensor | None = None,
+        negative_prompt_t5xxl_ids: torch.Tensor | None = None,
+        negative_prompt_t5xxl_weights: torch.Tensor | None = None,
         image: ImageBatchInput | None,
         mask_image: ImageBatchInput | None,
         strength: float,
@@ -601,6 +617,20 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
         """Validate user-facing call arguments and runtime constraints."""
         if (prompt_embeds is None) != (negative_prompt_embeds is None):
             raise ValueError("`prompt_embeds` and `negative_prompt_embeds` must both be provided " "or both be None.")
+        raw_embed_fields = (
+            prompt_t5xxl_ids,
+            prompt_t5xxl_weights,
+            negative_prompt_t5xxl_ids,
+            negative_prompt_t5xxl_weights,
+        )
+        if any(value is not None for value in raw_embed_fields):
+            if prompt_embeds is None or negative_prompt_embeds is None:
+                raise ValueError("Anima raw cached prompt embeds require both positive and negative prompt embeddings.")
+            if any(value is None for value in raw_embed_fields):
+                raise ValueError(
+                    "Anima raw cached prompt embeds require prompt_t5xxl_ids, prompt_t5xxl_weights, "
+                    "negative_prompt_t5xxl_ids, and negative_prompt_t5xxl_weights."
+                )
         if prompt_embeds is not None:
             batch_size = prompt_embeds.shape[0]
         else:
@@ -709,6 +739,10 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
         negative_prompt: PromptInput | None = None,
         prompt_embeds: torch.Tensor | None = None,
         negative_prompt_embeds: torch.Tensor | None = None,
+        prompt_t5xxl_ids: torch.Tensor | None = None,
+        prompt_t5xxl_weights: torch.Tensor | None = None,
+        negative_prompt_t5xxl_ids: torch.Tensor | None = None,
+        negative_prompt_t5xxl_weights: torch.Tensor | None = None,
         image: ImageBatchInput | None = None,
         mask_image: ImageBatchInput | None = None,
         strength: float = 1.0,
@@ -730,11 +764,13 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
             prompt: Text prompt(s) for generation.
             negative_prompt: Optional negative prompt(s).
             prompt_embeds: Pre-computed positive conditioning tensor from
-                ``encode_prompt``. When provided, ``prompt`` is ignored for text
-                encoding and this tensor is used directly. Requires
-                ``negative_prompt_embeds`` to be provided as well.
+                ``encode_prompt``, or raw Qwen hidden states when
+                ``prompt_t5xxl_ids`` / ``prompt_t5xxl_weights`` are also
+                provided. Requires ``negative_prompt_embeds`` to be provided as well.
             negative_prompt_embeds: Pre-computed negative conditioning tensor from
-                ``encode_prompt``. Must be provided together with ``prompt_embeds``.
+                ``encode_prompt``, or raw negative Qwen hidden states when the
+                negative T5 fields are also provided. Must be provided together
+                with ``prompt_embeds``.
             image: Optional initial image for img2img or inpainting.
             mask_image: Optional inpaint mask (white = region to inpaint).
             strength: Noise strength for img2img (0.0–1.0].
@@ -779,6 +815,10 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
             negative_prompt=negative_prompt,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
+            prompt_t5xxl_ids=prompt_t5xxl_ids,
+            prompt_t5xxl_weights=prompt_t5xxl_weights,
+            negative_prompt_t5xxl_ids=negative_prompt_t5xxl_ids,
+            negative_prompt_t5xxl_weights=negative_prompt_t5xxl_weights,
             image=image,
             mask_image=mask_image,
             strength=strength,
@@ -809,6 +849,10 @@ class AnimaPipeline(DiffusionPipeline, AnimaLoraLoaderMixin):
                 negative_prompt=negative_prompt,
                 prompt_embeds=prompt_embeds,
                 negative_prompt_embeds=negative_prompt_embeds,
+                prompt_t5xxl_ids=prompt_t5xxl_ids,
+                prompt_t5xxl_weights=prompt_t5xxl_weights,
+                negative_prompt_t5xxl_ids=negative_prompt_t5xxl_ids,
+                negative_prompt_t5xxl_weights=negative_prompt_t5xxl_weights,
                 image=image,
                 mask_image=mask_image,
                 strength=strength,

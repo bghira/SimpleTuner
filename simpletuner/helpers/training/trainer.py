@@ -6604,6 +6604,7 @@ def run_trainer_job(config):
 
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
+        psutil_module = globals().get("psutil", None)
 
         # Shared storage for child PIDs collected before termination signals are sent.
         # This ensures we can kill children even after the parent exits and they get reparented to init.
@@ -6620,9 +6621,9 @@ def run_trainer_job(config):
                     pid = getattr(proc, "pid", None)
                     # Collect child PIDs BEFORE sending any signals - this is critical because
                     # if the parent dies first, children get reparented to init and we lose them
-                    if psutil and pid:
+                    if psutil_module is not None and pid:
                         try:
-                            parent = psutil.Process(pid)
+                            parent = psutil_module.Process(pid)
                             for child in parent.children(recursive=True):
                                 try:
                                     if child.pid not in _collected_child_pids:
@@ -6657,9 +6658,9 @@ def run_trainer_job(config):
             try:
                 pid = getattr(proc, "pid", None)
                 # Try to collect any additional children (may find fewer if parent died)
-                if psutil and pid:
+                if psutil_module is not None and pid:
                     try:
-                        parent = psutil.Process(pid)
+                        parent = psutil_module.Process(pid)
                         for child in parent.children(recursive=True):
                             try:
                                 if child.pid not in _collected_child_pids:

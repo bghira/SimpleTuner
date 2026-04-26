@@ -1225,6 +1225,8 @@ def collate_fn(batch):
         "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),
         "add_text_embeds": all_text_encoder_outputs.get("pooled_prompt_embeds"),
+        "t5xxl_ids": all_text_encoder_outputs.get("t5xxl_ids"),
+        "t5xxl_weights": all_text_encoder_outputs.get("t5xxl_weights"),
         "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,

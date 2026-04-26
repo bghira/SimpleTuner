@@ -71,8 +71,8 @@ def compute_wan_posterior(latents: torch.Tensor, latents_mean: list, latents_std
         DiagonalGaussianDistribution: A diagonal Gaussian distribution representing the
                                       computed posterior distribution.
     """
-    latents_mean = torch.tensor(latents_mean)
-    latents_std = 1.0 / torch.tensor(latents_std)
+    latents_mean = torch.as_tensor(latents_mean, device=latents.device, dtype=latents.dtype)
+    latents_std = 1.0 / torch.as_tensor(latents_std, device=latents.device, dtype=latents.dtype)
 
     # Split the concatenated tensor into mu and logvar
     mu, logvar = torch.chunk(latents, 2, dim=1)
