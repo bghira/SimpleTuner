@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web UI Tutorial](webui/TUTORIAL.md)
 
+-   :material-closed-caption:{ .lg .middle } __CaptionFlow__
+
+    ---
+
+    Generate dataset captions with local GPU workers
+
+    [:octicons-arrow-right-24: CaptionFlow Captioning](CAPTIONFLOW.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---
@@ -66,6 +74,7 @@
 
 - **Multi-modal training** - Image, video, and audio generation models
 - **Web UI & API** - Train via browser or automate with REST
+- **CaptionFlow captioning** - Generate captions with local GPUs through the Web UI job queue
 - **Worker orchestration** - Distribute jobs across GPU machines
 - **Enterprise-ready** - LDAP/OIDC SSO, RBAC, quotas, audit logging
 - **Cloud integration** - Replicate, self-hosted workers

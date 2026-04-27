@@ -75,6 +75,7 @@ plugins:
             Video Models: 视频模型
             Audio Models: 音频模型
             Training: 训练
+            CaptionFlow Captioning: CaptionFlow 描述生成
             Reference: 参考
         - locale: ja
           name: 日本語
@@ -90,6 +91,7 @@ plugins:
             Video Models: 動画モデル
             Audio Models: 音声モデル
             Training: トレーニング
+            CaptionFlow Captioning: CaptionFlow キャプション生成
             Reference: リファレンス
         - locale: hi
           name: हिन्दी
@@ -105,6 +107,7 @@ plugins:
             Video Models: वीडियो मॉडल
             Audio Models: ऑडियो मॉडल
             Training: प्रशिक्षण
+            CaptionFlow Captioning: CaptionFlow captioning
             Scaling & Performance: स्केलिंग और प्रदर्शन
             Server & Multi-User: सर्वर और बहु-उपयोगकर्ता
             Cloud Training: क्लाउड प्रशिक्षण
@@ -139,6 +142,7 @@ plugins:
             Video Models: Modelos de video
             Audio Models: Modelos de audio
             Training: Treinamento
+            CaptionFlow Captioning: CaptionFlow captioning
             Scaling & Performance: Escala e performance
             Server & Multi-User: Servidor e multi-usuario
             Cloud Training: Treinamento na nuvem
@@ -158,6 +162,7 @@ plugins:
             Video Models: Modelos de video
             Audio Models: Modelos de audio
             Training: Entrenamiento
+            CaptionFlow Captioning: Captioning con CaptionFlow
             Scaling & Performance: Escala y rendimiento
             Server & Multi-User: Servidor y multiusuario
             Cloud Training: Entrenamiento en la nube
@@ -266,6 +271,7 @@ nav:
 
   - Training:
     - Dataloader Configuration: DATALOADER.md
+    - CaptionFlow Captioning: CAPTIONFLOW.md
     - Training Techniques:
       - DreamBooth: DREAMBOOTH.md
       - LyCORIS: LYCORIS.md
