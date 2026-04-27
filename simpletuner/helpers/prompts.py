@@ -402,6 +402,47 @@ class PromptHandler:
         return caption
 
     @staticmethod
+    def prepare_instance_prompt_from_webshart(
+        image_path: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
+        instance_prompt: str = None,
+        sampler_backend_id: str = None,
+    ) -> str:
+        if not use_captions:
+            if not instance_prompt:
+                raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
+            return instance_prompt
+
+        if sampler_backend_id is None:
+            sampler_backend_id = data_backend.id
+
+        backend_info = StateTracker.get_data_backend(sampler_backend_id)
+        if not backend_info or "metadata_backend" not in backend_info:
+            raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
+
+        metadata_backend = backend_info["metadata_backend"]
+        caption = metadata_backend.caption_cache_entry(image_path)
+        if caption is None:
+            raise CaptionNotFoundError(f"Could not find caption for {image_path} in Webshart dataset")
+
+        if isinstance(caption, bytes):
+            caption = caption.decode("utf-8")
+        if isinstance(caption, str):
+            caption = caption.strip()
+        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
+            caption = [str(item).strip() for item in caption if item is not None]
+
+        if prepend_instance_prompt and instance_prompt:
+            if isinstance(caption, list):
+                caption = [instance_prompt + " " + c for c in caption]
+            else:
+                caption = instance_prompt + " " + caption
+
+        return caption
+
+    @staticmethod
     def magic_prompt(
         image_path: str,
         use_captions: bool,
@@ -476,6 +517,15 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
             )
+        elif caption_strategy == "webshart":
+            instance_prompt = PromptHandler.prepare_instance_prompt_from_webshart(
+                image_path,
+                use_captions=use_captions,
+                prepend_instance_prompt=effective_prepend,
+                instance_prompt=instance_prompt,
+                data_backend=data_backend,
+                sampler_backend_id=sampler_backend_id,
+            )
         elif caption_strategy == "instanceprompt":
             if instance_prompt is None:
                 raise ValueError("caption_strategy='instanceprompt' requires an instance_prompt value.")
@@ -494,7 +544,7 @@ class PromptHandler:
             return data_backend.get_caption(image_path)
         elif caption_strategy is not None:
             raise ValueError(
-                f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
+                f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface', 'webshart'"
             )
 
         # Apply shuffle expansion if enabled
@@ -638,11 +688,20 @@ class PromptHandler:
                             data_backend=data_backend,
                             sampler_backend_id=data_backend.id,
                         )
+                    elif caption_strategy == "webshart":
+                        caption = PromptHandler.prepare_instance_prompt_from_webshart(
+                            image_path,
+                            use_captions=use_captions,
+                            prepend_instance_prompt=effective_prepend,
+                            instance_prompt=instance_prompt,
+                            data_backend=data_backend,
+                            sampler_backend_id=data_backend.id,
+                        )
                     elif caption_strategy == "csv":
                         caption = data_backend.get_caption(image_path)
                     else:
                         raise ValueError(
-                            f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
+                            f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface', 'webshart'"
                         )
                 except CaptionNotFoundError as e:
                     logger.error(f"Could not load caption for image {image_path}: {e}")

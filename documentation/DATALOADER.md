@@ -177,7 +177,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 
 ### `type`
 
-- **Values:** `aws` | `local` | `csv` | `huggingface`
+- **Values:** `aws` | `local` | `csv` | `huggingface` | `webshart`
 - **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
 
 ### `conditioning_type`
@@ -212,6 +212,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 - **instanceprompt** requires a value for `instance_prompt` also be provided, and will use **only** this value for the caption of every image in the set.
 - **filename** will use a converted and cleaned-up version of the filename as its caption, eg. after swapping underscores for spaces.
 - **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy-json-lines-datasets).
+- **webshart** pulls captions from Webshart shard metadata and requires `type: "webshart"` with `metadata_backend: "webshart"`.
 
 Both `textfile` and `parquet` support multi-captions:
 - textfiles are split by newlines. Each new line will be its own separate caption.
@@ -269,11 +270,12 @@ The first tag "dog" stays fixed while the remaining tags are shuffled.
 
 ### `metadata_backend`
 
-- **Values:** `discovery` | `parquet` | `huggingface`
+- **Values:** `discovery` | `parquet` | `huggingface` | `webshart`
 - **Description:** Controls how SimpleTuner discovers image dimensions and other metadata during dataset preparation.
   - **discovery** (default): Scans actual image files to read dimensions. Works with any storage backend but can be slow for large datasets.
   - **parquet**: Reads dimensions from `width_column` and `height_column` in a parquet/JSONL file, skipping file access. See [Parquet caption strategy](#parquet-caption-strategy-json-lines-datasets).
   - **huggingface**: Uses metadata from Hugging Face datasets. See [Hugging Face Datasets Support](#hugging-face-datasets-support).
+  - **webshart**: Uses Webshart shard metadata, including logical-sample aspect buckets and captions, without scanning image bytes.
 - **Note:** When using `parquet`, you must also configure the `parquet` block with `width_column` and `height_column`. This dramatically speeds up startup for large datasets.
 
 ### `metadata_update_interval`
@@ -937,7 +939,7 @@ In order, the lines behave as follows:
     "prepend_instance_prompt": false,
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
-    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "caption_strategy": "filename|instanceprompt|parquet|textfile|webshart",
     "disable_multiline_split": false,
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
@@ -1215,6 +1217,35 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
   "image_column": "image"
 }
 ```
+
+### Webshart Datasets
+
+Webshart datasets load WebDataset-style tar shards through the `webshart` package. This backend uses Webshart's logical sample metadata for aspect bucketing, so paired JSON sidecars are not treated as trainable samples.
+
+```json
+{
+  "id": "cc12m-webshart",
+  "type": "webshart",
+  "dataset_type": "image",
+  "source": "laion/conceptual-captions-12m-webdataset",
+  "metadata": "webshart/conceptual-captions-12m-webdataset-metadata",
+  "caption_strategy": "webshart",
+  "metadata_backend": "webshart",
+  "webshart": {
+    "cache_dir": "cache/webshart/cc12m-webshart",
+    "shard_cache_gb": 25,
+    "parallel_downloads": 4
+  }
+}
+```
+
+- `source` is required and points to a local dataset, URL-backed dataset, or Hugging Face dataset source discoverable by Webshart.
+- `metadata` is optional and points to a separate metadata location when captions or shard metadata are stored outside the shard source. For Hugging Face metadata repos such as `webshart/conceptual-captions-12m-webdataset-metadata`, pass the repo id; Webshart follows the source shard subfolder layout such as `data/`.
+- `metadata_backend` must be `webshart`; it reads dimensions and captions from Webshart metadata.
+- `caption_strategy` should be `webshart` to train from metadata captions, or `instanceprompt` to ignore stored captions.
+- `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache.
+
+This backend requires a Webshart build with `TarDataLoader.list_shard_sample_aspect_buckets()`.
 
 ## Custom aspect ratio-to-resolution mapping
 

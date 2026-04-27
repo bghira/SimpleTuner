@@ -783,6 +783,98 @@ _BLUEPRINTS: List[BackendBlueprint] = [
     ),
     BackendBlueprint.model_validate(
         {
+            "id": "webshart-image",
+            "backendType": "webshart",
+            "datasetTypes": ["image"],
+            "label": "webshart dataset",
+            "description": "load sharded webdataset archives through webshart metadata",
+            "defaults": {
+                "type": "webshart",
+                "metadata_backend": "webshart",
+                "caption_strategy": "webshart",
+            },
+            "fields": [
+                {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-webshart-dataset",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "webshart",
+                    "options": [
+                        {"value": "webshart", "label": "Webshart"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "image",
+                    "options": [
+                        {"value": "image", "label": "image"},
+                    ],
+                },
+                {
+                    "id": "source",
+                    "label": "dataset source",
+                    "description": "local directory or hugging face dataset repository containing tar shards",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "laion/conceptual-captions-12m-webdataset",
+                },
+                {
+                    "id": "metadata",
+                    "label": "metadata source",
+                    "description": "optional separate metadata directory, repository, or URL prefix; Webshart follows shard subfolders such as data/",
+                    "type": "text",
+                    "advanced": True,
+                    "placeholder": "webshart/conceptual-captions-12m-webdataset-metadata",
+                },
+                {
+                    "id": "cache_dir",
+                    "label": "dataset cache",
+                    "description": "cache root for webshart metadata, shard cache, and SimpleTuner metadata",
+                    "type": "text",
+                    "placeholder": "cache/webshart",
+                    "advanced": True,
+                },
+                {
+                    "id": "shard_cache_gb",
+                    "label": "shard cache GB",
+                    "description": "maximum size of the webshart shard cache",
+                    "type": "number",
+                    "defaultValue": 25,
+                    "min": 0,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
+                    "id": "parallel_downloads",
+                    "label": "parallel downloads",
+                    "description": "number of shard downloads webshart may run in parallel",
+                    "type": "number",
+                    "defaultValue": 4,
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+            ],
+            "metadata": {
+                "tags": ["image", "webshart"],
+                "docsUrl": docs_url("DATALOADER.md#webshart-datasets"),
+            },
+        }
+    ),
+    BackendBlueprint.model_validate(
+        {
             "id": "csv-image",
             "backendType": "csv",
             "datasetTypes": ["image", "video"],

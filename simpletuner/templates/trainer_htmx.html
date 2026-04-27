@@ -1681,6 +1681,16 @@ function trainerComponent() {
                     }
                 }
 
+                if (type === 'webshart') {
+                    if (!dataset.source || !dataset.source.trim()) {
+                        validations.push({
+                            field: `${id}.source`,
+                            message: 'Webshart dataset source is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
                 // Check AWS bucket for aws type
                 if (type === 'aws') {
                     if (!dataset.aws_bucket_name || !dataset.aws_bucket_name.trim()) {
@@ -1795,6 +1805,14 @@ function trainerComponent() {
                 }
                 if (!dataset.metadata_backend || dataset.metadata_backend === '' || dataset.metadata_backend === 'discovery') {
                     dataset.metadata_backend = 'huggingface';
+                }
+            }
+            if (dataset.type === 'webshart') {
+                if (dataset.caption_strategy !== 'webshart' && dataset.caption_strategy !== 'instanceprompt') {
+                    dataset.caption_strategy = 'webshart';
+                }
+                if (dataset.metadata_backend !== 'webshart') {
+                    dataset.metadata_backend = 'webshart';
                 }
             }
 
@@ -2847,6 +2865,43 @@ function trainerComponent() {
                     delete cleaned.auth_token;
                 }
 
+                if (cleaned.type === 'webshart') {
+                    const assignWebshart = (key) => {
+                        const value = this._coerceString(dataset[key]);
+                        if (value) {
+                            cleaned[key] = value;
+                        } else {
+                            delete cleaned[key];
+                        }
+                    };
+                    assignWebshart('source');
+                    assignWebshart('metadata');
+                    const cacheDir = this._coerceString(dataset.cache_dir);
+                    const shardCacheGb = this._coerceFloat(dataset.shard_cache_gb);
+                    const parallelDownloads = this._coerceInt(dataset.parallel_downloads);
+                    const webshart = {};
+                    if (cacheDir) {
+                        webshart.cache_dir = cacheDir;
+                    }
+                    if (Number.isFinite(shardCacheGb)) {
+                        webshart.shard_cache_gb = shardCacheGb;
+                    }
+                    if (Number.isFinite(parallelDownloads)) {
+                        webshart.parallel_downloads = parallelDownloads;
+                    }
+                    if (Object.keys(webshart).length > 0) {
+                        cleaned.webshart = webshart;
+                    } else {
+                        delete cleaned.webshart;
+                    }
+                } else {
+                    delete cleaned.source;
+                    delete cleaned.metadata;
+                    delete cleaned.webshart;
+                    delete cleaned.shard_cache_gb;
+                    delete cleaned.parallel_downloads;
+                }
+
                 return cleaned;
             };
 
@@ -3674,6 +3729,10 @@ function trainerComponent() {
                     csv_file: '',
                     csv_caption_column: '',
                     csv_cache_dir: '',
+                    source: '',
+                    metadata: '',
+                    shard_cache_gb: null,
+                    parallel_downloads: null,
                     dataset_name: '',
                     dataset_config: '',
                     split: '',

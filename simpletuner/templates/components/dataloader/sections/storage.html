@@ -28,6 +28,7 @@
                                 <option value="aws">AWS S3 / compatible</option>
                                 <option value="csv">CSV URL list</option>
                                 <option value="huggingface">Hugging Face dataset</option>
+                                <option value="webshart">Webshart dataset</option>
                             </select>
                         </div>
                     </div>
@@ -251,6 +252,55 @@
                                        @input="touchConnectionField(dataset)"
                                        placeholder="hf_...">
                                 <div class="form-text">Optional token for private datasets.</div>
+                            </div>
+                        </div>
+                    </div>
+                    </template>
+                    <template x-if="dataset.type === 'webshart'">
+                    <div class="dataset-subgroup">
+                        <div class="dataset-subgroup-title">Webshart Settings</div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Dataset Source</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.source"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="laion/conceptual-captions-12m-webdataset">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Metadata Source</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.metadata"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="webshart/conceptual-captions-12m-webdataset-metadata">
+                                <div class="form-text">Pass the metadata repo id; Webshart follows shard subfolders like data/.</div>
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Cache Directory</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.cache_dir"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="cache/webshart/my-dataset">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Shard Cache GB</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       min="0"
+                                       step="1"
+                                       x-model.number.lazy="dataset.shard_cache_gb"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="25">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Parallel Downloads</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       min="1"
+                                       step="1"
+                                       x-model.number.lazy="dataset.parallel_downloads"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="4">
                             </div>
                         </div>
                     </div>
