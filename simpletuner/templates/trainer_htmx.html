@@ -1808,10 +1808,10 @@ function trainerComponent() {
                 }
             }
             if (dataset.type === 'webshart') {
-                if (!dataset.caption_strategy || dataset.caption_strategy === 'textfile') {
+                if (dataset.caption_strategy !== 'webshart' && dataset.caption_strategy !== 'instanceprompt') {
                     dataset.caption_strategy = 'webshart';
                 }
-                if (!dataset.metadata_backend || dataset.metadata_backend === '' || dataset.metadata_backend === 'discovery') {
+                if (dataset.metadata_backend !== 'webshart') {
                     dataset.metadata_backend = 'webshart';
                 }
             }

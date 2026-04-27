@@ -202,7 +202,7 @@ class WebshartMetadataBackend(MetadataBackend):
             metadata["json_path"] = file_metadata["json_path"]
         return metadata
 
-    def _prepare_metadata(self, sample_path: str, sample_metadata: dict) -> Optional[tuple[str, dict]]:
+    def _prepare_metadata(self, sample_path: str, sample_metadata: dict) -> Optional[tuple[float, dict]]:
         if not sample_metadata or "original_size" not in sample_metadata:
             return None
         if not self.meets_resolution_requirements(image_metadata=sample_metadata):
@@ -223,7 +223,7 @@ class WebshartMetadataBackend(MetadataBackend):
                 "target_size": prepared_sample.target_size,
             }
         )
-        return str(round(aspect_ratio, 2)), sample_metadata
+        return round(aspect_ratio, 2), sample_metadata
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         logger.info("Building aspect ratio buckets from webshart metadata...")
@@ -252,7 +252,7 @@ class WebshartMetadataBackend(MetadataBackend):
 
         processed_entries = 0
         last_save_time = time.time()
-        aspect_ratio_bucket_updates: Dict[str, list[str]] = {}
+        aspect_ratio_bucket_updates: Dict[float, list[str]] = {}
         metadata_updates: Dict[str, dict] = {}
         shard_metadata_cache: Dict[int, dict] = {}
         shard_indices = self._all_shard_indices()

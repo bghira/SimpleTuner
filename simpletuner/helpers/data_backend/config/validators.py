@@ -158,7 +158,7 @@ def validate_webshart_backend_settings(
 
     if caption_strategy is not None and caption_strategy not in ["webshart", "instanceprompt"]:
         raise ValueError(
-            f"(id={backend_id}) When using a webshart data backend, caption_strategy must be set to 'webshart'."
+            f"(id={backend_id}) When using a webshart data backend, caption_strategy must be set to 'webshart' or 'instanceprompt'."
         )
 
     return {"metadata_backend": metadata_backend or "webshart", "caption_strategy": caption_strategy or "webshart"}

@@ -1261,10 +1261,10 @@ function dataloaderSectionComponent() {
                 dataset.metadata_backend = 'huggingface';
             }
         } else if (dataset.type === 'webshart') {
-            if (!previousStrategy || previousStrategy === 'textfile') {
+            if (previousStrategy !== 'webshart') {
                 dataset.caption_strategy = 'webshart';
             }
-            if (!previousBackend || previousBackend === '' || previousBackend === 'discovery') {
+            if (previousBackend !== 'webshart') {
                 dataset.metadata_backend = 'webshart';
             }
         }

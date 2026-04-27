@@ -623,7 +623,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["caption_strategy"] = "webshart"
         elif backend["caption_strategy"] not in ["webshart", "instanceprompt"]:
             raise ValueError(
-                f"(id={backend['id']}) When using a webshart data backend, caption_strategy must be set to 'webshart'."
+                f"(id={backend['id']}) When using a webshart data backend, caption_strategy must be set to 'webshart' or 'instanceprompt'."
             )
 
     # Validate and store caption_shuffle config
