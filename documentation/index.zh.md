@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web 界面教程](webui/TUTORIAL.md)
 
+-   :material-closed-caption:{ .lg .middle } __CaptionFlow__
+
+    ---
+
+    使用本地 GPU worker 生成数据集 captions
+
+    [:octicons-arrow-right-24: CaptionFlow 描述生成](CAPTIONFLOW.zh.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---
@@ -66,6 +74,7 @@
 
 - **多模态训练** - 图像、视频和音频生成模型
 - **Web 界面和 API** - 通过浏览器或 REST 自动化训练
+- **CaptionFlow 描述生成** - 通过 Web UI 作业队列使用本地 GPU 生成 captions
 - **工作节点编排** - 在多个 GPU 机器上分布任务
 - **企业就绪** - LDAP/OIDC SSO、RBAC、配额、审计日志
 - **云端集成** - Replicate、自托管工作节点

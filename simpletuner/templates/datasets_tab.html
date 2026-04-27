@@ -97,7 +97,7 @@
      x-data="datasetWizardComponent()"
      x-init="loadHints(); init()">
 
-    <!-- Sub-tab navigation: Configuration | Viewer -->
+    <!-- Sub-tab navigation: Configuration | Viewer | Captioning -->
     <div class="dataset-subtab-nav mb-3">
         <button type="button"
                 class="dataset-subtab-btn"
@@ -110,6 +110,12 @@
                 :class="{ 'active': activeSubTab === 'viewer' }"
                 @click="activeSubTab = 'viewer'; sessionStorage.setItem('dataset-viewer-subtab', 'viewer'); window.dispatchEvent(new CustomEvent('viewer-tab-activated'))">
             <i class="fas fa-eye me-1"></i> Viewer
+        </button>
+        <button type="button"
+                class="dataset-subtab-btn"
+                :class="{ 'active': activeSubTab === 'captioning' }"
+                @click="activeSubTab = 'captioning'; sessionStorage.setItem('dataset-viewer-subtab', 'captioning')">
+            <i class="fas fa-closed-captioning me-1"></i> Captioning
         </button>
     </div>
 
@@ -670,6 +676,11 @@
     <!-- Viewer Sub-tab -->
     <div x-show="activeSubTab === 'viewer'" x-cloak>
         {% include 'dataset_viewer_tab.html' %}
+    </div>
+
+    <!-- Captioning Sub-tab -->
+    <div x-show="activeSubTab === 'captioning'" x-cloak>
+        {% include 'dataset_captioning_tab.html' %}
     </div>
 
 </div>

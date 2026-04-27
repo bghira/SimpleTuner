@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web UI チュートリアル](webui/TUTORIAL.md)
 
+-   :material-closed-caption:{ .lg .middle } __CaptionFlow__
+
+    ---
+
+    ローカル GPU ワーカーで dataset captions を生成
+
+    [:octicons-arrow-right-24: CaptionFlow キャプション生成](CAPTIONFLOW.ja.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---
@@ -66,6 +74,7 @@
 
 - **マルチモーダルトレーニング** - 画像、動画、音声生成モデル
 - **Web UI & API** - ブラウザまたは REST で自動化
+- **CaptionFlow キャプション生成** - Web UI ジョブキューからローカル GPU で captions を生成
 - **ワーカーオーケストレーション** - 複数の GPU マシンにジョブを分散
 - **エンタープライズ対応** - LDAP/OIDC SSO、RBAC、クォータ、監査ログ
 - **クラウド統合** - Replicate、セルフホストワーカー

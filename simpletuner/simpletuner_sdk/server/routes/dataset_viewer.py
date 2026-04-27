@@ -4,10 +4,12 @@ and cache operations (text embeds, VAE, conditioning)."""
 
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.util
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, conlist
+from pydantic import BaseModel, Field, conlist
 
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import get_cache_service
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
@@ -221,6 +223,142 @@ async def update_viewer_bbox_entities(
 class SingleFileAction(BaseModel):
     dataset_id: str
     file_path: str
+
+
+def _captioning_install_command() -> str:
+    try:
+        import torch
+
+        cuda_version = str(getattr(torch.version, "cuda", "") or "")
+    except Exception:
+        cuda_version = ""
+
+    if cuda_version.startswith("13"):
+        return "pip install 'simpletuner[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu130"
+    return "pip install 'simpletuner[captioning]'"
+
+
+class CaptioningCapabilities(BaseModel):
+    """CaptionFlow integration availability for the dataset captioning UI."""
+
+    installed: bool = False
+    ready: bool = False
+    package: str = "caption-flow"
+    module: str = "caption_flow"
+    version: Optional[str] = None
+    required_version: str = "0.5.0"
+    install_command: str = Field(default_factory=_captioning_install_command)
+
+
+class CaptioningJobRequest(BaseModel):
+    dataset_id: str
+    model: str = Field(default="Qwen/Qwen2.5-VL-3B-Instruct")
+    prompt: str = Field(
+        default=(
+            "You're a caption bot designed to output image descriptions. " "Describe what you see. Output only the caption."
+        )
+    )
+    output_field: str = "captions"
+    worker_count: int = Field(default=1, ge=1, le=32)
+    batch_size: int = Field(default=8, ge=1, le=256)
+    chunk_size: int = Field(default=256, ge=1, le=10000)
+    max_tokens: int = Field(default=256, ge=1, le=4096)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    top_p: float = Field(default=0.95, ge=0.0, le=1.0)
+    gpu_memory_utilization: float = Field(default=0.92, ge=0.1, le=0.99)
+    export_textfiles: bool = True
+    no_wait: bool = False
+    any_gpu: bool = True
+    raw_config: Optional[str] = None
+
+
+class CaptioningJobResponse(BaseModel):
+    job_id: Optional[str]
+    status: str
+    allocated_gpus: Optional[List[int]] = None
+    queue_position: Optional[int] = None
+    reason: Optional[str] = None
+
+
+def _version_at_least(version: Optional[str], required: str) -> bool:
+    """Compare simple dotted package versions without importing packaging."""
+    if not version:
+        return False
+
+    def _parts(value: str) -> List[int]:
+        parts = []
+        for token in value.split("."):
+            numeric = ""
+            for char in token:
+                if not char.isdigit():
+                    break
+                numeric += char
+            parts.append(int(numeric or 0))
+        return parts
+
+    current_parts = _parts(version)
+    required_parts = _parts(required)
+    length = max(len(current_parts), len(required_parts))
+    current_parts.extend([0] * (length - len(current_parts)))
+    required_parts.extend([0] * (length - len(required_parts)))
+    return current_parts >= required_parts
+
+
+@router.get("/captioning/capabilities", response_model=CaptioningCapabilities)
+async def get_captioning_capabilities(_user: User = Depends(get_current_user)) -> CaptioningCapabilities:
+    """Return whether optional CaptionFlow dependencies are available."""
+    module_available = importlib.util.find_spec("caption_flow") is not None
+    if not module_available:
+        return CaptioningCapabilities(installed=False)
+
+    try:
+        version = importlib.metadata.version("caption-flow")
+    except importlib.metadata.PackageNotFoundError:
+        version = None
+
+    return CaptioningCapabilities(installed=True, ready=_version_at_least(version, "0.5.0"), version=version)
+
+
+@router.post("/captioning/jobs", response_model=CaptioningJobResponse)
+async def start_captioning_job(
+    request: CaptioningJobRequest, user: User = Depends(get_current_user)
+) -> CaptioningJobResponse:
+    """Start a CaptionFlow local GPU captioning job."""
+    capabilities = await get_captioning_capabilities(user)
+    if not capabilities.ready:
+        raise HTTPException(
+            status_code=409,
+            detail=f"CaptionFlow {capabilities.required_version}+ is required. Install with {capabilities.install_command}",
+        )
+
+    config = _require_dataset_config(request.dataset_id)
+    global_config = _get_global_config()
+
+    from simpletuner.simpletuner_sdk.server.services.captionflow_job_service import start_captionflow_job
+
+    try:
+        result = start_captionflow_job(
+            dataset_id=request.dataset_id,
+            dataset_config=config,
+            global_config=global_config,
+            request_config=request.model_dump(),
+            no_wait=request.no_wait,
+            any_gpu=request.any_gpu,
+            user_id=getattr(user, "id", None),
+            org_id=getattr(user, "org_id", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return CaptioningJobResponse(
+        job_id=result.job_id,
+        status=result.status,
+        allocated_gpus=result.allocated_gpus,
+        queue_position=result.queue_position,
+        reason=result.reason,
+    )
 
 
 @router.post("/viewer/rebuild-metadata")

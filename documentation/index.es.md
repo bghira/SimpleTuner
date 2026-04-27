@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Tutorial de Web UI](webui/TUTORIAL.md)
 
+-   :material-closed-caption:{ .lg .middle } __CaptionFlow__
+
+    ---
+
+    Genera captions de datasets con workers GPU locales
+
+    [:octicons-arrow-right-24: Captioning con CaptionFlow](CAPTIONFLOW.es.md)
+
 -   :material-api:{ .lg .middle } __API REST__
 
     ---
@@ -66,6 +74,7 @@
 
 - **Entrenamiento multimodal** - Modelos de generación de imágenes, video y audio
 - **Web UI y API** - Entrena vía navegador o automatiza con REST
+- **Captioning con CaptionFlow** - Genera captions con GPUs locales mediante la cola de jobs de la Web UI
 - **Orquestación de workers** - Distribuye trabajos entre máquinas con GPU
 - **Listo para empresas** - LDAP/OIDC SSO, RBAC, cuotas, registro de auditoría
 - **Integración en la nube** - Replicate, workers autoalojados

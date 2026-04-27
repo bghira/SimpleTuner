@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: वेब UI ट्यूटोरियल](webui/TUTORIAL.md)
 
+-   :material-closed-caption:{ .lg .middle } __CaptionFlow__
+
+    ---
+
+    Local GPU workers से dataset captions generate करें
+
+    [:octicons-arrow-right-24: CaptionFlow captioning](CAPTIONFLOW.hi.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---
@@ -66,6 +74,7 @@
 
 - **मल्टी‑मोडल प्रशिक्षण** - छवि, वीडियो, और ऑडियो जनरेशन मॉडल्स
 - **वेब UI और API** - ब्राउज़र से ट्रेन करें या REST से ऑटोमेट करें
+- **CaptionFlow captioning** - Web UI job queue से local GPUs पर captions generate करें
 - **वर्कर ऑर्केस्ट्रेशन** - GPU मशीनों पर जॉब्स वितरित करें
 - **एंटरप्राइज‑रेडी** - LDAP/OIDC SSO, RBAC, quotas, audit logging
 - **क्लाउड इंटीग्रेशन** - Replicate, self‑hosted workers

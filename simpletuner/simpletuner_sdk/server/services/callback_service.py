@@ -18,6 +18,8 @@ from .sse_manager import get_sse_manager
 
 logger = logging.getLogger(__name__)
 
+_CAPTIONFLOW_JOB_CACHE: dict[str, bool] = {}
+
 
 def _update_job_store_status(job_id: str | None, status: str) -> None:
     """Update job status in the unified JobRepository.
@@ -39,7 +41,7 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
         # Map callback status to CloudJobStatus
         if status in {"completed", "success"}:
             new_status = CloudJobStatus.COMPLETED.value
-        elif status in {"failed", "error"}:
+        elif status in {"failed", "error", "fatal"}:
             new_status = CloudJobStatus.FAILED.value
         elif status in {"cancelled", "stopped"}:
             new_status = CloudJobStatus.CANCELLED.value
@@ -116,6 +118,40 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
             threading.Thread(target=_update, daemon=True).start()
     except Exception as exc:
         logger.debug("Failed to update job status in JobRepository: %s", exc)
+
+
+def _is_captionflow_job(job_id: str | None) -> bool:
+    if not job_id:
+        return False
+    cached = _CAPTIONFLOW_JOB_CACHE.get(job_id)
+    if cached is not None:
+        return cached
+    try:
+        from .cloud.storage.job_repository import get_job_repository
+
+        async def _get_job():
+            return await get_job_repository().get(job_id)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            job = asyncio.run(_get_job())
+        else:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                job = pool.submit(lambda: asyncio.run(_get_job())).result(timeout=5)
+
+        if not job:
+            return False
+
+        metadata = job.metadata if isinstance(job.metadata, Mapping) else {}
+        is_captionflow = bool(job.provider == "captionflow" or metadata.get("handler") == "captionflow")
+        _CAPTIONFLOW_JOB_CACHE[job_id] = is_captionflow
+        return is_captionflow
+    except Exception:
+        logger.debug("Failed to inspect job provider for %s", job_id, exc_info=True)
+        return False
 
 
 _default_service: CallbackService | None = None
@@ -490,6 +526,17 @@ class CallbackService:
 
     def _update_training_state(self, event: CallbackEvent) -> None:
         job_id = self._derive_job_id(event)
+        if _is_captionflow_job(job_id):
+            if event.type == EventType.TRAINING_SUMMARY:
+                _update_job_store_status(job_id, "completed")
+            elif event.type == EventType.ERROR or event.severity in {EventSeverity.ERROR, EventSeverity.CRITICAL}:
+                _update_job_store_status(job_id, "failed")
+            elif event.type == EventType.TRAINING_STATUS:
+                status = self._extract_event_status(event)
+                if status in {"completed", "success", "failed", "error", "fatal", "cancelled", "stopped"}:
+                    _update_job_store_status(job_id, status)
+            return
+
         previous_job_id = APIState.get_state("current_job_id")
         job_changed = bool(job_id and job_id != previous_job_id)
 
