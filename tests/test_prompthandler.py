@@ -138,6 +138,34 @@ class TestPromptHandler(unittest.TestCase):
         expected_caption = f"{instance_prompt} {image_filename}"
         self.assertEqual(result_caption, expected_caption)
 
+    @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend")
+    def test_webshart_caption_strategy_uses_metadata_caption_cache(self, mock_get_data_backend):
+        metadata_backend = MagicMock()
+        metadata_backend.caption_cache_entry.return_value = [" caption one ", "caption two"]
+        mock_get_data_backend.return_value = {"metadata_backend": metadata_backend}
+
+        handler = PromptHandler(
+            args=self.args,
+            text_encoders=["LameTest"],
+            tokenizers=["LameTest"],
+            accelerator=MagicMock(),
+            model_type="sdxl",
+        )
+
+        result_caption = handler.magic_prompt(
+            "webshart://0/1/sample.webp",
+            use_captions=True,
+            caption_strategy="webshart",
+            prepend_instance_prompt=True,
+            data_backend=self.data_backend,
+            instance_prompt="style",
+            sampler_backend_id="webshart_backend",
+        )
+
+        self.assertEqual(result_caption, ["style caption one", "style caption two"])
+        metadata_backend.caption_cache_entry.assert_called_once_with("webshart://0/1/sample.webp")
+        mock_get_data_backend.assert_called_once_with("webshart_backend")
+
     @patch("simpletuner.helpers.prompts.PromptHandler.prepare_instance_prompt_from_filename")
     def test_prepare_instance_prompt_from_filename_called(self, mock_prepare):
         """Ensure that prepare_instance_prompt_from_filename is called with correct arguments."""

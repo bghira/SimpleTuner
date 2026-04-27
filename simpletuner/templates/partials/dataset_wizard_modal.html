@@ -139,6 +139,7 @@
                                                'fa-folder': blueprint.backendType === 'local',
                                                'fa-cloud': blueprint.backendType === 'aws',
                                                'fa-robot': blueprint.backendType === 'huggingface',
+                                               'fa-box-archive': blueprint.backendType === 'webshart',
                                                'fa-file-csv': blueprint.backendType === 'csv'
                                            }"></i>
                                     </div>
@@ -702,12 +703,21 @@
                      x-effect="if (currentDataset.caption_strategy === 'parquet') { currentDataset.metadata_backend = 'parquet'; } else if (selectedBackend === 'local' || selectedBackend === 'aws') { if (currentDataset.metadata_backend === 'parquet') { currentDataset.metadata_backend = 'discovery'; } }">
                     <h6 class="mb-3">Configure caption settings</h6>
 
-                    <!-- Fixed caption strategy notice for HuggingFace/CSV -->
+                    <!-- Fixed caption strategy notice for HuggingFace/CSV/Webshart -->
                     <template x-if="selectedBackend === 'huggingface'">
                         <div class="p-3 mb-4 rounded" style="background: rgba(56, 189, 248, 0.1); border-left: 3px solid rgba(56, 189, 248, 0.5);">
                             <i class="fas fa-info-circle me-2" style="color: rgba(56, 189, 248, 0.8);"></i>
                             <span style="color: rgba(255, 255, 255, 0.9);">
                                 Hugging Face datasets use the <strong>huggingface</strong> caption strategy (fixed)
+                            </span>
+                        </div>
+                    </template>
+
+                    <template x-if="selectedBackend === 'webshart'">
+                        <div class="p-3 mb-4 rounded" style="background: rgba(56, 189, 248, 0.1); border-left: 3px solid rgba(56, 189, 248, 0.5);">
+                            <i class="fas fa-info-circle me-2" style="color: rgba(56, 189, 248, 0.8);"></i>
+                            <span style="color: rgba(255, 255, 255, 0.9);">
+                                Webshart datasets use the <strong>webshart</strong> caption strategy (fixed)
                             </span>
                         </div>
                     </template>

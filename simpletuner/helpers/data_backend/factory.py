@@ -93,6 +93,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import (
     normalize_start_epoch,
     normalize_start_step,
 )
+from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
@@ -184,7 +185,7 @@ def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
     }
     raw_type = backend.get("dataset_type")
     if raw_type is None:
-        return backend.get("type") in {"local", "aws", "csv", "huggingface"}
+        return backend.get("type") in {"local", "aws", "csv", "huggingface", "webshart"}
     try:
         return ensure_dataset_type(raw_type, default=DatasetType.IMAGE) in primary_types
     except ValueError:
@@ -435,6 +436,31 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["csv_caption_column"] = backend["csv_caption_column"]
         if "csv_url_column" in backend:
             output["config"]["csv_url_column"] = backend["csv_url_column"]
+    if backend.get("type") == "webshart":
+        webshart_config = backend.get("webshart", {}) or {}
+        source = backend.get("source", webshart_config.get("source"))
+        if not source:
+            raise ValueError(f"(id={backend['id']}) Webshart backends require a source field.")
+        output["config"]["source"] = source
+        for field in ("metadata", "hf_token", "subfolder"):
+            value = backend.get(field, webshart_config.get(field))
+            if value is not None:
+                output["config"][field] = value
+        webshart_output = {}
+        for field in (
+            "cache_dir",
+            "metadata_cache_dir",
+            "shard_cache_dir",
+            "shard_cache_gb",
+            "parallel_downloads",
+            "buffer_size",
+            "max_file_size",
+        ):
+            value = backend.get(field, webshart_config.get(field))
+            if value is not None:
+                webshart_output[field] = value
+        if webshart_output:
+            output["config"]["webshart"] = webshart_output
     if not is_audio_dataset:
         if "crop_aspect" in backend:
             choices = ["square", "preserve", "random", "closest"]
@@ -531,7 +557,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["caption_strategy"] = backend["caption_strategy"]
     else:
         output["config"]["caption_strategy"] = _get_arg_value(args, "caption_strategy")
-    output["config"]["instance_data_dir"] = backend.get("instance_data_dir", backend.get("aws_data_prefix", ""))
+    if backend.get("type") == "webshart":
+        webshart_config = backend.get("webshart", {}) or {}
+        output["config"]["instance_data_dir"] = webshart_config.get(
+            "cache_dir", backend.get("cache_dir", os.path.join("cache", "webshart", backend["id"]))
+        )
+    else:
+        output["config"]["instance_data_dir"] = backend.get("instance_data_dir", backend.get("aws_data_prefix", ""))
     # hash_filenames is always enabled and not user-configurable
     output["config"]["hash_filenames"] = True
     if "conditioning" in backend:
@@ -553,6 +585,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"(id={backend['id']}) caption_strategy='huggingface' can only be used with type='huggingface' backends"
             )
+    elif output["config"]["caption_strategy"] == "webshart":
+        if backend.get("type") != "webshart":
+            raise ValueError(
+                f"(id={backend['id']}) caption_strategy='webshart' can only be used with type='webshart' backends"
+            )
     elif backend.get("type") == "huggingface" and not user_supplied_caption_strategy:
         output["config"]["caption_strategy"] = "huggingface"
         info_log(
@@ -573,6 +610,20 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         elif backend["caption_strategy"] not in ["huggingface", "instanceprompt"]:
             raise ValueError(
                 f"(id={backend['id']}) When using a huggingface data backend, caption_strategy must be set to 'huggingface'."
+            )
+    elif backend.get("type") == "webshart":
+        if not backend.get("metadata_backend"):
+            backend["metadata_backend"] = "webshart"
+        elif backend["metadata_backend"] != "webshart":
+            raise ValueError(
+                f"(id={backend['id']}) When using a webshart data backend, metadata_backend must be set to 'webshart'."
+            )
+        if backend.get("caption_strategy", None) is None:
+            backend["caption_strategy"] = "webshart"
+            output["config"]["caption_strategy"] = "webshart"
+        elif backend["caption_strategy"] not in ["webshart", "instanceprompt"]:
+            raise ValueError(
+                f"(id={backend['id']}) When using a webshart data backend, caption_strategy must be set to 'webshart'."
             )
 
     # Validate and store caption_shuffle config
@@ -945,6 +996,10 @@ def from_instance_representation(representation: dict) -> "BaseDataBackend":
         from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 
         return HuggingfaceDatasetsBackend.from_instance_representation(representation)
+    elif backend_type == "webshart":
+        from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+
+        return WebshartDataBackend.from_instance_representation(representation)
     elif backend_type == "aws":
         from simpletuner.helpers.data_backend.aws import S3DataBackend
 
@@ -2902,6 +2957,14 @@ class FactoryRegistry:
 
             if "cache_dir_vae" not in backend:
                 backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_value)
+        elif backend["type"] == "webshart":
+            webshart_config = backend.get("webshart", {}) or {}
+            init_backend["instance_data_dir"] = webshart_config.get(
+                "cache_dir", backend.get("cache_dir", os.path.join("cache", "webshart", backend["id"]))
+            )
+            init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
+            if "cache_dir_vae" not in backend:
+                backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_value)
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -2975,6 +3038,10 @@ class FactoryRegistry:
             metadata_backend_args["quality_filter"] = quality_filter
             metadata_backend_args["split_composite_images"] = backend.get("split_composite_images", False)
             metadata_backend_args["composite_image_column"] = backend.get("composite_image_column", "image")
+        elif metadata_backend == "webshart":
+            from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+
+            MetadataBackendCls = WebshartMetadataBackend
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
@@ -2983,6 +3050,8 @@ class FactoryRegistry:
             "instance_data_dir",
             backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
         )
+        if backend.get("type") == "webshart":
+            metadata_cache_root = init_backend.get("instance_data_dir") or metadata_cache_root
         metadata_cache_root = metadata_cache_root or ""
 
         init_backend["metadata_backend"] = MetadataBackendCls(

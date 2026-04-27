@@ -119,6 +119,9 @@ def validate_caption_strategy_compatibility(
             f"(id={backend_id}) caption_strategy='huggingface' can only be used with type='huggingface' backends"
         )
 
+    if caption_strategy == "webshart" and backend_type != "webshart":
+        raise ValueError(f"(id={backend_id}) caption_strategy='webshart' can only be used with type='webshart' backends")
+
 
 def validate_huggingface_backend_settings(
     backend_type: str, metadata_backend: Optional[str], caption_strategy: Optional[str], backend_id: str
@@ -140,6 +143,25 @@ def validate_huggingface_backend_settings(
 
     # Set defaults
     return {"metadata_backend": metadata_backend or "huggingface", "caption_strategy": caption_strategy or "huggingface"}
+
+
+def validate_webshart_backend_settings(
+    backend_type: str, metadata_backend: Optional[str], caption_strategy: Optional[str], backend_id: str
+) -> Dict[str, str]:
+    if backend_type != "webshart":
+        return {"metadata_backend": metadata_backend, "caption_strategy": caption_strategy}
+
+    if metadata_backend is not None and metadata_backend != "webshart":
+        raise ValueError(
+            f"(id={backend_id}) When using a webshart data backend, metadata_backend must be set to 'webshart'."
+        )
+
+    if caption_strategy is not None and caption_strategy not in ["webshart", "instanceprompt"]:
+        raise ValueError(
+            f"(id={backend_id}) When using a webshart data backend, caption_strategy must be set to 'webshart'."
+        )
+
+    return {"metadata_backend": metadata_backend or "webshart", "caption_strategy": caption_strategy or "webshart"}
 
 
 def validate_video_frame_settings(min_frames: int, num_frames: int, backend_id: str) -> None:

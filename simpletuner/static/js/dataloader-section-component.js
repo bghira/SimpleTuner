@@ -1260,6 +1260,13 @@ function dataloaderSectionComponent() {
             if (!previousBackend || previousBackend === '' || previousBackend === 'discovery') {
                 dataset.metadata_backend = 'huggingface';
             }
+        } else if (dataset.type === 'webshart') {
+            if (!previousStrategy || previousStrategy === 'textfile') {
+                dataset.caption_strategy = 'webshart';
+            }
+            if (!previousBackend || previousBackend === '' || previousBackend === 'discovery') {
+                dataset.metadata_backend = 'webshart';
+            }
         }
 
         this.markAsUnsaved();

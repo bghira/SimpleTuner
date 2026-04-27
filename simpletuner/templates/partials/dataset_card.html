@@ -272,8 +272,9 @@ function datasetAdvancedOptionsComponent() {
                                 x-model="dataset.type"
                                 x-bind:class="{ 'is-invalid': validationErrors.type }">
                             <option value="local">Local</option>
-                            <option value="aws">AWS S3</option>
-                            <option value="huggingface">Hugging Face</option>
+	                            <option value="aws">AWS S3</option>
+	                            <option value="huggingface">Hugging Face</option>
+	                            <option value="webshart">Webshart</option>
                         </select>
                         <div x-show="validationErrors.type"
                              class="dataset-form-error"
@@ -344,9 +345,10 @@ function datasetAdvancedOptionsComponent() {
                                         <select class="dataset-form-control" x-model="dataset.caption_strategy">
                                             <option value="textfile">Text File</option>
                                             <option value="filename">Filename</option>
-                                            <option value="csv">CSV Column</option>
-                                            <option value="huggingface">Hugging Face Field</option>
-                                            <option value="parquet">Parquet</option>
+	                                            <option value="csv">CSV Column</option>
+	                                            <option value="huggingface">Hugging Face Field</option>
+	                                            <option value="webshart">Webshart Metadata</option>
+	                                            <option value="parquet">Parquet</option>
                                         </select>
                                     </div>
 
