@@ -792,7 +792,7 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
     orchestrator_port = _find_free_port()
     image_port = _find_free_port()
     worker_token = secrets.token_urlsafe(24)
-    config_path = workspace / "orchestrator.yaml"
+    config_path = workspace / "orchestrator.json"
     storage_dir = workspace / "caption_data"
 
     orchestrator_config = _build_orchestrator_config(config, orchestrator_port, image_port, worker_token)

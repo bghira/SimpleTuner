@@ -18,6 +18,8 @@ from .sse_manager import get_sse_manager
 
 logger = logging.getLogger(__name__)
 
+_CAPTIONFLOW_JOB_CACHE: dict[str, bool] = {}
+
 
 def _update_job_store_status(job_id: str | None, status: str) -> None:
     """Update job status in the unified JobRepository.
@@ -121,6 +123,9 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
 def _is_captionflow_job(job_id: str | None) -> bool:
     if not job_id:
         return False
+    cached = _CAPTIONFLOW_JOB_CACHE.get(job_id)
+    if cached is not None:
+        return cached
     try:
         from .cloud.storage.job_repository import get_job_repository
 
@@ -137,8 +142,13 @@ def _is_captionflow_job(job_id: str | None) -> bool:
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 job = pool.submit(lambda: asyncio.run(_get_job())).result(timeout=5)
 
-        metadata = job.metadata if job else {}
-        return bool(job and (job.provider == "captionflow" or metadata.get("handler") == "captionflow"))
+        if not job:
+            return False
+
+        metadata = job.metadata if isinstance(job.metadata, Mapping) else {}
+        is_captionflow = bool(job.provider == "captionflow" or metadata.get("handler") == "captionflow")
+        _CAPTIONFLOW_JOB_CACHE[job_id] = is_captionflow
+        return is_captionflow
     except Exception:
         logger.debug("Failed to inspect job provider for %s", job_id, exc_info=True)
         return False

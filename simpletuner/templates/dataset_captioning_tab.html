@@ -8,7 +8,7 @@
         </div>
     </template>
 
-    <template x-if="!loading && !capabilities.ready">
+    <template x-if="!loading && !capabilities.ready && !error">
         <div>
             {% call hero_cta(
                 theme='cyan',
