@@ -172,6 +172,57 @@
                         </div>
                     </form>
                 </template>
+                <div class="mt-4" x-show="capabilities.ready" x-cloak>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0"><i class="fas fa-tasks me-2"></i>Status</h6>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" @click="loadCaptionJobs()">
+                            <i class="fas fa-sync-alt me-1"></i> Refresh
+                        </button>
+                    </div>
+                    <template x-if="captionJobs.length === 0">
+                        <div class="text-muted small">No captioning jobs yet.</div>
+                    </template>
+                    <template x-if="captionJobs.length > 0">
+                        <div class="row g-3">
+                            <div class="col-lg-4">
+                                <div class="list-group">
+                                    <template x-for="job in captionJobs" :key="job.job_id">
+                                        <button type="button"
+                                                class="list-group-item list-group-item-action d-flex justify-content-between align-items-start"
+                                                :class="{ 'active': job.job_id === activeJobId }"
+                                                @click="selectCaptionJob(job.job_id)">
+                                            <span class="me-2">
+                                                <span class="d-block fw-semibold" x-text="captionJobLabel(job)"></span>
+                                                <span class="small" x-text="formatJobTime(job.started_at || job.queued_at || job.created_at)"></span>
+                                            </span>
+                                            <span class="badge" :class="captionJobStatusClass(job.status)" x-text="job.status"></span>
+                                        </button>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="col-lg-8">
+                                <div class="border rounded p-3 bg-dark text-light">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <div>
+                                            <span class="fw-semibold" x-text="captionJobLabel(activeCaptionJob())"></span>
+                                            <span class="badge ms-2" :class="captionJobStatusClass(activeCaptionJob()?.status)" x-text="activeCaptionJob()?.status || ''"></span>
+                                        </div>
+                                        <span class="small text-muted" x-text="activeCaptionJob()?.output_url || ''"></span>
+                                    </div>
+                                    <pre class="mb-0 small text-light"
+                                         x-ref="captioningLogViewer"
+                                         @scroll="handleLogScroll()"
+                                         style="max-height: 320px; overflow: auto; white-space: pre-wrap;"
+                                         x-text="jobLogs || '(No log output yet)'"></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                    <div class="alert alert-warning mt-3 mb-0" x-show="jobStatusError" x-cloak>
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        <span x-text="jobStatusError"></span>
+                    </div>
+                </div>
                 <div class="alert alert-danger mt-3 mb-0" x-show="error" x-cloak>
                     <i class="fas fa-exclamation-triangle me-1"></i>
                     <span x-text="error"></span>

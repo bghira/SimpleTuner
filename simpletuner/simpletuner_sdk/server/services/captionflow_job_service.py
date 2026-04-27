@@ -30,6 +30,7 @@ DEFAULT_CAPTIONFLOW_PROMPT = (
 )
 LOCAL_FILESYSTEM_SOURCE = "local_filesystem"
 HUGGINGFACE_SOURCE = "huggingface_datasets"
+ORCHESTRATOR_READY_LOG_LINE = "Orchestrator ready for connections"
 
 
 @dataclass
@@ -425,15 +426,41 @@ def _find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_port(host: str, port: int, timeout: float) -> None:
+def _captionflow_orchestrator_startup_timeout() -> float:
+    raw_timeout = os.environ.get("SIMPLETUNER_CAPTIONFLOW_ORCHESTRATOR_TIMEOUT", "180")
+    try:
+        return max(15.0, float(raw_timeout))
+    except ValueError:
+        return 180.0
+
+
+def _wait_for_orchestrator_ready(
+    process: subprocess.Popen,
+    log_path: Path,
+    host: str,
+    port: int,
+    timeout: float,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(0.5)
-            if sock.connect_ex((host, port)) == 0:
-                return
-        time.sleep(0.2)
-    raise TimeoutError(f"CaptionFlow orchestrator did not open {host}:{port}")
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise RuntimeError(_process_failure_message("orchestrator", exit_code, log_path))
+
+        if ORCHESTRATOR_READY_LOG_LINE in _tail_text_file(log_path):
+            return
+        time.sleep(0.5)
+
+    detail = _extract_process_error_line(log_path)
+    log_hint = f" See {log_path}."
+    if detail:
+        raise TimeoutError(
+            f"CaptionFlow orchestrator did not report readiness on {host}:{port} within {timeout:.0f}s: "
+            f"{detail}.{log_hint}"
+        )
+    raise TimeoutError(
+        f"CaptionFlow orchestrator did not report readiness on {host}:{port} within {timeout:.0f}s.{log_hint}"
+    )
 
 
 def _terminate_processes(processes: List[subprocess.Popen], timeout: float = 10.0) -> None:
@@ -449,6 +476,56 @@ def _terminate_processes(processes: List[subprocess.Popen], timeout: float = 10.
         except subprocess.TimeoutExpired:
             if process.poll() is None:
                 process.kill()
+
+
+def _tail_text_file(path: Path, max_bytes: int = 12000) -> str:
+    if not path.exists():
+        return ""
+
+    with open(path, "rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        if size > max_bytes:
+            handle.seek(-max_bytes, os.SEEK_END)
+            handle.readline()
+        else:
+            handle.seek(0)
+        return handle.read().decode("utf-8", errors="replace")
+
+
+def _extract_process_error_line(log_path: Path) -> str:
+    tail = _tail_text_file(log_path)
+    if not tail:
+        return ""
+
+    error_tokens = (
+        "Traceback",
+        "Error:",
+        "Exception:",
+        "ImportError:",
+        "ModuleNotFoundError:",
+        "RuntimeError:",
+        "ValueError:",
+        "ERROR",
+        "CRITICAL",
+    )
+    for line in reversed(tail.splitlines()):
+        stripped = line.strip()
+        if stripped and any(token in stripped for token in error_tokens):
+            return stripped[-2000:]
+    for line in reversed(tail.splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped[-2000:]
+    return ""
+
+
+def _process_failure_message(process_name: str, returncode: int, log_path: Path) -> str:
+    error_line = _extract_process_error_line(log_path)
+    log_hint = f" See {log_path}."
+    if error_line:
+        return f"CaptionFlow {process_name} exited with status {returncode}: {error_line}.{log_hint}"
+    return f"CaptionFlow {process_name} exited with status {returncode}.{log_hint}"
 
 
 def _prepare_captionflow_import_shims(workspace: Path) -> Path:
@@ -643,7 +720,8 @@ def _build_orchestrator_config(config, orchestrator_port: int, image_port: int, 
 def _run_captionflow_job_impl(config) -> Dict[str, Any]:
     workspace = Path(config.workspace_dir)
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "logs").mkdir(parents=True, exist_ok=True)
+    logs_dir = workspace / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     orchestrator_port = _find_free_port()
     image_port = _find_free_port()
@@ -668,11 +746,23 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
         "--vllm",
     ]
     print(f"Starting CaptionFlow orchestrator on 127.0.0.1:{orchestrator_port}")
-    orchestrator = subprocess.Popen(orchestrator_cmd, env=env)
+    log_handles = []
+    process_logs: Dict[subprocess.Popen, Path] = {}
+    orchestrator_log = logs_dir / "orchestrator.log"
+    orchestrator_handle = open(orchestrator_log, "ab", buffering=0)
+    log_handles.append(orchestrator_handle)
+    orchestrator = subprocess.Popen(orchestrator_cmd, env=env, stdout=orchestrator_handle, stderr=subprocess.STDOUT)
+    process_logs[orchestrator] = orchestrator_log
     processes = [orchestrator]
 
     try:
-        _wait_for_port("127.0.0.1", orchestrator_port, timeout=45.0)
+        _wait_for_orchestrator_ready(
+            orchestrator,
+            orchestrator_log,
+            "127.0.0.1",
+            orchestrator_port,
+            _captionflow_orchestrator_startup_timeout(),
+        )
 
         gpus = list(config.allocated_gpus or [])
         worker_count = int(config.worker_count)
@@ -700,7 +790,11 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
                 "--no-verify-ssl",
             ]
             print(f"Starting CaptionFlow worker {idx} on GPU {gpu_id}")
-            process = subprocess.Popen(worker_cmd, env=env)
+            worker_log = logs_dir / f"worker-{idx}.log"
+            worker_handle = open(worker_log, "ab", buffering=0)
+            log_handles.append(worker_handle)
+            process = subprocess.Popen(worker_cmd, env=env, stdout=worker_handle, stderr=subprocess.STDOUT)
+            process_logs[process] = worker_log
             workers.append(process)
             processes.append(process)
 
@@ -710,11 +804,12 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
 
             orchestrator_exit = orchestrator.poll()
             if orchestrator_exit is not None:
-                raise RuntimeError(f"CaptionFlow orchestrator exited with status {orchestrator_exit}")
+                raise RuntimeError(_process_failure_message("orchestrator", orchestrator_exit, orchestrator_log))
 
             failed_worker = next((worker for worker in workers if worker.poll() not in (None, 0)), None)
             if failed_worker is not None:
-                raise RuntimeError(f"CaptionFlow worker exited with status {failed_worker.returncode}")
+                log_path = process_logs.get(failed_worker, logs_dir / "worker.log")
+                raise RuntimeError(_process_failure_message("worker", failed_worker.returncode, log_path))
 
             if workers and all(worker.poll() == 0 for worker in workers):
                 break
@@ -765,3 +860,5 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
         }
     finally:
         _terminate_processes(processes)
+        for handle in log_handles:
+            handle.close()

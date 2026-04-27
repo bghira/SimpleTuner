@@ -12,10 +12,15 @@ from simpletuner.simpletuner_sdk.server.services.captionflow_job_service import 
     _prepare_captionflow_import_shims,
     _prepare_captionflow_subprocess_env,
     _prepare_cuda_library_shims,
+    _process_failure_message,
+    _run_async,
+    _wait_for_orchestrator_ready,
     build_captionflow_runtime_config,
     resolve_captioning_dataset_path,
     resolve_captioning_dataset_source,
 )
+from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType
+from simpletuner.simpletuner_sdk.server.services.cloud.job_logs import fetch_job_logs
 
 
 class CaptionFlowJobServiceTestCase(unittest.TestCase):
@@ -252,6 +257,83 @@ orchestrator:
             if Path(".venv/lib/python3.13/site-packages/nvidia/cu13/lib/libcudart.so.13").exists():
                 self.assertIn("cuda_libs", env.get("LD_LIBRARY_PATH", ""))
                 self.assertIn("site-packages/nvidia/cu13/lib", env.get("LD_LIBRARY_PATH", ""))
+
+    def test_process_failure_message_includes_last_error_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "worker.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "starting worker",
+                        "Traceback (most recent call last):",
+                        "  File example.py, line 1, in <module>",
+                        "ImportError: libcudart.so.12: cannot open shared object file: No such file or directory",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            message = _process_failure_message("worker", 1, log_path)
+
+        self.assertIn("CaptionFlow worker exited with status 1", message)
+        self.assertIn("ImportError: libcudart.so.12", message)
+        self.assertIn("worker.log", message)
+
+    def test_wait_for_orchestrator_ready_timeout_includes_log_tail(self) -> None:
+        class RunningProcess:
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "orchestrator.log"
+            log_path.write_text("Loading HuggingFace dataset shards\n", encoding="utf-8")
+            with self.assertRaisesRegex(TimeoutError, "Loading HuggingFace dataset shards"):
+                _wait_for_orchestrator_ready(
+                    RunningProcess(),
+                    log_path,
+                    "127.0.0.1",
+                    1,
+                    0.01,
+                )
+
+    def test_wait_for_orchestrator_ready_uses_captionflow_ready_log_line(self) -> None:
+        class RunningProcess:
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "orchestrator.log"
+            log_path.write_text("INFO     Orchestrator ready for connections\n", encoding="utf-8")
+
+            _wait_for_orchestrator_ready(
+                RunningProcess(),
+                log_path,
+                "127.0.0.1",
+                1,
+                1,
+            )
+
+    def test_captionflow_job_logs_read_orchestrator_and_worker_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            logs_dir = workspace / "logs"
+            logs_dir.mkdir()
+            (logs_dir / "orchestrator.log").write_text("orchestrator ready\n", encoding="utf-8")
+            (logs_dir / "worker-1.log").write_text("worker captioned batch 1\n", encoding="utf-8")
+            job = SimpleNamespace(
+                job_id="caption123",
+                job_type=JobType.LOCAL,
+                provider="captionflow",
+                metadata={"handler": "captionflow"},
+                output_url=str(workspace),
+            )
+
+            logs = _run_async(fetch_job_logs(job))
+
+        self.assertIn("logs/orchestrator.log", logs)
+        self.assertIn("orchestrator ready", logs)
+        self.assertIn("logs/worker-1.log", logs)
+        self.assertIn("worker captioned batch 1", logs)
 
 
 if __name__ == "__main__":

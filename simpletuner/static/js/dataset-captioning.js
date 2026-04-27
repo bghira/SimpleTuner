@@ -12,6 +12,12 @@ window.datasetCaptioningComponent = function () {
         installCommand: "pip install 'simpletuner[captioning]'",
         datasets: [],
         selectedDatasetId: '',
+        captionJobs: [],
+        activeJobId: '',
+        jobLogs: '',
+        jobStatusError: '',
+        statusPollTimer: null,
+        autoScrollLogs: true,
         viewMode: 'builder',
         rawConfig: `orchestrator:
   chunk_size: 1000
@@ -75,6 +81,14 @@ window.datasetCaptioningComponent = function () {
 
         init() {
             this.loadCapabilities();
+            this.startStatusPolling();
+        },
+
+        destroy() {
+            if (this.statusPollTimer) {
+                clearInterval(this.statusPollTimer);
+                this.statusPollTimer = null;
+            }
         },
 
         async loadCapabilities() {
@@ -93,12 +107,126 @@ window.datasetCaptioningComponent = function () {
                 };
                 if (this.capabilities.ready) {
                     await this.loadDatasets();
+                    await this.loadCaptionJobs();
                 }
             } catch (err) {
                 this.error = err.message || 'Failed to check captioning dependencies';
             } finally {
                 this.loading = false;
             }
+        },
+
+        startStatusPolling() {
+            if (this.statusPollTimer) {
+                clearInterval(this.statusPollTimer);
+            }
+            this.statusPollTimer = setInterval(() => {
+                if (this.capabilities.ready) {
+                    this.loadCaptionJobs();
+                }
+            }, 3000);
+        },
+
+        async loadCaptionJobs() {
+            this.jobStatusError = '';
+            try {
+                const response = await fetch('/api/cloud/jobs?provider=captionflow&limit=10');
+                if (!response.ok) {
+                    const detail = await response.json().catch(() => ({}));
+                    throw new Error(detail.detail || 'Failed to load captioning jobs');
+                }
+                const data = await response.json();
+                const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+                this.captionJobs = jobs;
+                if (!this.activeJobId && jobs.length > 0) {
+                    const active = jobs.find((job) => ['running', 'queued', 'pending'].includes(String(job.status || '').toLowerCase()));
+                    this.activeJobId = (active || jobs[0]).job_id;
+                }
+                if (this.activeJobId && !jobs.some((job) => job.job_id === this.activeJobId)) {
+                    this.activeJobId = jobs[0]?.job_id || '';
+                }
+                if (this.activeJobId) {
+                    await this.loadJobLogs(this.activeJobId);
+                }
+            } catch (err) {
+                this.jobStatusError = err.message || 'Failed to load captioning jobs';
+            }
+        },
+
+        async loadJobLogs(jobId) {
+            if (!jobId) {
+                this.jobLogs = '';
+                return;
+            }
+            const shouldScroll = this.shouldAutoScrollLogs();
+            try {
+                const response = await fetch(`/api/cloud/jobs/${jobId}/logs`);
+                if (!response.ok) {
+                    const detail = await response.json().catch(() => ({}));
+                    throw new Error(detail.detail || 'Failed to load captioning logs');
+                }
+                const data = await response.json();
+                this.jobLogs = String(data.logs || '');
+            } catch (err) {
+                this.jobLogs = err.message || 'Failed to load captioning logs';
+            }
+            this.scrollLogsAfterUpdate(shouldScroll);
+        },
+
+        selectCaptionJob(jobId) {
+            this.activeJobId = jobId;
+            this.autoScrollLogs = true;
+            this.loadJobLogs(jobId);
+        },
+
+        shouldAutoScrollLogs() {
+            const viewer = this.$refs.captioningLogViewer;
+            if (!viewer) return true;
+            const distanceFromBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight;
+            return this.autoScrollLogs && distanceFromBottom < 48;
+        },
+
+        handleLogScroll() {
+            const viewer = this.$refs.captioningLogViewer;
+            if (!viewer) return;
+            const distanceFromBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight;
+            this.autoScrollLogs = distanceFromBottom < 48;
+        },
+
+        scrollLogsAfterUpdate(shouldScroll) {
+            if (!shouldScroll) return;
+            this.$nextTick(() => {
+                const viewer = this.$refs.captioningLogViewer;
+                if (viewer) {
+                    viewer.scrollTop = viewer.scrollHeight;
+                }
+            });
+        },
+
+        activeCaptionJob() {
+            return this.captionJobs.find((job) => job.job_id === this.activeJobId) || null;
+        },
+
+        captionJobStatusClass(status) {
+            const normalized = String(status || '').toLowerCase();
+            if (['running'].includes(normalized)) return 'bg-info text-dark';
+            if (['queued', 'pending'].includes(normalized)) return 'bg-warning text-dark';
+            if (['completed', 'success'].includes(normalized)) return 'bg-success';
+            if (['failed', 'error', 'cancelled'].includes(normalized)) return 'bg-danger';
+            return 'bg-secondary';
+        },
+
+        captionJobLabel(job) {
+            const id = String(job?.job_id || '').slice(0, 8);
+            const name = job?.config_name || 'Captioning';
+            return id ? `${name} (${id})` : name;
+        },
+
+        formatJobTime(value) {
+            if (!value) return '';
+            const timestamp = Date.parse(value);
+            if (Number.isNaN(timestamp)) return String(value);
+            return new Date(timestamp).toLocaleString();
         },
 
         async loadDatasets() {
@@ -194,6 +322,10 @@ window.datasetCaptioningComponent = function () {
                     this.submitMessage = `Captioning job ${data.job_id} started${gpuText}.`;
                 } else {
                     this.submitMessage = data.reason || `Captioning job status: ${data.status}`;
+                }
+                if (data.job_id) {
+                    this.activeJobId = data.job_id;
+                    await this.loadCaptionJobs();
                 }
 
                 if (window.showToast) {
