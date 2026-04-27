@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from simpletuner.simpletuner_sdk.server.services.captionflow_job_service import (
     HUGGINGFACE_SOURCE,
@@ -14,6 +15,8 @@ from simpletuner.simpletuner_sdk.server.services.captionflow_job_service import 
     _prepare_cuda_library_shims,
     _process_failure_message,
     _run_async,
+    _stop_orchestrator_before_export,
+    _wait_for_captionflow_storage_contents,
     _wait_for_orchestrator_ready,
     build_captionflow_runtime_config,
     resolve_captioning_dataset_path,
@@ -312,6 +315,56 @@ orchestrator:
                 1,
                 1,
             )
+
+    def test_wait_for_captionflow_storage_contents_retries_until_columns_exist(self) -> None:
+        empty = SimpleNamespace(rows=[], columns=[], output_fields=[], metadata={"message": "No data available"})
+        ready = SimpleNamespace(rows=[{"captions": ["ok"]}], columns=["job_id", "captions"], output_fields=["captions"])
+        calls = [empty, ready]
+
+        async def fake_load(_storage_dir):
+            return calls.pop(0)
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.captionflow_job_service._load_captionflow_storage_contents",
+            fake_load,
+        ):
+            contents = _wait_for_captionflow_storage_contents(Path("/tmp/caption-data"), timeout=2)
+
+        self.assertEqual(contents.columns, ["job_id", "captions"])
+
+    def test_wait_for_captionflow_storage_contents_reports_empty_storage(self) -> None:
+        empty = SimpleNamespace(rows=[], columns=[], output_fields=[], metadata={"message": "No data available"})
+
+        async def fake_load(_storage_dir):
+            return empty
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.captionflow_job_service._load_captionflow_storage_contents",
+            fake_load,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "No data available"):
+                _wait_for_captionflow_storage_contents(Path("/tmp/caption-data"), timeout=0.01)
+
+    def test_stop_orchestrator_before_export_sends_interrupt_for_checkpoint(self) -> None:
+        class RunningProcess:
+            returncode = 0
+
+            def __init__(self):
+                self.signals = []
+
+            def poll(self):
+                return None
+
+            def send_signal(self, value):
+                self.signals.append(value)
+
+            def wait(self, timeout):
+                return self.returncode
+
+        process = RunningProcess()
+        _stop_orchestrator_before_export(process, Path("/tmp/orchestrator.log"), timeout=1)
+
+        self.assertEqual(process.signals, [2])
 
     def test_captionflow_job_logs_read_orchestrator_and_worker_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -180,10 +180,7 @@ window.datasetCaptioningComponent = function () {
         },
 
         shouldAutoScrollLogs() {
-            const viewer = this.$refs.captioningLogViewer;
-            if (!viewer) return true;
-            const distanceFromBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight;
-            return this.autoScrollLogs && distanceFromBottom < 48;
+            return this.autoScrollLogs;
         },
 
         handleLogScroll() {
@@ -196,11 +193,17 @@ window.datasetCaptioningComponent = function () {
         scrollLogsAfterUpdate(shouldScroll) {
             if (!shouldScroll) return;
             this.$nextTick(() => {
-                const viewer = this.$refs.captioningLogViewer;
-                if (viewer) {
-                    viewer.scrollTop = viewer.scrollHeight;
-                }
+                this.scrollLogViewerToBottom();
+                const scheduleFrame = window.requestAnimationFrame || ((callback) => setTimeout(callback, 0));
+                scheduleFrame(() => this.scrollLogViewerToBottom());
             });
+        },
+
+        scrollLogViewerToBottom() {
+            const viewer = this.$refs.captioningLogViewer;
+            if (viewer) {
+                viewer.scrollTop = viewer.scrollHeight;
+            }
         },
 
         activeCaptionJob() {

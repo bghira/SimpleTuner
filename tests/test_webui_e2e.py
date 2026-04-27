@@ -1064,6 +1064,51 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             else:
                 self.assertIn("pip install 'simpletuner[captioning]'", driver.page_source)
 
+            scroll_state = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('[x-data="datasetCaptioningComponent()"]');
+                const comp = root && window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
+                if (!root || !comp) {
+                    done({ ready: false, reason: 'captioning component not found' });
+                    return;
+                }
+                if (comp.statusPollTimer) {
+                    clearInterval(comp.statusPollTimer);
+                    comp.statusPollTimer = null;
+                }
+                comp.loading = false;
+                comp.capabilities = { ready: true, installed: true, version: 'test' };
+                comp.datasets = [{ dataset_id: 'caption-smoke', total_files: 1, config: { dataset_type: 'image' } }];
+                comp.selectedDatasetId = 'caption-smoke';
+                comp.captionJobs = [{ job_id: 'job-scroll', status: 'running', config_name: 'Captioning' }];
+                comp.activeJobId = 'job-scroll';
+                comp.autoScrollLogs = true;
+                comp.jobLogs = Array.from({ length: 80 }, (_, idx) => `caption log line ${idx}`).join('\\n');
+                comp.$nextTick(() => {
+                    const viewer = root.querySelector('[x-ref="captioningLogViewer"]');
+                    if (!viewer) {
+                        done({ ready: false, reason: 'log viewer not rendered' });
+                        return;
+                    }
+                    viewer.style.height = '80px';
+                    viewer.style.maxHeight = '80px';
+                    comp.scrollLogsAfterUpdate(true);
+                    setTimeout(() => {
+                        done({
+                            ready: true,
+                            scrollTop: viewer.scrollTop,
+                            scrollHeight: viewer.scrollHeight,
+                            clientHeight: viewer.clientHeight,
+                            atBottom: viewer.scrollTop + viewer.clientHeight >= viewer.scrollHeight - 2
+                        });
+                    }, 100);
+                });
+                """
+            )
+            self.assertTrue(scroll_state.get("ready"), scroll_state)
+            self.assertTrue(scroll_state.get("atBottom"), scroll_state)
+
         self.for_each_browser("test_captioning_subtab_initializes", scenario)
 
 

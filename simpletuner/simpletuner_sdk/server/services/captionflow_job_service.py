@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import secrets
+import signal
 import socket
 import subprocess
 import sys
@@ -434,6 +435,14 @@ def _captionflow_orchestrator_startup_timeout() -> float:
         return 180.0
 
 
+def _captionflow_export_ready_timeout() -> float:
+    raw_timeout = os.environ.get("SIMPLETUNER_CAPTIONFLOW_EXPORT_READY_TIMEOUT", "60")
+    try:
+        return max(1.0, float(raw_timeout))
+    except ValueError:
+        return 60.0
+
+
 def _wait_for_orchestrator_ready(
     process: subprocess.Popen,
     log_path: Path,
@@ -526,6 +535,62 @@ def _process_failure_message(process_name: str, returncode: int, log_path: Path)
     if error_line:
         return f"CaptionFlow {process_name} exited with status {returncode}: {error_line}.{log_hint}"
     return f"CaptionFlow {process_name} exited with status {returncode}.{log_hint}"
+
+
+def _stop_orchestrator_before_export(process: subprocess.Popen, log_path: Path, timeout: float = 30.0) -> None:
+    exit_code = process.poll()
+    if exit_code is not None:
+        if exit_code != 0:
+            raise RuntimeError(_process_failure_message("orchestrator", exit_code, log_path))
+        return
+
+    process.send_signal(signal.SIGINT)
+    try:
+        exit_code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            f"CaptionFlow orchestrator did not checkpoint before export within {timeout:.0f}s. See {log_path}."
+        ) from exc
+
+    if exit_code != 0:
+        raise RuntimeError(_process_failure_message("orchestrator", exit_code, log_path))
+
+
+async def _load_captionflow_storage_contents(storage_dir: Path):
+    from caption_flow.storage import StorageManager
+
+    storage = StorageManager(storage_dir)
+    await storage.initialize()
+    return await storage.get_shard_contents("default")
+
+
+def _captionflow_storage_not_ready_detail(contents) -> str:
+    metadata = getattr(contents, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("error", "message"):
+            value = metadata.get(key)
+            if value:
+                return str(value)
+    rows = len(getattr(contents, "rows", []) or [])
+    fields = list(getattr(contents, "output_fields", []) or [])
+    return f"rows={rows}, output_fields={fields}, columns={list(getattr(contents, 'columns', []) or [])}"
+
+
+def _wait_for_captionflow_storage_contents(storage_dir: Path, timeout: float):
+    deadline = time.monotonic() + timeout
+    last_detail = ""
+
+    while time.monotonic() < deadline:
+        contents = asyncio.run(_load_captionflow_storage_contents(storage_dir))
+        if getattr(contents, "columns", None):
+            return contents
+        last_detail = _captionflow_storage_not_ready_detail(contents)
+        time.sleep(1.0)
+
+    detail = f": {last_detail}" if last_detail else ""
+    raise RuntimeError(
+        f"CaptionFlow completed, but no exportable caption columns were written within {timeout:.0f}s{detail}."
+    )
 
 
 def _prepare_captionflow_import_shims(workspace: Path) -> Path:
@@ -816,40 +881,28 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
 
             time.sleep(2.0)
 
+        _stop_orchestrator_before_export(orchestrator, orchestrator_log)
+
         exported = 0
         export_path = None
-        from caption_flow.storage import StorageManager
         from caption_flow.storage.exporter import StorageExporter
 
-        async def _get_exporter() -> StorageExporter:
-            storage = StorageManager(storage_dir)
-            await storage.initialize()
-            contents = await storage.get_shard_contents("default")
-            return StorageExporter(contents)
+        contents = _wait_for_captionflow_storage_contents(storage_dir, _captionflow_export_ready_timeout())
+        exporter = StorageExporter(contents)
 
         if bool(config.export_textfiles):
             print(f"Exporting CaptionFlow text captions into {config.dataset_path}")
-
-            async def _export_textfiles() -> int:
-                exporter = await _get_exporter()
-                return exporter.to_txt(
-                    config.dataset_path,
-                    filename_column="filename",
-                    export_column=config.output_field,
-                )
-
-            exported = asyncio.run(_export_textfiles())
+            exported = exporter.to_txt(
+                config.dataset_path,
+                filename_column="filename",
+                export_column=config.output_field,
+            )
             export_path = config.dataset_path
         elif bool(config.export_jsonl):
             exports_dir = workspace / "exports"
             export_path = str(exports_dir / "captions.jsonl")
             print(f"Exporting CaptionFlow captions to {export_path}")
-
-            async def _export_jsonl() -> int:
-                exporter = await _get_exporter()
-                return exporter.to_jsonl(export_path)
-
-            exported = asyncio.run(_export_jsonl())
+            exported = exporter.to_jsonl(export_path)
 
         return {
             "message": "CaptionFlow captioning completed.",
