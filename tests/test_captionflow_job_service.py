@@ -52,6 +52,7 @@ class CaptionFlowJobServiceTestCase(unittest.TestCase):
             )
 
         self.assertEqual(config["dataset_path"], str(dataset_dir.resolve()))
+        self.assertEqual(config["dataset_export_dir"], str(dataset_dir.resolve()))
         self.assertEqual(config["workspace_dir"], str(root / "output" / "captionflow" / "job12345"))
         self.assertEqual(config["worker_count"], 2)
         self.assertEqual(config["batch_size"], 4)
@@ -86,6 +87,24 @@ class CaptionFlowJobServiceTestCase(unittest.TestCase):
         self.assertEqual(source["dataset_config"], "default")
         self.assertEqual(source["dataset_image_column"], "image")
         self.assertEqual(source["dataset_url_column"], "")
+
+    def test_huggingface_runtime_config_has_no_textfile_export_dir(self) -> None:
+        config = build_captionflow_runtime_config(
+            job_id="hf12345",
+            dataset_id="hf-images",
+            dataset_config={
+                "id": "hf-images",
+                "type": "huggingface",
+                "dataset_type": "image",
+                "dataset_name": "org/dataset",
+            },
+            global_config={"--output_dir": "/tmp/output"},
+            request_config={},
+        )
+
+        self.assertIsNone(config["dataset_export_dir"])
+        self.assertFalse(config["export_textfiles"])
+        self.assertTrue(config["export_jsonl"])
 
     def test_huggingface_url_image_column_maps_to_url_column(self) -> None:
         source = resolve_captioning_dataset_source(

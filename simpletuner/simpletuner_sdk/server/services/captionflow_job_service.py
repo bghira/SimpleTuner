@@ -213,6 +213,7 @@ def build_captionflow_runtime_config(
         "workspace_dir": str(workspace),
         "dataset_id": dataset_id,
         "dataset_path": source["dataset_path"],
+        "dataset_export_dir": source["dataset_path"] if source_type == LOCAL_FILESYSTEM_SOURCE else None,
         "dataset_name": source["dataset_name"],
         "source_type": source_type,
         "dataset_config": source.get("dataset_config"),
@@ -891,13 +892,14 @@ def _run_captionflow_job_impl(config) -> Dict[str, Any]:
         exporter = StorageExporter(contents)
 
         if bool(config.export_textfiles):
-            print(f"Exporting CaptionFlow text captions into {config.dataset_path}")
+            dataset_export_dir = getattr(config, "dataset_export_dir", None) or config.dataset_path
+            print(f"Exporting CaptionFlow text captions into {dataset_export_dir}")
             exported = exporter.to_txt(
-                config.dataset_path,
+                dataset_export_dir,
                 filename_column="filename",
                 export_column=config.output_field,
             )
-            export_path = config.dataset_path
+            export_path = dataset_export_dir
         elif bool(config.export_jsonl):
             exports_dir = workspace / "exports"
             export_path = str(exports_dir / "captions.jsonl")
