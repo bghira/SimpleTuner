@@ -41,8 +41,8 @@
     </template>
 
     <template x-if="!loading && capabilities.ready">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
                 <div>
                     <h5 class="mb-1"><i class="fas fa-closed-captioning me-2"></i>Captioning</h5>
                     <p class="text-muted mb-0 small">CaptionFlow jobs use the local GPU job queue.</p>
@@ -51,8 +51,9 @@
                     CaptionFlow <span x-text="capabilities.version || 'installed'"></span>
                 </span>
             </div>
-            <div class="card-body">
-                <ul class="nav nav-tabs mb-3" role="tablist" aria-label="Captioning job mode">
+            <div class="card">
+                <div class="card-body">
+                    <ul class="nav nav-tabs mb-3" role="tablist" aria-label="Captioning job mode">
                     <li class="nav-item" role="presentation">
                         <button type="button"
                                 class="nav-link"
@@ -226,6 +227,7 @@
                 <div class="alert alert-danger mt-3 mb-0" x-show="error" x-cloak>
                     <i class="fas fa-exclamation-triangle me-1"></i>
                     <span x-text="error"></span>
+                </div>
                 </div>
             </div>
         </div>
