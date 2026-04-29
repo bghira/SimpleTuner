@@ -1548,6 +1548,24 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         # Test should complete within reasonable time for small model
         self.run_performance_benchmark(model, inputs, max_time_ms=3000.0)
 
+    def test_time_text_monkeypatch_accepts_timestep_sign(self):
+        """Regression test: time_text_monkeypatch must accept timestep_sign kwarg.
+
+        WanTransformer3DModel.forward (wan/transformer.py) unconditionally
+        passes timestep_sign= to condition_embedder for every forward pass,
+        even on non-TwinFlow runs (where the value is None). The monkeypatch
+        signature in wan/model.py must therefore accept this kwarg or every
+        Wan training/validation forward will raise TypeError.
+
+        Originally broken by commit 07e670c4 ("TwinFlow: Wan").
+        """
+        import inspect
+
+        from simpletuner.helpers.models.wan.model import time_text_monkeypatch
+
+        params = inspect.signature(time_text_monkeypatch).parameters
+        self.assertIn("timestep_sign", params)
+
 
 if __name__ == "__main__":
     unittest.main()
