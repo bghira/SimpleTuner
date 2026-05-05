@@ -50,16 +50,35 @@ def time_text_monkeypatch(
     timestep: torch.Tensor,
     encoder_hidden_states,
     encoder_hidden_states_image=None,
-    timestep_seq_len=None,
+    timestep_sign=None,
 ):
+    timestep_seq_len: Optional[int] = None
+    if timestep.ndim > 1:
+        timestep_seq_len = timestep.shape[1]
+        timestep = timestep.reshape(-1)
+
     timestep = self.timesteps_proj(timestep)
     if timestep_seq_len is not None:
-        timestep = timestep.unflatten(0, (encoder_hidden_states.shape[0], timestep_seq_len))
+        timestep = timestep.unflatten(0, (-1, timestep_seq_len))
 
     time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
     if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
         timestep = timestep.to(time_embedder_dtype)
     temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
+
+    if timestep_sign is not None:
+        time_sign_embed = getattr(self, "time_sign_embed", None)
+        if time_sign_embed is None:
+            raise ValueError(
+                "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+            )
+        sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
+        sign_embedding = time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+        if timestep_seq_len is not None:
+            sign_embedding = sign_embedding.unflatten(0, (-1, timestep_seq_len))
+        temb = temb + sign_embedding
+
     timestep_proj = self.time_proj(self.act_fn(temb))
 
     encoder_hidden_states = self.text_embedder(encoder_hidden_states)
