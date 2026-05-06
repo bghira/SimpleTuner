@@ -116,6 +116,98 @@ def _resolve_alpha_for_module(module_key: str, weight: Any, adapter_metadata: Op
     return None
 
 
+def _kohya_component_prefix(component_prefix: str, *, sdxl: bool) -> Optional[str]:
+    component = component_prefix.removesuffix(".")
+    if component == "unet":
+        return "lora_unet"
+    if component == "text_encoder":
+        return "lora_te1" if sdxl else "lora_te"
+    if component == "text_encoder_2":
+        return "lora_te2"
+    return None
+
+
+def _component_metadata(
+    component_prefix: str,
+    adapter_metadata: Optional[dict],
+    component_adapter_metadata: Optional[dict[str, dict]],
+) -> Optional[dict]:
+    component = component_prefix.removesuffix(".")
+    if component_adapter_metadata and component in component_adapter_metadata:
+        return component_adapter_metadata[component]
+    return adapter_metadata
+
+
+def _kohya_module_key(module_key: str, component_prefix: str, *, sdxl: bool) -> Optional[str]:
+    kohya_prefix = _kohya_component_prefix(component_prefix, sdxl=sdxl)
+    if kohya_prefix is None or not module_key.startswith(component_prefix):
+        return None
+
+    module_path = module_key.removeprefix(component_prefix)
+    module_path = module_path.replace(".processor.", ".")
+    return f"{kohya_prefix}_{module_path.replace('.', '_')}"
+
+
+def convert_diffusers_to_comfyui_sd_lora(
+    state_dict: Dict[str, Any],
+    *,
+    adapter_metadata: Optional[dict] = None,
+    component_adapter_metadata: Optional[dict[str, dict]] = None,
+    sdxl: bool = True,
+) -> Dict[str, Any]:
+    """
+    Convert SD/SDXL Diffusers/PEFT LoRA keys to the Kohya-style names ComfyUI
+    maps for UNet and CLIP LoRA loading.
+    """
+    converted: Dict[str, Any] = {}
+    alpha_entries: Dict[str, torch.Tensor] = {}
+
+    suffix_map = {
+        ".lora.down.weight": ".lora_down.weight",
+        ".lora.up.weight": ".lora_up.weight",
+        ".lora_A.weight": ".lora_down.weight",
+        ".lora_B.weight": ".lora_up.weight",
+    }
+
+    for key, weight in state_dict.items():
+        component_prefix = next(
+            (prefix for prefix in ("unet.", "text_encoder.", "text_encoder_2.") if key.startswith(prefix)),
+            None,
+        )
+        if component_prefix is None:
+            converted[key] = weight
+            continue
+
+        matched_suffix = next((suffix for suffix in suffix_map if key.endswith(suffix)), None)
+        if matched_suffix is None:
+            converted[key] = weight
+            continue
+
+        module_key = key[: -len(matched_suffix)]
+        kohya_key = _kohya_module_key(module_key, component_prefix, sdxl=sdxl)
+        if kohya_key is None:
+            converted[key] = weight
+            continue
+
+        new_key = f"{kohya_key}{suffix_map[matched_suffix]}"
+        converted[new_key] = weight
+
+        if suffix_map[matched_suffix] == ".lora_down.weight" and kohya_key not in alpha_entries:
+            metadata = _component_metadata(component_prefix, adapter_metadata, component_adapter_metadata)
+            alpha_value = _resolve_alpha_for_module(
+                module_key.removeprefix(component_prefix),
+                weight,
+                metadata,
+            )
+            if alpha_value is not None:
+                alpha_entries[kohya_key] = torch.tensor(alpha_value, dtype=torch.float32)
+
+    for module_key, alpha_value in alpha_entries.items():
+        converted[f"{module_key}.alpha"] = alpha_value
+
+    return converted
+
+
 def convert_diffusers_to_comfyui(
     state_dict: Dict[str, Any],
     *,
