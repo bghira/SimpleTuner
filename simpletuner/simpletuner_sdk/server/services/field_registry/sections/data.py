@@ -246,13 +246,13 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--enable_nsfw_check",
             ui_label="Enable NSFW Classifier Check",
             field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
             default_value=False,
             help_text="Scan uncached VAE preprocessing samples with Transformers image classifiers and reject NSFW samples",
             tooltip="Runs during VAE cache preprocessing for uncached image, video, and conditioning samples. Cached datasets and skip_file_discovery=vae are not rescanned.",
-            importance=ImportanceLevel.ADVANCED,
-            order=25,
+            importance=ImportanceLevel.IMPORTANT,
+            order=8,
             documentation="OPTIONS.md#--enable_nsfw_check",
         )
     )
@@ -263,15 +263,15 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_models",
             ui_label="NSFW Classifier Models",
             field_type=FieldType.TEXT,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
             default_value=DEFAULT_NSFW_CHECK_MODELS_CSV,
             placeholder="Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5",
             help_text="CSV list of Hugging Face Transformers image-classification models with optional :threshold= values",
             tooltip="Only standard Transformers image-classification models are supported; trust_remote_code is not enabled.",
             dependencies=nsfw_check_enabled,
-            importance=ImportanceLevel.ADVANCED,
-            order=26,
+            importance=ImportanceLevel.IMPORTANT,
+            order=9,
             documentation="OPTIONS.md#--nsfw_check_models",
         )
     )
@@ -282,8 +282,8 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_min_votes",
             ui_label="NSFW Minimum Votes",
             field_type=FieldType.NUMBER,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
             default_value=2,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="At least one classifier vote is required")
@@ -291,8 +291,8 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             help_text="Minimum number of configured classifiers that must flag a frame before the sample is rejected",
             tooltip="Must be between 1 and the number of configured classifier models.",
             dependencies=nsfw_check_enabled,
-            importance=ImportanceLevel.ADVANCED,
-            order=27,
+            importance=ImportanceLevel.IMPORTANT,
+            order=10,
             documentation="OPTIONS.md#--nsfw_check_min_votes",
         )
     )
@@ -303,15 +303,16 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_backend_types",
             ui_label="NSFW Backend Types",
             field_type=FieldType.TEXT,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
             default_value="all",
             placeholder="all",
             help_text="CSV list of data backend type values eligible for NSFW checks",
             tooltip="Use all, or values such as local,huggingface,csv,aws.",
             dependencies=nsfw_check_enabled,
             importance=ImportanceLevel.ADVANCED,
-            order=28,
+            order=11,
             documentation="OPTIONS.md#--nsfw_check_backend_types",
         )
     )
@@ -322,15 +323,16 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_sample_types",
             ui_label="NSFW Sample Types",
             field_type=FieldType.TEXT,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
             default_value="image,conditioning",
             placeholder="image,conditioning",
             help_text="CSV list of dataset_type values eligible for NSFW checks",
             tooltip="Defaults to training image and conditioning samples. Include video to scan video datasets; eval datasets are skipped.",
             dependencies=nsfw_check_enabled,
             importance=ImportanceLevel.ADVANCED,
-            order=29,
+            order=12,
             documentation="OPTIONS.md#--nsfw_check_sample_types",
         )
     )
@@ -341,14 +343,15 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--delete_nsfw_images",
             ui_label="Delete NSFW Images",
             field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
             default_value=False,
             help_text="Delete samples rejected by the NSFW classifier when the data backend supports deletion",
             tooltip="When disabled, rejected samples are removed from metadata for the current run but left in the source dataset.",
             dependencies=nsfw_check_enabled,
             importance=ImportanceLevel.ADVANCED,
-            order=30,
+            order=13,
             documentation="OPTIONS.md#--delete_nsfw_images",
         )
     )
@@ -359,8 +362,9 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_video_frame_count",
             ui_label="NSFW Video Frame Count",
             field_type=FieldType.NUMBER,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
             default_value=3,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="At least one video frame must be checked")
@@ -369,7 +373,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tooltip="Used when the classifier receives video or multi-frame conditioning samples.",
             dependencies=nsfw_check_enabled,
             importance=ImportanceLevel.ADVANCED,
-            order=31,
+            order=14,
             documentation="OPTIONS.md#--nsfw_check_video_frame_count",
         )
     )
@@ -380,8 +384,9 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_video_frame_selection",
             ui_label="NSFW Video Frame Selection",
             field_type=FieldType.SELECT,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
             default_value="uniform",
             choices=[
                 {"value": "uniform", "label": "Uniform"},
@@ -392,7 +397,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tooltip="Uniform samples across the clip; first checks the opening frames; middle checks the centered frame window.",
             dependencies=nsfw_check_enabled,
             importance=ImportanceLevel.ADVANCED,
-            order=32,
+            order=15,
             documentation="OPTIONS.md#--nsfw_check_video_frame_selection",
         )
     )
@@ -403,8 +408,9 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--nsfw_check_video_min_flagged_frames",
             ui_label="NSFW Video Min Flagged Frames",
             field_type=FieldType.NUMBER,
-            tab="model",
-            section="vae_config",
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
             default_value=1,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="At least one flagged frame is required")
@@ -413,7 +419,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tooltip="A frame is flagged when nsfw_check_min_votes classifiers mark it as NSFW.",
             dependencies=nsfw_check_enabled,
             importance=ImportanceLevel.ADVANCED,
-            order=33,
+            order=16,
             documentation="OPTIONS.md#--nsfw_check_video_min_flagged_frames",
         )
     )
