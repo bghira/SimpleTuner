@@ -28,6 +28,14 @@
 
     [:octicons-arrow-right-24: CaptionFlow 描述生成](CAPTIONFLOW.zh.md)
 
+-   :material-shield-check:{ .lg .middle } __NSFW 检查__
+
+    ---
+
+    使用本地分类器策略过滤 VAE 缓存样本
+
+    [:octicons-arrow-right-24: NSFW 分类器检查](NSFW.zh.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---

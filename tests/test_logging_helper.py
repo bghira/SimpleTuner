@@ -125,6 +125,72 @@ class WebhookLoggerTests(unittest.TestCase):
         with patch("simpletuner.helpers.logging._load_env_webhook_config", return_value=None):
             self.assertIsNone(logging_module._fallback_webhook_config())
 
+    def test_third_party_loggers_suppress_hub_and_httpx_request_noise(self):
+        import logging
+
+        from simpletuner.helpers import log_format
+
+        logger_names = (
+            "httpx",
+            "httpcore",
+            "huggingface_hub",
+            "huggingface_hub.utils._http",
+            "huggingface_hub.file_download",
+        )
+        for logger_name in logger_names:
+            dependency_logger = logging.getLogger(logger_name)
+            dependency_logger.setLevel(logging.DEBUG)
+            dependency_logger.addHandler(logging.NullHandler())
+            dependency_logger.propagate = False
+
+        log_format.configure_third_party_loggers(include_library_utils=False)
+
+        for logger_name in logger_names:
+            dependency_logger = logging.getLogger(logger_name)
+            self.assertGreaterEqual(dependency_logger.getEffectiveLevel(), logging.WARNING)
+            self.assertEqual([], dependency_logger.handlers)
+            self.assertTrue(dependency_logger.propagate)
+
+    def test_third_party_loggers_suppress_transformers_unsharded_layer_warning(self):
+        import logging
+
+        from simpletuner.helpers import log_format
+
+        log_format.configure_third_party_loggers(include_library_utils=False)
+
+        records: list[str] = []
+
+        class ListHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record.getMessage())
+
+        handler = ListHandler()
+        transformers_logger = logging.getLogger("transformers")
+        previous_handlers = list(transformers_logger.handlers)
+        previous_transformers_level = transformers_logger.level
+        previous_transformers_propagate = transformers_logger.propagate
+        for existing_handler in previous_handlers:
+            transformers_logger.removeHandler(existing_handler)
+        transformers_logger.setLevel(logging.DEBUG)
+        transformers_logger.propagate = False
+        transformers_logger.addHandler(handler)
+        try:
+            tp_logger = logging.getLogger("transformers.integrations.tensor_parallel")
+            tp_logger.warning("The following layers were not sharded: vit.encoder.layer.*.attention.output.dense.weight")
+            tp_logger.warning("The following TP rules were not applied on any of the layers: {'unused': 'colwise'}")
+        finally:
+            transformers_logger.removeHandler(handler)
+            for previous_handler in previous_handlers:
+                transformers_logger.addHandler(previous_handler)
+            transformers_logger.setLevel(previous_transformers_level)
+            transformers_logger.propagate = previous_transformers_propagate
+
+        self.assertNotIn(
+            "The following layers were not sharded: vit.encoder.layer.*.attention.output.dense.weight",
+            records,
+        )
+        self.assertIn("The following TP rules were not applied on any of the layers: {'unused': 'colwise'}", records)
+
 
 if __name__ == "__main__":
     unittest.main()

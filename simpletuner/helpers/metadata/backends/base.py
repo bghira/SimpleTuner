@@ -405,6 +405,7 @@ class MetadataBackend:
         aspect_ratio_bucket_indices_queue,
         metadata_updates_queue,
         written_files_queue,
+        filtered_files_queue,
         existing_files_set,
     ):
         """worker process to bucket files and extract metadata"""
@@ -434,9 +435,11 @@ class MetadataBackend:
                         metadata_updates=local_metadata_updates,
                         delete_problematic_images=self.delete_problematic_images,
                         statistics=statistics,
+                        filtered_files_queue=filtered_files_queue,
                     )
                 except Exception as e:
                     logger.error(f"Error processing file {file}. Reason: {e}. Skipping.")
+                    statistics.setdefault("skipped", {}).setdefault("error", 0)
                     statistics["skipped"]["error"] += 1
                 logger.debug(
                     f"Statistics: {statistics}, total: {sum([len(bucket) for bucket in local_aspect_ratio_bucket_indices.values()])}"
@@ -461,9 +464,57 @@ class MetadataBackend:
             aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
         if local_metadata_updates:
             metadata_updates_queue.put(local_metadata_updates)
-            metadata_updates_queue.put(("statistics", statistics))
+        metadata_updates_queue.put(("statistics", statistics))
         time.sleep(0.001)
         logger.debug("Bucket worker completed processing. Returning to main thread.")
+
+    def _queue_or_delete_filtered_file(
+        self,
+        filepath: str,
+        reason: str,
+        delete_from_backend: bool,
+        filtered_files_queue=None,
+    ) -> None:
+        if not delete_from_backend:
+            return
+        action = {
+            "filepath": filepath,
+            "reason": reason,
+            "delete_from_backend": True,
+        }
+        if filtered_files_queue is not None:
+            filtered_files_queue.put(action)
+            return
+        self._delete_filtered_file(action)
+
+    def _delete_filtered_file(self, action: dict) -> bool:
+        filepath = action["filepath"]
+        reason = action.get("reason", "filtered")
+        try:
+            self.data_backend.delete(filepath)
+            return True
+        except NotImplementedError:
+            logger.warning(
+                "(id=%s) %s sample %s was filtered from metadata, but backend type %s does not support deletion.",
+                self.id,
+                reason,
+                filepath,
+                getattr(self.data_backend, "type", "unknown"),
+            )
+        except FileNotFoundError:
+            logger.debug("(id=%s) %s sample %s was already absent.", self.id, reason, filepath)
+        except Exception as exc:
+            logger.warning("(id=%s) Could not delete %s sample %s: %s", self.id, reason, filepath, exc)
+        return False
+
+    def _drain_filtered_files_queue(self, filtered_files_queue) -> int:
+        deleted = 0
+        while not filtered_files_queue.empty():
+            action = filtered_files_queue.get()
+            if isinstance(action, dict) and action.get("delete_from_backend"):
+                if self._delete_filtered_file(action):
+                    deleted += 1
+        return deleted
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         """compute aspect ratio buckets - main processing function
@@ -576,6 +627,7 @@ class MetadataBackend:
 
         metadata_updates_queue = Queue()
         written_files_queue = Queue()
+        filtered_files_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         if not ignore_existing_cache and not self.image_metadata_loaded:
@@ -595,6 +647,7 @@ class MetadataBackend:
                     aspect_ratio_bucket_indices_queue,
                     metadata_updates_queue,
                     written_files_queue,
+                    filtered_files_queue,
                     existing_files_set,
                 ),
             )
@@ -621,6 +674,7 @@ class MetadataBackend:
                 or not aspect_ratio_bucket_indices_queue.empty()
                 or not metadata_updates_queue.empty()
                 or not written_files_queue.empty()
+                or not filtered_files_queue.empty()
             ):
                 current_time = time.time()
                 while not tqdm_queue.empty():
@@ -636,6 +690,7 @@ class MetadataBackend:
                     if type(metadata_update) is tuple and metadata_update[0] == "statistics":
                         logger.debug(f"Received statistics update: {metadata_update[1]}")
                         for reason, count in metadata_update[1]["skipped"].items():
+                            aggregated_statistics["skipped"].setdefault(reason, 0)
                             aggregated_statistics["skipped"][reason] += count
                         aggregated_statistics["total_processed"] += metadata_update[1]["total_processed"]
                         continue
@@ -644,6 +699,7 @@ class MetadataBackend:
                 while not written_files_queue.empty():
                     written_files_batch = written_files_queue.get()
                     written_files.update(written_files_batch)  # Use update for sets
+                self._drain_filtered_files_queue(filtered_files_queue)
 
                 processing_duration = current_time - last_write_time
                 if processing_duration >= self.metadata_update_interval:
@@ -658,6 +714,7 @@ class MetadataBackend:
 
         for worker in workers:
             worker.join()
+        self._drain_filtered_files_queue(filtered_files_queue)
         logger.info(f"Sample processing statistics: {aggregated_statistics}")
         self.filtering_statistics = aggregated_statistics
         self.save_image_metadata()
@@ -1212,11 +1269,12 @@ class MetadataBackend:
     def handle_small_image(self, image_path: str, bucket: str, delete_unwanted_images: bool):
         """remove or delete undersized image"""
         if delete_unwanted_images:
-            try:
-                logger.warning(f"Image {image_path} too small: DELETING image and continuing search.")
-                self.data_backend.delete(image_path)
-            except Exception:
-                logger.debug(f"Image {image_path} was already deleted. Another GPU must have gotten to it.")
+            logger.warning(f"Image {image_path} too small: DELETING image and continuing search.")
+            self._queue_or_delete_filtered_file(
+                filepath=image_path,
+                reason="too_small",
+                delete_from_backend=True,
+            )
         else:
             logger.warning(
                 f"Image {image_path} too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."

@@ -75,6 +75,7 @@ plugins:
             Video Models: 视频模型
             Audio Models: 音频模型
             Training: 训练
+            NSFW Classifier Checks: NSFW 分类器检查
             CaptionFlow Captioning: CaptionFlow 描述生成
             Reference: 参考
         - locale: ja
@@ -91,6 +92,7 @@ plugins:
             Video Models: 動画モデル
             Audio Models: 音声モデル
             Training: トレーニング
+            NSFW Classifier Checks: NSFW 分類器チェック
             CaptionFlow Captioning: CaptionFlow キャプション生成
             Reference: リファレンス
         - locale: hi
@@ -107,6 +109,7 @@ plugins:
             Video Models: वीडियो मॉडल
             Audio Models: ऑडियो मॉडल
             Training: प्रशिक्षण
+            NSFW Classifier Checks: NSFW classifier checks
             CaptionFlow Captioning: CaptionFlow captioning
             Scaling & Performance: स्केलिंग और प्रदर्शन
             Server & Multi-User: सर्वर और बहु-उपयोगकर्ता
@@ -142,6 +145,7 @@ plugins:
             Video Models: Modelos de video
             Audio Models: Modelos de audio
             Training: Treinamento
+            NSFW Classifier Checks: Verificacoes do classificador NSFW
             CaptionFlow Captioning: CaptionFlow captioning
             Scaling & Performance: Escala e performance
             Server & Multi-User: Servidor e multi-usuario
@@ -162,6 +166,7 @@ plugins:
             Video Models: Modelos de video
             Audio Models: Modelos de audio
             Training: Entrenamiento
+            NSFW Classifier Checks: Comprobaciones del clasificador NSFW
             CaptionFlow Captioning: Captioning con CaptionFlow
             Scaling & Performance: Escala y rendimiento
             Server & Multi-User: Servidor y multiusuario
@@ -271,6 +276,7 @@ nav:
 
   - Training:
     - Dataloader Configuration: DATALOADER.md
+    - NSFW Classifier Checks: NSFW.md
     - CaptionFlow Captioning: CAPTIONFLOW.md
     - Training Techniques:
       - DreamBooth: DREAMBOOTH.md

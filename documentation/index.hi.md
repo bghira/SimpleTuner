@@ -28,6 +28,14 @@
 
     [:octicons-arrow-right-24: CaptionFlow captioning](CAPTIONFLOW.hi.md)
 
+-   :material-shield-check:{ .lg .middle } __NSFW checks__
+
+    ---
+
+    Local classifier policies से VAE cache samples filter करें
+
+    [:octicons-arrow-right-24: NSFW classifier checks](NSFW.hi.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---

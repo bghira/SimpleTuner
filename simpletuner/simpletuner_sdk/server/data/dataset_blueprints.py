@@ -309,6 +309,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "delete_nsfw_images",
+                    "label": "delete nsfw samples",
+                    "description": "delete classifier-rejected samples from this backend when nsfw checks are enabled",
+                    "type": "toggle",
+                    "defaultValue": False,
+                    "advanced": True,
+                },
+                {
                     "id": "instance_prompt",
                     "label": "instance prompt",
                     "description": "trigger word or prompt prepended to captions",
@@ -850,6 +858,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "placeholder": "cache/csv",
                     "advanced": True,
                 },
+                {
+                    "id": "delete_nsfw_images",
+                    "label": "delete nsfw samples",
+                    "description": "delete classifier-rejected cached samples when nsfw checks are enabled",
+                    "type": "toggle",
+                    "defaultValue": False,
+                    "advanced": True,
+                },
             ],
             "metadata": {
                 "tags": ["image", "csv"],
@@ -943,6 +959,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                     "min": 1,
                     "step": 1,
+                },
+                {
+                    "id": "delete_nsfw_images",
+                    "label": "delete nsfw samples",
+                    "description": "delete classifier-rejected samples from S3 when nsfw checks are enabled",
+                    "type": "toggle",
+                    "defaultValue": False,
+                    "advanced": True,
                 },
             ],
             "metadata": {

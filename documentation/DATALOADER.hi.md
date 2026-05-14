@@ -709,6 +709,53 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **Warning:** यह destructive है और undo नहीं किया जा सकता। सावधानी से उपयोग करें।
 - **Default:** trainer के `--delete_problematic_images` argument पर fallback करता है (डिफ़ॉल्ट: `false`)।
 
+### `delete_nsfw_images`
+
+- **Values:** `true` | `false`
+- **Description:** `--enable_nsfw_check` enabled होने पर, NSFW classifier से rejected samples इस backend से delete किए जाते हैं यदि backend deletion support करता है।
+- **Warning:** यह destructive है और undo नहीं किया जा सकता। Hugging Face datasets read-only हैं और केवल current run के metadata से हटेंगे।
+- **Default:** trainer के `--delete_nsfw_images` argument पर fallback करता है (डिफ़ॉल्ट: `false`)।
+
+<a id="nsfw-classifier-checks-during-vae-caching"></a>
+
+### VAE caching के दौरान NSFW classifier checks
+
+`--enable_nsfw_check=true` सेट करने पर SimpleTuner VAE cache preprocessing के दौरान Hugging Face Transformers image classifiers से training samples scan कर सकता है। Scan bucket discovery के बाद और VAE encoding से पहले होता है, इसलिए rejected samples latents लिखे जाने से पहले current metadata buckets से हट जाते हैं।
+
+Privacy, responsibility, और legal-context notes के लिए [NSFW.hi.md](NSFW.hi.md) देखें।
+
+Scan केवल उन uncached samples पर लागू होता है जिन्हें VAE cache process करने वाला है। Existing VAE cache entries trusted मानी जाती हैं, और `skip_file_discovery=vae` NSFW enforcement bypass करता है क्योंकि trainer मानता है कि dataset user की अपनी policy के अनुसार पहले ही तैयार है। Evaluation datasets scan नहीं होते।
+
+Classifier configuration:
+- `--nsfw_check_models` standard Hugging Face Transformers image-classification models की CSV list लेता है। Per-model thresholds `model/repo:threshold=0.5` से जोड़ें।
+- Default `Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5` है।
+- `trust_remote_code` enabled नहीं होता, और `timm` या custom model code मांगने वाले classifiers supported नहीं हैं।
+- `--nsfw_check_min_votes` नियंत्रित करता है कि किसी frame को reject करने के लिए कितने configured models को NSFW verdict देना होगा।
+
+Scope controls:
+- `--nsfw_check_backend_types` `all`, `local`, `huggingface`, `csv`, या `aws` जैसे backend `type` values लेता है।
+- `--nsfw_check_sample_types` dataset `dataset_type` values लेता है। Default `image,conditioning` है; video datasets scan करने के लिए `video` जोड़ें।
+- `--delete_nsfw_images=true` mutable backends से rejected samples delete करता है। Disabled होने पर वे केवल current run के metadata से हटते हैं।
+
+Video और multi-frame samples:
+- `--nsfw_check_video_frame_count` नियंत्रित करता है कि कितने frames check होंगे।
+- `--nsfw_check_video_frame_selection` `uniform`, `first`, या `middle` हो सकता है।
+- `--nsfw_check_video_min_flagged_frames` नियंत्रित करता है कि पूरे sample को reject करने से पहले कितने checked frames reject होने चाहिए।
+
+जब samples scan होते हैं, हर VAE cache process VAE cache directory में `nsfw_classifier_report_rank*.json` report लिखता है। Reports में model thresholds, classifier verdict counts, rejected sample paths, और deletion counts शामिल होते हैं।
+
+Per-backend deletion को `multidatabackend.json` में enabled किया जा सकता है:
+
+```json
+{
+  "id": "train",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/data/training/images",
+  "delete_nsfw_images": true
+}
+```
+
 ### Filtering Statistics देखना
 
 जब SimpleTuner आपके dataset को process करता है, यह track करता है कि कितनी files filter हुईं और क्यों। ये statistics dataset के cache file (`aspect_ratio_bucket_indices_*.json`) में store होती हैं और WebUI में देखी जा सकती हैं।
@@ -720,6 +767,7 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - **metadata_missing**: missing metadata के कारण skip की गई files
 - **not_found**: जो files locate नहीं हो सकीं
 - **already_exists**: cache में पहले से मौजूद files (reprocess नहीं हुईं)
+- **nsfw**: VAE cache preprocessing के दौरान NSFW classifier से rejected files
 - **other**: अन्य कारणों से filter की गई files
 
 **WebUI में देखना:**

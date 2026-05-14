@@ -515,6 +515,59 @@ Esto es útil para herramientas de monitoreo que reciben webhooks de múltiples 
 - **Qué**: Configura el comportamiento de la comprobación de escaneo de integridad.
 - **Por qué**: Un dataset podría tener ajustes incorrectos aplicados en múltiples puntos del entrenamiento, p. ej., si eliminas accidentalmente los archivos de caché `.json` de tu dataset y cambias la configuración del backend de datos para usar imágenes cuadradas en lugar de crops por aspecto. Esto dará como resultado un caché de datos inconsistente, que puede corregirse configurando `scan_for_errors` en `true` en tu archivo de configuración `multidatabackend.json`. Cuando se ejecuta este escaneo, se basa en el ajuste de `--vae_cache_scan_behaviour` para determinar cómo resolver la inconsistencia: `recreate` (predeterminado) eliminará la entrada de caché problemática para que pueda recrearse, y `sync` actualizará los metadatos del bucket para reflejar la realidad de la muestra real de entrenamiento. Valor recomendado: `recreate`.
 
+### `--enable_nsfw_check`
+
+- **Qué**: Habilita la aplicación de clasificadores NSFW durante el preprocesamiento del caché VAE.
+- **Predeterminado**: `false`.
+- **Notas**: Solo se escanean las muestras sin caché que el caché VAE está a punto de procesar. Los cachés VAE existentes y `skip_file_discovery=vae` se consideran confiables y no se reescanean.
+- **Más información**: Consulta [NSFW.es.md](NSFW.es.md) para notas de privacidad y responsabilidad, y [DATALOADER.es.md#nsfw-classifier-checks-during-vae-caching](DATALOADER.es.md#nsfw-classifier-checks-during-vae-caching) para detalles del caché VAE.
+
+### `--nsfw_check_models`
+
+- **Qué**: Lista CSV de modelos de clasificación de imágenes de Hugging Face Transformers. Puedes adjuntar un umbral por modelo con `:threshold=0.5`.
+- **Predeterminado**: `Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5`.
+- **Notas**: Solo se admiten modelos Transformers estándar. No se habilita `trust_remote_code` y no se cargan clasificadores basados en `timm`.
+
+### `--nsfw_check_min_votes`
+
+- **Qué**: Número de clasificadores configurados que deben devolver NSFW antes de rechazar un frame.
+- **Predeterminado**: `2`.
+- **Notas**: Debe ser al menos `1` y no mayor que el número de clasificadores configurados.
+
+### `--nsfw_check_backend_types`
+
+- **Qué**: Lista CSV de valores `type` de backend de datos que deben escanearse.
+- **Predeterminado**: `all`.
+- **Ejemplo**: `local,huggingface,csv,aws`.
+
+### `--nsfw_check_sample_types`
+
+- **Qué**: Lista CSV de valores `dataset_type` que deben escanearse.
+- **Predeterminado**: `image,conditioning`.
+- **Notas**: Los datasets de evaluación no se escanean.
+
+### `--delete_nsfw_images`
+
+- **Qué**: Elimina muestras rechazadas por el clasificador NSFW cuando el backend admite eliminación.
+- **Predeterminado**: `false`.
+- **Notas**: Cuando está deshabilitado, las muestras rechazadas se eliminan de los metadatos de la ejecución actual, pero permanecen en el dataset de origen.
+
+### `--nsfw_check_video_frame_count`
+
+- **Qué**: Número de frames muestreados desde entradas de video o conditioning con varios frames.
+- **Predeterminado**: `3`.
+
+### `--nsfw_check_video_frame_selection`
+
+- **Qué**: Modo de selección de frames para comprobaciones NSFW en video.
+- **Predeterminado**: `uniform`.
+- **Opciones**: `uniform`, `first`, `middle`.
+
+### `--nsfw_check_video_min_flagged_frames`
+
+- **Qué**: Número de frames de video comprobados que deben ser rechazados antes de rechazar toda la muestra.
+- **Predeterminado**: `1`.
+
 ### `--dataloader_prefetch`
 
 - **Qué**: Recupera lotes por adelantado.

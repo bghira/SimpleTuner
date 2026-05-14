@@ -102,6 +102,7 @@ from simpletuner.helpers.distillation.requirements import (
     describe_requirement_groups,
     evaluate_requirement_profile,
 )
+from simpletuner.helpers.image_manipulation.nsfw_classifier import DEFAULT_NSFW_CHECK_MODELS_CSV
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
 from simpletuner.helpers.models.common import ModelFoundation, TextEmbedCacheKey
@@ -3979,6 +3980,15 @@ class FactoryRegistry:
             vae_cache_ondemand=self.args.vae_cache_ondemand,
             vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
             hash_filenames=True,  # always enabled
+            enable_nsfw_check=getattr(self.args, "enable_nsfw_check", False),
+            nsfw_check_models=getattr(self.args, "nsfw_check_models", None) or DEFAULT_NSFW_CHECK_MODELS_CSV,
+            nsfw_check_min_votes=getattr(self.args, "nsfw_check_min_votes", 2),
+            nsfw_check_backend_types=getattr(self.args, "nsfw_check_backend_types", "all"),
+            nsfw_check_sample_types=getattr(self.args, "nsfw_check_sample_types", "image,conditioning"),
+            nsfw_check_video_frame_count=getattr(self.args, "nsfw_check_video_frame_count", 3),
+            nsfw_check_video_frame_selection=getattr(self.args, "nsfw_check_video_frame_selection", "uniform"),
+            nsfw_check_video_min_flagged_frames=getattr(self.args, "nsfw_check_video_min_flagged_frames", 1),
+            delete_nsfw_images=backend.get("delete_nsfw_images", getattr(self.args, "delete_nsfw_images", False)),
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
