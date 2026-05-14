@@ -164,18 +164,26 @@ class WebhookLoggerTests(unittest.TestCase):
             def emit(self, record: logging.LogRecord) -> None:
                 records.append(record.getMessage())
 
-        root_logger = logging.getLogger()
-        previous_root_level = root_logger.level
         handler = ListHandler()
-        root_logger.setLevel(logging.DEBUG)
-        root_logger.addHandler(handler)
+        transformers_logger = logging.getLogger("transformers")
+        previous_handlers = list(transformers_logger.handlers)
+        previous_transformers_level = transformers_logger.level
+        previous_transformers_propagate = transformers_logger.propagate
+        for existing_handler in previous_handlers:
+            transformers_logger.removeHandler(existing_handler)
+        transformers_logger.setLevel(logging.DEBUG)
+        transformers_logger.propagate = False
+        transformers_logger.addHandler(handler)
         try:
             tp_logger = logging.getLogger("transformers.integrations.tensor_parallel")
             tp_logger.warning("The following layers were not sharded: vit.encoder.layer.*.attention.output.dense.weight")
             tp_logger.warning("The following TP rules were not applied on any of the layers: {'unused': 'colwise'}")
         finally:
-            root_logger.removeHandler(handler)
-            root_logger.setLevel(previous_root_level)
+            transformers_logger.removeHandler(handler)
+            for previous_handler in previous_handlers:
+                transformers_logger.addHandler(previous_handler)
+            transformers_logger.setLevel(previous_transformers_level)
+            transformers_logger.propagate = previous_transformers_propagate
 
         self.assertNotIn(
             "The following layers were not sharded: vit.encoder.layer.*.attention.output.dense.weight",
