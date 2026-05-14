@@ -125,6 +125,32 @@ class WebhookLoggerTests(unittest.TestCase):
         with patch("simpletuner.helpers.logging._load_env_webhook_config", return_value=None):
             self.assertIsNone(logging_module._fallback_webhook_config())
 
+    def test_third_party_loggers_suppress_hub_and_httpx_request_noise(self):
+        import logging
+
+        from simpletuner.helpers import log_format
+
+        logger_names = (
+            "httpx",
+            "httpcore",
+            "huggingface_hub",
+            "huggingface_hub.utils._http",
+            "huggingface_hub.file_download",
+        )
+        for logger_name in logger_names:
+            dependency_logger = logging.getLogger(logger_name)
+            dependency_logger.setLevel(logging.DEBUG)
+            dependency_logger.addHandler(logging.NullHandler())
+            dependency_logger.propagate = False
+
+        log_format.configure_third_party_loggers(include_library_utils=False)
+
+        for logger_name in logger_names:
+            dependency_logger = logging.getLogger(logger_name)
+            self.assertGreaterEqual(dependency_logger.getEffectiveLevel(), logging.WARNING)
+            self.assertEqual([], dependency_logger.handlers)
+            self.assertTrue(dependency_logger.propagate)
+
 
 if __name__ == "__main__":
     unittest.main()

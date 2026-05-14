@@ -150,6 +150,15 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
             # diffusers is optional; skip configuration if not installed or if logging API is missing
             pass
 
+        try:
+            import huggingface_hub.utils.logging as huggingface_hub_logging
+
+            if hasattr(huggingface_hub_logging, "set_verbosity_warning"):
+                huggingface_hub_logging.set_verbosity_warning()
+        except (ImportError, AttributeError):
+            # huggingface_hub is optional; skip configuration if not installed or if logging API is missing
+            pass
+
     # Configure individual loggers (safe to do at any time, no imports needed)
     forward_logger = logging.getLogger("diffusers.models.unet_2d_condition")
     forward_logger.setLevel(logging.WARNING)
@@ -216,6 +225,17 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     urllib_logger = logging.getLogger("urllib3.connectionpool")
     urllib_logger.setLevel(logging.WARNING)
 
+    httpx_logger = logging.getLogger("httpx")
+    httpx_logger.setLevel(logging.WARNING)
+    httpcore_logger = logging.getLogger("httpcore")
+    httpcore_logger.setLevel(logging.WARNING)
+
+    huggingface_hub_logger = logging.getLogger("huggingface_hub")
+    huggingface_hub_logger.setLevel(logging.WARNING)
+    huggingface_http_logger = logging.getLogger("huggingface_hub.utils._http")
+    huggingface_http_logger.setLevel(logging.WARNING)
+    huggingface_file_download_logger = logging.getLogger("huggingface_hub.file_download")
+    huggingface_file_download_logger.setLevel(logging.WARNING)
     huggingface_login_logger = logging.getLogger("huggingface_hub._login")
     huggingface_login_logger.setLevel(logging.ERROR)
 
@@ -257,6 +277,11 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
         "sse_starlette.sse",
         "python_multipart.multipart",
         "urllib3.connectionpool",
+        "httpx",
+        "httpcore",
+        "huggingface_hub",
+        "huggingface_hub.utils._http",
+        "huggingface_hub.file_download",
         "huggingface_hub._login",
         "uvicorn.access",
         "uvicorn.error",
