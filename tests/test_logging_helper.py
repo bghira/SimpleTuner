@@ -151,6 +151,38 @@ class WebhookLoggerTests(unittest.TestCase):
             self.assertEqual([], dependency_logger.handlers)
             self.assertTrue(dependency_logger.propagate)
 
+    def test_third_party_loggers_suppress_transformers_unsharded_layer_warning(self):
+        import logging
+
+        from simpletuner.helpers import log_format
+
+        log_format.configure_third_party_loggers(include_library_utils=False)
+
+        records: list[str] = []
+
+        class ListHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record.getMessage())
+
+        root_logger = logging.getLogger()
+        previous_root_level = root_logger.level
+        handler = ListHandler()
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(handler)
+        try:
+            tp_logger = logging.getLogger("transformers.integrations.tensor_parallel")
+            tp_logger.warning("The following layers were not sharded: vit.encoder.layer.*.attention.output.dense.weight")
+            tp_logger.warning("The following TP rules were not applied on any of the layers: {'unused': 'colwise'}")
+        finally:
+            root_logger.removeHandler(handler)
+            root_logger.setLevel(previous_root_level)
+
+        self.assertNotIn(
+            "The following layers were not sharded: vit.encoder.layer.*.attention.output.dense.weight",
+            records,
+        )
+        self.assertIn("The following TP rules were not applied on any of the layers: {'unused': 'colwise'}", records)
+
 
 if __name__ == "__main__":
     unittest.main()

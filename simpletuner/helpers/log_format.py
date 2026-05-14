@@ -118,6 +118,22 @@ file_handler.setFormatter(RankFileFormatter("%(asctime)s [%(levelname)s] (%(name
 _CUSTOM_HANDLERS = {id(console_handler): console_handler, id(file_handler): file_handler}
 
 
+class _SuppressMessagePrefixFilter(logging.Filter):
+    def __init__(self, prefix: str):
+        super().__init__()
+        self.prefix = prefix
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith(self.prefix)
+
+
+def _ensure_message_prefix_filter(logger_instance: logging.Logger, prefix: str) -> None:
+    for existing_filter in logger_instance.filters:
+        if isinstance(existing_filter, _SuppressMessagePrefixFilter) and existing_filter.prefix == prefix:
+            return
+    logger_instance.addFilter(_SuppressMessagePrefixFilter(prefix))
+
+
 def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     """
     Configure third-party library loggers to suppress verbose output.
@@ -190,6 +206,9 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     transformers_generation_config_logger.setLevel(logging.ERROR)
     transformers_modeling_logger = logging.getLogger("transformers.modeling_utils")
     transformers_modeling_logger.setLevel(logging.ERROR)
+    transformers_tp_logger = logging.getLogger("transformers.integrations.tensor_parallel")
+    transformers_tp_logger.setLevel(logging.WARNING)
+    _ensure_message_prefix_filter(transformers_tp_logger, "The following layers were not sharded:")
 
     diffusers_logger = logging.getLogger("diffusers.configuration_utils")
     diffusers_logger.setLevel(logging.ERROR)
@@ -265,6 +284,7 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
         "transformers.generation_utils",
         "transformers.generation.configuration_utils",
         "transformers.modeling_utils",
+        "transformers.integrations.tensor_parallel",
         "diffusers.configuration_utils",
         "diffusers.pipelines.pipeline_utils",
         "torch.distributed.nn.jit.instantiator",
