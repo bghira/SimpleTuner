@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -474,6 +475,21 @@ class TestFilteringStatistics(unittest.TestCase):
     def test_filtering_statistics_initialized_to_none(self):
         """filtering_statistics should be initialized to None."""
         self.assertIsNone(self.metadata_backend.filtering_statistics)
+
+    def test_filtered_file_queue_defers_delete_until_drained(self):
+        filtered_files_queue = Queue()
+        self.data_backend.delete = Mock(return_value=True)
+
+        self.metadata_backend._queue_or_delete_filtered_file(
+            filepath="too-small.png",
+            reason="too_small",
+            delete_from_backend=True,
+            filtered_files_queue=filtered_files_queue,
+        )
+
+        self.data_backend.delete.assert_not_called()
+        self.assertEqual(self.metadata_backend._drain_filtered_files_queue(filtered_files_queue), 1)
+        self.data_backend.delete.assert_called_once_with("too-small.png")
 
     def test_filtering_statistics_saved_in_cache(self):
         """filtering_statistics should be included when save_cache is called."""

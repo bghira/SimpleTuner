@@ -58,14 +58,47 @@ class FakeImageBackend:
         self.deleted.append(filepath)
 
 
+class FakeAccelerator:
+    is_main_process = True
+    is_local_main_process = True
+    num_processes = 1
+    device = "cpu"
+
+    def __init__(self):
+        self.waits = 0
+
+    def wait_for_everyone(self):
+        self.waits += 1
+
+
 class FakeMetadataBackend:
     def __init__(self):
         self.filtering_statistics = None
         self.bucket_report = None
         self.removed = []
+        self.saved = False
 
     def remove_image(self, filepath, bucket=None):
         self.removed.append((filepath, bucket))
+
+    def save_cache(self, enforce_constraints=False):
+        self.saved = True
+
+
+class FakeReadOnlyMetadataBackend:
+    def __init__(self, split_cache, unsplit_cache):
+        self.aspect_ratio_bucket_indices = {key: list(value) for key, value in split_cache.items()}
+        self.unsplit_cache = {key: list(value) for key, value in unsplit_cache.items()}
+        self.saved_cache = None
+        self.filtering_statistics = None
+        self.bucket_report = None
+        self.read_only = True
+
+    def reload_cache(self, set_config=True):
+        self.aspect_ratio_bucket_indices = {key: list(value) for key, value in self.unsplit_cache.items()}
+
+    def save_cache(self, enforce_constraints=False):
+        self.saved_cache = {key: list(value) for key, value in self.aspect_ratio_bucket_indices.items()}
 
 
 class FakeVotingStore(NsfwClassifierModelStore):
@@ -97,6 +130,7 @@ def make_vae_for_nsfw_filter(samples, rejected_paths, delete_nsfw_images=False):
     vae.read_batch_size = 2
     vae.delete_problematic_images = False
     vae.delete_nsfw_images = delete_nsfw_images
+    vae.accelerator = FakeAccelerator()
     vae.image_data_backend = FakeImageBackend(samples)
     vae.metadata_backend = FakeMetadataBackend()
     vae._nsfw_classifier_store = FakeClassifierStore(rejected_paths)
@@ -200,8 +234,30 @@ class VaeNsfwFilterTest(unittest.TestCase):
         vae = make_vae_for_nsfw_filter(samples, rejected_paths={bad}, delete_nsfw_images=True)
 
         safe_files = vae._filter_nsfw_relevant_files([bad], bucket="1.0")
+        vae._finalize_deferred_metadata_filters()
 
         self.assertEqual(safe_files, [])
+        self.assertEqual(vae.image_data_backend.deleted, [bad])
+        self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
+
+    def test_read_only_metadata_cache_is_reloaded_before_deleting_rejected_sample(self):
+        bad = "bad.png"
+        vae = make_vae_for_nsfw_filter({}, rejected_paths=set(), delete_nsfw_images=True)
+        vae.metadata_backend = FakeReadOnlyMetadataBackend(
+            split_cache={"1.0": [bad]},
+            unsplit_cache={"1.0": ["good.png", bad], "2.0": ["other.png"]},
+        )
+        vae._queue_metadata_filter_action(
+            filepath=bad,
+            bucket="1.0",
+            reason="nsfw",
+            delete_from_backend=True,
+        )
+
+        vae._finalize_deferred_metadata_filters()
+
+        self.assertEqual(vae.metadata_backend.aspect_ratio_bucket_indices, {"1.0": [bad]})
+        self.assertEqual(vae.metadata_backend.saved_cache, {"1.0": ["good.png"], "2.0": ["other.png"]})
         self.assertEqual(vae.image_data_backend.deleted, [bad])
         self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
 

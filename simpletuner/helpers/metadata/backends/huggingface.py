@@ -531,6 +531,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         delete_problematic_images: bool = False,
         statistics: Optional[dict] = None,
         aspect_ratio_rounding: int = 2,
+        filtered_files_queue=None,
     ) -> Dict:
         if statistics is None:
             statistics = {}

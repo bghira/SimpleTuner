@@ -363,6 +363,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
         metadata_updates=None,
         delete_problematic_images: bool = False,
         statistics: dict = {},
+        filtered_files_queue=None,
     ):
         if self.dataset_type is DatasetType.AUDIO:
             return self._process_audio_sample(
@@ -371,6 +372,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 metadata_updates=metadata_updates,
                 delete_problematic_images=delete_problematic_images,
                 statistics=statistics,
+                filtered_files_queue=filtered_files_queue,
             )
 
         try:
@@ -434,7 +436,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")
                     else:
                         logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Deleting image.")
-                        self.data_backend.delete(image_path_str)
+                        self._queue_or_delete_filtered_file(
+                            filepath=image_path_str,
+                            reason="too_small",
+                            delete_from_backend=True,
+                            filtered_files_queue=filtered_files_queue,
+                        )
                     statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                     statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
@@ -486,7 +493,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")
                     else:
                         logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Deleting image.")
-                        self.data_backend.delete(image_path_str)
+                        self._queue_or_delete_filtered_file(
+                            filepath=image_path_str,
+                            reason="too_small",
+                            delete_from_backend=True,
+                            filtered_files_queue=filtered_files_queue,
+                        )
                     statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                     statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
@@ -539,7 +551,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
             logger.error(f"Error traceback: {traceback.format_exc()}")
             if delete_problematic_images:
                 logger.error(f"Deleting image {image_path_str}.")
-                self.data_backend.delete(image_path_str)
+                self._queue_or_delete_filtered_file(
+                    filepath=image_path_str,
+                    reason="problematic",
+                    delete_from_backend=True,
+                    filtered_files_queue=filtered_files_queue,
+                )
 
         return aspect_ratio_bucket_indices
 
@@ -550,6 +567,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
         metadata_updates=None,
         delete_problematic_images: bool = False,
         statistics: Optional[dict] = None,
+        filtered_files_queue=None,
     ):
         if statistics is None:
             statistics = {}
@@ -680,7 +698,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
             skipped["processing_error"] = skipped.get("processing_error", 0) + 1
             if delete_problematic_images:
                 logger.error(f"Deleting audio sample {image_path_str}.")
-                self.data_backend.delete(image_path_str)
+                self._queue_or_delete_filtered_file(
+                    filepath=image_path_str,
+                    reason="problematic",
+                    delete_from_backend=True,
+                    filtered_files_queue=filtered_files_queue,
+                )
 
         return aspect_ratio_bucket_indices
 
