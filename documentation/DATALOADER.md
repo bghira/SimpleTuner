@@ -710,6 +710,53 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 - **Warning:** This is destructive and cannot be undone. Use with caution.
 - **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
 
+### `delete_nsfw_images`
+
+- **Values:** `true` | `false`
+- **Description:** When `--enable_nsfw_check` is enabled, samples rejected by the NSFW classifier are deleted from this backend if the backend supports deletion.
+- **Warning:** This is destructive and cannot be undone. Hugging Face datasets are read-only and will only be removed from metadata for the current run.
+- **Default:** Falls back to the trainer's `--delete_nsfw_images` argument (default: `false`).
+
+<a id="nsfw-classifier-checks-during-vae-caching"></a>
+
+### NSFW classifier checks during VAE caching
+
+SimpleTuner can scan training samples with Hugging Face Transformers image classifiers during VAE cache preprocessing by setting `--enable_nsfw_check=true`. The scan happens after bucket discovery and before VAE encoding, so rejected samples are removed from the current metadata buckets before latents are written.
+
+For privacy, responsibility, and legal-context notes, see [NSFW.md](NSFW.md).
+
+The scan only applies to uncached samples that the VAE cache is about to process. Existing VAE cache entries are trusted, and `skip_file_discovery=vae` bypasses NSFW enforcement because the trainer is assuming the dataset has already been prepared under the user's own policy. Evaluation datasets are not scanned.
+
+Classifier configuration:
+- `--nsfw_check_models` accepts a CSV list of standard Hugging Face Transformers image-classification models. Attach per-model thresholds with `model/repo:threshold=0.5`.
+- The default is `Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5`.
+- `trust_remote_code` is not enabled, and classifiers that require `timm` or custom model code are not supported.
+- `--nsfw_check_min_votes` controls how many configured models must return an NSFW verdict for a frame to be rejected.
+
+Scope controls:
+- `--nsfw_check_backend_types` accepts backend `type` values such as `all`, `local`, `huggingface`, `csv`, or `aws`.
+- `--nsfw_check_sample_types` accepts dataset `dataset_type` values. The default is `image,conditioning`; add `video` to scan video datasets.
+- `--delete_nsfw_images=true` deletes rejected samples from mutable backends. When disabled, rejected samples are only removed from metadata for the current run.
+
+Video and multi-frame samples:
+- `--nsfw_check_video_frame_count` controls how many frames are checked.
+- `--nsfw_check_video_frame_selection` may be `uniform`, `first`, or `middle`.
+- `--nsfw_check_video_min_flagged_frames` controls how many checked frames must be rejected before the whole sample is rejected.
+
+Each VAE cache process writes a report named `nsfw_classifier_report_rank*.json` in the VAE cache directory when samples are scanned. Reports include model thresholds, aggregate classifier verdict counts, rejected sample paths, and deletion counts.
+
+Per-backend deletion can be enabled in `multidatabackend.json`:
+
+```json
+{
+  "id": "train",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/data/training/images",
+  "delete_nsfw_images": true
+}
+```
+
 ### Viewing Filtering Statistics
 
 When SimpleTuner processes your dataset, it tracks how many files were filtered out and why. These statistics are stored in the dataset's cache file (`aspect_ratio_bucket_indices_*.json`) and can be viewed in the WebUI.
@@ -721,6 +768,7 @@ When SimpleTuner processes your dataset, it tracks how many files were filtered 
 - **metadata_missing**: Files skipped due to missing metadata
 - **not_found**: Files that couldn't be located
 - **already_exists**: Files already in the cache (not reprocessed)
+- **nsfw**: Files rejected by the NSFW classifier during VAE cache preprocessing
 - **other**: Files filtered for other reasons
 
 **Viewing in the WebUI:**

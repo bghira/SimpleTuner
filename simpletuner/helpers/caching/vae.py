@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 import random
+import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
@@ -19,6 +21,12 @@ from tqdm import tqdm
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
+from simpletuner.helpers.image_manipulation.nsfw_classifier import (
+    DEFAULT_NSFW_CHECK_MODELS_CSV,
+    NsfwClassifierModelStore,
+    csv_option_allows,
+    parse_nsfw_model_specs,
+)
 from simpletuner.helpers.image_manipulation.training_sample import PreparedSample, TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.models.ltxvideo import normalize_ltx_latents
@@ -130,6 +138,15 @@ class VAECache(WebhookMixin):
         vae_cache_disable: bool = False,
         hash_filenames: bool = True,
         dataset_type: str = None,
+        enable_nsfw_check: bool = False,
+        nsfw_check_models: str = DEFAULT_NSFW_CHECK_MODELS_CSV,
+        nsfw_check_min_votes: int = 2,
+        nsfw_check_backend_types: str = "all",
+        nsfw_check_sample_types: str = "image,conditioning",
+        nsfw_check_video_frame_count: int = 3,
+        nsfw_check_video_frame_selection: str = "uniform",
+        nsfw_check_video_min_flagged_frames: int = 1,
+        delete_nsfw_images: bool = False,
     ):
         self.id = id
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
@@ -184,6 +201,27 @@ class VAECache(WebhookMixin):
         if self.vae_cache_disable:
             self.vae_cache_ondemand = True
 
+        self.nsfw_check_requested = bool(enable_nsfw_check)
+        self.nsfw_check_backend_types = nsfw_check_backend_types
+        self.nsfw_check_sample_types = nsfw_check_sample_types
+        self.nsfw_check_model_specs = parse_nsfw_model_specs(nsfw_check_models)
+        self.nsfw_check_min_votes = int(nsfw_check_min_votes)
+        self.nsfw_check_video_frame_count = int(nsfw_check_video_frame_count)
+        self.nsfw_check_video_frame_selection = str(nsfw_check_video_frame_selection or "uniform").lower()
+        self.nsfw_check_video_min_flagged_frames = int(nsfw_check_video_min_flagged_frames)
+        self.delete_nsfw_images = bool(delete_nsfw_images)
+        self._nsfw_classifier_store = None
+        self._nsfw_lock = threading.Lock()
+        self._nsfw_scan_report = {
+            "images_scanned": 0,
+            "images_rejected": 0,
+            "deleted_images": 0,
+            "errors": [],
+            "rejected_images": [],
+            "classifier_verdicts": {},
+        }
+        self.nsfw_check_enabled = self._resolve_nsfw_check_enabled()
+
         self.max_workers = max_workers
         self.read_queue = Queue()
         self.process_queue = Queue()
@@ -195,6 +233,172 @@ class VAECache(WebhookMixin):
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
+
+    def _resolve_nsfw_check_enabled(self) -> bool:
+        if not self.nsfw_check_requested:
+            return False
+
+        backend_type = getattr(self.image_data_backend, "type", "")
+        if not csv_option_allows(self.nsfw_check_backend_types, backend_type):
+            self.debug_log(
+                f"NSFW checks disabled for backend type {backend_type!r}; "
+                f"allowed types: {self.nsfw_check_backend_types!r}."
+            )
+            return False
+
+        supported_sample_types = {"image", "video", "conditioning"}
+        if self.dataset_type not in supported_sample_types:
+            self.debug_log(f"NSFW checks disabled for unsupported dataset_type={self.dataset_type!r}.")
+            return False
+        if not csv_option_allows(self.nsfw_check_sample_types, self.dataset_type):
+            self.debug_log(
+                f"NSFW checks disabled for dataset_type={self.dataset_type!r}; "
+                f"allowed sample types: {self.nsfw_check_sample_types!r}."
+            )
+            return False
+
+        if not self.nsfw_check_model_specs:
+            raise ValueError("NSFW checks are enabled but nsfw_check_models is empty.")
+        if self.nsfw_check_min_votes < 1:
+            raise ValueError("nsfw_check_min_votes must be at least 1.")
+        if self.nsfw_check_min_votes > len(self.nsfw_check_model_specs):
+            raise ValueError("nsfw_check_min_votes cannot exceed the number of configured NSFW classifiers.")
+        if self.nsfw_check_video_frame_count < 1:
+            raise ValueError("nsfw_check_video_frame_count must be at least 1.")
+        if self.nsfw_check_video_min_flagged_frames < 1:
+            raise ValueError("nsfw_check_video_min_flagged_frames must be at least 1.")
+        if self.nsfw_check_video_min_flagged_frames > self.nsfw_check_video_frame_count:
+            raise ValueError("nsfw_check_video_min_flagged_frames cannot exceed nsfw_check_video_frame_count.")
+        if self.nsfw_check_video_frame_selection not in {"uniform", "first", "middle"}:
+            raise ValueError("nsfw_check_video_frame_selection must be one of: uniform, first, middle.")
+
+        return True
+
+    def _get_nsfw_classifier_store(self) -> NsfwClassifierModelStore:
+        if self._nsfw_classifier_store is None:
+            self._nsfw_classifier_store = NsfwClassifierModelStore(
+                model_specs=self.nsfw_check_model_specs,
+                min_votes=self.nsfw_check_min_votes,
+                video_frame_count=self.nsfw_check_video_frame_count,
+                video_frame_selection=self.nsfw_check_video_frame_selection,
+                video_min_flagged_frames=self.nsfw_check_video_min_flagged_frames,
+                device=self.accelerator.device,
+            )
+        return self._nsfw_classifier_store
+
+    def _close_nsfw_classifier_store(self) -> None:
+        if self._nsfw_classifier_store is None:
+            return
+        self._nsfw_classifier_store.close()
+        self._nsfw_classifier_store = None
+
+    def _record_nsfw_classifier_verdicts(self, classification: dict) -> None:
+        classifier_verdicts = self._nsfw_scan_report["classifier_verdicts"]
+        for frame_result in classification.get("frame_results", []):
+            for result in frame_result.get("classifiers", []):
+                key = result.get("key") or result.get("model_id")
+                verdict = result.get("verdict", "unknown")
+                if not key:
+                    continue
+                classifier_verdicts.setdefault(key, {"nsfw": 0, "sfw": 0, "unknown": 0})
+                classifier_verdicts[key].setdefault(verdict, 0)
+                classifier_verdicts[key][verdict] += 1
+
+    def _record_nsfw_filter_stat(self, bucket: str, filepath: str) -> None:
+        statistics = self.metadata_backend.filtering_statistics
+        if statistics is None:
+            statistics = {"total_processed": 0, "skipped": {}}
+        statistics.setdefault("skipped", {}).setdefault("nsfw", 0)
+        statistics["skipped"]["nsfw"] += 1
+        self.metadata_backend.filtering_statistics = statistics
+
+        bucket_report = getattr(self.metadata_backend, "bucket_report", None)
+        if bucket_report is not None:
+            bucket_report.update_statistics({"skipped": {"nsfw": 1}})
+            bucket_report.record_bucket_event(bucket=bucket, reason="nsfw", removed=1, filepath=filepath)
+
+    def _handle_nsfw_rejected_sample(self, filepath: str, bucket: str, classification: dict) -> None:
+        self.metadata_backend.remove_image(filepath, bucket)
+        self._record_nsfw_filter_stat(bucket, filepath)
+
+        rejected_entry = {
+            "filepath": filepath,
+            "bucket": bucket,
+            "frames_scanned": classification.get("frames_scanned", 0),
+            "flagged_frames": classification.get("summary", {}).get("flagged_frames", 0),
+        }
+        self._nsfw_scan_report["rejected_images"].append(rejected_entry)
+        self._nsfw_scan_report["images_rejected"] += 1
+
+        if not self.delete_nsfw_images:
+            return
+        try:
+            self.image_data_backend.delete(filepath)
+            self._nsfw_scan_report["deleted_images"] += 1
+        except NotImplementedError:
+            logger.warning(
+                "NSFW sample %s was removed from metadata, but backend type %s does not support deletion.",
+                filepath,
+                getattr(self.image_data_backend, "type", "unknown"),
+            )
+
+    def _scan_sample_for_nsfw(self, filepath: str, sample, bucket: str) -> bool:
+        classifier_store = self._get_nsfw_classifier_store()
+        classification = classifier_store.classify_sample(sample, filepath=filepath)
+        with self._nsfw_lock:
+            self._nsfw_scan_report["images_scanned"] += 1
+            self._record_nsfw_classifier_verdicts(classification)
+            if classification.get("summary", {}).get("rejected", False):
+                self._handle_nsfw_rejected_sample(filepath, bucket, classification)
+                return True
+        return False
+
+    def _filter_nsfw_relevant_files(self, relevant_files: list[str], bucket: str) -> list[str]:
+        if not self.nsfw_check_enabled or not relevant_files:
+            return relevant_files
+
+        safe_files = []
+        for start in range(0, len(relevant_files), max(1, self.read_batch_size)):
+            batch_paths = relevant_files[start : start + max(1, self.read_batch_size)]
+            try:
+                available_paths, batch_samples = self.image_data_backend.read_image_batch(
+                    batch_paths,
+                    delete_problematic_images=self.delete_problematic_images,
+                )
+            except Exception as exc:
+                self._nsfw_scan_report["errors"].append({"bucket": bucket, "error": str(exc)})
+                raise
+
+            for filepath, sample in zip(available_paths, batch_samples):
+                if sample is None:
+                    continue
+                if self._scan_sample_for_nsfw(filepath, sample, bucket):
+                    logger.warning("Rejected NSFW sample during VAE cache preprocessing: %s", filepath)
+                    continue
+                safe_files.append(filepath)
+
+        return safe_files
+
+    def _write_nsfw_scan_report(self) -> None:
+        if not self.nsfw_check_enabled or self._nsfw_scan_report["images_scanned"] == 0:
+            return
+
+        report = {
+            "data_backend_id": self.id,
+            "backend_type": getattr(self.image_data_backend, "type", None),
+            "dataset_type": self.dataset_type,
+            "models": [{"model_id": spec.model_id, "threshold": spec.threshold} for spec in self.nsfw_check_model_specs],
+            "min_votes": self.nsfw_check_min_votes,
+            "video_frame_count": self.nsfw_check_video_frame_count,
+            "video_frame_selection": self.nsfw_check_video_frame_selection,
+            "video_min_flagged_frames": self.nsfw_check_video_min_flagged_frames,
+            "summary": self._nsfw_scan_report,
+        }
+        report_filename = os.path.join(self.cache_dir, f"nsfw_classifier_report_rank{get_rank()}.json")
+        try:
+            self.cache_data_backend.write(report_filename, json.dumps(report, indent=2))
+        except Exception as exc:
+            logger.warning("Could not write NSFW classifier report to %s: %s", report_filename, exc)
 
     def _cache_vae_dtype(self) -> torch.dtype:
         if self.dataset_type_enum is DatasetType.AUDIO and StateTracker.get_model_family() == "ltxvideo2":
@@ -1536,9 +1740,20 @@ class VAECache(WebhookMixin):
                 current=0,
             )
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        bucket_file_plan = {}
+        try:
             for bucket in shuffled_keys:
                 relevant_files = self._reduce_bucket(bucket, aspect_bucket_cache, processed_images)
+                if len(relevant_files) == 0:
+                    bucket_file_plan[bucket] = []
+                    continue
+                bucket_file_plan[bucket] = self._filter_nsfw_relevant_files(relevant_files, bucket)
+        finally:
+            self._close_nsfw_classifier_store()
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            for bucket in shuffled_keys:
+                relevant_files = bucket_file_plan.get(bucket, [])
                 if len(relevant_files) == 0:
                     continue
                 statistics = {
@@ -1663,6 +1878,7 @@ class VAECache(WebhookMixin):
                     continue
 
         # Send completion event for VAE cache initialization
+        self._write_nsfw_scan_report()
         if self.webhook_handler is not None:
             event = lifecycle_stage_event(
                 key="init_vae_cache",

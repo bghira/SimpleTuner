@@ -518,6 +518,59 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：配置完整性扫描的行为。
 - **原因**：数据集可能在多个训练阶段被错误配置，例如误删 `.json` 缓存并改用方形裁剪配置，导致缓存不一致。可在 `multidatabackend.json` 中设置 `scan_for_errors=true` 进行修复。扫描时会根据 `--vae_cache_scan_behaviour` 决定如何修复不一致：`recreate`（默认）删除异常缓存以重建，`sync` 则更新桶元数据以匹配真实样本。推荐值：`recreate`。
 
+### `--enable_nsfw_check`
+
+- **内容**：在 VAE 缓存预处理期间启用 NSFW 分类器强制检查。
+- **默认值**：`false`。
+- **说明**：只扫描 VAE 缓存即将处理的未缓存样本。已有 VAE 缓存和 `skip_file_discovery=vae` 会被信任，不会重新扫描。
+- **更多信息**：隐私和责任说明见 [NSFW.zh.md](NSFW.zh.md)，VAE 缓存细节见 [DATALOADER.zh.md#nsfw-classifier-checks-during-vae-caching](DATALOADER.zh.md#nsfw-classifier-checks-during-vae-caching)。
+
+### `--nsfw_check_models`
+
+- **内容**：Hugging Face Transformers 图像分类模型的 CSV 列表。可用 `:threshold=0.5` 为单个模型指定阈值。
+- **默认值**：`Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5`。
+- **说明**：仅支持标准 Transformers 模型。不会启用 `trust_remote_code`，也不会加载依赖 `timm` 的分类器。
+
+### `--nsfw_check_min_votes`
+
+- **内容**：一帧被拒绝前，必须返回 NSFW 结果的分类器数量。
+- **默认值**：`2`。
+- **说明**：必须至少为 `1`，且不能大于已配置分类器数量。
+
+### `--nsfw_check_backend_types`
+
+- **内容**：需要扫描的数据后端 `type` 值 CSV 列表。
+- **默认值**：`all`。
+- **示例**：`local,huggingface,csv,aws`。
+
+### `--nsfw_check_sample_types`
+
+- **内容**：需要扫描的数据集 `dataset_type` 值 CSV 列表。
+- **默认值**：`image,conditioning`。
+- **说明**：评估数据集不会被扫描。
+
+### `--delete_nsfw_images`
+
+- **内容**：后端支持删除时，删除被 NSFW 分类器拒绝的源样本。
+- **默认值**：`false`。
+- **说明**：禁用时，拒绝样本只会从当前运行的元数据中移除，源数据集文件保留。
+
+### `--nsfw_check_video_frame_count`
+
+- **内容**：从视频或多帧 conditioning 输入中抽样的帧数。
+- **默认值**：`3`。
+
+### `--nsfw_check_video_frame_selection`
+
+- **内容**：视频 NSFW 检查的帧选择模式。
+- **默认值**：`uniform`。
+- **选项**：`uniform`、`first`、`middle`。
+
+### `--nsfw_check_video_min_flagged_frames`
+
+- **内容**：拒绝整个样本前，必须被拒绝的已检查视频帧数。
+- **默认值**：`1`。
+
 ### `--dataloader_prefetch`
 
 - **内容**：提前加载批次。

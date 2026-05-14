@@ -28,6 +28,14 @@
 
     [:octicons-arrow-right-24: Captioning con CaptionFlow](CAPTIONFLOW.es.md)
 
+-   :material-shield-check:{ .lg .middle } __Comprobaciones NSFW__
+
+    ---
+
+    Filtra muestras del caché VAE con políticas locales de clasificador
+
+    [:octicons-arrow-right-24: Comprobaciones del clasificador NSFW](NSFW.es.md)
+
 -   :material-api:{ .lg .middle } __API REST__
 
     ---

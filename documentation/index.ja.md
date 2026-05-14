@@ -28,6 +28,14 @@
 
     [:octicons-arrow-right-24: CaptionFlow キャプション生成](CAPTIONFLOW.ja.md)
 
+-   :material-shield-check:{ .lg .middle } __NSFW チェック__
+
+    ---
+
+    ローカル分類器ポリシーで VAE キャッシュサンプルをフィルタ
+
+    [:octicons-arrow-right-24: NSFW 分類器チェック](NSFW.ja.md)
+
 -   :material-api:{ .lg .middle } __REST API__
 
     ---
