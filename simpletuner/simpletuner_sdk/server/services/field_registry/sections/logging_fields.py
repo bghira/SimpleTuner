@@ -396,7 +396,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": "flow_dpo", "label": "Flow-DPO"},
             ],
             help_text="Method for model distillation",
-            tooltip="Select the distillation approach to use when converting models (LCM, DCM, DMD, PerFlow, or Flow-DPO).",
+            tooltip="Select the distillation approach to use when converting models (LCM, DCM, DMD, PerFlow, or Flow-DPO). Distillation cannot be combined with text encoder training.",
             importance=ImportanceLevel.ADVANCED,
             allow_empty=True,
             order=1,

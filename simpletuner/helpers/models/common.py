@@ -3841,7 +3841,17 @@ class ModelFoundation(ABC):
         if isinstance(batch.get("conditioning_pixel_values"), list) and len(batch["conditioning_pixel_values"]) > 0:
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
         if isinstance(batch.get("conditioning_latents"), list) and len(batch["conditioning_latents"]) > 0:
-            batch["conditioning_latents"] = batch["conditioning_latents"][0]
+            selected_index = 0
+            latent_types = batch.get("conditioning_latents_type")
+            if (
+                batch.get("conditioning_type") == "reference_strict"
+                and isinstance(latent_types, list)
+                and "reference_strict" in latent_types
+            ):
+                selected_index = latent_types.index("reference_strict")
+            batch["conditioning_latents"] = batch["conditioning_latents"][selected_index]
+            if isinstance(latent_types, list) and selected_index < len(latent_types):
+                batch["conditioning_latents_type"] = latent_types[selected_index]
         conditioning_embeds = batch.get("conditioning_image_embeds")
         if isinstance(conditioning_embeds, list) and len(conditioning_embeds) > 0:
             if not isinstance(conditioning_embeds[0], dict):
@@ -4024,9 +4034,16 @@ class ModelFoundation(ABC):
                 timesteps = base_timesteps.expand(bsz)
             else:
                 if timestep_mode == "round-robin":
+                    world_size = max(1, int(getattr(self.accelerator, "num_processes", 1) or 1))
+                    process_index = int(getattr(self.accelerator, "process_index", 0) or 0)
+                    if not hasattr(self, "_flow_custom_timestep_cursor"):
+                        completed_steps = int(state.get("global_step", 0) or 0)
+                        self._flow_custom_timestep_cursor = (
+                            completed_steps * bsz * world_size + process_index * bsz
+                        ) % base_timesteps.numel()
                     cursor = int(getattr(self, "_flow_custom_timestep_cursor", 0))
                     indices = (torch.arange(bsz, device=self.accelerator.device) + cursor) % base_timesteps.numel()
-                    self._flow_custom_timestep_cursor = (cursor + bsz) % base_timesteps.numel()
+                    self._flow_custom_timestep_cursor = (cursor + bsz * world_size) % base_timesteps.numel()
                 else:
                     indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
                 sigmas = base_sigmas[indices]

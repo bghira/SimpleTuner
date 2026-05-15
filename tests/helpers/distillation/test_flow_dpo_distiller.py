@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import torch
 
 import tests.test_stubs  # noqa: F401
+from simpletuner.helpers.distillation.factory import DistillerFactory
 from simpletuner.helpers.distillation.flow_dpo.distiller import FlowDPODistiller
 from simpletuner.helpers.models.common import PredictionTypes
 
@@ -23,6 +24,7 @@ class _FlowModel:
 
     def __init__(self, adapter: _Adapter):
         self.adapter = adapter
+        self.raise_when_disabled = False
         self.config = SimpleNamespace(lora_type="lycoris")
         self.accelerator = SimpleNamespace(
             device=torch.device("cpu"),
@@ -31,6 +33,8 @@ class _FlowModel:
         )
 
     def model_predict(self, batch):
+        if self.raise_when_disabled and self.adapter.multiplier == 0.0:
+            raise RuntimeError("reference pass failed")
         target = batch["noise"] - batch["latents"]
         rejected = bool(torch.mean(batch["latents"]).item() > 0.5)
         if self.adapter.multiplier > 0.0:
@@ -78,6 +82,39 @@ class FlowDPODistillerTests(unittest.TestCase):
         self.assertEqual(adapter.calls, [0.0, 1.0])
         self.assertEqual(adapter.multiplier, 1.0)
 
+    def test_reference_pass_failure_reenables_adapter(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        model.raise_when_disabled = True
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False},
+        )
+        batch = _prepared_batch()
+        model_output = model.model_predict(batch)
+
+        with self.assertRaisesRegex(RuntimeError, "reference pass failed"):
+            distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
+
+        self.assertEqual(adapter.calls, [0.0, 1.0])
+        self.assertEqual(adapter.multiplier, 1.0)
+
+    def test_factory_creates_flow_dpo_distiller(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+
+        distiller = DistillerFactory.create_distiller(
+            "flow_dpo",
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"distillation_config": {"flow_dpo": {"auto_beta": False}}},
+            model_type="lora",
+        )
+
+        self.assertIsInstance(distiller, FlowDPODistiller)
+        self.assertFalse(distiller.config["auto_beta"])
+
     def test_requires_low_rank_training(self):
         adapter = _Adapter()
         model = _FlowModel(adapter)
@@ -103,6 +140,152 @@ class FlowDPODistillerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "conditioning_type=reference_strict"):
             distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
+
+    def test_rejected_latent_shape_must_match_preferred_latents(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False},
+        )
+        batch = _prepared_batch()
+        batch["conditioning_latents"] = torch.ones(2, 1, 3, 2)
+        model_output = model.model_predict(batch)
+
+        with self.assertRaisesRegex(ValueError, "must match preferred latents"):
+            distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
+
+    def test_selects_reference_strict_latents_from_list(self):
+        reference_latents = torch.ones(2, 1, 2, 2)
+        mask_placeholder = torch.zeros_like(reference_latents)
+        batch = _prepared_batch()
+        batch["conditioning_latents"] = [mask_placeholder, reference_latents]
+        batch["conditioning_latents_type"] = ["mask", "reference_strict"]
+
+        selected = FlowDPODistiller._conditioning_latents(batch)
+
+        self.assertTrue(torch.equal(selected, reference_latents))
+
+    def test_rejected_batch_uses_input_noise_for_noisy_latents(self):
+        batch = _prepared_batch()
+        batch["noise"] = torch.full_like(batch["latents"], 2.0)
+        batch["input_noise"] = torch.full_like(batch["latents"], 4.0)
+        rejected_latents = torch.ones_like(batch["latents"])
+
+        rejected_batch = FlowDPODistiller._build_rejected_batch(batch, rejected_latents)
+
+        expected = (1 - batch["sigmas"]) * rejected_latents + batch["sigmas"] * batch["input_noise"]
+        torch.testing.assert_close(rejected_batch["noisy_latents"], expected)
+
+    def test_mask_for_loss_handles_video_mask_and_dilation(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "mask_dilate": 1},
+        )
+        prediction = torch.zeros(1, 1, 2, 4, 4)
+        mask_image = torch.full((1, 1, 4, 4), -1.0)
+        mask_image[:, :, 1, 1] = 1.0
+        batch = {"loss_mask_type": "mask", "conditioning_pixel_values": mask_image}
+
+        mask = distiller._mask_for_loss(batch, prediction)
+
+        self.assertEqual(mask.shape, prediction.shape)
+        self.assertTrue(torch.equal(mask[:, :, 0], mask[:, :, 1]))
+        self.assertEqual(float(mask[0, 0, 0].sum()), 9.0)
+
+    def test_mask_for_loss_reduces_segmentation_channels(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora"},
+        )
+        prediction = torch.zeros(1, 1, 2, 2)
+        mask_image = torch.full((1, 2, 2, 2), -1.0)
+        mask_image[:, 1, 0, 0] = 1.0
+        batch = {"loss_mask_type": "segmentation", "conditioning_pixel_values": mask_image}
+
+        mask = distiller._mask_for_loss(batch, prediction)
+
+        self.assertEqual(mask.shape, prediction.shape)
+        self.assertEqual(float(mask.sum()), 1.0)
+
+    def test_masked_mean_counts_video_temporal_axis(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "norm_type": "masked_mean"},
+        )
+        prediction = torch.ones(1, 2, 3, 2, 2)
+        target = torch.zeros_like(prediction)
+        mask = torch.ones(1, 1, 1, 2, 2)
+
+        sample_error = distiller._per_sample_error(prediction, target, mask)
+
+        self.assertTrue(torch.equal(sample_error, torch.tensor([1.0])))
+
+    def test_auto_beta_uses_positive_floor(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": True, "auto_beta_min": 1e-3},
+        )
+
+        beta = distiller._beta_for_margin(torch.tensor([1_000_000.0]))
+
+        self.assertAlmostEqual(float(beta), 1e-3)
+
+    def test_sft_loss_weight_mixes_original_loss(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        batch = _prepared_batch()
+        model_output = model.model_predict(batch)
+        base_distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False},
+        )
+        mixed_distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False, "sft_loss_weight": 0.5},
+        )
+
+        base_loss, _ = base_distiller.compute_distill_loss(batch, model_output, torch.tensor(2.0))
+        mixed_loss, _ = mixed_distiller.compute_distill_loss(batch, model_output, torch.tensor(2.0))
+
+        torch.testing.assert_close(mixed_loss, base_loss + torch.tensor(1.0))
+
+    def test_anchor_regularizes_preferred_and_rejected_predictions(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        batch = _prepared_batch()
+        model_output = model.model_predict(batch)
+        base_distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False},
+        )
+        anchored_distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False, "anchor_alpha": 2.0},
+        )
+
+        base_loss, _ = base_distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
+        anchored_loss, logs = anchored_distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
+
+        self.assertIn("flow_dpo_anchor_loss", logs)
+        torch.testing.assert_close(anchored_loss, base_loss + torch.tensor(0.13), rtol=1e-5, atol=1e-6)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Union
 import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
 import simpletuner.helpers.distillation.self_forcing  # noqa: F401
-from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.common import DistillationBase, validate_distillation_text_encoder_training
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 
 logger = logging.getLogger(__name__)
@@ -71,8 +71,7 @@ class DistillerFactory:
         if method is None:
             return None
 
-        if config.get("train_text_encoder"):
-            raise ValueError("Text encoder training is not supported with distillation methods.")
+        validate_distillation_text_encoder_training(method, bool(config.get("train_text_encoder")))
 
         distill_config = {}
         if config.get("distillation_config") is not None:
@@ -112,29 +111,7 @@ class DistillerFactory:
                 prediction_type=prediction_type,
                 student_model=student_model,
             )
-        elif method == DistillationMethod.PERFLOW:
-            return DistillerFactory._create_registered_distiller(
-                registry_key=method.value,
-                teacher_model=teacher_model,
-                noise_scheduler=noise_scheduler,
-                distill_config=distill_config,
-                model_type=model_type,
-                model_family=model_family,
-                prediction_type=prediction_type,
-                student_model=student_model,
-            )
-        elif method == DistillationMethod.FLOW_DPO:
-            return DistillerFactory._create_registered_distiller(
-                registry_key=method.value,
-                teacher_model=teacher_model,
-                noise_scheduler=noise_scheduler,
-                distill_config=distill_config,
-                model_type=model_type,
-                model_family=model_family,
-                prediction_type=prediction_type,
-                student_model=student_model,
-            )
-        elif method == DistillationMethod.SELF_FORCING:
+        elif method in {DistillationMethod.PERFLOW, DistillationMethod.FLOW_DPO, DistillationMethod.SELF_FORCING}:
             return DistillerFactory._create_registered_distiller(
                 registry_key=method.value,
                 teacher_model=teacher_model,
@@ -316,7 +293,7 @@ class DistillerFactory:
         teacher_model,
         noise_scheduler,
         distill_config: Dict[str, Any],
-        model_type: str = "lora",
+        model_type: str,
         model_family: Optional[str] = None,
         prediction_type: Optional[str] = None,
         student_model=None,

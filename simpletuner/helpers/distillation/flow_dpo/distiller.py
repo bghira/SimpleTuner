@@ -24,7 +24,7 @@ class FlowDPODistiller(DistillationBase):
         "auto_beta": True,
         "auto_beta_target_gf": 0.2,
         "auto_beta_decay": 0.99,
-        "auto_beta_min": 0.0,
+        "auto_beta_min": 1e-3,
         "auto_beta_max": 1.0,
         "auto_beta_eps": 1e-6,
     }
@@ -44,19 +44,19 @@ class FlowDPODistiller(DistillationBase):
         super().__init__(teacher_model, student_model, merged_config)
         self.noise_scheduler = noise_scheduler
         self.margin_ema: Optional[float] = None
-        self.current_beta = float(self.config["beta"])
 
         if not self.is_flow_matching:
             raise ValueError("Flow-DPO requires a flow-matching model.")
         if not self.low_rank_distillation or self.config.get("model_type") != "lora":
             raise ValueError("Flow-DPO only supports low-rank LoRA/LyCORIS training.")
-        if self.config.get("train_text_encoder"):
-            raise ValueError("Text encoder training is not supported with Flow-DPO.")
 
         norm_type = str(self.config.get("norm_type", "sum")).lower()
         if norm_type not in {"sum", "mean", "masked_mean"}:
             raise ValueError("Flow-DPO norm_type must be one of: sum, mean, masked_mean.")
         self.config["norm_type"] = norm_type
+        target_gf = float(self.config.get("auto_beta_target_gf", 0.0) or 0.0)
+        if bool(self.config.get("auto_beta", True)) and target_gf >= 0.5:
+            raise ValueError("Flow-DPO auto_beta_target_gf must be less than 0.5.")
 
     def compute_distill_loss(
         self,
@@ -105,7 +105,11 @@ class FlowDPODistiller(DistillationBase):
         anchor_loss = policy_win.new_zeros(())
         anchor_alpha = float(self.config.get("anchor_alpha", 0.0) or 0.0)
         if anchor_alpha != 0.0:
-            anchor_loss = F.mse_loss(policy_win.float(), ref_win.float()) * anchor_alpha
+            anchor_loss = (
+                0.5
+                * (F.mse_loss(policy_win.float(), ref_win.float()) + F.mse_loss(policy_lose.float(), ref_lose.float()))
+                * anchor_alpha
+            )
 
         loss = dpo_loss * float(self.config.get("loss_weight", 1.0)) + anchor_loss
         sft_loss_weight = float(self.config.get("sft_loss_weight", 0.0) or 0.0)
@@ -149,9 +153,13 @@ class FlowDPODistiller(DistillationBase):
     def _conditioning_latents(prepared_batch: Dict[str, Any]) -> torch.Tensor:
         latents = prepared_batch["conditioning_latents"]
         if isinstance(latents, list):
-            if len(latents) != 1:
-                raise ValueError("Flow-DPO requires exactly one reference_strict conditioning latent set.")
-            latents = latents[0]
+            latent_types = prepared_batch.get("conditioning_latents_type")
+            if isinstance(latent_types, list) and "reference_strict" in latent_types:
+                latents = latents[latent_types.index("reference_strict")]
+            elif len(latents) == 1:
+                latents = latents[0]
+            else:
+                raise ValueError("Flow-DPO requires one reference_strict conditioning latent set.")
         if not torch.is_tensor(latents):
             raise ValueError("Flow-DPO conditioning_latents must be a tensor.")
         return latents
@@ -225,8 +233,10 @@ class FlowDPODistiller(DistillationBase):
         mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
         error = (prediction.float() - target.float()).pow(2)
+        mask_float = None
         if mask is not None:
-            error = error * mask.float()
+            mask_float = mask.float()
+            error = error * mask_float
 
         reduction_dims = tuple(range(1, error.dim()))
         norm_type = self.config["norm_type"]
@@ -237,15 +247,16 @@ class FlowDPODistiller(DistillationBase):
 
         if mask is None:
             return error.mean(dim=reduction_dims)
-        channels = prediction.shape[1]
-        denominator = mask.float().sum(dim=reduction_dims) * channels
+        denominator_mask = mask_float
+        if denominator_mask.shape != error.shape:
+            denominator_mask = denominator_mask.expand_as(error)
+        denominator = denominator_mask.sum(dim=reduction_dims)
         return error.sum(dim=reduction_dims) / denominator.clamp_min(1.0)
 
     def _beta_for_margin(self, margin: torch.Tensor) -> torch.Tensor:
         fixed_beta = float(self.config.get("beta", 1.0))
         target_gf = float(self.config.get("auto_beta_target_gf", 0.0) or 0.0)
         if not bool(self.config.get("auto_beta", True)) or target_gf <= 0.0:
-            self.current_beta = fixed_beta
             return margin.new_tensor(fixed_beta, dtype=torch.float32)
 
         margin_value = margin.detach().abs().mean()
@@ -271,7 +282,6 @@ class FlowDPODistiller(DistillationBase):
         if beta_max is not None:
             beta_value = min(float(beta_max), beta_value)
 
-        self.current_beta = beta_value
         return margin.new_tensor(beta_value, dtype=torch.float32)
 
 

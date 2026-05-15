@@ -2107,8 +2107,9 @@ options:
                         Auto-adjust schedule shift based on image resolution
   --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
                         Override flow-matching timestep sampling with a fixed
-                        list. Values >1 are timesteps [0,1000]; values in
-                        [0,1] are sigmas.
+                        comma-separated list. The list is interpreted as
+                        sigmas only when every value is in [0,1]; otherwise
+                        all values are interpreted as timesteps [0,1000].
   --flow_timesteps_mode {fixed-list,round-robin}
                         Select how flow_custom_timesteps values are assigned
                         to samples.
@@ -2469,6 +2470,8 @@ options:
                         Interval for webhook reports (seconds)
   --distillation_method {lcm,dcm,dmd,perflow,flow_dpo}
                         Method for model distillation
+                        Distillation methods cannot be combined with
+                        --train_text_encoder.
   --distillation_config DISTILLATION_CONFIG
                         Path to distillation configuration file
   --ema_validation {none,ema_only,comparison}

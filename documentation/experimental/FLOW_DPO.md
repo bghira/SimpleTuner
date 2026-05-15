@@ -25,7 +25,7 @@ For flow-matching models, the target is `noise - latents`.
 
 If the batch also includes a `conditioning` dataset with `conditioning_type=mask` or `conditioning_type=segmentation`, SimpleTuner applies that mask to the DPO prediction errors before reducing them. This concentrates the preference signal on the region that differs between the preferred and rejected samples.
 
-`anchor_alpha` adds an optional global MSE regularizer between the adapter-enabled preferred prediction and the adapter-disabled preferred prediction. This anchor is win-only and unmasked.
+`anchor_alpha` adds an optional global MSE regularizer between adapter-enabled and adapter-disabled predictions on both the preferred and rejected samples. The anchor is unmasked, so it constrains whole-frame drift rather than only the masked region.
 
 ## Configuration
 
@@ -55,11 +55,13 @@ Common `distillation_config` keys:
 }
 ```
 
-- `norm_type=sum` matches the usual Flow-DPO formulation.
+- `norm_type=sum` matches the usual Flow-DPO formulation. `mean` averages all latent elements, and `masked_mean` averages over active mask elements when a mask is present.
 - `auto_beta=true` adapts beta from the running margin magnitude. This is useful for small paired datasets where a fixed beta can saturate the sigmoid.
 - `flow_timesteps_mode=fixed-list` randomly samples from `flow_custom_timesteps`.
-- `flow_timesteps_mode=round-robin` cycles through `flow_custom_timesteps` for even timestep coverage.
+- `flow_timesteps_mode=round-robin` cycles through `flow_custom_timesteps` for even timestep coverage. Distributed ranks are offset from each other, and resumed runs seed the cursor from `global_step`.
 - `sft_loss_weight` defaults to `0.0`, so Flow-DPO does not mix in the normal diffusion loss unless you explicitly request it.
+
+SimpleTuner logs the core Flow-DPO health values: beta, margin, win/lose advantages, policy/reference errors, negative-margin percentage, and gradient factor. The extended reward-hacking detector metrics shown in the original demo model card are analysis tooling from that release and are not all emitted by SimpleTuner yet.
 
 ## Dataset Shape
 

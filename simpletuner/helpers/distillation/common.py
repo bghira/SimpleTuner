@@ -7,6 +7,17 @@ from typing import Any, Callable, Dict, Optional, Union
 import torch
 import torch.nn.functional as F
 
+DISTILLATION_TEXT_ENCODER_ERROR = (
+    "--train_text_encoder is not supported with distillation methods. "
+    "Disable text encoder training or unset --distillation_method."
+)
+
+
+def validate_distillation_text_encoder_training(method, train_text_encoder: bool) -> None:
+    method_value = getattr(method, "value", method)
+    if method_value not in (None, "", "None") and train_text_encoder:
+        raise ValueError(DISTILLATION_TEXT_ENCODER_ERROR)
+
 
 class DistillationBase:
     """Base class for model distillation techniques."""

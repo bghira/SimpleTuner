@@ -27,13 +27,18 @@ to_tensor = ToTensor()
 REFERENCE_CONDITIONING_TYPES = {"reference_strict", "reference_loose"}
 MASK_CONDITIONING_TYPES = {"mask", "segmentation"}
 
+_FLOW_DPO_REFERENCE_LATENTS_CACHE = {}
+
 
 def _flow_dpo_requires_reference_latents() -> bool:
     method = StateTracker.get_distillation_method()
     if method is None:
         method = getattr(StateTracker.get_args(), "distillation_method", None)
     method = getattr(method, "value", method)
-    return isinstance(method, str) and method.lower() == "flow_dpo"
+    cache_key = method.lower() if isinstance(method, str) else method
+    if cache_key not in _FLOW_DPO_REFERENCE_LATENTS_CACHE:
+        _FLOW_DPO_REFERENCE_LATENTS_CACHE[cache_key] = cache_key == "flow_dpo"
+    return _FLOW_DPO_REFERENCE_LATENTS_CACHE[cache_key]
 
 
 def debug_log(msg: str):
@@ -726,6 +731,7 @@ def collate_fn(batch):
     loss_mask_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
+    conditioning_latents_type = None
 
     # get multiple backend ids (conditioning_data is already populated with full backend dicts by set_conditioning_datasets)
     conditioning_backends = data_backend.get("conditioning_data", [])
@@ -897,6 +903,7 @@ def collate_fn(batch):
             # Collect latents from reference/untyped backends (for model input)
             if latent_source_backends and requires_conditioning_latents:
                 conditioning_latents = []
+                conditioning_latents_type = []
                 debug_log("Compute conditioning latents from reference/untyped backends")
                 for backend_cfg in latent_source_backends:
                     backend_id = backend_cfg["id"]
@@ -927,6 +934,7 @@ def collate_fn(batch):
                         is_conditioning=(backend_cond_type == "reference_loose"),
                     )
                     conditioning_latents.append(_latents)
+                    conditioning_latents_type.append(backend_cond_type)
 
             # Collect pixels from reference/untyped backends FIRST if needed for text embed image context
             # (must be first since _conditioning_pixel_value_for_example uses index 0)
@@ -1241,6 +1249,7 @@ def collate_fn(batch):
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,
         "conditioning_latents": conditioning_latents,
+        "conditioning_latents_type": conditioning_latents_type,
         "conditioning_image_embeds": conditioning_image_embeds,
         "conditioning_captions": conditioning_captions,
         "encoder_attention_mask": all_text_encoder_outputs.get("attention_masks"),

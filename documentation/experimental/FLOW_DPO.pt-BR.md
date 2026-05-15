@@ -25,7 +25,7 @@ Para modelos flow-matching, o target é `noise - latents`.
 
 Se o batch também inclui um dataset `conditioning_type=mask` ou `conditioning_type=segmentation`, o SimpleTuner aplica a mask aos erros DPO antes da redução. Isso concentra o sinal de preferência na região que difere entre preferred e rejected.
 
-`anchor_alpha` adiciona um regularizador MSE global no lado preferred, entre a predição com adapter ligado e desligado. Esse anchor é apenas win-side e não usa mask.
+`anchor_alpha` adiciona um regularizador MSE global entre as predições com adapter ligado e desligado nas amostras preferred e rejected. Esse anchor não usa mask, então limita o drift do frame inteiro.
 
 ## Configuração
 
@@ -55,11 +55,13 @@ Chaves comuns de `distillation_config`:
 }
 ```
 
-- `norm_type=sum` corresponde à formulação comum do Flow-DPO.
+- `norm_type=sum` corresponde à formulação comum do Flow-DPO. `mean` calcula a média de todos os elementos latentes, e `masked_mean` calcula a média dos elementos ativos da mask quando houver uma mask.
 - `auto_beta=true` ajusta beta pela magnitude média da margem, útil em datasets pareados pequenos.
 - `flow_timesteps_mode=fixed-list` amostra aleatoriamente de `flow_custom_timesteps`.
-- `flow_timesteps_mode=round-robin` percorre `flow_custom_timesteps` em ciclo.
+- `flow_timesteps_mode=round-robin` percorre `flow_custom_timesteps` em ciclo. Ranks distribuídos usam offsets diferentes, e runs retomados inicializam o cursor a partir de `global_step`.
 - `sft_loss_weight` padrão é `0.0`, então a loss diffusion normal não é misturada.
+
+O SimpleTuner registra os principais valores de saúde do Flow-DPO: beta, margin, vantagens win/lose, erros policy/reference, porcentagem de margins negativos e gradient factor. As métricas estendidas de reward-hacking do model card original pertencem ao tooling de análise daquele release e ainda não são todas emitidas pelo SimpleTuner.
 
 ## Formato do Dataset
 

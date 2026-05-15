@@ -25,7 +25,7 @@ Flow-matching target `noise - latents` है।
 
 अगर batch में `conditioning_type=mask` या `conditioning_type=segmentation` dataset भी है, तो SimpleTuner DPO prediction errors पर reduction से पहले mask apply करता है। इससे preference signal preferred और rejected samples के बदलने वाले region पर केंद्रित रहता है।
 
-`anchor_alpha` preferred side पर global MSE regularizer जोड़ता है, adapter-enabled और adapter-disabled preferred prediction के बीच। यह anchor win-only है और mask use नहीं करता।
+`anchor_alpha` preferred और rejected दोनों samples पर adapter-enabled और adapter-disabled predictions के बीच global MSE regularizer जोड़ता है। यह anchor mask use नहीं करता, इसलिए यह पूरे frame drift को constrain करता है।
 
 ## Configuration
 
@@ -55,11 +55,13 @@ Common `distillation_config` keys:
 }
 ```
 
-- `norm_type=sum` common Flow-DPO formulation से match करता है।
+- `norm_type=sum` common Flow-DPO formulation से match करता है। `mean` सभी latent elements का average लेता है, और mask मौजूद होने पर `masked_mean` active mask elements का average लेता है।
 - `auto_beta=true` running margin magnitude से beta adapt करता है, जो small paired datasets में उपयोगी है।
 - `flow_timesteps_mode=fixed-list` `flow_custom_timesteps` से random sample करता है।
-- `flow_timesteps_mode=round-robin` `flow_custom_timesteps` को cycle करता है।
+- `flow_timesteps_mode=round-robin` `flow_custom_timesteps` को cycle करता है। Distributed ranks अलग offsets use करते हैं, और resumed runs cursor को `global_step` से initialize करते हैं।
 - `sft_loss_weight` default `0.0` है, इसलिए normal diffusion loss mix नहीं होती।
+
+SimpleTuner core Flow-DPO health values log करता है: beta, margin, win/lose advantages, policy/reference errors, negative-margin percentage, और gradient factor। Original demo model card में दिखाए गए extended reward-hacking detector metrics उस release के analysis tooling का हिस्सा हैं और SimpleTuner अभी उन सभी को emit नहीं करता।
 
 ## Dataset Shape
 

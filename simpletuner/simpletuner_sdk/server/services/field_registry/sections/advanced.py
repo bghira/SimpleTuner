@@ -543,7 +543,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             section="loss_functions",
             subsection="advanced",
             default_value=None,
-            help_text="Override flow-matching timestep sampling with a fixed list (comma-separated). Values >1 are treated as timesteps [0,1000]; values in [0,1] are treated as sigmas.",
+            help_text="Override flow-matching timestep sampling with a fixed comma-separated list. The list is interpreted as sigmas only when every value is in [0,1]; otherwise all values are interpreted as timesteps [0,1000].",
             tooltip="Skips CDF/Uniform/Beta sampling and randomly picks from your provided list each step.",
             importance=ImportanceLevel.ADVANCED,
             order=26.5,

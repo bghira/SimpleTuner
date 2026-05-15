@@ -2,6 +2,8 @@
 
 इस उदाहरण में हम **4-8 step SDXL student** को **LCM (Latent Consistency Model) distillation** से प्रशिक्षित करेंगे, एक pre-trained SDXL teacher मॉडल से।
 
+> **Note:** Distillation methods को `--train_text_encoder` के साथ combine नहीं किया जा सकता; text encoder training disabled रखें।
+
 > **नोट**: अन्य मॉडल्स को भी आधार के रूप में उपयोग किया जा सकता है, यहाँ SDXL सिर्फ LCM कॉन्फ़िगरेशन कॉन्सेप्ट्स को समझाने के लिए उपयोग किया गया है।
 
 LCM सक्षम करता है:
