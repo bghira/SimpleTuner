@@ -28,6 +28,14 @@ REFERENCE_CONDITIONING_TYPES = {"reference_strict", "reference_loose"}
 MASK_CONDITIONING_TYPES = {"mask", "segmentation"}
 
 
+def _flow_dpo_requires_reference_latents() -> bool:
+    method = StateTracker.get_distillation_method()
+    if method is None:
+        method = getattr(StateTracker.get_args(), "distillation_method", None)
+    method = getattr(method, "value", method)
+    return isinstance(method, str) and method.lower() == "flow_dpo"
+
+
 def debug_log(msg: str):
     logger.debug(f"{rank_text}{msg}")
 
@@ -877,7 +885,9 @@ def collate_fn(batch):
         assert model is not None
         has_conditioning_backends = bool(conditioning_types_by_backend) or model.requires_conditioning_dataset()
         if has_conditioning_backends:
-            requires_conditioning_latents = model.requires_conditioning_latents() or is_i2v_data
+            requires_conditioning_latents = (
+                model.requires_conditioning_latents() or is_i2v_data or _flow_dpo_requires_reference_latents()
+            )
             needs_reference_pixels = getattr(model, "requires_text_embed_image_context", lambda: False)()
 
             # Combine reference and untyped backends for latent/pixel collection

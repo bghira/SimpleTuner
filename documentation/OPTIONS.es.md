@@ -1639,6 +1639,8 @@ usage: train.py [-h] --model_family
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
+                [--flow_timesteps_mode {fixed-list,round-robin}]
                 [--flux_guidance_mode {constant,random-range}]
                 [--flux_attention_masked_training [FLUX_ATTENTION_MASKED_TRAINING]]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
@@ -1753,7 +1755,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2098,6 +2100,13 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
+                        Override flow-matching timestep sampling with a fixed
+                        list. Values >1 are timesteps [0,1000]; values in
+                        [0,1] are sigmas.
+  --flow_timesteps_mode {fixed-list,round-robin}
+                        Select how flow_custom_timesteps values are assigned
+                        to samples.
   --flux_guidance_mode {constant,random-range}
                         Guidance mode for Flux training
   --flux_attention_masked_training [FLUX_ATTENTION_MASKED_TRAINING]
@@ -2453,7 +2462,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo}
                         Method for model distillation
   --distillation_config DISTILLATION_CONFIG
                         Path to distillation configuration file

@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Any, Dict, Optional, Union
 
 # Ensure registry-backed distillers (like self_forcing) register themselves on import.
+import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
 import simpletuner.helpers.distillation.self_forcing  # noqa: F401
 from simpletuner.helpers.distillation.common import DistillationBase
@@ -19,6 +20,7 @@ class DistillationMethod(Enum):
     DMD = "dmd"
     LCM = "lcm"
     PERFLOW = "perflow"
+    FLOW_DPO = "flow_dpo"
     SELF_FORCING = "self_forcing"
 
     @classmethod
@@ -69,6 +71,9 @@ class DistillerFactory:
         if method is None:
             return None
 
+        if config.get("train_text_encoder"):
+            raise ValueError("Text encoder training is not supported with distillation methods.")
+
         distill_config = {}
         if config.get("distillation_config") is not None:
             # Check for method-specific config first
@@ -113,6 +118,20 @@ class DistillerFactory:
                 teacher_model=teacher_model,
                 noise_scheduler=noise_scheduler,
                 distill_config=distill_config,
+                model_type=model_type,
+                model_family=model_family,
+                prediction_type=prediction_type,
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.FLOW_DPO:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                model_type=model_type,
+                model_family=model_family,
+                prediction_type=prediction_type,
                 student_model=student_model,
             )
         elif method == DistillationMethod.SELF_FORCING:
@@ -121,6 +140,9 @@ class DistillerFactory:
                 teacher_model=teacher_model,
                 noise_scheduler=noise_scheduler,
                 distill_config=distill_config,
+                model_type=model_type,
+                model_family=model_family,
+                prediction_type=prediction_type,
                 student_model=student_model,
             )
         else:
@@ -294,17 +316,25 @@ class DistillerFactory:
         teacher_model,
         noise_scheduler,
         distill_config: Dict[str, Any],
+        model_type: str = "lora",
+        model_family: Optional[str] = None,
+        prediction_type: Optional[str] = None,
         student_model=None,
     ) -> DistillationBase:
         distiller_cls = DistillationRegistry.get(registry_key)
         if distiller_cls is None:
             raise ValueError(f"No distiller registered under '{registry_key}'.")
 
+        runtime_config = dict(distill_config)
+        runtime_config.setdefault("model_type", model_type)
+        runtime_config.setdefault("model_family", model_family)
+        runtime_config.setdefault("prediction_type", prediction_type)
+
         return distiller_cls(
             teacher_model=teacher_model,
             student_model=student_model,
             noise_scheduler=noise_scheduler,
-            config=distill_config,
+            config=runtime_config,
         )
 
 

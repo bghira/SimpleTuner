@@ -187,6 +187,7 @@ Durante el descubrimiento de metadatos, el loader registra `sample_rate`, `num_s
   - **mask**: Máscaras binarias para entrenamiento de inpainting.
   - **reference_strict**: Imágenes de referencia con alineación estricta de píxeles (para modelos de edición como Qwen Edit).
   - **reference_loose**: Imágenes de referencia con alineación flexible.
+- **Nota de Flow-DPO:** `reference_strict` también lo usa [Flow-DPO](experimental/FLOW_DPO.es.md) para aportar los latentes rejected/lose de cada muestra preferred.
 
 ### `source_dataset_id`
 
@@ -199,6 +200,7 @@ Durante el descubrimiento de metadatos, el loader registra `sample_rate`, `num_s
 - **Valores:** valor `id` de dataset de condicionamiento o un arreglo de valores `id`
 - **Descripción:** Como se describe en [la guía de ControlNet](CONTROLNET.md), un dataset `image` puede emparejarse con sus datos de ControlNet o máscaras de imagen mediante esta opción.
 - **Nota:** Si tienes varios datasets de condicionamiento, puedes especificarlos como un arreglo de valores `id`. Al entrenar Flux Kontext, esto permite cambiar aleatoriamente entre condiciones o unir entradas para entrenar tareas avanzadas de composición multi-imagen.
+- **Flow-DPO:** Empareja aquí un dataset `reference_strict` cuando uses [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.es.md).
 
 ### `instance_data_dir` / `aws_data_prefix`
 

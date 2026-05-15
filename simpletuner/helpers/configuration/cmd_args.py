@@ -692,6 +692,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if hasattr(args, "modelspec_comment"):
         args.modelspec_comment = _process_modelspec_comment(args.modelspec_comment)
 
+    distillation_method = getattr(args, "distillation_method", None)
+    if distillation_method not in (None, "", "None") and getattr(args, "train_text_encoder", False):
+        raise ValueError("--train_text_encoder is not supported with distillation methods.")
+
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):
             try:

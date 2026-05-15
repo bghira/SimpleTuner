@@ -4007,6 +4007,10 @@ class ModelFoundation(ABC):
         bsz = batch["latents"].shape[0]
         custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
         if custom_timesteps is not None:
+            timestep_mode = str(getattr(self.config, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
+            if timestep_mode not in {"fixed-list", "round-robin"}:
+                raise ValueError("flow_timesteps_mode must be either 'fixed-list' or 'round-robin'.")
+
             # Interpret values <=1.0 as sigmas, otherwise as timesteps in [0, 1000].
             if torch.max(custom_timesteps) <= 1.0:
                 base_sigmas = custom_timesteps.clamp(0.0, 1.0)
@@ -4019,7 +4023,12 @@ class ModelFoundation(ABC):
                 sigmas = base_sigmas.expand(bsz)
                 timesteps = base_timesteps.expand(bsz)
             else:
-                indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
+                if timestep_mode == "round-robin":
+                    cursor = int(getattr(self, "_flow_custom_timestep_cursor", 0))
+                    indices = (torch.arange(bsz, device=self.accelerator.device) + cursor) % base_timesteps.numel()
+                    self._flow_custom_timestep_cursor = (cursor + bsz) % base_timesteps.numel()
+                else:
+                    indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
                 sigmas = base_sigmas[indices]
                 timesteps = base_timesteps[indices]
             return sigmas, timesteps

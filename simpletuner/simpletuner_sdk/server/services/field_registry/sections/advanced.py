@@ -550,6 +550,27 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="flow_timesteps_mode",
+            arg_name="--flow_timesteps_mode",
+            ui_label="Flow Timesteps Mode",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value="fixed-list",
+            choices=[
+                {"value": "fixed-list", "label": "Fixed List"},
+                {"value": "round-robin", "label": "Round Robin"},
+            ],
+            help_text="Select how flow_custom_timesteps values are assigned to samples.",
+            tooltip="Fixed List samples randomly from the custom list. Round Robin cycles through the list across batches for even coverage.",
+            importance=ImportanceLevel.ADVANCED,
+            order=26.6,
+        )
+    )
+
     # Flux Guidance Configuration
     registry._add_field(
         ConfigField(

@@ -187,6 +187,7 @@ Metadata discovery के दौरान loader प्रत्येक file �
   - **mask**: inpainting training के लिए binary masks.
   - **reference_strict**: strict pixel alignment वाले reference images (Qwen Edit जैसे edit models के लिए)।
   - **reference_loose**: loose alignment वाले reference images.
+- **Flow-DPO note:** `reference_strict` को [Flow-DPO](experimental/FLOW_DPO.hi.md) भी हर preferred training sample के rejected/lose image latents के लिए उपयोग करता है।
 
 ### `source_dataset_id`
 
@@ -199,6 +200,7 @@ Metadata discovery के दौरान loader प्रत्येक file �
 - **Values:** conditioning dataset का `id` या `id` values का array
 - **Description:** [ControlNet guide](CONTROLNET.md) में बताए अनुसार, `image` dataset को उसके ControlNet या image mask data के साथ इस विकल्प से pair किया जा सकता है।
 - **Note:** यदि आपके पास कई conditioning datasets हैं, तो आप उन्हें `id` values के array के रूप में दे सकते हैं। Flux Kontext ट्रेन करते समय, यह conditions के बीच random switching या multi‑image compositing tasks के लिए inputs stitch करने की अनुमति देता है।
+- **Flow-DPO:** [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.hi.md) इस्तेमाल करते समय यहां `reference_strict` conditioning dataset pair करें।
 
 ### `instance_data_dir` / `aws_data_prefix`
 
