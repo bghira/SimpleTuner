@@ -443,6 +443,7 @@ class ParquetMetadataBackend(MetadataBackend):
         metadata_updates=None,
         delete_problematic_images: bool = False,
         statistics: dict = {},
+        filtered_files_queue=None,
     ):
         # process file using parquet metadata only - no actual file loading
         try:
@@ -473,6 +474,7 @@ class ParquetMetadataBackend(MetadataBackend):
                     metadata_updates=metadata_updates,
                     delete_problematic_images=delete_problematic_images,
                     statistics=statistics,
+                    filtered_files_queue=filtered_files_queue,
                 )
 
             # 2. Check if it's image or video by extension
@@ -519,10 +521,12 @@ class ParquetMetadataBackend(MetadataBackend):
 
                         if self.maximum_num_frames and num_frames_val > self.maximum_num_frames:
                             if self.delete_unwanted_images:
-                                try:
-                                    self.data_backend.delete(image_path_str)
-                                except:
-                                    pass
+                                self._queue_or_delete_filtered_file(
+                                    filepath=image_path_str,
+                                    reason="too_small",
+                                    delete_from_backend=True,
+                                    filtered_files_queue=filtered_files_queue,
+                                )
                             statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                             statistics["skipped"]["too_small"] += 1
                             return aspect_ratio_bucket_indices
@@ -554,10 +558,12 @@ class ParquetMetadataBackend(MetadataBackend):
             # check size constraints
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
                 if self.delete_unwanted_images:
-                    try:
-                        self.data_backend.delete(image_path_str)
-                    except:
-                        pass
+                    self._queue_or_delete_filtered_file(
+                        filepath=image_path_str,
+                        reason="too_small",
+                        delete_from_backend=True,
+                        filtered_files_queue=filtered_files_queue,
+                    )
                 statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1
                 return aspect_ratio_bucket_indices
@@ -627,7 +633,12 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.error(traceback.format_exc())
             if delete_problematic_images:
                 logger.error(f"Deleting file {image_path_str} after error.")
-                self.data_backend.delete(image_path_str)
+                self._queue_or_delete_filtered_file(
+                    filepath=image_path_str,
+                    reason="problematic",
+                    delete_from_backend=True,
+                    filtered_files_queue=filtered_files_queue,
+                )
 
         return aspect_ratio_bucket_indices
 
@@ -647,6 +658,7 @@ class ParquetMetadataBackend(MetadataBackend):
         metadata_updates=None,
         delete_problematic_images: bool = False,
         statistics: Optional[dict] = None,
+        filtered_files_queue=None,
     ):
         if statistics is None:
             statistics = {}
@@ -742,7 +754,12 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.error(f"Error processing audio metadata for {image_path_str}: {exc}", exc_info=True)
             if delete_problematic_images:
                 logger.error(f"Deleting audio sample {image_path_str}.")
-                self.data_backend.delete(image_path_str)
+                self._queue_or_delete_filtered_file(
+                    filepath=image_path_str,
+                    reason="problematic",
+                    delete_from_backend=True,
+                    filtered_files_queue=filtered_files_queue,
+                )
 
         return aspect_ratio_bucket_indices
 

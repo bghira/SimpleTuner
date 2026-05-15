@@ -522,6 +522,59 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 - **What**: Configure the behaviour of the integrity scan check.
 - **Why**: A dataset could have incorrect settings applied at multiple points of training, eg. if you accidentally delete the `.json` cache files from your dataset and switch the data backend config to use square images rather than aspect-crops. This will result in an inconsistent data cache, which can be corrected by setting `scan_for_errors` to `true` in your `multidatabackend.json` configuration file. When this scan runs, it relies on the setting of `--vae_cache_scan_behaviour` to determine how to resolve the inconsistency: `recreate` (the default) will remove the offending cache entry so that it can be recreated, and `sync` will update the bucket metadata to reflect the reality of the real training sample. Recommended value: `recreate`.
 
+### `--enable_nsfw_check`
+
+- **What**: Enable NSFW classifier enforcement during VAE cache preprocessing.
+- **Default**: `false`.
+- **Notes**: Only uncached samples that the VAE cache is about to process are scanned. Existing VAE caches and `skip_file_discovery=vae` are trusted and not rescanned.
+- **More info**: See [NSFW.md](NSFW.md) for privacy and responsibility notes, and [DATALOADER.md#nsfw-classifier-checks-during-vae-caching](DATALOADER.md#nsfw-classifier-checks-during-vae-caching) for VAE cache details.
+
+### `--nsfw_check_models`
+
+- **What**: CSV list of Hugging Face Transformers image-classification models. A per-model threshold may be attached with `:threshold=0.5`.
+- **Default**: `Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5`.
+- **Notes**: Only standard Transformers models are supported. `trust_remote_code` is not enabled, and `timm`-based classifiers are not loaded.
+
+### `--nsfw_check_min_votes`
+
+- **What**: Number of configured classifier models that must return an NSFW verdict before a frame is rejected.
+- **Default**: `2`.
+- **Notes**: Must be at least `1` and no larger than the number of configured classifier models.
+
+### `--nsfw_check_backend_types`
+
+- **What**: CSV list of data backend `type` values that should be scanned.
+- **Default**: `all`.
+- **Example**: `local,huggingface,csv,aws`.
+
+### `--nsfw_check_sample_types`
+
+- **What**: CSV list of dataset `dataset_type` values that should be scanned.
+- **Default**: `image,conditioning`.
+- **Notes**: Evaluation datasets are not scanned.
+
+### `--delete_nsfw_images`
+
+- **What**: Delete NSFW-rejected samples from the source backend when deletion is supported.
+- **Default**: `false`.
+- **Notes**: When disabled, rejected samples are removed from metadata for the current run but left in the source dataset.
+
+### `--nsfw_check_video_frame_count`
+
+- **What**: Number of frames sampled from video or multi-frame conditioning inputs.
+- **Default**: `3`.
+
+### `--nsfw_check_video_frame_selection`
+
+- **What**: Frame selection mode for video NSFW checks.
+- **Default**: `uniform`.
+- **Options**: `uniform`, `first`, `middle`.
+
+### `--nsfw_check_video_min_flagged_frames`
+
+- **What**: Number of checked video frames that must be rejected before rejecting the whole sample.
+- **Default**: `1`.
+
 ### `--dataloader_prefetch`
 
 - **What**: Retrieve batches ahead-of-time.

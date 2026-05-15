@@ -1,8 +1,11 @@
+import json
 import logging
 import os
 import random
+import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -19,6 +22,12 @@ from tqdm import tqdm
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
+from simpletuner.helpers.image_manipulation.nsfw_classifier import (
+    DEFAULT_NSFW_CHECK_MODELS_CSV,
+    NsfwClassifierModelStore,
+    csv_option_allows,
+    parse_nsfw_model_specs,
+)
 from simpletuner.helpers.image_manipulation.training_sample import PreparedSample, TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.models.ltxvideo import normalize_ltx_latents
@@ -27,7 +36,7 @@ from simpletuner.helpers.models.wan import compute_wan_posterior
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import rank_info, should_log
+from simpletuner.helpers.training.multi_process import gather_across_processes, rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.webhooks.events import lifecycle_stage_event
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
@@ -130,6 +139,15 @@ class VAECache(WebhookMixin):
         vae_cache_disable: bool = False,
         hash_filenames: bool = True,
         dataset_type: str = None,
+        enable_nsfw_check: bool = False,
+        nsfw_check_models: str = DEFAULT_NSFW_CHECK_MODELS_CSV,
+        nsfw_check_min_votes: int = 2,
+        nsfw_check_backend_types: str = "all",
+        nsfw_check_sample_types: str = "image,conditioning",
+        nsfw_check_video_frame_count: int = 3,
+        nsfw_check_video_frame_selection: str = "uniform",
+        nsfw_check_video_min_flagged_frames: int = 1,
+        delete_nsfw_images: bool = False,
     ):
         self.id = id
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
@@ -184,6 +202,29 @@ class VAECache(WebhookMixin):
         if self.vae_cache_disable:
             self.vae_cache_ondemand = True
 
+        self.nsfw_check_requested = bool(enable_nsfw_check)
+        self.nsfw_check_backend_types = nsfw_check_backend_types
+        self.nsfw_check_sample_types = nsfw_check_sample_types
+        self.nsfw_check_model_specs = parse_nsfw_model_specs(nsfw_check_models)
+        self.nsfw_check_min_votes = int(nsfw_check_min_votes)
+        self.nsfw_check_video_frame_count = int(nsfw_check_video_frame_count)
+        self.nsfw_check_video_frame_selection = str(nsfw_check_video_frame_selection or "uniform").lower()
+        self.nsfw_check_video_min_flagged_frames = int(nsfw_check_video_min_flagged_frames)
+        self.delete_nsfw_images = bool(delete_nsfw_images)
+        self._nsfw_classifier_store = None
+        self._nsfw_lock = threading.Lock()
+        self._metadata_filter_actions_lock = threading.Lock()
+        self._deferred_metadata_filter_actions = []
+        self._nsfw_scan_report = {
+            "images_scanned": 0,
+            "images_rejected": 0,
+            "deleted_images": 0,
+            "errors": [],
+            "rejected_images": [],
+            "classifier_verdicts": {},
+        }
+        self.nsfw_check_enabled = self._resolve_nsfw_check_enabled()
+
         self.max_workers = max_workers
         self.read_queue = Queue()
         self.process_queue = Queue()
@@ -195,6 +236,375 @@ class VAECache(WebhookMixin):
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
+
+    def _resolve_nsfw_check_enabled(self) -> bool:
+        if not self.nsfw_check_requested:
+            return False
+
+        backend_type = getattr(self.image_data_backend, "type", "")
+        if not csv_option_allows(self.nsfw_check_backend_types, backend_type):
+            self.debug_log(
+                f"NSFW checks disabled for backend type {backend_type!r}; "
+                f"allowed types: {self.nsfw_check_backend_types!r}."
+            )
+            return False
+
+        supported_sample_types = {"image", "video", "conditioning"}
+        if self.dataset_type not in supported_sample_types:
+            self.debug_log(f"NSFW checks disabled for unsupported dataset_type={self.dataset_type!r}.")
+            return False
+        if not csv_option_allows(self.nsfw_check_sample_types, self.dataset_type):
+            self.debug_log(
+                f"NSFW checks disabled for dataset_type={self.dataset_type!r}; "
+                f"allowed sample types: {self.nsfw_check_sample_types!r}."
+            )
+            return False
+
+        if not self.nsfw_check_model_specs:
+            raise ValueError("NSFW checks are enabled but nsfw_check_models is empty.")
+        if self.nsfw_check_min_votes < 1:
+            raise ValueError("nsfw_check_min_votes must be at least 1.")
+        if self.nsfw_check_min_votes > len(self.nsfw_check_model_specs):
+            raise ValueError("nsfw_check_min_votes cannot exceed the number of configured NSFW classifiers.")
+        if self.nsfw_check_video_frame_count < 1:
+            raise ValueError("nsfw_check_video_frame_count must be at least 1.")
+        if self.nsfw_check_video_min_flagged_frames < 1:
+            raise ValueError("nsfw_check_video_min_flagged_frames must be at least 1.")
+        if self.nsfw_check_video_min_flagged_frames > self.nsfw_check_video_frame_count:
+            raise ValueError("nsfw_check_video_min_flagged_frames cannot exceed nsfw_check_video_frame_count.")
+        if self.nsfw_check_video_frame_selection not in {"uniform", "first", "middle"}:
+            raise ValueError("nsfw_check_video_frame_selection must be one of: uniform, first, middle.")
+
+        return True
+
+    def _get_nsfw_classifier_store(self) -> NsfwClassifierModelStore:
+        if self._nsfw_classifier_store is None:
+            self._nsfw_classifier_store = NsfwClassifierModelStore(
+                model_specs=self.nsfw_check_model_specs,
+                min_votes=self.nsfw_check_min_votes,
+                video_frame_count=self.nsfw_check_video_frame_count,
+                video_frame_selection=self.nsfw_check_video_frame_selection,
+                video_min_flagged_frames=self.nsfw_check_video_min_flagged_frames,
+                device=self.accelerator.device,
+            )
+        return self._nsfw_classifier_store
+
+    def _close_nsfw_classifier_store(self) -> None:
+        if self._nsfw_classifier_store is None:
+            return
+        self._nsfw_classifier_store.close()
+        self._nsfw_classifier_store = None
+
+    def _record_nsfw_classifier_verdicts(self, classification: dict) -> None:
+        classifier_verdicts = self._nsfw_scan_report["classifier_verdicts"]
+        for frame_result in classification.get("frame_results", []):
+            for result in frame_result.get("classifiers", []):
+                key = result.get("key") or result.get("model_id")
+                verdict = result.get("verdict", "unknown")
+                if not key:
+                    continue
+                classifier_verdicts.setdefault(key, {"nsfw": 0, "sfw": 0, "unknown": 0})
+                classifier_verdicts[key].setdefault(verdict, 0)
+                classifier_verdicts[key][verdict] += 1
+
+    def _is_main_process(self) -> bool:
+        return bool(
+            getattr(
+                self.accelerator,
+                "is_main_process",
+                getattr(self.accelerator, "is_local_main_process", True),
+            )
+        )
+
+    def _is_multi_process(self) -> bool:
+        return int(getattr(self.accelerator, "num_processes", 1) or 1) > 1
+
+    def _remove_image_from_metadata_backend(self, metadata_backend, filepath: str, bucket: str = None) -> bool:
+        aspect_ratio_bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", None)
+        if not isinstance(aspect_ratio_bucket_indices, dict):
+            metadata_backend.remove_image(filepath, bucket)
+            return True
+
+        candidate_buckets = []
+        if bucket in aspect_ratio_bucket_indices:
+            candidate_buckets.append(bucket)
+        elif bucket is not None:
+            for candidate in aspect_ratio_bucket_indices:
+                if str(candidate) == str(bucket):
+                    candidate_buckets.append(candidate)
+                    break
+        if not candidate_buckets:
+            candidate_buckets = list(aspect_ratio_bucket_indices.keys())
+
+        removed = False
+        for candidate in candidate_buckets:
+            images = aspect_ratio_bucket_indices.get(candidate, [])
+            while filepath in images:
+                images.remove(filepath)
+                removed = True
+        return removed
+
+    def _record_filter_stat(
+        self,
+        reason: str,
+        bucket: str,
+        filepath: str,
+        metadata_backend=None,
+        update_bucket_report: bool = True,
+    ) -> None:
+        metadata_backend = metadata_backend or self.metadata_backend
+        statistics = metadata_backend.filtering_statistics
+        if statistics is None:
+            statistics = {"total_processed": 0, "skipped": {}}
+        statistics.setdefault("skipped", {}).setdefault(reason, 0)
+        statistics["skipped"][reason] += 1
+        metadata_backend.filtering_statistics = statistics
+
+        bucket_report = getattr(metadata_backend, "bucket_report", None)
+        if update_bucket_report and bucket_report is not None:
+            bucket_report.update_statistics({"skipped": {reason: 1}})
+            bucket_report.record_bucket_event(bucket=bucket, reason=reason, removed=1, filepath=filepath)
+
+    def _queue_metadata_filter_action(
+        self,
+        filepath: str,
+        bucket: str = None,
+        reason: str = "other",
+        delete_from_backend: bool = False,
+        details: dict = None,
+    ) -> None:
+        action = {
+            "filepath": filepath,
+            "bucket": bucket,
+            "reason": reason,
+            "delete_from_backend": bool(delete_from_backend),
+            "details": details or {},
+        }
+        if not hasattr(self, "_metadata_filter_actions_lock"):
+            self._metadata_filter_actions_lock = threading.Lock()
+        if not hasattr(self, "_deferred_metadata_filter_actions"):
+            self._deferred_metadata_filter_actions = []
+        with self._metadata_filter_actions_lock:
+            self._deferred_metadata_filter_actions.append(action)
+
+    def _handle_metadata_filtered_sample(
+        self,
+        filepath: str,
+        bucket: str = None,
+        reason: str = "other",
+        delete_from_backend: bool = False,
+        details: dict = None,
+    ) -> None:
+        removed = self._remove_image_from_metadata_backend(self.metadata_backend, filepath, bucket)
+        if removed:
+            self._record_filter_stat(reason, bucket, filepath)
+        self._queue_metadata_filter_action(
+            filepath=filepath,
+            bucket=bucket,
+            reason=reason,
+            delete_from_backend=delete_from_backend,
+            details=details,
+        )
+
+    def _handle_nsfw_rejected_sample(self, filepath: str, bucket: str, classification: dict) -> None:
+        rejected_entry = {
+            "filepath": filepath,
+            "bucket": bucket,
+            "frames_scanned": classification.get("frames_scanned", 0),
+            "flagged_frames": classification.get("summary", {}).get("flagged_frames", 0),
+        }
+        self._handle_metadata_filtered_sample(
+            filepath=filepath,
+            bucket=bucket,
+            reason="nsfw",
+            delete_from_backend=self.delete_nsfw_images,
+            details=rejected_entry,
+        )
+        self._nsfw_scan_report["rejected_images"].append(rejected_entry)
+        self._nsfw_scan_report["images_rejected"] += 1
+
+    def _deduplicate_filter_actions(self, actions: list[dict]) -> list[dict]:
+        deduplicated_actions = {}
+        for action in actions:
+            filepath = action.get("filepath")
+            if not filepath:
+                continue
+            key = (filepath, action.get("reason", "other"))
+            if key not in deduplicated_actions:
+                deduplicated_actions[key] = dict(action)
+                continue
+            deduplicated_actions[key]["delete_from_backend"] = bool(
+                deduplicated_actions[key].get("delete_from_backend") or action.get("delete_from_backend")
+            )
+        return list(deduplicated_actions.values())
+
+    def _delete_filtered_source_file(self, filepath: str, reason: str) -> bool:
+        try:
+            self.image_data_backend.delete(filepath)
+            return True
+        except NotImplementedError:
+            logger.warning(
+                "%s sample %s was removed from metadata, but backend type %s does not support deletion.",
+                reason.upper(),
+                filepath,
+                getattr(self.image_data_backend, "type", "unknown"),
+            )
+        except FileNotFoundError:
+            logger.debug("%s sample %s was already absent from the source backend.", reason.upper(), filepath)
+        except Exception as exc:
+            logger.warning("Could not delete %s sample %s from source backend: %s", reason, filepath, exc)
+        return False
+
+    def _apply_filter_actions_to_metadata_cache(self, actions: list[dict]) -> bool:
+        if not actions:
+            return True
+
+        metadata_backend = self.metadata_backend
+        original_read_only = getattr(metadata_backend, "read_only", False)
+        original_bucket_indices = deepcopy(getattr(metadata_backend, "aspect_ratio_bucket_indices", {}))
+        original_filtering_statistics = deepcopy(getattr(metadata_backend, "filtering_statistics", None))
+
+        try:
+            if original_read_only:
+                metadata_backend.read_only = False
+                metadata_backend.reload_cache(set_config=False)
+
+            removed_count = 0
+            for action in actions:
+                filepath = action["filepath"]
+                bucket = action.get("bucket")
+                reason = action.get("reason", "other")
+                if self._remove_image_from_metadata_backend(metadata_backend, filepath, bucket):
+                    removed_count += 1
+                    self._record_filter_stat(
+                        reason=reason,
+                        bucket=bucket,
+                        filepath=filepath,
+                        metadata_backend=metadata_backend,
+                        update_bucket_report=False,
+                    )
+
+            if removed_count > 0 or any(action.get("delete_from_backend") for action in actions):
+                metadata_backend.save_cache(enforce_constraints=False)
+            return True
+        except Exception as exc:
+            logger.error(
+                "Could not persist filtered sample removals to the unsplit metadata cache for backend %s: %s",
+                self.id,
+                exc,
+            )
+            return False
+        finally:
+            if original_read_only:
+                metadata_backend.aspect_ratio_bucket_indices = original_bucket_indices
+                metadata_backend.filtering_statistics = original_filtering_statistics
+                metadata_backend.read_only = original_read_only
+
+    def _finalize_deferred_metadata_filters(self) -> None:
+        actions = getattr(self, "_deferred_metadata_filter_actions", [])
+        gathered_action_groups = gather_across_processes(actions)
+        if hasattr(self, "_metadata_filter_actions_lock"):
+            with self._metadata_filter_actions_lock:
+                self._deferred_metadata_filter_actions = []
+
+        if not self._is_main_process():
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
+            return
+
+        gathered_actions = [
+            action
+            for action_group in gathered_action_groups
+            for action in action_group
+            if isinstance(action, dict) and action.get("filepath")
+        ]
+        deduplicated_actions = self._deduplicate_filter_actions(gathered_actions)
+        if not deduplicated_actions:
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
+            return
+
+        metadata_cache_updated = self._apply_filter_actions_to_metadata_cache(deduplicated_actions)
+        if not metadata_cache_updated:
+            pending_deletes = sum(1 for action in deduplicated_actions if action.get("delete_from_backend"))
+            if pending_deletes > 0:
+                logger.warning(
+                    "Skipping %s destructive source delete(s) because the metadata cache could not be updated.",
+                    pending_deletes,
+                )
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
+            return
+
+        deleted_nsfw_images = 0
+        for action in deduplicated_actions:
+            if not action.get("delete_from_backend"):
+                continue
+            if self._delete_filtered_source_file(action["filepath"], action.get("reason", "other")):
+                if action.get("reason") == "nsfw":
+                    deleted_nsfw_images += 1
+        self._nsfw_scan_report["deleted_images"] += deleted_nsfw_images
+
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
+
+    def _scan_sample_for_nsfw(self, filepath: str, sample, bucket: str) -> bool:
+        classifier_store = self._get_nsfw_classifier_store()
+        classification = classifier_store.classify_sample(sample, filepath=filepath)
+        with self._nsfw_lock:
+            self._nsfw_scan_report["images_scanned"] += 1
+            self._record_nsfw_classifier_verdicts(classification)
+            if classification.get("summary", {}).get("rejected", False):
+                self._handle_nsfw_rejected_sample(filepath, bucket, classification)
+                return True
+        return False
+
+    def _filter_nsfw_relevant_files(self, relevant_files: list[str], bucket: str) -> list[str]:
+        if not self.nsfw_check_enabled or not relevant_files:
+            return relevant_files
+
+        safe_files = []
+        for start in range(0, len(relevant_files), max(1, self.read_batch_size)):
+            batch_paths = relevant_files[start : start + max(1, self.read_batch_size)]
+            try:
+                available_paths, batch_samples = self.image_data_backend.read_image_batch(
+                    batch_paths,
+                    delete_problematic_images=self.delete_problematic_images,
+                )
+            except Exception as exc:
+                self._nsfw_scan_report["errors"].append({"bucket": bucket, "error": str(exc)})
+                raise
+
+            for filepath, sample in zip(available_paths, batch_samples):
+                if sample is None:
+                    continue
+                if self._scan_sample_for_nsfw(filepath, sample, bucket):
+                    logger.warning("Rejected NSFW sample during VAE cache preprocessing: %s", filepath)
+                    continue
+                safe_files.append(filepath)
+
+        return safe_files
+
+    def _write_nsfw_scan_report(self) -> None:
+        if not self.nsfw_check_enabled or self._nsfw_scan_report["images_scanned"] == 0:
+            return
+
+        report = {
+            "data_backend_id": self.id,
+            "backend_type": getattr(self.image_data_backend, "type", None),
+            "dataset_type": self.dataset_type,
+            "models": [{"model_id": spec.model_id, "threshold": spec.threshold} for spec in self.nsfw_check_model_specs],
+            "min_votes": self.nsfw_check_min_votes,
+            "video_frame_count": self.nsfw_check_video_frame_count,
+            "video_frame_selection": self.nsfw_check_video_frame_selection,
+            "video_min_flagged_frames": self.nsfw_check_video_min_flagged_frames,
+            "summary": self._nsfw_scan_report,
+        }
+        report_filename = os.path.join(self.cache_dir, f"nsfw_classifier_report_rank{get_rank()}.json")
+        try:
+            self.cache_data_backend.write(report_filename, json.dumps(report, indent=2))
+        except Exception as exc:
+            logger.warning("Could not write NSFW classifier report to %s: %s", report_filename, exc)
 
     def _cache_vae_dtype(self) -> torch.dtype:
         if self.dataset_type_enum is DatasetType.AUDIO and StateTracker.get_model_family() == "ltxvideo2":
@@ -312,9 +722,13 @@ class VAECache(WebhookMixin):
                 return self._normalise_loaded_sample(sample)
             except Exception as e:
                 if self.delete_problematic_images:
-                    self.metadata_backend.remove_image(filename)
-                    self.image_data_backend.delete(filename)
-                    self.debug_log(f"Deleted {filename} because it was problematic: {e}")
+                    self._handle_metadata_filtered_sample(
+                        filepath=filename,
+                        reason="problematic",
+                        delete_from_backend=True,
+                        details={"error": str(e)},
+                    )
+                    self.debug_log(f"Queued {filename} for problematic sample deletion: {e}")
                 raise e
         try:
             torch_data = self.cache_data_backend.torch_load(filename)
@@ -1359,7 +1773,12 @@ class VAECache(WebhookMixin):
                 sys.exit(1)
             # Remove all of the errored images from the bucket. They will be captured on restart.
             for filepath in vae_input_filepaths:
-                self.metadata_backend.remove_image(filepath)
+                self._handle_metadata_filtered_sample(
+                    filepath=filepath,
+                    reason="problematic",
+                    delete_from_backend=False,
+                    details={"error": str(e)},
+                )
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise Exception(f"Error encoding images {vae_input_filepaths}: {e}, traceback: {traceback.format_exc()}")
         return output_values
@@ -1411,9 +1830,6 @@ class VAECache(WebhookMixin):
                         yield path, self._read_from_storage(path, hide_errors=hide_errors)
                     except Exception as read_e:
                         logger.error(f"Error reading {path}: {read_e}")
-                        if self.delete_problematic_images:
-                            self.metadata_backend.remove_image(path)
-                            self.image_data_backend.delete(path)
                         yield path, None
 
         # Read cache files individually (they're typically small)
@@ -1536,133 +1952,141 @@ class VAECache(WebhookMixin):
                 current=0,
             )
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            for bucket in shuffled_keys:
-                relevant_files = self._reduce_bucket(bucket, aspect_bucket_cache, processed_images)
-                if len(relevant_files) == 0:
-                    continue
-                statistics = {
-                    "not_local": 0,
-                    "already_cached": 0,
-                    "cached": 0,
-                    "total": 0,
-                }
-                last_reported_index = 0
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                for bucket in shuffled_keys:
+                    relevant_files = self._reduce_bucket(bucket, aspect_bucket_cache, processed_images)
+                    if len(relevant_files) == 0:
+                        continue
+                    relevant_files = self._filter_nsfw_relevant_files(relevant_files, bucket)
+                    if len(relevant_files) == 0:
+                        continue
+                    statistics = {
+                        "not_local": 0,
+                        "already_cached": 0,
+                        "cached": 0,
+                        "total": 0,
+                    }
+                    last_reported_index = 0
 
-                for raw_filepath in tqdm(
-                    relevant_files,
-                    desc=f"Processing bucket {bucket}",
-                    position=get_rank(),
-                    ncols=125,
-                    leave=False,
-                ):
-                    statistics["total"] += 1
-                    overall_processed += 1
-                    if progress_callback is not None:
-                        progress_callback(overall_processed, total_count)
-                    filepath = self._process_raw_filepath(raw_filepath)
-                    test_filepath = self._image_filename_from_vaecache_filename(filepath)
-                    if test_filepath is None:
-                        continue
-                    if test_filepath not in self.local_unprocessed_files:
-                        statistics["not_local"] += 1
-                        continue
-                    try:
-                        # Convert whatever we have, into the VAE cache basename.
+                    for raw_filepath in tqdm(
+                        relevant_files,
+                        desc=f"Processing bucket {bucket}",
+                        position=get_rank(),
+                        ncols=125,
+                        leave=False,
+                    ):
+                        statistics["total"] += 1
+                        overall_processed += 1
+                        if progress_callback is not None:
+                            progress_callback(overall_processed, total_count)
                         filepath = self._process_raw_filepath(raw_filepath)
-                        # Does it exist on the backend?
-                        if self.already_cached(filepath):
-                            statistics["already_cached"] += 1
+                        test_filepath = self._image_filename_from_vaecache_filename(filepath)
+                        if test_filepath is None:
                             continue
-                        self._accumulate_read_queue(filepath, aspect_bucket=bucket)
-                        if self.read_queue.qsize() >= self.read_batch_size:
+                        if test_filepath not in self.local_unprocessed_files:
+                            statistics["not_local"] += 1
+                            continue
+                        try:
+                            # Convert whatever we have, into the VAE cache basename.
+                            filepath = self._process_raw_filepath(raw_filepath)
+                            # Does it exist on the backend?
+                            if self.already_cached(filepath):
+                                statistics["already_cached"] += 1
+                                continue
+                            self._accumulate_read_queue(filepath, aspect_bucket=bucket)
+                            if self.read_queue.qsize() >= self.read_batch_size:
+                                future_to_read = executor.submit(self.read_images_in_batch)
+                                futures.append(future_to_read)
+
+                            if self.process_queue.qsize() >= self.process_queue_size:
+                                future_to_process = executor.submit(self._process_images_in_batch)
+                                futures.append(future_to_process)
+
+                            if self.vae_input_queue.qsize() >= self.vae_batch_size:
+                                statistics["cached"] += 1
+                                future_to_process = executor.submit(self._encode_images_in_batch)
+                                futures.append(future_to_process)
+                                if self.webhook_handler is not None:
+                                    last_reported_index = statistics["total"] // self.webhook_progress_interval
+                                    self.send_progress_update(
+                                        type="vaecache",
+                                        readable_type=f"VAE Caching (bucket {bucket})",
+                                        progress=int(statistics["total"] / len(relevant_files) * 100),
+                                        total=len(relevant_files),
+                                        current=statistics["total"],
+                                    )
+
+                            if self.write_queue.qsize() >= self.write_batch_size:
+                                future_to_write = executor.submit(self._write_latents_in_batch)
+                                futures.append(future_to_write)
+                        except ValueError as e:
+                            logger.error(f"Received fatal error: {e}")
+                            raise e
+                        except Exception as e:
+                            logger.error(f"Error processing image {filepath}: {e}")
+                            self.debug_log(f"Error traceback: {traceback.format_exc()}")
+                            raise e
+
+                        try:
+                            futures = self._process_futures(futures, executor)
+                        except Exception as e:
+                            logger.error(
+                                f"Error processing futures for bucket {bucket}: {e}, traceback: {traceback.format_exc()}"
+                            )
+                            continue
+                    logger.debug(f"bucket {bucket} statistics: {statistics}")
+                    try:
+                        # Handle remainders after processing the bucket
+                        if self.read_queue.qsize() > 0:
+                            # We have an adequate number of samples to read. Let's now do that in a batch, to reduce I/O wait.
                             future_to_read = executor.submit(self.read_images_in_batch)
                             futures.append(future_to_read)
 
-                        if self.process_queue.qsize() >= self.process_queue_size:
+                        futures = self._process_futures(futures, executor)
+
+                        # Now we try and process the images, if we have a process batch size large enough.
+                        if self.process_queue.qsize() > 0:
                             future_to_process = executor.submit(self._process_images_in_batch)
                             futures.append(future_to_process)
 
-                        if self.vae_input_queue.qsize() >= self.vae_batch_size:
-                            statistics["cached"] += 1
+                        futures = self._process_futures(futures, executor)
+
+                        if self.vae_input_queue.qsize() > 0:
                             future_to_process = executor.submit(self._encode_images_in_batch)
                             futures.append(future_to_process)
-                            if self.webhook_handler is not None:
-                                last_reported_index = statistics["total"] // self.webhook_progress_interval
-                                self.send_progress_update(
-                                    type="vaecache",
-                                    readable_type=f"VAE Caching (bucket {bucket})",
-                                    progress=int(statistics["total"] / len(relevant_files) * 100),
-                                    total=len(relevant_files),
-                                    current=statistics["total"],
-                                )
 
-                        if self.write_queue.qsize() >= self.write_batch_size:
+                        futures = self._process_futures(futures, executor)
+
+                        # Write the remaining batches. This is not strictly necessary, since they do not need to be written with matching dimensions.
+                        # However, it's simply easiest to do this now, even if we have less-than a single batch size.
+                        if self.write_queue.qsize() > 0:
                             future_to_write = executor.submit(self._write_latents_in_batch)
                             futures.append(future_to_write)
-                    except ValueError as e:
-                        logger.error(f"Received fatal error: {e}")
-                        raise e
-                    except Exception as e:
-                        logger.error(f"Error processing image {filepath}: {e}")
-                        self.debug_log(f"Error traceback: {traceback.format_exc()}")
-                        raise e
 
-                    try:
                         futures = self._process_futures(futures, executor)
+                        log_msg = f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
+                        if get_rank() == 0:
+                            logger.debug(log_msg)
+                            tqdm.write(log_msg)
+                        if self.webhook_handler is not None:
+                            self.send_progress_update(
+                                type="init_cache_vae_processing_complete",
+                                progress=100,
+                                total=statistics["total"],
+                                current=statistics["total"],
+                                readable_type=f"VAE Caching (bucket {bucket})",
+                            )
+                        self.debug_log("Completed process_buckets, all futures have been returned.")
                     except Exception as e:
-                        logger.error(
-                            f"Error processing futures for bucket {bucket}: {e}, traceback: {traceback.format_exc()}"
-                        )
+                        logger.error(f"Fatal error when processing bucket {bucket}: {e}")
                         continue
-                logger.debug(f"bucket {bucket} statistics: {statistics}")
-                try:
-                    # Handle remainders after processing the bucket
-                    if self.read_queue.qsize() > 0:
-                        # We have an adequate number of samples to read. Let's now do that in a batch, to reduce I/O wait.
-                        future_to_read = executor.submit(self.read_images_in_batch)
-                        futures.append(future_to_read)
-
-                    futures = self._process_futures(futures, executor)
-
-                    # Now we try and process the images, if we have a process batch size large enough.
-                    if self.process_queue.qsize() > 0:
-                        future_to_process = executor.submit(self._process_images_in_batch)
-                        futures.append(future_to_process)
-
-                    futures = self._process_futures(futures, executor)
-
-                    if self.vae_input_queue.qsize() > 0:
-                        future_to_process = executor.submit(self._encode_images_in_batch)
-                        futures.append(future_to_process)
-
-                    futures = self._process_futures(futures, executor)
-
-                    # Write the remaining batches. This is not strictly necessary, since they do not need to be written with matching dimensions.
-                    # However, it's simply easiest to do this now, even if we have less-than a single batch size.
-                    if self.write_queue.qsize() > 0:
-                        future_to_write = executor.submit(self._write_latents_in_batch)
-                        futures.append(future_to_write)
-
-                    futures = self._process_futures(futures, executor)
-                    log_msg = f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
-                    if get_rank() == 0:
-                        logger.debug(log_msg)
-                        tqdm.write(log_msg)
-                    if self.webhook_handler is not None:
-                        self.send_progress_update(
-                            type="init_cache_vae_processing_complete",
-                            progress=100,
-                            total=statistics["total"],
-                            current=statistics["total"],
-                            readable_type=f"VAE Caching (bucket {bucket})",
-                        )
-                    self.debug_log("Completed process_buckets, all futures have been returned.")
-                except Exception as e:
-                    logger.error(f"Fatal error when processing bucket {bucket}: {e}")
-                    continue
+        finally:
+            self._close_nsfw_classifier_store()
 
         # Send completion event for VAE cache initialization
+        self._finalize_deferred_metadata_filters()
+        self._write_nsfw_scan_report()
         if self.webhook_handler is not None:
             event = lifecycle_stage_event(
                 key="init_vae_cache",

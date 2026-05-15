@@ -53,6 +53,7 @@ from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     convert_comfyui_to_diffusers,
     convert_diffusers_to_comfyui,
+    convert_diffusers_to_comfyui_sd_lora,
     detect_state_dict_format,
     normalize_lora_format,
 )
@@ -1726,8 +1727,11 @@ class ModelFoundation(ABC):
             raise ValueError("save_directory is required to save LoRA weights.")
 
         adapter_metadata = {}
+        component_adapter_metadata = {}
         for key, value in kwargs.items():
             if key.endswith("lora_adapter_metadata") and isinstance(value, dict):
+                component_name = key.removesuffix("_lora_adapter_metadata")
+                component_adapter_metadata[component_name] = value
                 adapter_metadata.update(value)
 
         lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
@@ -1766,6 +1770,13 @@ class ModelFoundation(ABC):
                     from simpletuner.helpers.models.flux2.pipeline import _convert_diffusers_flux2_lora_to_comfyui
 
                     converted = _convert_diffusers_flux2_lora_to_comfyui(weights, adapter_metadata=adapter_metadata)
+                elif model_family in {"sd1x", "sdxl"}:
+                    converted = convert_diffusers_to_comfyui_sd_lora(
+                        weights,
+                        adapter_metadata=adapter_metadata,
+                        component_adapter_metadata=component_adapter_metadata,
+                        sdxl=(model_family == "sdxl"),
+                    )
                 else:
                     converted = convert_diffusers_to_comfyui(
                         weights,

@@ -118,6 +118,22 @@ file_handler.setFormatter(RankFileFormatter("%(asctime)s [%(levelname)s] (%(name
 _CUSTOM_HANDLERS = {id(console_handler): console_handler, id(file_handler): file_handler}
 
 
+class _SuppressMessagePrefixFilter(logging.Filter):
+    def __init__(self, prefix: str):
+        super().__init__()
+        self.prefix = prefix
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith(self.prefix)
+
+
+def _ensure_message_prefix_filter(logger_instance: logging.Logger, prefix: str) -> None:
+    for existing_filter in logger_instance.filters:
+        if isinstance(existing_filter, _SuppressMessagePrefixFilter) and existing_filter.prefix == prefix:
+            return
+    logger_instance.addFilter(_SuppressMessagePrefixFilter(prefix))
+
+
 def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     """
     Configure third-party library loggers to suppress verbose output.
@@ -148,6 +164,15 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
                 diffusers_logging.set_verbosity_warning()
         except (ImportError, AttributeError):
             # diffusers is optional; skip configuration if not installed or if logging API is missing
+            pass
+
+        try:
+            import huggingface_hub.utils.logging as huggingface_hub_logging
+
+            if hasattr(huggingface_hub_logging, "set_verbosity_warning"):
+                huggingface_hub_logging.set_verbosity_warning()
+        except (ImportError, AttributeError):
+            # huggingface_hub is optional; skip configuration if not installed or if logging API is missing
             pass
 
     # Configure individual loggers (safe to do at any time, no imports needed)
@@ -181,6 +206,9 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     transformers_generation_config_logger.setLevel(logging.ERROR)
     transformers_modeling_logger = logging.getLogger("transformers.modeling_utils")
     transformers_modeling_logger.setLevel(logging.ERROR)
+    transformers_tp_logger = logging.getLogger("transformers.integrations.tensor_parallel")
+    transformers_tp_logger.setLevel(logging.WARNING)
+    _ensure_message_prefix_filter(transformers_tp_logger, "The following layers were not sharded:")
 
     diffusers_logger = logging.getLogger("diffusers.configuration_utils")
     diffusers_logger.setLevel(logging.ERROR)
@@ -216,6 +244,17 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     urllib_logger = logging.getLogger("urllib3.connectionpool")
     urllib_logger.setLevel(logging.WARNING)
 
+    httpx_logger = logging.getLogger("httpx")
+    httpx_logger.setLevel(logging.WARNING)
+    httpcore_logger = logging.getLogger("httpcore")
+    httpcore_logger.setLevel(logging.WARNING)
+
+    huggingface_hub_logger = logging.getLogger("huggingface_hub")
+    huggingface_hub_logger.setLevel(logging.WARNING)
+    huggingface_http_logger = logging.getLogger("huggingface_hub.utils._http")
+    huggingface_http_logger.setLevel(logging.WARNING)
+    huggingface_file_download_logger = logging.getLogger("huggingface_hub.file_download")
+    huggingface_file_download_logger.setLevel(logging.WARNING)
     huggingface_login_logger = logging.getLogger("huggingface_hub._login")
     huggingface_login_logger.setLevel(logging.ERROR)
 
@@ -245,6 +284,7 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
         "transformers.generation_utils",
         "transformers.generation.configuration_utils",
         "transformers.modeling_utils",
+        "transformers.integrations.tensor_parallel",
         "diffusers.configuration_utils",
         "diffusers.pipelines.pipeline_utils",
         "torch.distributed.nn.jit.instantiator",
@@ -257,6 +297,11 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
         "sse_starlette.sse",
         "python_multipart.multipart",
         "urllib3.connectionpool",
+        "httpx",
+        "httpcore",
+        "huggingface_hub",
+        "huggingface_hub.utils._http",
+        "huggingface_hub.file_download",
         "huggingface_hub._login",
         "uvicorn.access",
         "uvicorn.error",

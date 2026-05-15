@@ -709,6 +709,53 @@ Neste exemplo, o dataset de 512px é usado para steps 1-300, então o dataset de
 - **Aviso:** Isso é destrutivo e não pode ser desfeito. Use com cuidado.
 - **Padrão:** Usa o argumento do trainer `--delete_problematic_images` (padrão: `false`).
 
+### `delete_nsfw_images`
+
+- **Valores:** `true` | `false`
+- **Descrição:** Quando `--enable_nsfw_check` está habilitado, samples rejeitados pelo classificador NSFW são deletados deste backend se ele suportar deleção.
+- **Aviso:** Isso é destrutivo e não pode ser desfeito. Datasets Hugging Face são somente leitura e serão apenas removidos dos metadados da execução atual.
+- **Padrão:** Usa o argumento do trainer `--delete_nsfw_images` (padrão: `false`).
+
+<a id="nsfw-classifier-checks-during-vae-caching"></a>
+
+### Verificações de classificador NSFW durante o cache VAE
+
+O SimpleTuner pode escanear samples de treinamento com classificadores de imagem do Hugging Face Transformers durante o pré-processamento do cache VAE ao definir `--enable_nsfw_check=true`. A verificação acontece depois do bucket discovery e antes da codificação VAE, então samples rejeitados são removidos dos buckets de metadados atuais antes que latents sejam escritos.
+
+Para notas de privacidade, responsabilidade e contexto legal, veja [NSFW.pt-BR.md](NSFW.pt-BR.md).
+
+A verificação se aplica apenas a samples sem cache que o VAE cache está prestes a processar. Entradas de cache VAE existentes são confiadas, e `skip_file_discovery=vae` ignora o enforcement NSFW porque o trainer assume que o dataset já foi preparado segundo a política do usuário. Datasets de avaliação não são verificados.
+
+Configuração dos classificadores:
+- `--nsfw_check_models` aceita uma lista CSV de modelos padrão de classificação de imagem do Hugging Face Transformers. Anexe thresholds por modelo com `model/repo:threshold=0.5`.
+- O padrão é `Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5`.
+- `trust_remote_code` não é habilitado, e classificadores que exigem `timm` ou código customizado não são suportados.
+- `--nsfw_check_min_votes` controla quantos modelos configurados precisam retornar NSFW para rejeitar um frame.
+
+Controles de escopo:
+- `--nsfw_check_backend_types` aceita valores `type` de backend, como `all`, `local`, `huggingface`, `csv` ou `aws`.
+- `--nsfw_check_sample_types` aceita valores `dataset_type`. O padrão é `image,conditioning`; adicione `video` para verificar datasets de vídeo.
+- `--delete_nsfw_images=true` deleta samples rejeitados de backends mutáveis. Quando desabilitado, eles são apenas removidos dos metadados da execução atual.
+
+Samples de vídeo e multi-frame:
+- `--nsfw_check_video_frame_count` controla quantos frames são verificados.
+- `--nsfw_check_video_frame_selection` pode ser `uniform`, `first` ou `middle`.
+- `--nsfw_check_video_min_flagged_frames` controla quantos frames verificados precisam ser rejeitados antes de rejeitar o sample inteiro.
+
+Cada processo de cache VAE escreve um relatório `nsfw_classifier_report_rank*.json` no diretório de cache VAE quando samples são verificados. Os relatórios incluem thresholds dos modelos, contagens agregadas de verdicts, caminhos de samples rejeitados e contagens de deleção.
+
+A deleção por backend pode ser habilitada em `multidatabackend.json`:
+
+```json
+{
+  "id": "train",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/data/training/images",
+  "delete_nsfw_images": true
+}
+```
+
 ### Visualizando Estatísticas de Filtragem
 
 Quando o SimpleTuner processa seu dataset, ele rastreia quantos arquivos foram filtrados e por quê. Essas estatísticas são armazenadas no arquivo de cache do dataset (`aspect_ratio_bucket_indices_*.json`) e podem ser visualizadas na WebUI.
@@ -720,6 +767,7 @@ Quando o SimpleTuner processa seu dataset, ele rastreia quantos arquivos foram f
 - **metadata_missing**: Arquivos ignorados por falta de metadados
 - **not_found**: Arquivos que não puderam ser localizados
 - **already_exists**: Arquivos já no cache (não reprocessados)
+- **nsfw**: Arquivos rejeitados pelo classificador NSFW durante o pré-processamento do cache VAE
 - **other**: Arquivos filtrados por outros motivos
 
 **Visualizando na WebUI:**

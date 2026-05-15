@@ -136,11 +136,64 @@ def _find_log_path(output_dir: str, job_id: str) -> Optional[str]:
     return None
 
 
+def _is_captionflow_job(job: "UnifiedJob") -> bool:
+    metadata = getattr(job, "metadata", None) or {}
+    return getattr(job, "provider", None) == "captionflow" or metadata.get("handler") == "captionflow"
+
+
+def _captionflow_log_paths(output_dir: str) -> List[str]:
+    logs_dir = os.path.join(output_dir, "logs")
+    if not os.path.isdir(logs_dir):
+        return []
+
+    paths = []
+    orchestrator = os.path.join(logs_dir, "orchestrator.log")
+    if os.path.exists(orchestrator):
+        paths.append(orchestrator)
+
+    import glob
+
+    paths.extend(sorted(glob.glob(os.path.join(logs_dir, "worker-*.log"))))
+    return paths
+
+
+def _read_tail(path: str, max_bytes: int) -> str:
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        if size > max_bytes:
+            f.seek(-max_bytes, 2)
+            f.readline()
+        else:
+            f.seek(0)
+        return f.read().decode("utf-8", errors="replace")
+
+
+def _fetch_captionflow_logs(output_dir: str, max_bytes: int) -> str:
+    paths = _captionflow_log_paths(output_dir)
+    if not paths:
+        return "(CaptionFlow log file not found)"
+
+    per_file_bytes = max(4096, max_bytes // max(1, len(paths)))
+    sections = []
+    for path in paths:
+        try:
+            content = _read_tail(path, per_file_bytes).strip()
+        except Exception as exc:
+            content = f"(Error reading log file: {exc})"
+        label = os.path.relpath(path, output_dir)
+        sections.append(f"===== {label} =====\n{content}")
+    return "\n\n".join(sections)
+
+
 def _fetch_local_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
     """Fetch logs from local job output directory."""
     output_dir = job.output_url
     if not output_dir:
         return "(No output directory recorded)"
+
+    if _is_captionflow_job(job):
+        return _fetch_captionflow_logs(output_dir, max_bytes)
 
     log_path = _find_log_path(output_dir, job.job_id)
     if not log_path:
@@ -199,7 +252,13 @@ async def get_inline_progress(job: "UnifiedJob") -> InlineProgress:
     elif job.job_type == JobType.LOCAL:
         output_dir = job.output_url
         if output_dir:
-            log_path = _find_log_path(output_dir, job.job_id)
+            log_path = None
+            if _is_captionflow_job(job):
+                paths = _captionflow_log_paths(output_dir)
+                if paths:
+                    log_path = max(paths, key=os.path.getmtime)
+            else:
+                log_path = _find_log_path(output_dir, job.job_id)
             if log_path:
                 try:
                     with open(log_path, "rb") as f:
@@ -245,14 +304,25 @@ async def stream_local_logs(job: "UnifiedJob", poll_interval: float = 0.5):
         yield "(No output directory recorded)"
         return
 
-    log_path = _find_log_path(output_dir, job.job_id)
+    log_path = None
+    if _is_captionflow_job(job):
+        paths = _captionflow_log_paths(output_dir)
+        if paths:
+            log_path = max(paths, key=os.path.getmtime)
+    else:
+        log_path = _find_log_path(output_dir, job.job_id)
 
     # Wait for log file to appear (up to 30 seconds)
     wait_time = 0
     while not log_path and wait_time < 30:
         await asyncio.sleep(1)
         wait_time += 1
-        log_path = _find_log_path(output_dir, job.job_id)
+        if _is_captionflow_job(job):
+            paths = _captionflow_log_paths(output_dir)
+            if paths:
+                log_path = max(paths, key=os.path.getmtime)
+        else:
+            log_path = _find_log_path(output_dir, job.job_id)
 
     if not log_path:
         yield "(Log file not found)"

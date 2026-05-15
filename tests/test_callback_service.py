@@ -7,11 +7,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 try:
     from simpletuner.simpletuner_sdk.api_state import APIState
+    from simpletuner.simpletuner_sdk.server.services import callback_service
     from simpletuner.simpletuner_sdk.server.services.callback_events import EventType
     from simpletuner.simpletuner_sdk.server.services.callback_presenter import CallbackPresenter
     from simpletuner.simpletuner_sdk.server.services.callback_service import CallbackService
     from simpletuner.simpletuner_sdk.server.services.event_store import EventStore
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+    callback_service = None  # type: ignore[assignment]
     CallbackPresenter = None  # type: ignore[assignment]
     CallbackService = None  # type: ignore[assignment]
     EventStore = None  # type: ignore[assignment]
@@ -35,6 +37,8 @@ class CallbackServiceTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         if APIState is not None:
             APIState.state = {}
+        if callback_service is not None:
+            callback_service._CAPTIONFLOW_JOB_CACHE.clear()
         self._tmpdir.cleanup()
 
     def test_handle_incoming_assigns_index_and_payload(self) -> None:
@@ -298,6 +302,26 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.assertIsNotNone(event)
         self.assertEqual(APIState.get_state("training_status"), "error")
         self.assertIsNone(APIState.get_state("training_progress"))
+
+    def test_captionflow_job_detection_is_cached(self) -> None:
+        calls = []
+
+        class FakeRepository:
+            async def get(self, job_id: str):
+                calls.append(job_id)
+                job = Mock()
+                job.provider = "local"
+                job.metadata = {"handler": "captionflow"}
+                return job
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+            return_value=FakeRepository(),
+        ):
+            self.assertTrue(callback_service._is_captionflow_job("caption-job"))
+            self.assertTrue(callback_service._is_captionflow_job("caption-job"))
+
+        self.assertEqual(calls, ["caption-job"])
 
 
 @unittest.skipIf(

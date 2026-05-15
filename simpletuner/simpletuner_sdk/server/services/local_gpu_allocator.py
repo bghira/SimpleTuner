@@ -535,6 +535,11 @@ class LocalGPUAllocator:
         if not runtime_config:
             raise ValueError("No runtime_config in job metadata")
 
+        handler = metadata.get("handler")
+        if handler == "captionflow":
+            await self._start_captionflow_job(job, gpus, metadata)
+            return
+
         # Update config with allocated GPUs and job ID
         runtime_config["accelerate_visible_devices"] = gpus
         runtime_config["--num_processes"] = len(gpus)
@@ -591,3 +596,44 @@ class LocalGPUAllocator:
             logger.info("SSE broadcast completed for job %s", job.job_id)
         except Exception as exc:
             logger.warning("Failed to broadcast SSE event for queued job: %s", exc, exc_info=True)
+
+    async def _start_captionflow_job(self, job: "UnifiedJob", gpus: List[int], metadata: Dict[str, Any]) -> None:
+        """Start a queued CaptionFlow job."""
+        from simpletuner.simpletuner_sdk import process_keeper
+
+        from .captionflow_job_service import run_captionflow_job
+
+        runtime_config = metadata.get("runtime_config", {})
+        if not runtime_config:
+            raise ValueError("No runtime_config in captioning job metadata")
+
+        runtime_config["allocated_gpus"] = gpus
+        runtime_config["worker_count"] = len(gpus)
+        runtime_config["__job_id__"] = job.job_id
+
+        process_keeper.submit_job(job.job_id, run_captionflow_job, runtime_config)
+
+        pid = process_keeper.get_process_pid(job.job_id)
+        if pid:
+            job_repo = self._get_job_repo()
+            updated_metadata = metadata.copy()
+            updated_metadata["runtime_config"] = runtime_config
+            updated_metadata["pid"] = pid
+            await job_repo.update(job.job_id, {"metadata": updated_metadata})
+
+        try:
+            from .sse_manager import get_sse_manager
+
+            await get_sse_manager().broadcast(
+                data={
+                    "type": "captioning.status",
+                    "status": "starting",
+                    "job_id": job.job_id,
+                    "config_name": job.config_name,
+                    "allocated_gpus": gpus,
+                    "message": f"Queued CaptionFlow job {job.job_id} starting",
+                },
+                event_type="captioning.status",
+            )
+        except Exception as exc:
+            logger.warning("Failed to broadcast SSE event for queued CaptionFlow job: %s", exc, exc_info=True)

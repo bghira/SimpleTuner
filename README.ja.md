@@ -53,6 +53,7 @@ SimpleTunerは、一貫した機能可用性を持つ複数の拡散モデルア
 - **マルチモーダルトレーニング** - **画像、動画、音声**生成モデルのための統合パイプライン
 - **マルチGPUトレーニング** - 自動最適化による複数GPU間の分散トレーニング
 - **高度なキャッシング** - より高速なトレーニングのために、画像、動画、音声、キャプション埋め込みをディスクにキャッシュ
+- **CaptionFlow連携** - [bghira/CaptionFlow](https://github.com/bghira/CaptionFlow)を使い、Web UIのジョブキューからローカルGPUでdataset captionsを生成できます。詳しくは[CaptionFlow連携ガイド](/documentation/CAPTIONFLOW.ja.md)を参照してください
 - **アスペクト比バケッティング** - さまざまな画像/動画サイズとアスペクト比のサポート
 - **コンセプトスライダー** - LoRA/LyCORIS/full（LyCORIS `full`経由）のスライダー対応ターゲティング、ポジティブ/ネガティブ/ニュートラルサンプリング、プロンプトごとの強度；[Slider LoRAガイド](/documentation/SLIDER_LORA.md)を参照
 - **メモリ最適化** - ほとんどのモデルが24G GPUでトレーニング可能、多くは最適化により16Gで可能

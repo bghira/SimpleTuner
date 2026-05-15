@@ -79,11 +79,38 @@ class _DummySavePipeline:
         save_function(packed, filename)
 
 
+class _DummySDXLSavePipeline:
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory,
+        unet_lora_layers=None,
+        text_encoder_lora_layers=None,
+        text_encoder_2_lora_layers=None,
+        save_function=None,
+        weight_name=None,
+        safe_serialization=True,
+        **kwargs,
+    ):
+        if save_function is None:
+            raise ValueError("save_function is required for this test pipeline")
+        filename = os.path.join(save_directory, weight_name or "pytorch_lora_weights.safetensors")
+        packed = {}
+        packed.update({f"unet.{key}": value for key, value in (unet_lora_layers or {}).items()})
+        packed.update({f"text_encoder.{key}": value for key, value in (text_encoder_lora_layers or {}).items()})
+        packed.update({f"text_encoder_2.{key}": value for key, value in (text_encoder_2_lora_layers or {}).items()})
+        save_function(packed, filename)
+
+
 class _DummySaveModel:
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummySavePipeline, PipelineTypes.CONTROLNET: _DummySavePipeline}
 
     def __init__(self, model_family, lora_format="comfyui", controlnet=False):
         self.config = SimpleNamespace(model_family=model_family, lora_format=lora_format, controlnet=controlnet)
+
+
+class _DummySDXLSaveModel(_DummySaveModel):
+    PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummySDXLSavePipeline, PipelineTypes.CONTROLNET: _DummySDXLSavePipeline}
 
 
 _ema_stub = SimpleNamespace(
@@ -259,6 +286,61 @@ class FluxPipelineMetadataTests(unittest.TestCase):
 
 
 class ComfyUILoraPrefixTests(unittest.TestCase):
+    def test_sdxl_models_write_kohya_comfyui_keys(self):
+        unet_weights = {
+            "down_blocks.1.attentions.0.transformer_blocks.0.attn1.to_k.lora.down.weight": torch.zeros(4, 8),
+            "down_blocks.1.attentions.0.transformer_blocks.0.attn1.to_k.lora.up.weight": torch.zeros(8, 4),
+            "down_blocks.1.attentions.0.transformer_blocks.0.attn1.to_out.0.lora.down.weight": torch.zeros(4, 8),
+            "down_blocks.1.attentions.0.transformer_blocks.0.attn1.to_out.0.lora.up.weight": torch.zeros(8, 4),
+        }
+        text_encoder_weights = {
+            "text_model.encoder.layers.0.self_attn.q_proj.lora.down.weight": torch.zeros(4, 8),
+            "text_model.encoder.layers.0.self_attn.q_proj.lora.up.weight": torch.zeros(8, 4),
+        }
+        text_encoder_2_weights = {
+            "text_model.encoder.layers.0.self_attn.k_proj.lora.down.weight": torch.zeros(4, 8),
+            "text_model.encoder.layers.0.self_attn.k_proj.lora.up.weight": torch.zeros(8, 4),
+        }
+        model = _DummySDXLSaveModel(model_family="sdxl")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ModelFoundation.save_lora_weights(
+                model,
+                save_directory=tmpdir,
+                unet_lora_layers=unet_weights,
+                text_encoder_lora_layers=text_encoder_weights,
+                text_encoder_2_lora_layers=text_encoder_2_weights,
+                unet_lora_adapter_metadata={"lora_alpha": 8},
+                text_encoder_lora_adapter_metadata={"lora_alpha": 4},
+                text_encoder_2_lora_adapter_metadata={"lora_alpha": 6},
+            )
+
+            lora_path = os.path.join(tmpdir, "pytorch_lora_weights.safetensors")
+            with safe_open(lora_path, framework="pt", device="cpu") as handle:
+                keys = list(handle.keys())
+                unet_alpha = handle.get_tensor("lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k.alpha")
+                text_encoder_alpha = handle.get_tensor("lora_te1_text_model_encoder_layers_0_self_attn_q_proj.alpha")
+                text_encoder_2_alpha = handle.get_tensor("lora_te2_text_model_encoder_layers_0_self_attn_k_proj.alpha")
+
+        self.assertIn(
+            "lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k.lora_down.weight",
+            keys,
+        )
+        self.assertIn(
+            "lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k.lora_up.weight",
+            keys,
+        )
+        self.assertIn(
+            "lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_out_0.lora_down.weight",
+            keys,
+        )
+        self.assertIn("lora_te1_text_model_encoder_layers_0_self_attn_q_proj.lora_down.weight", keys)
+        self.assertIn("lora_te2_text_model_encoder_layers_0_self_attn_k_proj.lora_up.weight", keys)
+        self.assertFalse(any(key.startswith("diffusion_model.down_blocks.") for key in keys))
+        self.assertEqual(unet_alpha.item(), 8)
+        self.assertEqual(text_encoder_alpha.item(), 4)
+        self.assertEqual(text_encoder_2_alpha.item(), 6)
+
     def test_non_native_transformer_models_write_diffusion_model_prefix(self):
         weights = {
             "blocks.0.attn.to_q.lora.down.weight": torch.zeros(4, 8),

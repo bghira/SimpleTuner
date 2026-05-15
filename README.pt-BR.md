@@ -53,6 +53,7 @@ SimpleTuner oferece suporte de treinamento abrangente em varias arquiteturas de 
 - **Treinamento multi-modal** - Pipeline unificado para modelos generativos de **Imagem, Video e Audio**
 - **Treinamento multi-GPU** - Treino distribuido em varias GPUs com otimizacao automatica
 - **Cache avancado** - Embeddings de imagem, video, audio e legenda em disco para treino mais rapido
+- **Integracao com CaptionFlow** - Gere captions de datasets com GPUs locais pela fila de jobs da Web UI usando [bghira/CaptionFlow](https://github.com/bghira/CaptionFlow); veja o [guia de integracao CaptionFlow](/documentation/CAPTIONFLOW.pt-BR.md)
 - **Aspect bucketing** - Suporte a tamanhos e proporcoes variadas de imagem/video
 - **Sliders de conceito** - Targeting amigavel para sliders em LoRA/LyCORIS/full (via LyCORIS `full`) com amostragem positiva/negativa/neutra e forca por prompt; veja o [guia Slider LoRA](/documentation/SLIDER_LORA.pt-BR.md)
 - **Otimizacao de memoria** - A maioria dos modelos treinaveis em GPU 24G, muitos em 16G com otimizacoes

@@ -709,6 +709,53 @@ En este ejemplo, el dataset de 512px se usa para los pasos 1-300, luego el datas
 - **Advertencia:** Esto es destructivo y no se puede deshacer. Úsalo con cuidado.
 - **Default:** Usa el argumento `--delete_problematic_images` del trainer (default: `false`).
 
+### `delete_nsfw_images`
+
+- **Valores:** `true` | `false`
+- **Descripción:** Cuando `--enable_nsfw_check` está habilitado, las muestras rechazadas por el clasificador NSFW se eliminan de este backend si el backend admite eliminación.
+- **Advertencia:** Esto es destructivo y no se puede deshacer. Los datasets de Hugging Face son de solo lectura y solo se eliminan de los metadatos de la ejecución actual.
+- **Default:** Usa el argumento `--delete_nsfw_images` del trainer (default: `false`).
+
+<a id="nsfw-classifier-checks-during-vae-caching"></a>
+
+### Comprobaciones del clasificador NSFW durante el caché VAE
+
+SimpleTuner puede escanear muestras de entrenamiento con clasificadores de imágenes de Hugging Face Transformers durante el preprocesamiento del caché VAE configurando `--enable_nsfw_check=true`. El escaneo ocurre después del bucket discovery y antes de la codificación VAE, por lo que las muestras rechazadas se eliminan de los buckets de metadatos actuales antes de escribir latents.
+
+Para notas de privacidad, responsabilidad y contexto legal, consulta [NSFW.es.md](NSFW.es.md).
+
+El escaneo solo se aplica a muestras sin caché que el caché VAE está a punto de procesar. Las entradas de caché VAE existentes se consideran confiables, y `skip_file_discovery=vae` omite la aplicación NSFW porque el trainer asume que el dataset ya fue preparado según la política del usuario. Los datasets de evaluación no se escanean.
+
+Configuración de clasificadores:
+- `--nsfw_check_models` acepta una lista CSV de modelos estándar de clasificación de imágenes de Hugging Face Transformers. Adjunta umbrales por modelo con `model/repo:threshold=0.5`.
+- El valor predeterminado es `Falconsai/nsfw_image_detection:threshold=0.5,AdamCodd/vit-base-nsfw-detector:threshold=0.5`.
+- No se habilita `trust_remote_code`, y no se admiten clasificadores que requieran `timm` o código de modelo personalizado.
+- `--nsfw_check_min_votes` controla cuántos modelos configurados deben devolver NSFW para rechazar un frame.
+
+Controles de alcance:
+- `--nsfw_check_backend_types` acepta valores `type` de backend como `all`, `local`, `huggingface`, `csv` o `aws`.
+- `--nsfw_check_sample_types` acepta valores `dataset_type`. El valor predeterminado es `image,conditioning`; agrega `video` para escanear datasets de video.
+- `--delete_nsfw_images=true` elimina muestras rechazadas de backends mutables. Cuando está deshabilitado, solo se eliminan de los metadatos de la ejecución actual.
+
+Muestras de video y multi-frame:
+- `--nsfw_check_video_frame_count` controla cuántos frames se comprueban.
+- `--nsfw_check_video_frame_selection` puede ser `uniform`, `first` o `middle`.
+- `--nsfw_check_video_min_flagged_frames` controla cuántos frames comprobados deben rechazarse antes de rechazar toda la muestra.
+
+Cada proceso de caché VAE escribe un reporte `nsfw_classifier_report_rank*.json` en el directorio de caché VAE cuando se escanean muestras. Los reportes incluyen umbrales de modelos, conteos agregados de veredictos, rutas de muestras rechazadas y conteos de eliminación.
+
+La eliminación por backend puede habilitarse en `multidatabackend.json`:
+
+```json
+{
+  "id": "train",
+  "type": "local",
+  "dataset_type": "image",
+  "instance_data_dir": "/data/training/images",
+  "delete_nsfw_images": true
+}
+```
+
 ### Ver Estadísticas de Filtrado
 
 Cuando SimpleTuner procesa tu dataset, rastrea cuántos archivos fueron filtrados y por qué. Estas estadísticas se almacenan en el archivo de caché del dataset (`aspect_ratio_bucket_indices_*.json`) y pueden verse en la WebUI.
@@ -720,6 +767,7 @@ Cuando SimpleTuner procesa tu dataset, rastrea cuántos archivos fueron filtrado
 - **metadata_missing**: Archivos omitidos por falta de metadatos
 - **not_found**: Archivos que no se pudieron localizar
 - **already_exists**: Archivos ya en caché (no reprocesados)
+- **nsfw**: Archivos rechazados por el clasificador NSFW durante el preprocesamiento del caché VAE
 - **other**: Archivos filtrados por otras razones
 
 **Ver en la WebUI:**
