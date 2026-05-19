@@ -47,7 +47,14 @@ def analyze_test_coverage():
     ]
 
     coverage_analysis = {
-        "backend_types": {"local": False, "aws": False, "csv": False, "huggingface": False, "parquet": False},
+        "backend_types": {
+            "local": False,
+            "aws": False,
+            "csv": False,
+            "huggingface": False,
+            "webshart": False,
+            "parquet": False,
+        },
         "scenarios": {
             "minimal_config": False,
             "conditioning_datasets": False,
@@ -232,7 +239,7 @@ def main():
 
         print("\nThe integration test suite successfully validates:")
         print("1. Real config file compatibility")
-        print("2. All backend types (local, aws, csv, parquet, huggingface)")
+        print("2. All backend types (local, aws, csv, parquet, huggingface, webshart)")
         print("3. Conditioning dataset synchronization")
         print("4. Error conditions and edge cases")
         print("5. Performance metrics and validation")

@@ -1,7 +1,7 @@
 <!-- Storage Settings Body (for modal) -->
 <div class="modal-section-body">
     <!-- Backend Selection -->
-    <div class="section-group" x-show="matchesParamFilter('storage', 'backend', 'local', 'aws', 's3', 'csv', 'huggingface')">
+    <div class="section-group" x-show="matchesParamFilter('storage', 'backend', 'local', 'aws', 's3', 'csv', 'huggingface', 'webshart')">
         <h6 class="modal-section-title">Storage Backend</h6>
         <label class="form-label small">Backend Type <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#type') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
         <select class="form-select form-select-sm"
@@ -11,6 +11,7 @@
             <option value="aws">AWS S3 / compatible</option>
             <option value="csv">CSV URL list</option>
             <option value="huggingface">Hugging Face dataset</option>
+            <option value="webshart">Webshart dataset</option>
         </select>
     </div>
 
@@ -286,6 +287,60 @@
                        @input="markAsUnsaved()"
                        placeholder="lyrics">
                 <div class="form-text small">Column for lyrics (used by lyric encoder)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Webshart -->
+    <div class="section-group" x-show="editingDataset.type === 'webshart' && matchesParamFilter('webshart', 'webdataset', 'source', 'metadata', 'shard', 'cache')" x-cloak>
+        <h6 class="modal-section-title">Webshart Dataset</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Dataset Source <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model="editingDataset.source"
+                          @input="touchConnectionField(editingDataset)"
+                          placeholder="laion/conceptual-captions-12m-webdataset"></textarea>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Metadata Source <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model="editingDataset.metadata"
+                          @input="touchConnectionField(editingDataset)"
+                          placeholder="webshart/conceptual-captions-12m-webdataset-metadata"></textarea>
+                <div class="form-text small">Pass the metadata repo id; Webshart follows shard subfolders like data/.</div>
+            </div>
+        </div>
+        <div class="row g-2 mt-2">
+            <div class="col-md-4">
+                <label class="form-label small">Cache Directory <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model="editingDataset.cache_dir"
+                          @input="touchConnectionField(editingDataset)"
+                          placeholder="cache/webshart/my-dataset"></textarea>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Shard Cache GB</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.shard_cache_gb"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="25">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Parallel Downloads</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.parallel_downloads"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="4">
             </div>
         </div>
     </div>

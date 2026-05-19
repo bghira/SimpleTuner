@@ -7,6 +7,7 @@ from .base import BaseBackendBuilder
 from .csv import CsvBackendBuilder
 from .huggingface import HuggingfaceBackendBuilder
 from .local import LocalBackendBuilder
+from .webshart import WebshartBackendBuilder
 
 __all__ = [
     "BaseBackendBuilder",
@@ -14,6 +15,7 @@ __all__ = [
     "AwsBackendBuilder",
     "CsvBackendBuilder",
     "HuggingfaceBackendBuilder",
+    "WebshartBackendBuilder",
     "create_backend_builder",
     "build_backend_from_config",
 ]
@@ -25,6 +27,7 @@ def create_backend_builder(backend_type: str, accelerator, args: Optional[Any] =
         "aws": AwsBackendBuilder,
         "csv": CsvBackendBuilder,
         "huggingface": HuggingfaceBackendBuilder,
+        "webshart": WebshartBackendBuilder,
     }
 
     if backend_type not in builder_mapping:

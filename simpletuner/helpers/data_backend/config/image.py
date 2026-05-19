@@ -49,6 +49,17 @@ class ImageBackendConfig(BaseBackendConfig):
     has_huggingface_block: bool = False
     huggingface_auto_load: Optional[bool] = None
 
+    webshart: Optional[Dict[str, Any]] = None
+    webshart_source: Optional[str] = None
+    webshart_metadata: Optional[str] = None
+    webshart_hf_token: Optional[str] = None
+    webshart_subfolder: Optional[str] = None
+    webshart_cache_dir: Optional[str] = None
+    webshart_shard_cache_gb: Optional[float] = None
+    webshart_parallel_downloads: Optional[int] = None
+    webshart_buffer_size: Optional[int] = None
+    webshart_max_file_size: Optional[int] = None
+
     vae_cache_clear_each_epoch: Optional[bool] = None
     probability: float = 1.0
     repeats: int = 0
@@ -152,6 +163,21 @@ class ImageBackendConfig(BaseBackendConfig):
             config.huggingface_composite_config = hf_block.get("composite_image_config")
             config.huggingface_auto_load = hf_block.get("auto_load", backend_dict.get("auto_load"))
 
+        if config.backend_type == "webshart":
+            webshart_block = backend_dict.get("webshart", {}) or {}
+            config.webshart = webshart_block
+            config.webshart_source = backend_dict.get("source", webshart_block.get("source"))
+            config.webshart_metadata = backend_dict.get("metadata", webshart_block.get("metadata"))
+            config.webshart_hf_token = backend_dict.get("hf_token", webshart_block.get("hf_token"))
+            config.webshart_subfolder = backend_dict.get("subfolder", webshart_block.get("subfolder"))
+            config.webshart_cache_dir = webshart_block.get("cache_dir", backend_dict.get("cache_dir"))
+            config.webshart_shard_cache_gb = webshart_block.get("shard_cache_gb", backend_dict.get("shard_cache_gb"))
+            config.webshart_parallel_downloads = webshart_block.get(
+                "parallel_downloads", backend_dict.get("parallel_downloads")
+            )
+            config.webshart_buffer_size = webshart_block.get("buffer_size", backend_dict.get("buffer_size"))
+            config.webshart_max_file_size = webshart_block.get("max_file_size", backend_dict.get("max_file_size"))
+
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
         config.repeats = int(backend_dict.get("repeats", 0)) if backend_dict.get("repeats") else 0
@@ -246,6 +272,11 @@ class ImageBackendConfig(BaseBackendConfig):
                 self.metadata_backend = "huggingface"
             if self.caption_strategy is None:
                 self.caption_strategy = "huggingface"
+        elif self.backend_type == "webshart":
+            if self.metadata_backend is None:
+                self.metadata_backend = "webshart"
+            if self.caption_strategy is None:
+                self.caption_strategy = "webshart"
 
         if self.disable_vae_cache:
             self.config["disable_vae_cache"] = True
@@ -315,6 +346,9 @@ class ImageBackendConfig(BaseBackendConfig):
 
     def _validate_backend_specific_settings(self) -> None:
         validators.validate_huggingface_backend_settings(
+            self.backend_type, self.metadata_backend, self.caption_strategy, self.id
+        )
+        validators.validate_webshart_backend_settings(
             self.backend_type, self.metadata_backend, self.caption_strategy, self.id
         )
 
@@ -446,6 +480,26 @@ class ImageBackendConfig(BaseBackendConfig):
                 hf_config["composite_image_config"] = self.huggingface_composite_config
             if self.huggingface_auto_load is not None:
                 hf_config["auto_load"] = self.huggingface_auto_load
+
+        if self.backend_type == "webshart":
+            config["source"] = self.webshart_source
+            if self.webshart_metadata is not None:
+                config["metadata"] = self.webshart_metadata
+            webshart_config = config.setdefault("webshart", {})
+            if self.webshart_cache_dir is not None:
+                webshart_config["cache_dir"] = self.webshart_cache_dir
+            if self.webshart_hf_token is not None:
+                webshart_config["hf_token"] = self.webshart_hf_token
+            if self.webshart_subfolder is not None:
+                webshart_config["subfolder"] = self.webshart_subfolder
+            if self.webshart_shard_cache_gb is not None:
+                webshart_config["shard_cache_gb"] = self.webshart_shard_cache_gb
+            if self.webshart_parallel_downloads is not None:
+                webshart_config["parallel_downloads"] = self.webshart_parallel_downloads
+            if self.webshart_buffer_size is not None:
+                webshart_config["buffer_size"] = self.webshart_buffer_size
+            if self.webshart_max_file_size is not None:
+                webshart_config["max_file_size"] = self.webshart_max_file_size
 
         if self.video is not None:
             config["video"] = self.video

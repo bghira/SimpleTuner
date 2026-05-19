@@ -14,6 +14,7 @@ from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend as JsonMetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
 from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
+from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("BaseBackendBuilder")
@@ -99,6 +100,10 @@ class BaseBackendBuilder(ABC):
                 metadata_backend_args["quality_filter"] = quality_filter
                 metadata_backend_args["split_composite_images"] = backend_dict.get("split_composite_images", False)
                 metadata_backend_args["composite_image_column"] = backend_dict.get("composite_image_column", "image")
+        elif metadata_backend_type == "webshart":
+            if is_caption_dataset:
+                raise ValueError("Webshart metadata backend is not supported for caption-only datasets.")
+            MetadataBackendCls = WebshartMetadataBackend
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
 
