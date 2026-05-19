@@ -111,15 +111,33 @@ class DistillerFactory:
                 prediction_type=prediction_type,
                 student_model=student_model,
             )
-        elif method in {DistillationMethod.PERFLOW, DistillationMethod.FLOW_DPO, DistillationMethod.SELF_FORCING}:
+        elif method == DistillationMethod.PERFLOW:
             return DistillerFactory._create_registered_distiller(
                 registry_key=method.value,
                 teacher_model=teacher_model,
                 noise_scheduler=noise_scheduler,
                 distill_config=distill_config,
-                model_type=model_type,
-                model_family=model_family,
-                prediction_type=prediction_type,
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.FLOW_DPO:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                runtime_config_defaults={
+                    "model_type": model_type,
+                    "model_family": model_family,
+                    "prediction_type": prediction_type,
+                },
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.SELF_FORCING:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
                 student_model=student_model,
             )
         else:
@@ -293,9 +311,7 @@ class DistillerFactory:
         teacher_model,
         noise_scheduler,
         distill_config: Dict[str, Any],
-        model_type: str,
-        model_family: Optional[str] = None,
-        prediction_type: Optional[str] = None,
+        runtime_config_defaults: Optional[Dict[str, Any]] = None,
         student_model=None,
     ) -> DistillationBase:
         distiller_cls = DistillationRegistry.get(registry_key)
@@ -303,9 +319,9 @@ class DistillerFactory:
             raise ValueError(f"No distiller registered under '{registry_key}'.")
 
         runtime_config = dict(distill_config)
-        runtime_config.setdefault("model_type", model_type)
-        runtime_config.setdefault("model_family", model_family)
-        runtime_config.setdefault("prediction_type", prediction_type)
+        if runtime_config_defaults is not None:
+            for key, value in runtime_config_defaults.items():
+                runtime_config.setdefault(key, value)
 
         return distiller_cls(
             teacher_model=teacher_model,

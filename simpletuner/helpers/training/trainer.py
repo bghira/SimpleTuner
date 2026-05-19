@@ -30,10 +30,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
+import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
-import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -4193,6 +4193,8 @@ class Trainer:
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
+        if hasattr(self.model, "reset_flow_custom_timestep_cursor"):
+            self.model.reset_flow_custom_timestep_cursor(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
         event = lifecycle_stage_event(
             key="init_resume_checkpoint",

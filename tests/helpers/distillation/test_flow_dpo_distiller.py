@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -42,6 +43,17 @@ class _FlowModel:
         else:
             offset = 0.10 if rejected else 0.30
         return {"model_prediction": target + offset * torch.ones_like(target)}
+
+
+class _ConfigCaptureDistiller:
+    last_config = None
+
+    def __init__(self, teacher_model, student_model=None, *, noise_scheduler=None, config=None):
+        self.teacher_model = teacher_model
+        self.student_model = student_model
+        self.noise_scheduler = noise_scheduler
+        self.config = config or {}
+        _ConfigCaptureDistiller.last_config = self.config
 
 
 def _prepared_batch():
@@ -115,6 +127,39 @@ class FlowDPODistillerTests(unittest.TestCase):
         self.assertIsInstance(distiller, FlowDPODistiller)
         self.assertFalse(distiller.config["auto_beta"])
 
+    def test_registered_distiller_does_not_receive_runtime_defaults_unless_requested(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillationRegistry.get", return_value=_ConfigCaptureDistiller
+        ):
+            DistillerFactory._create_registered_distiller(
+                registry_key="perflow",
+                teacher_model=model,
+                noise_scheduler=None,
+                distill_config={"loss_weight": 2.0},
+            )
+
+        self.assertEqual(_ConfigCaptureDistiller.last_config, {"loss_weight": 2.0})
+
+    def test_registered_distiller_applies_explicit_runtime_defaults(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillationRegistry.get", return_value=_ConfigCaptureDistiller
+        ):
+            DistillerFactory._create_registered_distiller(
+                registry_key="flow_dpo",
+                teacher_model=model,
+                noise_scheduler=None,
+                distill_config={"loss_weight": 2.0},
+                runtime_config_defaults={"model_type": "lora"},
+            )
+
+        self.assertEqual(_ConfigCaptureDistiller.last_config, {"loss_weight": 2.0, "model_type": "lora"})
+
     def test_requires_low_rank_training(self):
         adapter = _Adapter()
         model = _FlowModel(adapter)
@@ -139,6 +184,21 @@ class FlowDPODistillerTests(unittest.TestCase):
         model_output = model.model_predict(batch)
 
         with self.assertRaisesRegex(ValueError, "conditioning_type=reference_strict"):
+            distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
+
+    def test_empty_conditioning_latents_reports_missing_rejected_dataset(self):
+        adapter = _Adapter()
+        model = _FlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False},
+        )
+        batch = _prepared_batch()
+        batch["conditioning_latents"] = []
+        model_output = model.model_predict(batch)
+
+        with self.assertRaisesRegex(ValueError, "conditioning_latents from the rejected-sample dataset"):
             distiller.compute_distill_loss(batch, model_output, torch.tensor(0.0))
 
     def test_rejected_latent_shape_must_match_preferred_latents(self):

@@ -16,6 +16,7 @@ def _flow_model(custom_timesteps: str, mode: str):
         accelerator=SimpleNamespace(device=torch.device("cpu"), num_processes=1, process_index=0),
     )
     model._normalize_flow_custom_timesteps = ImageModelFoundation._normalize_flow_custom_timesteps.__get__(model)
+    model.reset_flow_custom_timestep_cursor = ImageModelFoundation.reset_flow_custom_timestep_cursor.__get__(model)
     model.sample_flow_sigmas = ImageModelFoundation.sample_flow_sigmas.__get__(model)
     model.prepare_batch_conditions = ImageModelFoundation.prepare_batch_conditions.__get__(model)
     return model
@@ -60,6 +61,17 @@ class FlowCustomTimestepsTests(unittest.TestCase):
         model.accelerator.num_processes = 2
         batch = {"latents": torch.zeros(2, 1, 2, 2)}
 
+        _, timesteps = model.sample_flow_sigmas(batch=batch, state={"global_step": 1})
+
+        self.assertTrue(torch.equal(timesteps, torch.tensor([500.0, 100.0])))
+
+    def test_round_robin_resume_reset_overrides_prior_cursor(self):
+        model = _flow_model("100,200,300,400,500", "round-robin")
+        model.accelerator.num_processes = 2
+        batch = {"latents": torch.zeros(2, 1, 2, 2)}
+
+        model.sample_flow_sigmas(batch=batch, state={"global_step": 0})
+        model.reset_flow_custom_timestep_cursor(global_step=1)
         _, timesteps = model.sample_flow_sigmas(batch=batch, state={"global_step": 1})
 
         self.assertTrue(torch.equal(timesteps, torch.tensor([500.0, 100.0])))

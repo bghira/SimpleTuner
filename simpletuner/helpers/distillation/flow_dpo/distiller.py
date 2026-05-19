@@ -142,7 +142,8 @@ class FlowDPODistiller(DistillationBase):
             raise ValueError(
                 "Flow-DPO requires a rejected-sample conditioning dataset with conditioning_type=reference_strict."
             )
-        if prepared_batch.get("conditioning_latents") is None:
+        conditioning_latents = prepared_batch.get("conditioning_latents")
+        if conditioning_latents is None or (isinstance(conditioning_latents, list) and not conditioning_latents):
             raise ValueError("Flow-DPO requires conditioning_latents from the rejected-sample dataset.")
         required_keys = ("latents", "noise", "input_noise", "sigmas", "timesteps", "noisy_latents")
         missing = [key for key in required_keys if key not in prepared_batch or prepared_batch[key] is None]

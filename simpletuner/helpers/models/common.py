@@ -4008,6 +4008,11 @@ class ModelFoundation(ABC):
 
         return tensor
 
+    def reset_flow_custom_timestep_cursor(self, global_step: int = 0) -> None:
+        if hasattr(self, "_flow_custom_timestep_cursor"):
+            delattr(self, "_flow_custom_timestep_cursor")
+        self._flow_custom_timestep_resume_step = int(global_step or 0)
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -4036,11 +4041,26 @@ class ModelFoundation(ABC):
                 if timestep_mode == "round-robin":
                     world_size = max(1, int(getattr(self.accelerator, "num_processes", 1) or 1))
                     process_index = int(getattr(self.accelerator, "process_index", 0) or 0)
+                    if base_timesteps.numel() < bsz * world_size and not getattr(
+                        self, "_flow_custom_timestep_overlap_warning_logged", False
+                    ):
+                        logger.warning(
+                            "flow_timesteps_mode=round-robin has %s custom timestep(s), but the global batch "
+                            "consumes %s sample(s) per step. Different ranks may reuse timestep entries on the same step; "
+                            "provide at least train_batch_size * num_processes values for non-overlapping per-step "
+                            "coverage.",
+                            base_timesteps.numel(),
+                            bsz * world_size,
+                        )
+                        self._flow_custom_timestep_overlap_warning_logged = True
                     if not hasattr(self, "_flow_custom_timestep_cursor"):
-                        completed_steps = int(state.get("global_step", 0) or 0)
+                        resume_step = getattr(self, "_flow_custom_timestep_resume_step", None)
+                        completed_steps = int(resume_step if resume_step is not None else state.get("global_step", 0) or 0)
                         self._flow_custom_timestep_cursor = (
                             completed_steps * bsz * world_size + process_index * bsz
                         ) % base_timesteps.numel()
+                        if resume_step is not None:
+                            delattr(self, "_flow_custom_timestep_resume_step")
                     cursor = int(getattr(self, "_flow_custom_timestep_cursor", 0))
                     indices = (torch.arange(bsz, device=self.accelerator.device) + cursor) % base_timesteps.numel()
                     self._flow_custom_timestep_cursor = (cursor + bsz * world_size) % base_timesteps.numel()

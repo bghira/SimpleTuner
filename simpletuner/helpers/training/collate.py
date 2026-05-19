@@ -27,18 +27,13 @@ to_tensor = ToTensor()
 REFERENCE_CONDITIONING_TYPES = {"reference_strict", "reference_loose"}
 MASK_CONDITIONING_TYPES = {"mask", "segmentation"}
 
-_FLOW_DPO_REFERENCE_LATENTS_CACHE = {}
-
 
 def _flow_dpo_requires_reference_latents() -> bool:
     method = StateTracker.get_distillation_method()
     if method is None:
         method = getattr(StateTracker.get_args(), "distillation_method", None)
     method = getattr(method, "value", method)
-    cache_key = method.lower() if isinstance(method, str) else method
-    if cache_key not in _FLOW_DPO_REFERENCE_LATENTS_CACHE:
-        _FLOW_DPO_REFERENCE_LATENTS_CACHE[cache_key] = cache_key == "flow_dpo"
-    return _FLOW_DPO_REFERENCE_LATENTS_CACHE[cache_key]
+    return isinstance(method, str) and method.lower() == "flow_dpo"
 
 
 def debug_log(msg: str):
