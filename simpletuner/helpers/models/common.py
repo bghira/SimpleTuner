@@ -5646,6 +5646,10 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         hidden_size = getattr(config, "hidden_size", None)
         if hidden_size is not None:
             return int(hidden_size)
+        # Fallback: dim (Z-Image and related single-stream transformer configs)
+        dim = getattr(config, "dim", None)
+        if dim is not None:
+            return int(dim)
         return None
 
     def _init_urepa_regularizer(self):
