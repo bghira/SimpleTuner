@@ -11,6 +11,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import get_local_state_dir
+
+os.environ.setdefault("SIMPLETUNER_STATE_DIR", str(get_local_state_dir()))
+os.environ.setdefault("SIMPLETUNER_SERVER_ROOT_PID", str(os.getpid()))
+
 from simpletuner.simpletuner_sdk.configuration import Configuration
 
 # Import route modules
@@ -20,8 +25,6 @@ from simpletuner.simpletuner_sdk.server.routes.publishing import router as publi
 from simpletuner.simpletuner_sdk.server.routes.web import router as web_router
 from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_static_directory, get_template_directory
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
-
-os.environ.setdefault("SIMPLETUNER_SERVER_ROOT_PID", str(os.getpid()))
 
 
 # Pydantic models for request/response
