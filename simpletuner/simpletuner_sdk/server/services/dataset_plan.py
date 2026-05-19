@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
 
+import simpletuner.helpers.distillation.factory  # noqa: F401
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (

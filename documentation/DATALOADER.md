@@ -188,6 +188,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
   - **mask**: Binary masks for inpainting training.
   - **reference_strict**: Reference images with strict pixel alignment (for edit models like Qwen Edit).
   - **reference_loose**: Reference images with loose alignment.
+- **Flow-DPO note:** `reference_strict` is also used by [Flow-DPO](experimental/FLOW_DPO.md) to provide the rejected/lose image latents for each preferred training sample.
 
 ### `source_dataset_id`
 
@@ -200,6 +201,7 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 - **Values:** `id` value of conditioning dataset or an array of `id` values
 - **Description:** As described in [the ControlNet guide](CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
 - **Note:** If you have multiple conditioning datasets, you can specify them as an array of `id` values. When training Flux Kontext, this allows switching between conditions randomly or stitching inputs together to train in more advanced multi-image compositing tasks.
+- **Flow-DPO:** Pair a `reference_strict` conditioning dataset here when using [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.md).
 
 ### `instance_data_dir` / `aws_data_prefix`
 

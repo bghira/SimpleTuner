@@ -2,6 +2,8 @@
 
 En este ejemplo, entrenaremos un **estudiante de 4 pasos** usando **destilación DCM** a partir de un modelo teacher de flow-matching grande como [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B).
 
+> **Nota:** Los métodos de destilación no pueden combinarse con `--train_text_encoder`; mantén desactivado el entrenamiento del text encoder.
+
 DCM soporta:
 
 * Modo **Semantic**: flow-matching estándar con CFG integrado.

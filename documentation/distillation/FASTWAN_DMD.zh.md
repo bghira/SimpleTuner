@@ -2,6 +2,8 @@
 
 在本示例中，我们将使用 **DMD（Distribution Matching Distillation）** 从大型 flow-matching 教师模型（例如 [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B)）训练 **3 步学生**。
 
+> **注记:** 蒸馏方法不能与 `--train_text_encoder` 一起使用；请保持 text encoder 训练关闭。
+
 DMD 特性：
 
 * **Generator（Student）**：学习以更少步数匹配教师

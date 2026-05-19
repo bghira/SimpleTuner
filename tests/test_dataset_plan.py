@@ -139,6 +139,27 @@ class StrictI2VDatasetValidationTest(unittest.TestCase):
         errors = self._collect_errors(validations)
         self.assertTrue(any("Caption datasets cannot use CSV backends" in msg for msg in errors))
 
+    def test_flow_dpo_requires_conditioning_dataset(self):
+        datasets = self._base_datasets()
+        validations = compute_validations(
+            datasets,
+            blueprints=[],
+            distillation_method="flow_dpo",
+        )
+        errors = self._collect_errors(validations)
+        self.assertTrue(any("flow dpo requires datasets" in msg for msg in errors))
+
+    def test_flow_dpo_accepts_image_and_conditioning_datasets(self):
+        datasets = self._base_datasets()
+        datasets.append({"id": "rejected", "dataset_type": "conditioning", "type": "local"})
+        validations = compute_validations(
+            datasets,
+            blueprints=[],
+            distillation_method="flow_dpo",
+        )
+        errors = self._collect_errors(validations)
+        self.assertFalse(any("flow dpo requires datasets" in msg for msg in errors))
+
 
 class IsImmediatelyAvailableTest(unittest.TestCase):
     """Tests for the _is_immediately_available helper function."""

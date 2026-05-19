@@ -187,6 +187,7 @@
   - **mask**: 修补训练用的二值掩码。
   - **reference_strict**: 严格像素对齐的参考图像（如 Qwen Edit 等编辑模型）。
   - **reference_loose**: 宽松对齐的参考图像。
+- **Flow-DPO 说明:** `reference_strict` 也由 [Flow-DPO](experimental/FLOW_DPO.zh.md) 使用，为每个 preferred 训练样本提供 rejected/lose 图像 latent。
 
 ### `source_dataset_id`
 
@@ -199,6 +200,7 @@
 - **取值:** 条件数据集的 `id` 或 `id` 数组
 - **说明:** 如 [ControlNet 指南](CONTROLNET.md) 所述，可通过该选项将 `image` 数据集与 ControlNet 或图像掩码数据配对。
 - **注记:** 如果有多个条件数据集，可指定 `id` 数组。训练 Flux Kontext 时，可在条件之间随机切换或拼接输入，用于更高级的多图像合成任务。
+- **Flow-DPO:** 使用 [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.zh.md) 时，在这里配对一个 `reference_strict` conditioning 数据集。
 
 ### `instance_data_dir` / `aws_data_prefix`
 

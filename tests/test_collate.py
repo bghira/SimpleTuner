@@ -51,19 +51,27 @@ class _StubModel:
 
 
 class _StubConditioningSample:
-    def __init__(self, training_path: str, backend_id: str, caption=None, paired_training_path: str = None):
+    def __init__(
+        self,
+        training_path: str,
+        backend_id: str,
+        caption=None,
+        paired_training_path: str = None,
+        conditioning_type: str | None = None,
+    ):
         self._training_path = training_path
         self._source_dataset_id = backend_id
         self._image_path = training_path
         self.caption = caption
         self.data_backend_id = backend_id
         self._paired_training_path = paired_training_path or training_path
+        self._conditioning_type = conditioning_type
 
     def training_sample_path(self, training_dataset_id: str):
         return self._paired_training_path
 
     def get_conditioning_type(self):
-        return None
+        return self._conditioning_type
 
     def image_path(self, basename_only=False):
         return self._training_path
@@ -334,6 +342,50 @@ class CollateFunctionTests(unittest.TestCase):
                 result = collate_fn(batch)
 
         self.assertIsNotNone(result["conditioning_pixel_values"])
+        self.assertIsNotNone(result["conditioning_latents"])
+
+    def test_flow_dpo_collects_reference_latents_without_model_requirement(self):
+        text_outputs = {"prompt_embeds": torch.zeros(1, 1)}
+        cond_backend = {
+            "id": "cond-1",
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/cond"},
+            "conditioning_image_embed_cache": SimpleNamespace(),
+        }
+        backend_dict = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "conditioning_data": [cond_backend],
+            "config": {"instance_data_dir": "/train"},
+            "data_backend": _make_stub_data_backend(),
+        }
+        model = _StubModel(
+            requires_conditioning=False,
+            requires_conditioning_latents=False,
+            requires_conditioning_dataset=False,
+        )
+        conditioning_sample = _StubConditioningSample(
+            "/cond/ref.png",
+            "cond-1",
+            paired_training_path="sample.png",
+            conditioning_type="reference_strict",
+        )
+        batch = copy.deepcopy(self.base_batch)
+        batch[0]["conditioning_samples"] = [conditioning_sample]
+
+        patchers, _ = self._patch_state_tracker(
+            model=model,
+            data_backend=backend_dict,
+            text_outputs=text_outputs,
+            backend_lookup={"backend-1": backend_dict, "cond-1": cond_backend},
+        )
+
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            stack.enter_context(patch.object(StateTracker, "get_distillation_method", return_value="flow_dpo"))
+            result = collate_fn(batch)
+
+        self.assertEqual(result["conditioning_type"], "reference_strict")
         self.assertIsNotNone(result["conditioning_latents"])
 
     def test_describe_missing_conditioning_pairs_reports_backend(self):

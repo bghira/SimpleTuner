@@ -2,6 +2,8 @@
 
 Neste exemplo, vamos treinar um **student SDXL de 4-8 steps** usando destilacao **LCM (Latent Consistency Model)** a partir de um modelo teacher SDXL pretreinado.
 
+> **Nota:** Métodos de destilação não podem ser combinados com `--train_text_encoder`; mantenha o treino do text encoder desativado.
+
 > **NOTA**: Outros modelos podem ser usados como base; o SDXL e usado apenas para ilustrar os conceitos de configuracao do LCM.
 
 O LCM permite:
