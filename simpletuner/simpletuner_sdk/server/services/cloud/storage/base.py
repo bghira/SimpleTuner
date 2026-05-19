@@ -21,22 +21,42 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-def get_default_config_dir() -> Path:
-    """Get the default configuration directory in a cross-platform manner.
+def get_local_state_dir() -> Path:
+    """Get the local per-machine SimpleTuner state directory.
 
-    Environment variable override:
-        SIMPLETUNER_CONFIG_DIR: If set, use this path directly (useful for testing)
+    This intentionally avoids shared ML workspace paths. SQLite-backed server
+    state should stay local to the machine unless explicitly configured.
+    """
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return base / "SimpleTuner"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "SimpleTuner"
+    return Path.home() / ".simpletuner"
+
+
+def get_default_config_dir() -> Path:
+    """Get the default server state directory in a cross-platform manner.
+
+    Environment variable overrides:
+        SIMPLETUNER_STATE_DIR: If set, use this path for server state.
+        SIMPLETUNER_CONFIG_DIR: Legacy fallback for tests/custom deployments.
 
     Returns:
-        Path to the configuration directory:
+        Path to the server state directory:
         - Windows: %APPDATA%/SimpleTuner
         - macOS: ~/Library/Application Support/SimpleTuner
         - Linux: /workspace/simpletuner, /notebooks/simpletuner, or ~/.simpletuner
     """
-    # Check for explicit override (testing, custom deployment)
+    state_override = os.environ.get("SIMPLETUNER_STATE_DIR")
+    if state_override:
+        return Path(state_override).expanduser()
+
+    # Legacy override retained for tests and deployments that already use it
+    # as a state root. New server entry points set SIMPLETUNER_STATE_DIR.
     override = os.environ.get("SIMPLETUNER_CONFIG_DIR")
     if override:
-        return Path(override)
+        return Path(override).expanduser()
 
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))

@@ -118,6 +118,16 @@ def _setup_ssl_config(ssl_key: Optional[str] = None, ssl_cert: Optional[str] = N
         return None
 
 
+def _ensure_server_state_dir() -> None:
+    """Keep server SQLite state local unless the user explicitly overrides it."""
+    if os.environ.get("SIMPLETUNER_STATE_DIR"):
+        return
+
+    from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import get_local_state_dir
+
+    os.environ["SIMPLETUNER_STATE_DIR"] = str(get_local_state_dir())
+
+
 def cmd_server(args) -> int:
     """Handle server command."""
     host = getattr(args, "host", "0.0.0.0")
@@ -129,6 +139,8 @@ def cmd_server(args) -> int:
     ssl_cert = getattr(args, "ssl_cert", None)
     ssl_no_verify = getattr(args, "ssl_no_verify", False)
     env = getattr(args, "env", None)
+
+    _ensure_server_state_dir()
 
     if not os.environ.get("SIMPLETUNER_CONFIG_DIR"):
         webui_configs_dir = _get_webui_configs_dir()
