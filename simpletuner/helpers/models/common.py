@@ -3841,7 +3841,17 @@ class ModelFoundation(ABC):
         if isinstance(batch.get("conditioning_pixel_values"), list) and len(batch["conditioning_pixel_values"]) > 0:
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
         if isinstance(batch.get("conditioning_latents"), list) and len(batch["conditioning_latents"]) > 0:
-            batch["conditioning_latents"] = batch["conditioning_latents"][0]
+            selected_index = 0
+            latent_types = batch.get("conditioning_latents_type")
+            if (
+                batch.get("conditioning_type") == "reference_strict"
+                and isinstance(latent_types, list)
+                and "reference_strict" in latent_types
+            ):
+                selected_index = latent_types.index("reference_strict")
+            batch["conditioning_latents"] = batch["conditioning_latents"][selected_index]
+            if isinstance(latent_types, list) and selected_index < len(latent_types):
+                batch["conditioning_latents_type"] = latent_types[selected_index]
         conditioning_embeds = batch.get("conditioning_image_embeds")
         if isinstance(conditioning_embeds, list) and len(conditioning_embeds) > 0:
             if not isinstance(conditioning_embeds[0], dict):
@@ -3998,6 +4008,65 @@ class ModelFoundation(ABC):
 
         return tensor
 
+    def reset_flow_custom_timestep_cursor(self, global_step: int = 0) -> None:
+        if hasattr(self, "_flow_custom_timestep_cursor"):
+            delattr(self, "_flow_custom_timestep_cursor")
+        self._flow_custom_timestep_resume_step = int(global_step or 0)
+
+    def _flow_custom_timestep_state_path(self, ckpt_dir: str) -> str:
+        rank = _get_rank()
+        filename = "flow_custom_timestep_state.json" if rank == 0 else f"flow_custom_timestep_state-{rank}.json"
+        return os.path.join(ckpt_dir, filename)
+
+    def save_flow_custom_timestep_state(self, ckpt_dir: str) -> None:
+        if (
+            self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None)) is None
+            or str(getattr(self.config, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
+            != "round-robin"
+        ):
+            return
+
+        state = {"rank": _get_rank()}
+        if hasattr(self, "_flow_custom_timestep_cursor"):
+            state["cursor"] = int(getattr(self, "_flow_custom_timestep_cursor"))
+        elif hasattr(self, "_flow_custom_timestep_resume_step"):
+            state["resume_step"] = int(getattr(self, "_flow_custom_timestep_resume_step"))
+        else:
+            return
+
+        os.makedirs(ckpt_dir, exist_ok=True)
+        path = self._flow_custom_timestep_state_path(ckpt_dir)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        os.replace(tmp_path, path)
+
+    def load_flow_custom_timestep_state(self, ckpt_dir: str, fallback_global_step: int = 0) -> bool:
+        rank_path = self._flow_custom_timestep_state_path(ckpt_dir)
+        generic_path = os.path.join(ckpt_dir, "flow_custom_timestep_state.json")
+        candidate_paths = [rank_path]
+        if generic_path != rank_path:
+            candidate_paths.append(generic_path)
+
+        for path in candidate_paths:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+            cursor = state.get("cursor")
+            if cursor is not None:
+                self._flow_custom_timestep_cursor = int(cursor)
+                if hasattr(self, "_flow_custom_timestep_resume_step"):
+                    delattr(self, "_flow_custom_timestep_resume_step")
+                return True
+            resume_step = state.get("resume_step")
+            if resume_step is not None:
+                self.reset_flow_custom_timestep_cursor(int(resume_step))
+                return True
+
+        self.reset_flow_custom_timestep_cursor(fallback_global_step)
+        return False
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -4007,6 +4076,10 @@ class ModelFoundation(ABC):
         bsz = batch["latents"].shape[0]
         custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
         if custom_timesteps is not None:
+            timestep_mode = str(getattr(self.config, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
+            if timestep_mode not in {"fixed-list", "round-robin"}:
+                raise ValueError("flow_timesteps_mode must be either 'fixed-list' or 'round-robin'.")
+
             # Interpret values <=1.0 as sigmas, otherwise as timesteps in [0, 1000].
             if torch.max(custom_timesteps) <= 1.0:
                 base_sigmas = custom_timesteps.clamp(0.0, 1.0)
@@ -4019,7 +4092,34 @@ class ModelFoundation(ABC):
                 sigmas = base_sigmas.expand(bsz)
                 timesteps = base_timesteps.expand(bsz)
             else:
-                indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
+                if timestep_mode == "round-robin":
+                    world_size = max(1, int(getattr(self.accelerator, "num_processes", 1) or 1))
+                    process_index = int(getattr(self.accelerator, "process_index", 0) or 0)
+                    if base_timesteps.numel() < bsz * world_size and not getattr(
+                        self, "_flow_custom_timestep_overlap_warning_logged", False
+                    ):
+                        logger.warning(
+                            "flow_timesteps_mode=round-robin has %s custom timestep(s), but the global batch "
+                            "consumes %s sample(s) per step. Different ranks may reuse timestep entries on the same step; "
+                            "provide at least train_batch_size * num_processes values for non-overlapping per-step "
+                            "coverage.",
+                            base_timesteps.numel(),
+                            bsz * world_size,
+                        )
+                        self._flow_custom_timestep_overlap_warning_logged = True
+                    if not hasattr(self, "_flow_custom_timestep_cursor"):
+                        resume_step = getattr(self, "_flow_custom_timestep_resume_step", None)
+                        completed_steps = int(resume_step if resume_step is not None else state.get("global_step", 0) or 0)
+                        self._flow_custom_timestep_cursor = (
+                            completed_steps * bsz * world_size + process_index * bsz
+                        ) % base_timesteps.numel()
+                        if resume_step is not None:
+                            delattr(self, "_flow_custom_timestep_resume_step")
+                    cursor = int(getattr(self, "_flow_custom_timestep_cursor", 0))
+                    indices = (torch.arange(bsz, device=self.accelerator.device) + cursor) % base_timesteps.numel()
+                    self._flow_custom_timestep_cursor = (cursor + bsz * world_size) % base_timesteps.numel()
+                else:
+                    indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
                 sigmas = base_sigmas[indices]
                 timesteps = base_timesteps[indices]
             return sigmas, timesteps
@@ -5546,6 +5646,10 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         hidden_size = getattr(config, "hidden_size", None)
         if hidden_size is not None:
             return int(hidden_size)
+        # Fallback: dim (Z-Image and related single-stream transformer configs)
+        dim = getattr(config, "dim", None)
+        if dim is not None:
+            return int(dim)
         return None
 
     def _init_urepa_regularizer(self):

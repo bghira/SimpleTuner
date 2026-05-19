@@ -2,6 +2,8 @@
 
 In this example, we'll be training a **3-step student** using **DMD (Distribution Matching Distillation)** from a large flow-matching teacher model like [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B).
 
+> **Note:** Distillation methods cannot be combined with `--train_text_encoder`; keep text encoder training disabled.
+
 DMD features:
 
 * **Generator (Student)**: Learns to match teacher in fewer steps

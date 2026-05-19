@@ -72,9 +72,9 @@
 
     ---
 
-    Research features such as Self-Flow, LayerSync, Diff2Flow, and Video CREPA
+    Research features such as Self-Flow, Flow-DPO, LayerSync, Diff2Flow, and Video CREPA
 
-    [:octicons-arrow-right-24: Self-Flow](experimental/SELF_FLOW.md)
+    [:octicons-arrow-right-24: Flow-DPO](experimental/FLOW_DPO.md)
 
 </div>
 

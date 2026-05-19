@@ -338,6 +338,7 @@ nav:
       - Sliding Window (SLA): attention/SLA.md
     - Experimental:
       - Diff2Flow: experimental/DIFF2FLOW.md
+      - Flow-DPO: experimental/FLOW_DPO.md
       - LayerSync: experimental/LAYERSYNC.md
       - Self-Flow: experimental/SELF_FLOW.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md

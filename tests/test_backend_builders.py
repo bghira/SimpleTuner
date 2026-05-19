@@ -15,6 +15,7 @@ from simpletuner.helpers.data_backend.builders import (
     CsvBackendBuilder,
     HuggingfaceBackendBuilder,
     LocalBackendBuilder,
+    WebshartBackendBuilder,
     build_backend_from_config,
     create_backend_builder,
 )
@@ -36,7 +37,13 @@ class TestBaseBackendBuilder(unittest.TestCase):
 
     def test_builder_classes_have_required_methods(self):
         """All builder classes implement required methods"""
-        builder_classes = [LocalBackendBuilder, AwsBackendBuilder, CsvBackendBuilder, HuggingfaceBackendBuilder]
+        builder_classes = [
+            LocalBackendBuilder,
+            AwsBackendBuilder,
+            CsvBackendBuilder,
+            HuggingfaceBackendBuilder,
+            WebshartBackendBuilder,
+        ]
 
         for builder_class in builder_classes:
             builder = builder_class(self.accelerator)
@@ -50,7 +57,13 @@ class TestBaseBackendBuilder(unittest.TestCase):
 
     def test_builder_classes_have_accelerator(self):
         """All builder classes store accelerator"""
-        builder_classes = [LocalBackendBuilder, AwsBackendBuilder, CsvBackendBuilder, HuggingfaceBackendBuilder]
+        builder_classes = [
+            LocalBackendBuilder,
+            AwsBackendBuilder,
+            CsvBackendBuilder,
+            HuggingfaceBackendBuilder,
+            WebshartBackendBuilder,
+        ]
 
         for builder_class in builder_classes:
             builder = builder_class(self.accelerator)
@@ -559,6 +572,172 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
             self.fail(f"Legacy configs without a huggingface block should be accepted, but raised: {exc}")
 
 
+class TestWebshartBackendBuilder(unittest.TestCase):
+    """Test WebshartBackendBuilder class"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.accelerator = Mock()
+        self.accelerator.is_main_process = True
+        self.accelerator.is_local_main_process = True
+        self.builder = WebshartBackendBuilder(self.accelerator, {"cache_dir": "/tmp/cache", "model_family": "flux"})
+
+        self.args = {
+            "cache_dir": "/tmp/cache",
+            "compress_disk_cache": False,
+            "model_family": "flux",
+            "resolution": 1.0,
+            "resolution_type": "area",
+            "train_batch_size": 1,
+            "metadata_update_interval": 3600,
+        }
+
+    @patch("simpletuner.helpers.data_backend.builders.webshart.WebshartDataBackend")
+    def test_build_basic_config(self, mock_webshart_backend_class):
+        """Test building with basic Webshart configuration"""
+        mock_backend = Mock()
+        mock_webshart_backend_class.return_value = mock_backend
+
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_webshart",
+                "type": "webshart",
+                "source": "/datasets/shards",
+                "metadata": "/datasets/metadata",
+                "caption_strategy": "webshart",
+                "metadata_backend": "webshart",
+                "webshart": {
+                    "cache_dir": "/tmp/webshart_cache",
+                    "shard_cache_gb": 10,
+                    "parallel_downloads": 2,
+                    "buffer_size": 32,
+                    "max_file_size": 12345,
+                },
+            },
+            self.args,
+        )
+
+        result = self.builder.build(config)
+
+        mock_webshart_backend_class.assert_called_once()
+        call_kwargs = mock_webshart_backend_class.call_args[1]
+
+        self.assertEqual(call_kwargs["id"], "test_webshart")
+        self.assertEqual(call_kwargs["source"], "/datasets/shards")
+        self.assertEqual(call_kwargs["metadata"], "/datasets/metadata")
+        self.assertEqual(call_kwargs["cache_dir"], "/tmp/webshart_cache")
+        self.assertEqual(call_kwargs["shard_cache_gb"], 10)
+        self.assertEqual(call_kwargs["parallel_downloads"], 2)
+        self.assertEqual(call_kwargs["buffer_size"], 32)
+        self.assertEqual(call_kwargs["max_file_size"], 12345)
+        self.assertEqual(call_kwargs["dataset_type"], "image")
+        self.assertFalse(call_kwargs["compress_cache"])
+
+        self.assertEqual(result, mock_backend)
+
+    @patch("simpletuner.helpers.data_backend.builders.webshart.WebshartDataBackend")
+    def test_build_assigns_default_cache_dir_when_missing(self, mock_webshart_backend_class):
+        """Default cache directory should be derived when none is provided."""
+        mock_webshart_backend_class.return_value = Mock()
+
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_webshart",
+                "type": "webshart",
+                "source": "/datasets/shards",
+            },
+            self.args,
+        )
+
+        self.builder.build(config)
+
+        expected_cache = Path("/tmp/cache") / "webshart" / "test_webshart"
+        call_kwargs = mock_webshart_backend_class.call_args[1]
+        self.assertEqual(Path(call_kwargs["cache_dir"]), expected_cache)
+        self.assertEqual(Path(config.webshart_cache_dir), expected_cache)
+
+    def test_validate_webshart_config_success(self):
+        """Test Webshart config validation with valid configuration"""
+        config = ImageBackendConfig.from_dict(
+            {"id": "test_webshart", "type": "webshart", "source": "/datasets/shards"},
+            self.args,
+        )
+
+        self.builder._validate_webshart_config(config)
+
+    def test_validate_webshart_config_missing_source(self):
+        """Test Webshart config validation with missing source"""
+        config = ImageBackendConfig.from_dict({"id": "test_webshart", "type": "webshart"}, self.args)
+
+        with self.assertRaises(ValueError) as context:
+            self.builder._validate_webshart_config(config)
+
+        self.assertIn("source is required", str(context.exception))
+
+    def test_validate_webshart_config_invalid_metadata_backend(self):
+        """Test Webshart config validation with invalid metadata backend"""
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_webshart",
+                "type": "webshart",
+                "source": "/datasets/shards",
+                "metadata_backend": "discovery",
+            },
+            self.args,
+        )
+
+        with self.assertRaises(ValueError) as context:
+            self.builder._validate_webshart_config(config)
+
+        self.assertIn("metadata_backend must be 'webshart'", str(context.exception))
+
+    def test_validate_webshart_config_invalid_caption_strategy(self):
+        """Test Webshart config validation with invalid caption strategy"""
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_webshart",
+                "type": "webshart",
+                "source": "/datasets/shards",
+                "caption_strategy": "filename",
+            },
+            self.args,
+        )
+
+        with self.assertRaises(ValueError) as context:
+            self.builder._validate_webshart_config(config)
+
+        self.assertIn("caption_strategy must be 'webshart'", str(context.exception))
+
+    @patch("simpletuner.helpers.data_backend.builders.base.WebshartMetadataBackend")
+    @patch("simpletuner.helpers.data_backend.builders.webshart.WebshartDataBackend")
+    def test_build_with_metadata_uses_webshart_cache_root(self, mock_webshart_backend_class, mock_metadata_backend_class):
+        """Test complete build_with_metadata workflow"""
+        mock_data_backend = Mock()
+        mock_webshart_backend_class.return_value = mock_data_backend
+        mock_metadata_backend = Mock()
+        mock_metadata_backend_class.return_value = mock_metadata_backend
+
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_webshart",
+                "type": "webshart",
+                "source": "/datasets/shards",
+                "webshart": {"cache_dir": "/tmp/webshart_cache"},
+            },
+            self.args,
+        )
+
+        result = self.builder.build_with_metadata(config, self.args)
+
+        self.assertEqual(result["id"], "test_webshart")
+        self.assertEqual(result["data_backend"], mock_data_backend)
+        self.assertEqual(result["metadata_backend"], mock_metadata_backend)
+        self.assertEqual(result["instance_data_dir"], "/tmp/webshart_cache")
+        metadata_kwargs = mock_metadata_backend_class.call_args[1]
+        self.assertEqual(metadata_kwargs["instance_data_dir"], "/tmp/webshart_cache")
+        self.assertEqual(metadata_kwargs["data_backend"], mock_data_backend)
+
+
 class TestCreateBackendBuilder(unittest.TestCase):
     """Test the create_backend_builder factory function"""
 
@@ -594,6 +773,13 @@ class TestCreateBackendBuilder(unittest.TestCase):
         self.assertIsInstance(builder, HuggingfaceBackendBuilder)
         self.assertEqual(builder.accelerator, self.accelerator)
 
+    def test_create_webshart_builder(self):
+        """Test creating Webshart backend builder"""
+        builder = create_backend_builder("webshart", self.accelerator)
+
+        self.assertIsInstance(builder, WebshartBackendBuilder)
+        self.assertEqual(builder.accelerator, self.accelerator)
+
     def test_create_builder_invalid_type(self):
         """Test creating builder with invalid backend type"""
         with self.assertRaises(ValueError) as context:
@@ -604,7 +790,7 @@ class TestCreateBackendBuilder(unittest.TestCase):
 
     def test_supported_backend_types(self):
         """Test that all expected backend types are supported"""
-        expected_types = ["local", "aws", "csv", "huggingface"]
+        expected_types = ["local", "aws", "csv", "huggingface", "webshart"]
 
         for backend_type in expected_types:
             # Should not raise any exceptions

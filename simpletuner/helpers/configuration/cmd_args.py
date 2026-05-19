@@ -18,6 +18,7 @@ from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
 from simpletuner.helpers.configuration.template_vars import render_modelspec_comment
+from simpletuner.helpers.distillation.common import validate_distillation_text_encoder_training
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import (
     AttentionBackendMode,
@@ -691,6 +692,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if hasattr(args, "modelspec_comment"):
         args.modelspec_comment = _process_modelspec_comment(args.modelspec_comment)
+
+    validate_distillation_text_encoder_training(
+        getattr(args, "distillation_method", None),
+        bool(getattr(args, "train_text_encoder", False)),
+    )
+
+    if hasattr(args, "flow_timesteps_mode"):
+        flow_timesteps_mode = str(getattr(args, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
+        if flow_timesteps_mode not in {"fixed-list", "round-robin"}:
+            raise ValueError("--flow_timesteps_mode must be either 'fixed-list' or 'round-robin'.")
+        args.flow_timesteps_mode = flow_timesteps_mode
 
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):

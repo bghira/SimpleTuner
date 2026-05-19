@@ -249,7 +249,7 @@ class TestConfigurationValidation(unittest.TestCase):
             logger.info(f"Dataset type '{dataset_type}' is valid")
 
         # Test backend types
-        valid_backend_types = ["local", "aws", "csv", "huggingface"]
+        valid_backend_types = ["local", "aws", "csv", "huggingface", "webshart"]
         for backend_type in valid_backend_types:
             config = {"id": "test", "type": backend_type, "dataset_type": "image"}
             self.assertIn(backend_type, valid_backend_types)

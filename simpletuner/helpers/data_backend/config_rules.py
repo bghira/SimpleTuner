@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
+import simpletuner.helpers.distillation.factory  # noqa: F401
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,

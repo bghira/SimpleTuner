@@ -349,7 +349,7 @@ class SaveHookManager:
             return False
         try:
             with safe_open(target_path, framework="pt", device="cpu") as handle:
-                tensors = {key: handle.get_tensor(key) for key in handle.keys()}
+                tensors = {key: handle.get_tensor(key).clone() for key in handle.keys()}
                 existing_metadata = handle.metadata() or {}
             combined_metadata = dict(existing_metadata)
             combined_metadata.update(metadata)

@@ -2,6 +2,8 @@
 
 इस उदाहरण में हम एक **4-step student** ट्रेन करेंगे **DCM distillation** के जरिए, एक बड़े flow-matching teacher मॉडल से जैसे [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B)।
 
+> **Note:** Distillation methods को `--train_text_encoder` के साथ combine नहीं किया जा सकता; text encoder training disabled रखें।
+
 DCM सपोर्ट करता है:
 
 * **Semantic** मोड: standard flow-matching जिसमें CFG baked-in होता है।

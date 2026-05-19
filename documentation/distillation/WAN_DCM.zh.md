@@ -2,6 +2,8 @@
 
 在本示例中，我们将从大型 flow-matching 教师模型（如 [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B)）使用 **DCM 蒸馏**训练 **4 步学生**。
 
+> **注记:** 蒸馏方法不能与 `--train_text_encoder` 一起使用；请保持 text encoder 训练关闭。
+
 DCM 支持：
 
 * **Semantic** 模式：带 CFG 的标准 flow-matching。

@@ -30,10 +30,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
+import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
-import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -344,6 +344,24 @@ class Trainer:
             return self._ramtorch_enabled() and getattr(self.accelerator, "num_processes", 1) > 1
         except Exception:
             return False
+
+    def _distributed_collectives_ready(self) -> bool:
+        try:
+            num_processes = int(getattr(self.accelerator, "num_processes", 1) or 1)
+        except (TypeError, ValueError):
+            num_processes = 1
+        return num_processes > 1 and torch.distributed.is_available() and torch.distributed.is_initialized()
+
+    def _any_rank_reached_epoch_end(self, reached_epoch_end: bool) -> bool:
+        if not self._distributed_collectives_ready():
+            return reached_epoch_end
+
+        device = getattr(self.accelerator, "device", None)
+        if device is None:
+            device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+        local_flag = torch.tensor(1 if reached_epoch_end else 0, device=device, dtype=torch.int32)
+        torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
+        return bool(local_flag.item())
 
     def _register_optimizer_attention_params(self, optimizer) -> None:
         try:
@@ -4193,6 +4211,13 @@ class Trainer:
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
+        if hasattr(self.model, "load_flow_custom_timestep_state"):
+            self.model.load_flow_custom_timestep_state(
+                checkpoint_dir,
+                fallback_global_step=self.state["global_resume_step"],
+            )
+        elif hasattr(self.model, "reset_flow_custom_timestep_cursor"):
+            self.model.reset_flow_custom_timestep_cursor(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
         event = lifecycle_stage_event(
             key="init_resume_checkpoint",
@@ -5375,6 +5400,8 @@ class Trainer:
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         self.accelerator.save_state(save_path_tmp)
+        if hasattr(self.model, "save_flow_custom_timestep_state"):
+            self.model.save_flow_custom_timestep_state(save_path_tmp)
         AttentionBackendController.on_save_checkpoint(
             save_path_tmp,
             is_main_process=getattr(self.accelerator, "is_main_process", True),
@@ -5600,8 +5627,12 @@ class Trainer:
                         f"Epoch {self.state['current_epoch']}/{self.config.num_train_epochs}, Steps"
                     )
 
-                # If we receive a False from the enumerator, we know we reached the next epoch.
-                if prepared_batch is False:
+                local_epoch_end = prepared_batch is False
+                epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end)
+                # If any rank receives False from the enumerator, all ranks must leave the step loop together.
+                if epoch_end_reached:
+                    if not local_epoch_end:
+                        training_logger.debug("Reached the end of epoch because another rank exhausted its dataloader.")
                     if (
                         self._should_checkpoint_epoch(epoch)
                         and not last_step_saved_checkpoint

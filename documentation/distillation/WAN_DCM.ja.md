@@ -2,6 +2,8 @@
 
 この例では、大規模な flow-matching 教師モデル（例: [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B)）から **DCM 蒸留**を使って **4 ステップ学生** を学習します。
 
+> **注記:** 蒸留手法は `--train_text_encoder` と併用できません。text encoder 学習は無効にしてください。
+
 DCM がサポートするモード:
 
 * **Semantic** モード: CFG を組み込んだ標準 flow-matching。

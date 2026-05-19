@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -104,12 +105,16 @@ class AsyncJobStore:
             return cls._instance
 
     def _resolve_config_dir(self) -> Path:
-        """Resolve config directory from WebUIStateStore or default.
+        """Resolve the server state directory.
 
-        Returns the SimpleTuner root directory (e.g. /notebooks/simpletuner
-        or ~/.simpletuner). The database path is then constructed as
-        config_dir / "cloud" / "jobs.db".
+        Returns the SimpleTuner state root directory. The database path is then
+        constructed as state_dir / "cloud" / "jobs.db".
         """
+        from .storage.base import get_default_config_dir
+
+        if os.environ.get("SIMPLETUNER_STATE_DIR"):
+            return get_default_config_dir()
+
         try:
             from .webui_state import WebUIStateStore
 
@@ -119,8 +124,6 @@ class AsyncJobStore:
                 return Path(defaults.configs_dir)
             return store.base_dir.parent
         except Exception:
-            from .storage.base import get_default_config_dir
-
             return get_default_config_dir()
 
     async def _ensure_initialized(self) -> None:

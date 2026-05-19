@@ -2,6 +2,8 @@
 
 在本示例中，我们将使用 **LCM（Latent Consistency Model）蒸馏** 从预训练 SDXL 教师模型训练 **4-8 步的 SDXL 学生**。
 
+> **注记:** 蒸馏方法不能与 `--train_text_encoder` 一起使用；请保持 text encoder 训练关闭。
+
 > **注记**：其他模型也可作为基础，这里仅以 SDXL 说明 LCM 的配置概念。
 
 LCM 可以实现：

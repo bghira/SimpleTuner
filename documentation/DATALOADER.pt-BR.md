@@ -176,7 +176,7 @@ Durante a descoberta de metadados, o loader registra `sample_rate`, `num_samples
 
 ### `type`
 
-- **Valores:** `aws` | `local` | `csv` | `huggingface`
+- **Valores:** `aws` | `local` | `csv` | `huggingface` | `webshart`
 - **Descrição:** Determina o backend de armazenamento (local, csv ou nuvem) usado para este dataset.
 
 ### `conditioning_type`
@@ -187,6 +187,7 @@ Durante a descoberta de metadados, o loader registra `sample_rate`, `num_samples
   - **mask**: Máscaras binárias para treinamento de inpainting.
   - **reference_strict**: Imagens de referência com alinhamento estrito de pixels (para modelos de edição como Qwen Edit).
   - **reference_loose**: Imagens de referência com alinhamento frouxo.
+- **Nota Flow-DPO:** `reference_strict` também é usado pelo [Flow-DPO](experimental/FLOW_DPO.pt-BR.md) para fornecer os latentes rejected/lose de cada amostra preferred.
 
 ### `source_dataset_id`
 
@@ -199,6 +200,7 @@ Durante a descoberta de metadados, o loader registra `sample_rate`, `num_samples
 - **Valores:** valor `id` do dataset de condicionamento ou um array de valores `id`
 - **Descrição:** Conforme descrito no [guia do ControlNet](CONTROLNET.md), um dataset `image` pode ser pareado ao seu ControlNet ou dados de máscara de imagem via esta opção.
 - **Nota:** Se você tiver múltiplos datasets de condicionamento, pode especificá-los como um array de valores `id`. Ao treinar Flux Kontext, isso permite alternar aleatoriamente entre condições ou juntar entradas para treinar tarefas mais avançadas de composição multi-imagem.
+- **Flow-DPO:** Pareie aqui um dataset `reference_strict` ao usar [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.pt-BR.md).
 
 ### `instance_data_dir` / `aws_data_prefix`
 
@@ -211,6 +213,7 @@ Durante a descoberta de metadados, o loader registra `sample_rate`, `num_samples
 - **instanceprompt** exige que um valor `instance_prompt` também seja fornecido e usará **apenas** esse valor como a caption de todas as imagens do conjunto.
 - **filename** usará uma versão convertida e limpa do nome do arquivo como caption, por exemplo, após trocar sublinhados por espaços.
 - **parquet** extrairá captions da tabela parquet que contém o restante dos metadados da imagem. Use o campo `parquet` para configurar isso. Veja [Estratégia de captions Parquet](#estrategia-de-captions-parquet-e-datasets-json-lines).
+- **webshart** extrai captions dos metadados dos shards Webshart e exige `type: "webshart"` com `metadata_backend: "webshart"`.
 
 Tanto `textfile` quanto `parquet` suportam multi-captions:
 - textfiles são separadas por novas linhas. Cada nova linha será sua própria caption.
@@ -268,11 +271,12 @@ A primeira tag "dog" permanece fixa enquanto as tags restantes são embaralhadas
 
 ### `metadata_backend`
 
-- **Valores:** `discovery` | `parquet` | `huggingface`
+- **Valores:** `discovery` | `parquet` | `huggingface` | `webshart`
 - **Descrição:** Controla como o SimpleTuner descobre dimensões de imagem e outros metadados durante a preparação do dataset.
   - **discovery** (padrão): Examina arquivos de imagem reais para ler dimensões. Funciona com qualquer backend de armazenamento, mas pode ser lento para datasets grandes.
   - **parquet**: Lê dimensões de `width_column` e `height_column` em um arquivo parquet/JSONL, evitando acessar os arquivos. Veja [Estratégia de captions Parquet](#estrategia-de-captions-parquet-e-datasets-json-lines).
   - **huggingface**: Usa metadados de datasets do Hugging Face. Veja [Suporte a Hugging Face Datasets](#hugging-face-datasets-support).
+  - **webshart**: Usa metadados de shards Webshart, incluindo buckets de aspecto por amostra lógica e captions, sem escanear bytes de imagem.
 - **Nota:** Ao usar `parquet`, você também deve configurar o bloco `parquet` com `width_column` e `height_column`. Isso acelera drasticamente a inicialização para datasets grandes.
 
 ### `metadata_update_interval`
@@ -940,7 +944,7 @@ Em ordem, as linhas se comportam da seguinte forma:
     "prepend_instance_prompt": false,
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
-    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "caption_strategy": "filename|instanceprompt|parquet|textfile|webshart",
     "disable_multiline_split": false,
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
@@ -1218,6 +1222,34 @@ Para um exemplo básico de como usar um dataset do Hugging Face, defina `"type":
   "image_column": "image"
 }
 ```
+
+### Datasets Webshart
+
+Datasets Webshart carregam shards tar no estilo WebDataset pelo pacote `webshart`. Esse backend usa metadados de amostras lógicas para bucketing de aspecto, então sidecars JSON pareados não são tratados como amostras treináveis.
+
+```json
+{
+  "id": "cc12m-webshart",
+  "type": "webshart",
+  "dataset_type": "image",
+  "source": "laion/conceptual-captions-12m-webdataset",
+  "metadata": "webshart/conceptual-captions-12m-webdataset-metadata",
+  "caption_strategy": "webshart",
+  "metadata_backend": "webshart",
+  "webshart": {
+    "cache_dir": "cache/webshart/cc12m-webshart",
+    "shard_cache_gb": 25,
+    "parallel_downloads": 4
+  }
+}
+```
+
+- `source` é obrigatório e aponta para uma fonte que o Webshart consiga descobrir.
+- `metadata` é opcional e pode apontar para metadados separados com captions. Para repos Hugging Face de metadata como `webshart/conceptual-captions-12m-webdataset-metadata`, passe o repo id; o Webshart segue o layout de subpastas do source, como `data/`.
+- `metadata_backend` deve ser `webshart`; `caption_strategy` deve ser `webshart` ou `instanceprompt`.
+- `webshart.cache_dir` armazena os metadados do SimpleTuner e os caches do Webshart.
+
+Exige um build do Webshart com `TarDataLoader.list_shard_sample_aspect_buckets()`.
 
 ## Mapeamento personalizado de proporção para resolução
 

@@ -107,6 +107,12 @@ class ZImageModelTests(unittest.TestCase):
         torch.testing.assert_close(received_t, torch.full((1, 16), 0.9, dtype=torch.float32))
         self.assertTrue(torch.equal(output["crepa_hidden_states"], torch.full((1, 16, 8), 7.0)))
 
+    def test_infer_crepa_hidden_size_uses_transformer_dim(self):
+        model = self._build_model()
+        model.model.config = types.SimpleNamespace(dim=3840)
+
+        self.assertEqual(model._infer_crepa_hidden_size(), 3840)
+
     def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
         model = self._build_model()
         model.sample_flow_sigmas = mock.MagicMock(
