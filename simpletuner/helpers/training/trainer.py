@@ -345,6 +345,24 @@ class Trainer:
         except Exception:
             return False
 
+    def _distributed_collectives_ready(self) -> bool:
+        try:
+            num_processes = int(getattr(self.accelerator, "num_processes", 1) or 1)
+        except (TypeError, ValueError):
+            num_processes = 1
+        return num_processes > 1 and torch.distributed.is_available() and torch.distributed.is_initialized()
+
+    def _any_rank_reached_epoch_end(self, reached_epoch_end: bool) -> bool:
+        if not self._distributed_collectives_ready():
+            return reached_epoch_end
+
+        device = getattr(self.accelerator, "device", None)
+        if device is None:
+            device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+        local_flag = torch.tensor(1 if reached_epoch_end else 0, device=device, dtype=torch.int32)
+        torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
+        return bool(local_flag.item())
+
     def _register_optimizer_attention_params(self, optimizer) -> None:
         try:
             from simpletuner.helpers.training.optimizers.muon import MuonClip
@@ -5609,8 +5627,12 @@ class Trainer:
                         f"Epoch {self.state['current_epoch']}/{self.config.num_train_epochs}, Steps"
                     )
 
-                # If we receive a False from the enumerator, we know we reached the next epoch.
-                if prepared_batch is False:
+                local_epoch_end = prepared_batch is False
+                epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end)
+                # If any rank receives False from the enumerator, all ranks must leave the step loop together.
+                if epoch_end_reached:
+                    if not local_epoch_end:
+                        training_logger.debug("Reached the end of epoch because another rank exhausted its dataloader.")
                     if (
                         self._should_checkpoint_epoch(epoch)
                         and not last_step_saved_checkpoint

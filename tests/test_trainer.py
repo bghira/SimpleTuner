@@ -617,6 +617,39 @@ class TestTrainer(unittest.TestCase):
         trainer.grad_norm = grad_value
         return trainer
 
+    def test_any_rank_reached_epoch_end_returns_local_value_without_process_group(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=8, device=torch.device("cpu"))
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=False),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            self.assertTrue(trainer._any_rank_reached_epoch_end(True))
+            self.assertFalse(trainer._any_rank_reached_epoch_end(False))
+
+        mock_all_reduce.assert_not_called()
+
+    def test_any_rank_reached_epoch_end_uses_max_across_distributed_ranks(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=8, device=torch.device("cpu"))
+
+        def mark_remote_epoch_end(tensor, op=None):
+            tensor.fill_(1)
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch(
+                "simpletuner.helpers.training.trainer.torch.distributed.all_reduce",
+                side_effect=mark_remote_epoch_end,
+            ) as mock_all_reduce,
+        ):
+            self.assertTrue(trainer._any_rank_reached_epoch_end(False))
+
+        mock_all_reduce.assert_called_once()
+
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
