@@ -58,7 +58,7 @@ flow-matching target 为 `noise - latents`。
 - `norm_type=sum` 对应常见 Flow-DPO 公式。`mean` 会平均所有 latent 元素，`masked_mean` 会在存在 mask 时平均 active mask 元素。
 - `auto_beta=true` 会根据 margin 运行均值调整 beta，适合小型配对数据集。
 - `flow_timesteps_mode=fixed-list` 从 `flow_custom_timesteps` 随机采样。
-- `flow_timesteps_mode=round-robin` 循环使用 `flow_custom_timesteps`，让 timestep 覆盖更均匀。分布式 rank 会使用不同 offset，恢复训练时会从 `global_step` 初始化 cursor。
+- `flow_timesteps_mode=round-robin` 循环使用 `flow_custom_timesteps`，让 timestep 覆盖更均匀。分布式 rank 会使用不同 offset，checkpoint 会保存 cursor，让恢复训练继续同一 microbatch 序列。
 - `sft_loss_weight` 默认为 `0.0`，不会混入普通 diffusion loss。
 
 SimpleTuner 会记录核心 Flow-DPO 健康指标：beta、margin、win/lose advantage、policy/reference error、negative-margin percentage 和 gradient factor。原 demo model card 中的扩展 reward-hacking detector 指标属于该发布的分析工具，SimpleTuner 目前还不会全部输出。

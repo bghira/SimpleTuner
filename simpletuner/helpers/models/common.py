@@ -4013,6 +4013,60 @@ class ModelFoundation(ABC):
             delattr(self, "_flow_custom_timestep_cursor")
         self._flow_custom_timestep_resume_step = int(global_step or 0)
 
+    def _flow_custom_timestep_state_path(self, ckpt_dir: str) -> str:
+        rank = _get_rank()
+        filename = "flow_custom_timestep_state.json" if rank == 0 else f"flow_custom_timestep_state-{rank}.json"
+        return os.path.join(ckpt_dir, filename)
+
+    def save_flow_custom_timestep_state(self, ckpt_dir: str) -> None:
+        if (
+            self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None)) is None
+            or str(getattr(self.config, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
+            != "round-robin"
+        ):
+            return
+
+        state = {"rank": _get_rank()}
+        if hasattr(self, "_flow_custom_timestep_cursor"):
+            state["cursor"] = int(getattr(self, "_flow_custom_timestep_cursor"))
+        elif hasattr(self, "_flow_custom_timestep_resume_step"):
+            state["resume_step"] = int(getattr(self, "_flow_custom_timestep_resume_step"))
+        else:
+            return
+
+        os.makedirs(ckpt_dir, exist_ok=True)
+        path = self._flow_custom_timestep_state_path(ckpt_dir)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        os.replace(tmp_path, path)
+
+    def load_flow_custom_timestep_state(self, ckpt_dir: str, fallback_global_step: int = 0) -> bool:
+        rank_path = self._flow_custom_timestep_state_path(ckpt_dir)
+        generic_path = os.path.join(ckpt_dir, "flow_custom_timestep_state.json")
+        candidate_paths = [rank_path]
+        if generic_path != rank_path:
+            candidate_paths.append(generic_path)
+
+        for path in candidate_paths:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+            cursor = state.get("cursor")
+            if cursor is not None:
+                self._flow_custom_timestep_cursor = int(cursor)
+                if hasattr(self, "_flow_custom_timestep_resume_step"):
+                    delattr(self, "_flow_custom_timestep_resume_step")
+                return True
+            resume_step = state.get("resume_step")
+            if resume_step is not None:
+                self.reset_flow_custom_timestep_cursor(int(resume_step))
+                return True
+
+        self.reset_flow_custom_timestep_cursor(fallback_global_step)
+        return False
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.

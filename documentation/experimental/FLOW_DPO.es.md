@@ -58,7 +58,7 @@ Claves comunes de `distillation_config`:
 - `norm_type=sum` coincide con la formulación habitual de Flow-DPO. `mean` promedia todos los elementos latentes, y `masked_mean` promedia los elementos activos de la mask cuando hay una mask.
 - `auto_beta=true` adapta beta con la magnitud media de la margen, útil para datasets pareados pequeños.
 - `flow_timesteps_mode=fixed-list` muestrea aleatoriamente de `flow_custom_timesteps`.
-- `flow_timesteps_mode=round-robin` recorre `flow_custom_timesteps` en ciclo. Los ranks distribuidos usan offsets distintos, y los runs reanudados inicializan el cursor desde `global_step`.
+- `flow_timesteps_mode=round-robin` recorre `flow_custom_timesteps` en ciclo. Los ranks distribuidos usan offsets distintos, y los checkpoints guardan el cursor para que los runs reanudados continúen la misma secuencia de microbatches.
 - `sft_loss_weight` por defecto es `0.0`, así que no se mezcla la diffusion loss normal.
 
 SimpleTuner registra los valores principales de salud Flow-DPO: beta, margin, ventajas win/lose, errores policy/reference, porcentaje de margins negativos y gradient factor. Las métricas extendidas de reward-hacking del model card original pertenecen al tooling de análisis de esa release y todavía no se emiten todas desde SimpleTuner.

@@ -1,4 +1,5 @@
 import unittest
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import torch
@@ -17,6 +18,9 @@ def _flow_model(custom_timesteps: str, mode: str):
     )
     model._normalize_flow_custom_timesteps = ImageModelFoundation._normalize_flow_custom_timesteps.__get__(model)
     model.reset_flow_custom_timestep_cursor = ImageModelFoundation.reset_flow_custom_timestep_cursor.__get__(model)
+    model._flow_custom_timestep_state_path = ImageModelFoundation._flow_custom_timestep_state_path.__get__(model)
+    model.save_flow_custom_timestep_state = ImageModelFoundation.save_flow_custom_timestep_state.__get__(model)
+    model.load_flow_custom_timestep_state = ImageModelFoundation.load_flow_custom_timestep_state.__get__(model)
     model.sample_flow_sigmas = ImageModelFoundation.sample_flow_sigmas.__get__(model)
     model.prepare_batch_conditions = ImageModelFoundation.prepare_batch_conditions.__get__(model)
     return model
@@ -75,6 +79,34 @@ class FlowCustomTimestepsTests(unittest.TestCase):
         _, timesteps = model.sample_flow_sigmas(batch=batch, state={"global_step": 1})
 
         self.assertTrue(torch.equal(timesteps, torch.tensor([500.0, 100.0])))
+
+    def test_round_robin_checkpoint_restores_microbatch_cursor(self):
+        model = _flow_model("100,200,300,400", "round-robin")
+        batch = {"latents": torch.zeros(1, 1, 2, 2)}
+
+        model.sample_flow_sigmas(batch=batch, state={"global_step": 0})
+        model.sample_flow_sigmas(batch=batch, state={"global_step": 0})
+        model.sample_flow_sigmas(batch=batch, state={"global_step": 0})
+
+        with TemporaryDirectory() as tmpdir:
+            model.save_flow_custom_timestep_state(tmpdir)
+            resumed = _flow_model("100,200,300,400", "round-robin")
+            loaded = resumed.load_flow_custom_timestep_state(tmpdir, fallback_global_step=1)
+            _, timesteps = resumed.sample_flow_sigmas(batch=batch, state={"global_step": 1})
+
+        self.assertTrue(loaded)
+        self.assertTrue(torch.equal(timesteps, torch.tensor([400.0])))
+
+    def test_round_robin_checkpoint_load_falls_back_to_global_step(self):
+        model = _flow_model("100,200,300,400", "round-robin")
+        batch = {"latents": torch.zeros(1, 1, 2, 2)}
+
+        with TemporaryDirectory() as tmpdir:
+            loaded = model.load_flow_custom_timestep_state(tmpdir, fallback_global_step=1)
+            _, timesteps = model.sample_flow_sigmas(batch=batch, state={"global_step": 1})
+
+        self.assertFalse(loaded)
+        self.assertTrue(torch.equal(timesteps, torch.tensor([200.0])))
 
     def test_prepare_batch_conditions_selects_reference_strict_latents(self):
         model = _flow_model("100", "fixed-list")

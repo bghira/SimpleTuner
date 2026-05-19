@@ -4193,7 +4193,12 @@ class Trainer:
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
-        if hasattr(self.model, "reset_flow_custom_timestep_cursor"):
+        if hasattr(self.model, "load_flow_custom_timestep_state"):
+            self.model.load_flow_custom_timestep_state(
+                checkpoint_dir,
+                fallback_global_step=self.state["global_resume_step"],
+            )
+        elif hasattr(self.model, "reset_flow_custom_timestep_cursor"):
             self.model.reset_flow_custom_timestep_cursor(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
         event = lifecycle_stage_event(
@@ -5377,6 +5382,8 @@ class Trainer:
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         self.accelerator.save_state(save_path_tmp)
+        if hasattr(self.model, "save_flow_custom_timestep_state"):
+            self.model.save_flow_custom_timestep_state(save_path_tmp)
         AttentionBackendController.on_save_checkpoint(
             save_path_tmp,
             is_main_process=getattr(self.accelerator, "is_main_process", True),

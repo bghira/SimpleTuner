@@ -58,7 +58,7 @@ Common `distillation_config` keys:
 - `norm_type=sum` matches the usual Flow-DPO formulation. `mean` averages all latent elements, and `masked_mean` averages over active mask elements when a mask is present.
 - `auto_beta=true` adapts beta from the running margin magnitude. This is useful for small paired datasets where a fixed beta can saturate the sigmoid.
 - `flow_timesteps_mode=fixed-list` randomly samples from `flow_custom_timesteps`.
-- `flow_timesteps_mode=round-robin` cycles through `flow_custom_timesteps` for even timestep coverage. Distributed ranks are offset from each other, and resumed runs seed the cursor from `global_step`.
+- `flow_timesteps_mode=round-robin` cycles through `flow_custom_timesteps` for even timestep coverage. Distributed ranks are offset from each other, and checkpoints save the cursor so resumed runs continue the same microbatch sequence.
 - `sft_loss_weight` defaults to `0.0`, so Flow-DPO does not mix in the normal diffusion loss unless you explicitly request it.
 
 SimpleTuner logs the core Flow-DPO health values: beta, margin, win/lose advantages, policy/reference errors, negative-margin percentage, and gradient factor. The extended reward-hacking detector metrics shown in the original demo model card are analysis tooling from that release and are not all emitted by SimpleTuner yet.
