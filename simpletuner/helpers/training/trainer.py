@@ -6596,6 +6596,16 @@ def run_trainer_job(config):
             if tokens:
                 selected_device_ids = tokens
 
+    def _normalize_visible_device_list(value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        tokens = [token.strip() for token in value.split(",") if token.strip()]
+        if not tokens:
+            return None
+        if len(tokens) == 1 and tokens[0].lower() in {"all", "none", "void"}:
+            return None
+        return ",".join(tokens)
+
     def _resolve_hf_token() -> Optional[str]:
         possible_env_vars = (
             "HUGGINGFACEHUB_API_TOKEN",
@@ -6847,6 +6857,12 @@ def run_trainer_job(config):
 
         if selected_device_ids:
             launch_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_device_ids)
+        elif not _normalize_visible_device_list(launch_env.get("CUDA_VISIBLE_DEVICES")):
+            provider_visible_devices = _normalize_visible_device_list(launch_env.get("NV_GPU"))
+            if provider_visible_devices is None:
+                provider_visible_devices = _normalize_visible_device_list(launch_env.get("NVIDIA_VISIBLE_DEVICES"))
+            if provider_visible_devices is not None:
+                launch_env["CUDA_VISIBLE_DEVICES"] = provider_visible_devices
 
         config_backend_value: Optional[str] = None
         config_env_value: Optional[str] = None
@@ -6937,11 +6953,36 @@ def run_trainer_job(config):
         if signal_file_path:
             launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
 
+        extra_args = []
+        if accelerate_extra_args:
+            try:
+                extra_args = shlex.split(str(accelerate_extra_args))
+            except ValueError:
+                launch_logger.warning("Failed to parse accelerate extra args; using raw string")
+                extra_args = [str(accelerate_extra_args)]
+
+        def _has_accelerate_distributed_selector(args: list[str]) -> bool:
+            selectors = {
+                "--multi_gpu",
+                "--cpu",
+                "--tpu",
+                "--use_deepspeed",
+                "--use_fsdp",
+                "--use_megatron_lm",
+            }
+            for arg in args:
+                option = arg.split("=", 1)[0]
+                if option in selectors:
+                    return True
+            return False
+
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
             cmd.append(f"--config_file={config_file_arg}")
         else:
+            if proc_count > 1 and not _has_accelerate_distributed_selector(extra_args):
+                cmd.append("--multi_gpu")
             cmd.extend(
                 [
                     f"--mixed_precision={launch_env.get('MIXED_PRECISION', 'bf16')}",
@@ -6957,13 +6998,6 @@ def run_trainer_job(config):
                 if same_network_value:
                     cmd.append("--same_network")
 
-        extra_args = []
-        if accelerate_extra_args:
-            try:
-                extra_args = shlex.split(str(accelerate_extra_args))
-            except ValueError:
-                launch_logger.warning("Failed to parse accelerate extra args; using raw string")
-                extra_args = [str(accelerate_extra_args)]
         if extra_args:
             cmd.extend(extra_args)
 

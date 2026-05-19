@@ -3,6 +3,7 @@
 import importlib.machinery as machinery
 import importlib.util as _importlib_util
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -846,7 +847,7 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(instance.abort_called)
         self.assertTrue(instance.should_abort)
 
-    def test_run_trainer_job_honours_single_device_selection(self):
+    def _run_trainer_job_with_captured_popen(self, payload):
         from simpletuner.helpers.training import trainer as trainer_module
 
         captured = {}
@@ -882,18 +883,57 @@ class TestTrainer(unittest.TestCase):
             return DummyProcess()
 
         with patch("subprocess.Popen", side_effect=fake_popen):
-            result = trainer_module.run_trainer_job(
-                {
-                    "accelerate_visible_devices": [1],
-                    "--num_processes": 1,
-                }
-            )
+            result = trainer_module.run_trainer_job(payload)
 
-            self.assertEqual(result, 0)
+        return result, captured
+
+    def test_run_trainer_job_honours_single_device_selection(self):
+        result, captured = self._run_trainer_job_with_captured_popen(
+            {
+                "accelerate_visible_devices": [1],
+                "--num_processes": 1,
+            }
+        )
+
+        self.assertEqual(result, 0)
         self.assertIn("cmd", captured)
         self.assertEqual(captured["cmd"][0], "accelerate")
         self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
         self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
+
+    def test_run_trainer_job_enables_multi_gpu_for_multiple_processes(self):
+        result, captured = self._run_trainer_job_with_captured_popen(
+            {
+                "accelerate_visible_devices": [2, 3],
+                "--num_processes": 2,
+            }
+        )
+
+        self.assertEqual(result, 0)
+        self.assertIn("--multi_gpu", captured["cmd"])
+        self.assertIn("--num_processes=2", captured["cmd"])
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "2,3")
+
+    def test_run_trainer_job_uses_provider_gpu_assignment_when_unset(self):
+        with patch.dict(os.environ, {"NV_GPU": "2,3", "NVIDIA_VISIBLE_DEVICES": "all"}, clear=False):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            result, captured = self._run_trainer_job_with_captured_popen({"--num_processes": 2})
+
+        self.assertEqual(result, 0)
+        self.assertIn("--multi_gpu", captured["cmd"])
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "2,3")
+
+    def test_run_trainer_job_does_not_duplicate_accelerate_selector(self):
+        result, captured = self._run_trainer_job_with_captured_popen(
+            {
+                "--num_processes": 2,
+                "accelerate_extra_args": "--use_fsdp",
+            }
+        )
+
+        self.assertEqual(result, 0)
+        self.assertNotIn("--multi_gpu", captured["cmd"])
+        self.assertIn("--use_fsdp", captured["cmd"])
 
     def test_accelerate_manual_triggers_are_relayed(self):
         from simpletuner.helpers.training import trainer as trainer_module
