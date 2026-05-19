@@ -8,25 +8,31 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 
-def import_cog_module():
-    os.environ["SIMPLETUNER_SKIP_TORCH"] = "1"
-
+def build_cog_dependency_stubs():
     loader_module = types.ModuleType("simpletuner.helpers.configuration.loader")
     loader_module.load_config = lambda *_, **__: {}
 
     trainer_module = types.ModuleType("simpletuner.helpers.training.trainer")
     trainer_module.run_trainer_job = lambda config: dict(config)
 
-    sys.modules["simpletuner.helpers.configuration.loader"] = loader_module
-    sys.modules["simpletuner.helpers.training.trainer"] = trainer_module
-    sys.modules.pop("simpletuner.cog", None)
-    return importlib.import_module("simpletuner.cog")
+    return {
+        "simpletuner.helpers.configuration.loader": loader_module,
+        "simpletuner.helpers.training.trainer": trainer_module,
+    }
 
 
 class TestCogNsfwOverrides(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.cog = import_cog_module()
+        env_patcher = patch.dict(os.environ, {"SIMPLETUNER_SKIP_TORCH": "1"})
+        module_patcher = patch.dict(sys.modules, build_cog_dependency_stubs())
+        env_patcher.start()
+        cls.addClassCleanup(env_patcher.stop)
+        module_patcher.start()
+        cls.addClassCleanup(module_patcher.stop)
+
+        sys.modules.pop("simpletuner.cog", None)
+        cls.cog = importlib.import_module("simpletuner.cog")
 
     def test_force_nsfw_check_replaces_user_values(self):
         with TemporaryDirectory() as temp_dir:

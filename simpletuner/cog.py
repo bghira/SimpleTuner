@@ -50,7 +50,7 @@ def _resolve_cog_nsfw_model_path(model_key: str, model_id: str) -> str:
 
 
 def build_cog_nsfw_model_specs_csv() -> str:
-    """Return fixed HF classifier specs for Cog-enforced NSFW checks."""
+    """Return Cog-enforced NSFW classifier specs using baked paths or HF repo IDs."""
 
     return ",".join(
         f"{_resolve_cog_nsfw_model_path(model_key, model_id)}:threshold={COG_NSFW_SCORE_THRESHOLD}"
