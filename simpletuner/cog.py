@@ -25,6 +25,38 @@ from typing import Any, Dict, List, Optional
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.training.trainer import run_trainer_job
 
+COG_NSFW_CLASSIFIER_MODELS = {
+    "hf_falconsai": "Falconsai/nsfw_image_detection",
+    "hf_adamcodd": "AdamCodd/vit-base-nsfw-detector",
+    "hf_hoangtrung": "hoangtrung1801/nsfw-vit-model",
+}
+COG_NSFW_BAKED_ROOT = "/opt/nsfw-classifier-comparison"
+COG_NSFW_SCORE_THRESHOLD = 0.5
+COG_NSFW_VOTE_THRESHOLD = 2
+COG_NSFW_BACKEND_TYPES = "all"
+COG_NSFW_SAMPLE_TYPES = "image,conditioning"
+
+
+def _has_hf_model_files(model_dir: Path) -> bool:
+    return (model_dir / "config.json").is_file() and (any(model_dir.glob("*.safetensors")) or any(model_dir.glob("*.bin")))
+
+
+def _resolve_cog_nsfw_model_path(model_key: str, model_id: str) -> str:
+    baked_root = Path(os.environ.get("NSFW_CLASSIFIER_MODEL_DIR", COG_NSFW_BAKED_ROOT))
+    baked_dir = baked_root / model_key
+    if _has_hf_model_files(baked_dir):
+        return str(baked_dir)
+    return model_id
+
+
+def build_cog_nsfw_model_specs_csv() -> str:
+    """Return fixed HF classifier specs for Cog-enforced NSFW checks."""
+
+    return ",".join(
+        f"{_resolve_cog_nsfw_model_path(model_key, model_id)}:threshold={COG_NSFW_SCORE_THRESHOLD}"
+        for model_key, model_id in COG_NSFW_CLASSIFIER_MODELS.items()
+    )
+
 
 class CogWebhookReceiver:
     """
@@ -304,6 +336,7 @@ class SimpleTunerCogRunner:
         if webhook_config:
             merged_config["webhook_config"] = webhook_config
 
+        self._force_nsfw_check(merged_config)
         self._apply_hf_token(hf_token)
 
         training_result = run_trainer_job(merged_config)
@@ -447,6 +480,19 @@ class SimpleTunerCogRunner:
         with config_path.open("w", encoding="utf-8") as handle:
             json.dump([dataset_entry], handle, indent=2)
         return config_path
+
+    @staticmethod
+    def _set_cli_arg(config: Dict[str, Any], name: str, value: Any) -> None:
+        config.pop(name, None)
+        config.pop(f"--{name}", None)
+        config[f"--{name}"] = value
+
+    def _force_nsfw_check(self, config: Dict[str, Any]) -> None:
+        self._set_cli_arg(config, "enable_nsfw_check", True)
+        self._set_cli_arg(config, "nsfw_check_models", build_cog_nsfw_model_specs_csv())
+        self._set_cli_arg(config, "nsfw_check_min_votes", COG_NSFW_VOTE_THRESHOLD)
+        self._set_cli_arg(config, "nsfw_check_backend_types", COG_NSFW_BACKEND_TYPES)
+        self._set_cli_arg(config, "nsfw_check_sample_types", COG_NSFW_SAMPLE_TYPES)
 
     def _apply_hf_token(self, hf_token: Optional[str]) -> None:
         """Expose the HF token to downstream libraries via standard env vars."""
