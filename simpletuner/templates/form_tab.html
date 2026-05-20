@@ -1151,6 +1151,9 @@ if (!window.hardwareHeroCTA) {
                     'model_type', 'optimizer', 'train_batch_size', 'gradient_accumulation_steps', 'max_grad_norm',
                     'flow_schedule_auto_shift', 'flow_schedule_shift'
                 ];
+                const optimizerPresetFields = new Set([
+                    'model_type', 'learning_rate', 'optimizer', 'train_batch_size', 'gradient_accumulation_steps'
+                ]);
 
                 for (const fieldName of fields) {
                     const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
@@ -1163,6 +1166,10 @@ if (!window.hardwareHeroCTA) {
                                 this[fieldName] = isNaN(val) ? null : val;
                             } else {
                                 this[fieldName] = el.value || '';
+                            }
+
+                            if (optimizerPresetFields.has(fieldName)) {
+                                this.syncSelectedOptimizerPreset();
                             }
                         };
                         el.addEventListener('change', handler);
