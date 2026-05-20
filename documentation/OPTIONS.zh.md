@@ -1459,6 +1459,13 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 
 > ℹ️ PixArt、SD3、Hunyuan 等 Transformer 模型使用 `transformer` 与 `transformer_ema` 子目录名称。
 
+### `--delete_invalid_checkpoints`
+
+- **内容**：恢复时删除无法加载的本地检查点。
+- **行为**：使用 `--resume_from_checkpoint=latest` 时，SimpleTuner 会删除无效的本地检查点并尝试下一个最新检查点。新的检查点会在保存恢复所需文件后写入 `.guard` 文件，因此当存在较旧的 guarded 检查点时，可以丢弃缺少该 guard 的较新检查点。
+- **安全性**：只会删除 `output_dir` 下的本地检查点目录。显式检查点路径在删除后仍会抛出原始加载失败。
+- **默认**：`false`
+
 ### `--disk_low_threshold`
 
 - **内容**：检查点保存前所需的最小可用磁盘空间。
@@ -1748,6 +1755,7 @@ usage: train.py [-h] --model_family
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
                 [--checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]]
+                [--delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]]
                 [--checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT]
                 [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
@@ -2443,6 +2451,9 @@ options:
   --checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]
                         Use temporary directory for checkpoint files before
                         final save
+  --delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]
+                        Delete local checkpoints that cannot be loaded while
+                        resuming.
   --checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT
                         Maximum number of rolling checkpoints to keep
   --tracker_run_name TRACKER_RUN_NAME

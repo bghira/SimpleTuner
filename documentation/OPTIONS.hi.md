@@ -1453,6 +1453,13 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 > ℹ️ PixArt, SD3, या Hunyuan जैसे transformer मॉडल `transformer` और `transformer_ema` subfolder नाम उपयोग करते हैं।
 
+### `--delete_invalid_checkpoints`
+
+- **What**: resume करते समय जो local checkpoints load नहीं हो सकते उन्हें delete करें।
+- **Behavior**: `--resume_from_checkpoint=latest` के साथ SimpleTuner invalid local checkpoints हटाकर next latest checkpoint आज़माता है। नए checkpoints resume के लिए जरूरी files सेव होने के बाद `.guard` file लिखते हैं, इसलिए किसी पुराने guarded checkpoint के मौजूद होने पर बिना guard वाला नया checkpoint discard किया जा सकता है।
+- **Safety**: केवल `output_dir` के अंदर local checkpoint directories delete होते हैं। explicit checkpoint paths deletion के बाद भी original load failure raise करते हैं।
+- **Default**: `false`
+
 ### `--disk_low_threshold`
 
 - **What**: checkpoint saves से पहले आवश्यक न्यूनतम खाली disk space।
@@ -1742,6 +1749,7 @@ usage: train.py [-h] --model_family
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
                 [--checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]]
+                [--delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]]
                 [--checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT]
                 [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
@@ -2438,6 +2446,9 @@ options:
   --checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]
                         Use temporary directory for checkpoint files before
                         final save
+  --delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]
+                        Delete local checkpoints that cannot be loaded while
+                        resuming.
   --checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT
                         Maximum number of rolling checkpoints to keep
   --tracker_run_name TRACKER_RUN_NAME

@@ -219,6 +219,35 @@ class TemplateRenderingTests(unittest.TestCase):
         self.assertIn("window.__promptLibraries =", rendered)
         self.assertIn("user_prompt_library-alpha.json", rendered)
 
+    def test_training_tab_renders_optimizer_preset_selector(self):
+        rendered = self.render_form_tab(
+            tab_name="training",
+            tab_config={
+                "id": "training",
+                "title": "Training",
+                "icon": "fas fa-play",
+                "description": "",
+            },
+        )
+
+        self.assertIn("optimizer-preset-options", rendered)
+        self.assertIn("selectOptimizerPreset", rendered)
+
+    def test_training_wizard_renders_optimizer_preset_selector(self):
+        template = self.env.get_template("partials/training_wizard_modal.html")
+        rendered = template.render()
+
+        self.assertIn("optimizer-preset-options", rendered)
+        self.assertIn("isOptimizerPresetSelected", rendered)
+
+    def test_optimizer_presets_modal_renders_shared_selector(self):
+        template = self.env.get_template("partials/optimizer_presets_modal.html")
+        rendered = template.render()
+
+        self.assertIn('x-data="optimizerPresetsComponent()"', rendered)
+        self.assertIn("optimizer-preset-options", rendered)
+        self.assertIn("applySelectedPreset", rendered)
+
     def test_dataloader_caption_strategy_lists_filename_option(self):
         template_dir = Path(__file__).parent.parent / "simpletuner" / "templates"
         relative_paths = [

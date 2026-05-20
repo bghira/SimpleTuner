@@ -1,3 +1,4 @@
+{% from 'partials/optimizer_preset_selector.html' import optimizer_preset_selector %}
 <!-- Training Configuration Wizard Modal -->
 <div x-data="trainingWizardComponent()"
      x-show="wizardOpen"
@@ -1033,26 +1034,7 @@
                     </div>
                 </div>
 
-                <div class="wizard-options preset-options">
-                    <template x-for="preset in getAdvancedPresets()" :key="preset.key">
-                        <div class="wizard-option-card"
-                             :class="{ 'selected': advancedMode === 'preset' && selectedPreset === preset.key }"
-                             @click="applyPreset(preset.key)">
-                            <h6 x-text="preset.label"></h6>
-                            <p class="text-muted small" x-text="preset.tagline"></p>
-                            <ul class="text-muted small mb-0 ps-3">
-                                <li><strong>Optimizer:</strong> <span x-text="preset.optimizer"></span></li>
-                                <li>
-                                    <strong>Learning Rate:</strong>
-                                    <span x-text="preset.displayLearningRate"></span>
-                                    <span class="text-muted">(LoRA: <span x-text="preset.loraLearningRate"></span>; Full: <span x-text="preset.fullLearningRate"></span>)</span>
-                                </li>
-                                <li><strong>Batch Size:</strong> <span x-text="preset.batchSize"></span></li>
-                                <li><strong>Grad Accum:</strong> <span x-text="preset.gradientAccumulation"></span></li>
-                            </ul>
-                        </div>
-                    </template>
-                </div>
+                {{ optimizer_preset_selector('getOptimizerPresetCards()', 'isOptimizerPresetSelected(preset.key)', 'selectOptimizerPreset') }}
 
                 <div class="mt-4" x-show="advancedMode === 'manual'" x-transition>
                     <div class="mb-3">

@@ -1,0 +1,25 @@
+{% macro optimizer_preset_selector(presets_expr, selected_check_expr, select_method) -%}
+<div class="optimizer-preset-options" role="group" aria-label="Optimizer presets">
+    <template x-for="preset in {{ presets_expr }}" :key="preset.key">
+        <button type="button"
+                class="optimizer-preset-card"
+                :class="{ 'selected': {{ selected_check_expr }} }"
+                @click.stop.prevent="{{ select_method }}(preset.key)">
+            <span class="optimizer-preset-title" x-text="preset.label"></span>
+            <span class="optimizer-preset-tagline" x-text="preset.tagline"></span>
+            <span class="optimizer-preset-details">
+                <span><strong>Optimizer:</strong> <span x-text="preset.optimizer"></span></span>
+                <span>
+                    <strong>Learning Rate:</strong>
+                    <span x-text="preset.displayLearningRate"></span>
+                    <span class="optimizer-preset-muted">
+                        (LoRA: <span x-text="preset.loraLearningRate"></span>; Full: <span x-text="preset.fullLearningRate"></span>)
+                    </span>
+                </span>
+                <span><strong>Batch Size:</strong> <span x-text="preset.batchSize"></span></span>
+                <span><strong>Grad Accum:</strong> <span x-text="preset.gradientAccumulation"></span></span>
+            </span>
+        </button>
+    </template>
+</div>
+{%- endmacro %}

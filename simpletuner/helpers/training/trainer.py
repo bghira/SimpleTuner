@@ -86,7 +86,11 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
-from simpletuner.helpers.utils.checkpoint_manager import CHECKPOINT_MANIFEST_FILENAME, CheckpointManager
+from simpletuner.helpers.utils.checkpoint_manager import (
+    CHECKPOINT_GUARD_FILENAME,
+    CHECKPOINT_MANIFEST_FILENAME,
+    CheckpointManager,
+)
 from simpletuner.helpers.webhooks.events import (
     attach_timestamp,
     checkpoint_event,
@@ -4117,6 +4121,48 @@ class Trainer:
             metadata["modelspec_architecture"] = self.model_hooks.get_modelspec_architecture()
         return {key: value for key, value in metadata.items() if value not in (None, "")}
 
+    def _checkpoint_dir_is_in_output_dir(self, checkpoint_dir: str) -> bool:
+        output_dir = getattr(self.config, "output_dir", None)
+        if not output_dir:
+            return False
+        try:
+            return os.path.commonpath([os.path.abspath(output_dir), os.path.abspath(checkpoint_dir)]) == os.path.abspath(
+                output_dir
+            )
+        except ValueError:
+            return False
+
+    def _checkpoint_has_guard(self, checkpoint_name: str, checkpoint_dir: str) -> bool:
+        if self.checkpoint_manager and self._checkpoint_dir_is_in_output_dir(checkpoint_dir):
+            return self.checkpoint_manager.has_guard(checkpoint_name)
+        return os.path.exists(os.path.join(checkpoint_dir, CHECKPOINT_GUARD_FILENAME))
+
+    def _delete_invalid_resume_checkpoint(self, checkpoint_dir: str, reason: str) -> bool:
+        checkpoint_name = os.path.basename(checkpoint_dir.rstrip(os.sep))
+        if not checkpoint_name.startswith("checkpoint-"):
+            logger.warning(f"Refusing to delete invalid resume path outside checkpoint naming: {checkpoint_dir}")
+            return False
+        if not self._checkpoint_dir_is_in_output_dir(checkpoint_dir):
+            logger.warning(f"Refusing to delete invalid checkpoint outside output_dir: {checkpoint_dir}")
+            return False
+
+        logger.warning(f"Deleting invalid checkpoint {checkpoint_dir}: {reason}")
+        self.checkpoint_state_remove(self.config.output_dir, checkpoint_name)
+        return True
+
+    def _delete_unguarded_latest_checkpoint(self, checkpoint_name: str, checkpoint_dir: str) -> bool:
+        if self._checkpoint_has_guard(checkpoint_name, checkpoint_dir):
+            return False
+        latest_guarded = (
+            self.checkpoint_manager.get_latest_checkpoint(require_guard=True) if self.checkpoint_manager else None
+        )
+        if latest_guarded in (None, checkpoint_name):
+            return False
+        return self._delete_invalid_resume_checkpoint(
+            checkpoint_dir,
+            f"missing checkpoint completion guard {CHECKPOINT_GUARD_FILENAME}",
+        )
+
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
@@ -4127,35 +4173,69 @@ class Trainer:
             logger.info(f"Not resuming from checkpoint.")
             return lr_scheduler
         resume_value = str(self.config.resume_from_checkpoint)
-        checkpoint_dir = None
-        if resume_value != "latest" and self._resume_path_is_remote(resume_value):
-            checkpoint_dir = self._download_remote_checkpoint(resume_value)
-            path = os.path.basename(checkpoint_dir.rstrip("/"))
-        elif resume_value != "latest":
-            path = os.path.basename(resume_value.rstrip("/"))
-        else:
-            # Get the most recent checkpoint
-            path = self.checkpoint_state_latest(self.config.output_dir)
-            logger.info(f"Checking {path} for latest checkpoint.")
+        delete_invalid_value = getattr(self.config, "delete_invalid_checkpoints", False)
+        if isinstance(delete_invalid_value, unittest_mock.Mock):
+            delete_invalid_value = False
+        delete_invalid_checkpoints = bool(delete_invalid_value)
+        resume_latest = resume_value == "latest"
+        deleted_checkpoint_names: set[str] = set()
 
-        if path is None:
-            logger.info(f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run.")
-            event = lifecycle_stage_event(
-                key="init_resume_checkpoint",
-                label="Resume Checkpoint",
-                status="completed",
-                message="No model to resume. Beginning fresh training run.",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
+        while True:
+            checkpoint_dir = None
+            if resume_value != "latest" and self._resume_path_is_remote(resume_value):
+                checkpoint_dir = self._download_remote_checkpoint(resume_value)
+                path = os.path.basename(checkpoint_dir.rstrip("/"))
+            elif resume_value != "latest":
+                path = os.path.basename(resume_value.rstrip("/"))
+            else:
+                # Get the most recent checkpoint
+                path = self.checkpoint_state_latest(self.config.output_dir)
+                logger.info(f"Checking {path} for latest checkpoint.")
 
-            self.config.resume_from_checkpoint = None
-            return lr_scheduler
+            if path is None:
+                logger.info(
+                    f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run."
+                )
+                event = lifecycle_stage_event(
+                    key="init_resume_checkpoint",
+                    label="Resume Checkpoint",
+                    status="completed",
+                    message="No model to resume. Beginning fresh training run.",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
 
-        if checkpoint_dir is None:
-            checkpoint_dir = os.path.join(self.config.output_dir, path)
-        logger.info(f"Resuming from checkpoint {checkpoint_dir}")
-        self.accelerator.load_state(checkpoint_dir)
+                self.config.resume_from_checkpoint = None
+                return lr_scheduler
+
+            if path in deleted_checkpoint_names:
+                raise RuntimeError(f"Invalid checkpoint {path} was not removed; refusing to retry it.")
+
+            if checkpoint_dir is None:
+                checkpoint_dir = os.path.join(self.config.output_dir, path)
+
+            if (
+                delete_invalid_checkpoints
+                and resume_latest
+                and self._delete_unguarded_latest_checkpoint(path, checkpoint_dir)
+            ):
+                deleted_checkpoint_names.add(path)
+                continue
+
+            logger.info(f"Resuming from checkpoint {checkpoint_dir}")
+            try:
+                self.accelerator.load_state(checkpoint_dir)
+            except Exception as exc:
+                if not delete_invalid_checkpoints:
+                    raise
+                if not self._delete_invalid_resume_checkpoint(checkpoint_dir, str(exc)):
+                    raise
+                deleted_checkpoint_names.add(path)
+                if resume_latest:
+                    logger.warning("Trying the next latest checkpoint after deleting the invalid checkpoint.")
+                    continue
+                raise
+            break
 
         # Re-apply block swap device placement after checkpoint load
         # (checkpoint may have restored model to GPU, overwriting our block swap setup)
@@ -5393,12 +5473,19 @@ class Trainer:
             logger.warning("Unable to describe registered models before checkpoint: %s", describe_err)
 
         plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
-        fsdp_v2_run = (
-            getattr(self.accelerator, "distributed_type", DistributedType.NO) == DistributedType.FSDP
-            and getattr(plugin, "fsdp_version", 1) == 2
+        distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
+        fsdp_v2_run = distributed_type == DistributedType.FSDP and getattr(plugin, "fsdp_version", 1) == 2
+        is_main_process = getattr(self.accelerator, "is_main_process", True)
+        all_processes_saving = bool(
+            getattr(self.config, "use_deepspeed_optimizer", False) or getattr(self.config, "fsdp_enable", False)
         )
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
+        if is_main_process:
+            try:
+                os.remove(os.path.join(save_path_tmp, CHECKPOINT_GUARD_FILENAME))
+            except FileNotFoundError:
+                pass
         self.accelerator.save_state(save_path_tmp)
         if hasattr(self.model, "save_flow_custom_timestep_state"):
             self.model.save_flow_custom_timestep_state(save_path_tmp)
@@ -5442,13 +5529,21 @@ class Trainer:
                         self.model_hooks.training_state_path,
                     ),
                 )
-        if self.checkpoint_manager and getattr(self.accelerator, "is_main_process", True):
-            self.checkpoint_manager.write_manifest(
+        if self.accelerator is not None and distributed_type != DistributedType.NO and all_processes_saving:
+            self.accelerator.wait_for_everyone()
+        if is_main_process:
+            checkpoint_manager = self.checkpoint_manager or CheckpointManager(output_dir)
+            checkpoint_manager.write_manifest(
                 save_path_tmp,
                 metadata=self._build_checkpoint_manifest_metadata(),
             )
-        if save_path != save_path_tmp:
+            checkpoint_manager.write_guard(save_path_tmp)
+        if self.accelerator is not None and distributed_type != DistributedType.NO and all_processes_saving:
+            self.accelerator.wait_for_everyone()
+        if save_path != save_path_tmp and is_main_process:
             os.rename(save_path_tmp, save_path)
+        if self.accelerator is not None and distributed_type != DistributedType.NO and all_processes_saving:
+            self.accelerator.wait_for_everyone()
         event = checkpoint_event(
             path=save_path,
             label=f"Checkpoint saved to {save_path}",
@@ -5509,6 +5604,47 @@ class Trainer:
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
             return dirs[-1] if len(dirs) > 0 else None
 
+    def _run_intermediary_validation(
+        self,
+        step: int,
+        *,
+        manual_validation_requested: bool = False,
+        epoch_end: bool = False,
+    ) -> bool:
+        if self.validation is None:
+            return False
+
+        should_validate = manual_validation_requested or self.validation.would_validate(step=step, epoch_end=epoch_end)
+        if should_validate:
+            self.mark_optimizer_eval()
+            AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
+            self.disable_gradient_checkpointing()
+
+        try:
+            self.validation.run_validations(
+                validation_type="intermediary",
+                step=step,
+                force_evaluation=manual_validation_requested,
+                epoch_end=epoch_end,
+            )
+        except Exception as error:
+            from simpletuner.helpers.training.validation import ValidationAbortedException
+
+            if isinstance(error, ValidationAbortedException):
+                raise
+            root_logger = logging.getLogger()
+            root_logger.error(f"Validation run failed at step {step}: {error}")
+            import traceback
+
+            root_logger.debug(traceback.format_exc())
+
+        if should_validate:
+            AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
+            self.enable_gradient_checkpointing()
+            self.mark_optimizer_train()
+
+        return should_validate
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -5565,6 +5701,7 @@ class Trainer:
                     training_models.append(text_encoder)
 
             epoch_checkpoint_pending = False
+            epoch_validation_boundary_reached = False
             last_step_saved_checkpoint = False
 
             if current_epoch_step is not None:
@@ -5633,6 +5770,7 @@ class Trainer:
                 if epoch_end_reached:
                     if not local_epoch_end:
                         training_logger.debug("Reached the end of epoch because another rank exhausted its dataloader.")
+                    epoch_validation_boundary_reached = True
                     if (
                         self._should_checkpoint_epoch(epoch)
                         and not last_step_saved_checkpoint
@@ -6221,35 +6359,10 @@ class Trainer:
 
                 if self.validation is not None:
                     manual_validation_requested = self._consume_manual_validation_request()
-                    should_validate = manual_validation_requested or self.validation.would_validate()
-                    if should_validate:
-                        self.mark_optimizer_eval()
-                        AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
-                        self.disable_gradient_checkpointing()
-
-                    try:
-                        self.validation.run_validations(
-                            validation_type="intermediary",
-                            step=step,
-                            force_evaluation=manual_validation_requested,
-                        )
-                    except Exception as error:
-                        # Re-raise abort exceptions to allow graceful shutdown
-                        from simpletuner.helpers.training.validation import ValidationAbortedException
-
-                        if isinstance(error, ValidationAbortedException):
-                            raise
-                        # let's not crash training because of a validation error.
-                        root_logger = logging.getLogger()
-                        root_logger.error(f"Validation run failed at step {step}: {error}")
-                        import traceback
-
-                        root_logger.debug(traceback.format_exc())
-
-                    if should_validate:
-                        AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
-                        self.enable_gradient_checkpointing()
-                        self.mark_optimizer_train()
+                    self._run_intermediary_validation(
+                        step,
+                        manual_validation_requested=manual_validation_requested,
+                    )
                     if step_checkpoint_path:
                         self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
@@ -6263,20 +6376,24 @@ class Trainer:
                     )
                     # Note: training_complete event is emitted after final validation and model save
                     break
+            epoch_checkpoint_dir = None
             if epoch_checkpoint_pending:
                 epoch_message = f"Epoch {epoch} completed at step {self.state['global_step']}"
                 epoch_upload_to_hub = self.hub_manager is not None and (
                     self.state["global_step"] > self.state["global_resume_step"]
                 )
-                checkpoint_dir = self._run_standard_checkpoint(
+                epoch_checkpoint_dir = self._run_standard_checkpoint(
                     webhook_message=epoch_message,
                     parent_loss=parent_loss,
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
                 )
-                if checkpoint_dir:
-                    self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
-                    self._populate_checkpoint_assets(checkpoint_dir)
+                if epoch_checkpoint_dir:
+                    self._write_checkpoint_epoch(epoch_checkpoint_dir, epoch + 1)
+            if epoch_validation_boundary_reached:
+                self._run_intermediary_validation(step, epoch_end=True)
+            if epoch_checkpoint_dir:
+                self._populate_checkpoint_assets(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -6596,6 +6713,16 @@ def run_trainer_job(config):
             if tokens:
                 selected_device_ids = tokens
 
+    def _normalize_visible_device_list(value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        tokens = [token.strip() for token in value.split(",") if token.strip()]
+        if not tokens:
+            return None
+        if len(tokens) == 1 and tokens[0].lower() in {"all", "none", "void"}:
+            return None
+        return ",".join(tokens)
+
     def _resolve_hf_token() -> Optional[str]:
         possible_env_vars = (
             "HUGGINGFACEHUB_API_TOKEN",
@@ -6847,6 +6974,12 @@ def run_trainer_job(config):
 
         if selected_device_ids:
             launch_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_device_ids)
+        elif not _normalize_visible_device_list(launch_env.get("CUDA_VISIBLE_DEVICES")):
+            provider_visible_devices = _normalize_visible_device_list(launch_env.get("NV_GPU"))
+            if provider_visible_devices is None:
+                provider_visible_devices = _normalize_visible_device_list(launch_env.get("NVIDIA_VISIBLE_DEVICES"))
+            if provider_visible_devices is not None:
+                launch_env["CUDA_VISIBLE_DEVICES"] = provider_visible_devices
 
         config_backend_value: Optional[str] = None
         config_env_value: Optional[str] = None
@@ -6937,11 +7070,36 @@ def run_trainer_job(config):
         if signal_file_path:
             launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
 
+        extra_args = []
+        if accelerate_extra_args:
+            try:
+                extra_args = shlex.split(str(accelerate_extra_args))
+            except ValueError:
+                launch_logger.warning("Failed to parse accelerate extra args; using raw string")
+                extra_args = [str(accelerate_extra_args)]
+
+        def _has_accelerate_distributed_selector(args: list[str]) -> bool:
+            selectors = {
+                "--multi_gpu",
+                "--cpu",
+                "--tpu",
+                "--use_deepspeed",
+                "--use_fsdp",
+                "--use_megatron_lm",
+            }
+            for arg in args:
+                option = arg.split("=", 1)[0]
+                if option in selectors:
+                    return True
+            return False
+
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
             cmd.append(f"--config_file={config_file_arg}")
         else:
+            if proc_count > 1 and not _has_accelerate_distributed_selector(extra_args):
+                cmd.append("--multi_gpu")
             cmd.extend(
                 [
                     f"--mixed_precision={launch_env.get('MIXED_PRECISION', 'bf16')}",
@@ -6957,13 +7115,6 @@ def run_trainer_job(config):
                 if same_network_value:
                     cmd.append("--same_network")
 
-        extra_args = []
-        if accelerate_extra_args:
-            try:
-                extra_args = shlex.split(str(accelerate_extra_args))
-            except ValueError:
-                launch_logger.warning("Failed to parse accelerate extra args; using raw string")
-                extra_args = [str(accelerate_extra_args)]
         if extra_args:
             cmd.extend(extra_args)
 

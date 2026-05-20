@@ -394,6 +394,68 @@ class TestIssue2483Scenario(unittest.TestCase):
             validation_steps, [98, 224], f"Validation should only occur at epoch boundaries. Got: {validation_steps}"
         )
 
+    def test_epoch_end_signal_handles_computed_epoch_length_drift(self):
+        """
+        If the computed schedule is one optimizer step longer than actual
+        dataloader exhaustion, validation should still run at the real epoch
+        boundary used by checkpointing.
+
+        This matches the reported pattern:
+        - checkpoints: 270, 540, 810, 1080, 1417, 1755
+        - validation missed epochs after the schedule changed at epoch 5
+        """
+        validation = Validation.__new__(Validation)
+        validation.config = SimpleNamespace(
+            validation_epoch_interval=1,
+            validation_step_interval=None,
+            num_update_steps_per_epoch=338,
+            gradient_accumulation_steps=4,
+            epoch_batches_schedule={1: 1080, 5: 272},
+        )
+        validation._pending_epoch_validation = None
+        validation._epoch_validations_completed = {1, 2, 3, 4}
+        validation.deepspeed = False
+        validation.accelerator = MagicMock()
+        validation.accelerator.is_main_process = True
+        validation.accelerator.num_processes = 1
+        validation.global_resume_step = 0
+        prompts = [{"prompt": "test"}]
+
+        validation.global_step = 1417
+        validation.current_epoch = 5
+        validation.current_epoch_step = 337
+        self.assertEqual(validation._epoch_relative_step(338), 337)
+        self.assertFalse(
+            validation.should_perform_intermediary_validation(
+                step=1417,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+        self.assertTrue(
+            validation.should_perform_intermediary_validation(
+                step=1417,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+                epoch_end=True,
+            )
+        )
+
+        validation._epoch_validations_completed.add(5)
+        validation._pending_epoch_validation = None
+        validation.global_step = 1755
+        validation.current_epoch = 6
+        validation.current_epoch_step = 338
+        self.assertEqual(validation._epoch_relative_step(338), 337)
+        self.assertTrue(
+            validation.should_perform_intermediary_validation(
+                step=1755,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+                epoch_end=True,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

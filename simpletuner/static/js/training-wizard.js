@@ -18,6 +18,16 @@ const SD3_FLAVOURS = [
     { value: '3.5-medium', label: '3.5 Medium', description: 'SD3.5 Medium model' }
 ];
 
+const OptimizerPresets = (() => {
+    if (typeof window !== 'undefined' && window.SimpleTunerOptimizerPresets) {
+        return window.SimpleTunerOptimizerPresets;
+    }
+    if (typeof require !== 'undefined') {
+        return require('./optimizer-presets.js');
+    }
+    throw new Error('SimpleTunerOptimizerPresets must be loaded before training-wizard.js');
+})();
+
 function trainingWizardComponent() {
     return {
         // State
@@ -2068,13 +2078,7 @@ function trainingWizardComponent() {
             this.advancedMode = 'manual';
             this.selectedPreset = null;
 
-            const fallback = this.getPresetDefinition('moderate') || {
-                optimizer: 'adamw_bf16',
-                fullLearningRate: 1e-5,
-                loraLearningRate: 1e-4,
-                batchSize: 2,
-                gradientAccumulation: 1
-            };
+            const fallback = this.getPresetDefinition('moderate');
 
             if (!(typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0)) {
                 this.answers.learning_rate = this.getLearningRateForCurrentModel(fallback);
@@ -2101,32 +2105,36 @@ function trainingWizardComponent() {
             }
         },
 
-        applyPreset(presetKey) {
-            const preset = this.getPresetDefinition(presetKey);
-            if (!preset) {
+        applyOptimizerPreset(presetKey) {
+            const values = OptimizerPresets.getPresetValues(presetKey, this.answers.model_type);
+            if (!values) {
                 console.warn('[TRAINING WIZARD] Unknown preset selected:', presetKey);
-                return;
+                return false;
             }
 
             this.advancedMode = 'preset';
             this.selectedPreset = presetKey;
 
-            this.answers.learning_rate = this.getLearningRateForCurrentModel(preset);
-            this.answers.optimizer = this.resolveOptimizerSelection(preset.optimizer);
-            this.answers.train_batch_size = preset.batchSize ?? 2;
-            this.answers.gradient_accumulation_steps = preset.gradientAccumulation ?? 1;
+            this.answers.learning_rate = values.learning_rate;
+            this.answers.optimizer = this.resolveOptimizerSelection(values.optimizer);
+            this.answers.train_batch_size = values.train_batch_size;
+            this.answers.gradient_accumulation_steps = values.gradient_accumulation_steps;
 
-            this.nextStep();
+            return true;
+        },
+
+        selectOptimizerPreset(presetKey) {
+            if (this.applyOptimizerPreset(presetKey)) {
+                this.nextStep();
+            }
+        },
+
+        applyPreset(presetKey) {
+            this.selectOptimizerPreset(presetKey);
         },
 
         resolveOptimizerSelection(preferredValue) {
-            if (preferredValue && this.isOptimizerChoiceAvailable(preferredValue)) {
-                return preferredValue;
-            }
-            if (this.optimizerChoices.length > 0) {
-                return this.optimizerChoices[0].value;
-            }
-            return preferredValue || 'adamw_bf16';
+            return OptimizerPresets.resolveOptimizerSelection(preferredValue, this.optimizerChoices);
         },
 
         isOptimizerChoiceAvailable(value) {
@@ -2224,68 +2232,19 @@ function trainingWizardComponent() {
         },
 
         getPresetDefinition(key) {
-            const definitions = {
-                aggressive: {
-                    key: 'aggressive',
-                    label: 'Aggressive',
-                    tagline: 'Fast convergence, higher risk of instability.',
-                    optimizer: 'optimi-lion',
-                    fullLearningRate: 1e-5,
-                    loraLearningRate: 1e-4,
-                    batchSize: 2,
-                    gradientAccumulation: 1
-                },
-                moderate: {
-                    key: 'moderate',
-                    label: 'Moderate',
-                    tagline: 'Balanced stability with AdamW BF16.',
-                    optimizer: 'adamw_bf16',
-                    fullLearningRate: 1e-5,
-                    loraLearningRate: 1e-4,
-                    batchSize: 2,
-                    gradientAccumulation: 1
-                },
-                slow_safe: {
-                    key: 'slow_safe',
-                    label: 'Slow & Safe',
-                    tagline: 'Lower risk, more VRAM due to larger batch size.',
-                    optimizer: 'adamw_bf16',
-                    fullLearningRate: 1e-5,
-                    loraLearningRate: 1e-4,
-                    batchSize: 4,
-                    gradientAccumulation: 2
-                }
-            };
-
-            return definitions[key] || null;
+            return OptimizerPresets.getPresetDefinition(key);
         },
 
         getAdvancedPresets() {
-            const presetKeys = ['aggressive', 'moderate', 'slow_safe'];
-            return presetKeys
-                .map(key => {
-                    const preset = this.getPresetDefinition(key);
-                    if (!preset) {
-                        return null;
-                    }
+            return this.getOptimizerPresetCards();
+        },
 
-                    const currentLr = this.formatLearningRate(this.getLearningRateForCurrentModel(preset));
-                    const loraLr = this.formatLearningRate(preset.loraLearningRate);
-                    const fullLr = this.formatLearningRate(preset.fullLearningRate);
+        getOptimizerPresetCards() {
+            return OptimizerPresets.getDisplayPresets(this.answers.model_type);
+        },
 
-                    return {
-                        key: preset.key,
-                        label: preset.label,
-                        tagline: preset.tagline,
-                        optimizer: preset.optimizer,
-                        batchSize: preset.batchSize,
-                        gradientAccumulation: preset.gradientAccumulation ?? 1,
-                        displayLearningRate: currentLr,
-                        loraLearningRate: loraLr,
-                        fullLearningRate: fullLr
-                    };
-                })
-                .filter(Boolean);
+        isOptimizerPresetSelected(presetKey) {
+            return this.advancedMode === 'preset' && this.selectedPreset === presetKey;
         },
 
         getLearningRateForCurrentModel(preset) {
@@ -2294,8 +2253,7 @@ function trainingWizardComponent() {
                     ? this.answers.learning_rate
                     : 1e-4;
             }
-            const isLora = this.answers.model_type === 'lora';
-            return isLora ? preset.loraLearningRate : preset.fullLearningRate;
+            return OptimizerPresets.getLearningRateForModelType(preset, this.answers.model_type);
         },
 
         registerDeepSpeedBuilderField(field) {
@@ -2725,16 +2683,7 @@ function trainingWizardComponent() {
         },
 
         formatLearningRate(value) {
-            if (typeof value !== 'number' || Number.isNaN(value)) {
-                return value;
-            }
-            if (value === 0) {
-                return '0';
-            }
-            if ((value > 0 && value < 0.001) || value >= 1000) {
-                return value.toExponential();
-            }
-            return value.toString();
+            return OptimizerPresets.formatLearningRate(value);
         },
 
         getBaseQuantizationSummary() {

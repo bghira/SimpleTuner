@@ -3,6 +3,7 @@
 import importlib.machinery as machinery
 import importlib.util as _importlib_util
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -17,6 +18,7 @@ import torch
 
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 _OPTIONAL_MODULES = {
     "wandb",
@@ -597,7 +599,7 @@ sys.modules.setdefault("wandb", wandb_module)
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
-from simpletuner.helpers.training.trainer import Trainer
+from simpletuner.helpers.training.trainer import DistributedType, Trainer
 
 # Import test configuration to suppress logging/warnings
 try:
@@ -649,6 +651,23 @@ class TestTrainer(unittest.TestCase):
             self.assertTrue(trainer._any_rank_reached_epoch_end(False))
 
         mock_all_reduce.assert_called_once()
+
+    def test_run_intermediary_validation_passes_step_to_would_validate(self):
+        trainer = object.__new__(Trainer)
+        validation = MagicMock()
+        validation.would_validate.return_value = False
+        trainer.validation = validation
+
+        result = trainer._run_intermediary_validation(8, epoch_end=True)
+
+        self.assertFalse(result)
+        validation.would_validate.assert_called_once_with(step=8, epoch_end=True)
+        validation.run_validations.assert_called_once_with(
+            validation_type="intermediary",
+            step=8,
+            force_evaluation=False,
+            epoch_end=True,
+        )
 
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
@@ -846,7 +865,7 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(instance.abort_called)
         self.assertTrue(instance.should_abort)
 
-    def test_run_trainer_job_honours_single_device_selection(self):
+    def _run_trainer_job_with_captured_popen(self, payload):
         from simpletuner.helpers.training import trainer as trainer_module
 
         captured = {}
@@ -882,18 +901,57 @@ class TestTrainer(unittest.TestCase):
             return DummyProcess()
 
         with patch("subprocess.Popen", side_effect=fake_popen):
-            result = trainer_module.run_trainer_job(
-                {
-                    "accelerate_visible_devices": [1],
-                    "--num_processes": 1,
-                }
-            )
+            result = trainer_module.run_trainer_job(payload)
 
-            self.assertEqual(result, 0)
+        return result, captured
+
+    def test_run_trainer_job_honours_single_device_selection(self):
+        result, captured = self._run_trainer_job_with_captured_popen(
+            {
+                "accelerate_visible_devices": [1],
+                "--num_processes": 1,
+            }
+        )
+
+        self.assertEqual(result, 0)
         self.assertIn("cmd", captured)
         self.assertEqual(captured["cmd"][0], "accelerate")
         self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
         self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
+
+    def test_run_trainer_job_enables_multi_gpu_for_multiple_processes(self):
+        result, captured = self._run_trainer_job_with_captured_popen(
+            {
+                "accelerate_visible_devices": [2, 3],
+                "--num_processes": 2,
+            }
+        )
+
+        self.assertEqual(result, 0)
+        self.assertIn("--multi_gpu", captured["cmd"])
+        self.assertIn("--num_processes=2", captured["cmd"])
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "2,3")
+
+    def test_run_trainer_job_uses_provider_gpu_assignment_when_unset(self):
+        with patch.dict(os.environ, {"NV_GPU": "2,3", "NVIDIA_VISIBLE_DEVICES": "all"}, clear=False):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            result, captured = self._run_trainer_job_with_captured_popen({"--num_processes": 2})
+
+        self.assertEqual(result, 0)
+        self.assertIn("--multi_gpu", captured["cmd"])
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "2,3")
+
+    def test_run_trainer_job_does_not_duplicate_accelerate_selector(self):
+        result, captured = self._run_trainer_job_with_captured_popen(
+            {
+                "--num_processes": 2,
+                "accelerate_extra_args": "--use_fsdp",
+            }
+        )
+
+        self.assertEqual(result, 0)
+        self.assertNotIn("--multi_gpu", captured["cmd"])
+        self.assertIn("--use_fsdp", captured["cmd"])
 
     def test_accelerate_manual_triggers_are_relayed(self):
         from simpletuner.helpers.training import trainer as trainer_module
@@ -1653,6 +1711,163 @@ class TestTrainer(unittest.TestCase):
             manifest_filename="checkpoint_manifest.json",
         )
         trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-100")
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_deletes_invalid_latest_and_retries(self, mock_attention_backend):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "checkpoint-100").mkdir()
+            Path(tmpdir, "checkpoint-200").mkdir()
+
+            trainer = object.__new__(Trainer)
+            trainer.model = Mock()
+            trainer.config = SimpleNamespace(
+                output_dir=tmpdir,
+                resume_from_checkpoint="latest",
+                total_steps_remaining_at_start=100,
+                global_resume_step=1,
+                num_train_epochs=1,
+                max_train_steps=100,
+                musubi_blocks_to_swap=0,
+                lr_scheduler="constant",
+                learning_rate=0.001,
+                is_schedulefree=False,
+                overrode_max_train_steps=False,
+                ignore_final_epochs=False,
+                optimizer="adamw",
+                delete_invalid_checkpoints=True,
+            )
+            trainer.accelerator = Mock(num_processes=1)
+            trainer.accelerator.load_state.side_effect = [RuntimeError("bad safetensors"), None]
+            trainer.accelerator.wait_for_everyone = Mock()
+            trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+            trainer.optimizer = Mock(param_groups=[{"lr": 0.1}])
+            trainer.distiller = None
+            trainer.job_id = "test-job"
+            trainer._emit_event = Mock()
+            trainer.checkpoint_manager = CheckpointManager(tmpdir)
+
+            lr_scheduler = Mock()
+            lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
+                    with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
+                        with patch(
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}
+                        ):
+                            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
+                                with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
+                                    trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+            deleted_path = Path(tmpdir, "checkpoint-200")
+            self.assertFalse(deleted_path.exists())
+            trainer.accelerator.load_state.assert_any_call(os.path.join(tmpdir, "checkpoint-200"))
+            trainer.accelerator.load_state.assert_any_call(os.path.join(tmpdir, "checkpoint-100"))
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_deletes_unguarded_latest_when_guarded_checkpoint_exists(self, mock_attention_backend):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_100 = Path(tmpdir, "checkpoint-100")
+            checkpoint_100.mkdir()
+            Path(tmpdir, "checkpoint-200").mkdir()
+            checkpoint_manager = CheckpointManager(tmpdir)
+            checkpoint_manager.write_guard(str(checkpoint_100))
+
+            trainer = object.__new__(Trainer)
+            trainer.model = Mock()
+            trainer.config = SimpleNamespace(
+                output_dir=tmpdir,
+                resume_from_checkpoint="latest",
+                total_steps_remaining_at_start=100,
+                global_resume_step=1,
+                num_train_epochs=1,
+                max_train_steps=100,
+                musubi_blocks_to_swap=0,
+                lr_scheduler="constant",
+                learning_rate=0.001,
+                is_schedulefree=False,
+                overrode_max_train_steps=False,
+                ignore_final_epochs=False,
+                optimizer="adamw",
+                delete_invalid_checkpoints=True,
+            )
+            trainer.accelerator = Mock(num_processes=1)
+            trainer.accelerator.load_state = Mock()
+            trainer.accelerator.wait_for_everyone = Mock()
+            trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+            trainer.optimizer = Mock(param_groups=[{"lr": 0.1}])
+            trainer.distiller = None
+            trainer.job_id = "test-job"
+            trainer._emit_event = Mock()
+            trainer.checkpoint_manager = checkpoint_manager
+
+            lr_scheduler = Mock()
+            lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
+                    with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
+                        with patch(
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}
+                        ):
+                            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
+                                with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
+                                    trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+            self.assertFalse(Path(tmpdir, "checkpoint-200").exists())
+            trainer.accelerator.load_state.assert_called_once_with(os.path.join(tmpdir, "checkpoint-100"))
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
+    def test_checkpoint_state_save_writes_completion_guard(self, mock_attention_backend):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                output_dir=tmpdir,
+                checkpointing_use_tempdir=False,
+                disk_low_threshold=None,
+                use_deepspeed_optimizer=False,
+                fsdp_enable=False,
+            )
+            trainer.state = {"global_step": 100}
+            trainer.job_id = "test-job"
+            trainer.model = SimpleNamespace()
+            trainer.model_hooks = SimpleNamespace(
+                training_state_path="training_state.json",
+                get_modelspec_architecture=Mock(return_value="test/lora"),
+            )
+            trainer.checkpoint_manager = CheckpointManager(tmpdir)
+            trainer.mark_optimizer_eval = Mock()
+            trainer.mark_optimizer_train = Mock()
+            trainer._emit_event = Mock()
+            trainer._run_post_checkpoint_script = Mock()
+
+            checkpoint_dir = Path(tmpdir) / "checkpoint-100"
+            stale_guard = checkpoint_dir / ".guard"
+            checkpoint_dir.mkdir()
+            stale_guard.write_text("stale", encoding="utf-8")
+
+            def save_state(path):
+                Path(path).mkdir(parents=True, exist_ok=True)
+                (Path(path) / "pytorch_lora_weights.safetensors").write_bytes(b"weights")
+
+            trainer.accelerator = SimpleNamespace(
+                _models=[],
+                is_main_process=True,
+                distributed_type=DistributedType.NO,
+                save_state=Mock(side_effect=save_state),
+                wait_for_everyone=Mock(),
+            )
+
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+                save_path = trainer.checkpoint_state_save(tmpdir)
+
+            self.assertEqual(save_path, str(checkpoint_dir))
+            self.assertEqual(stale_guard.read_text(encoding="utf-8"), "complete\n")
+            self.assertTrue((checkpoint_dir / "checkpoint_manifest.json").exists())
+            manifest = trainer.checkpoint_manager.load_manifest(str(checkpoint_dir))
+            self.assertIn("pytorch_lora_weights.safetensors", manifest["files"])
+            self.assertNotIn(".guard", manifest["files"])
+            trainer.accelerator.wait_for_everyone.assert_not_called()
 
     @patch("simpletuner.helpers.training.trainer.logger")
     def test_init_resume_checkpoint_prodigy_without_split_groups(self, mock_logger):

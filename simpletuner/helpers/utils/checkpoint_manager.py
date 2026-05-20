@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_MANIFEST_FILENAME = "checkpoint_manifest.json"
+CHECKPOINT_GUARD_FILENAME = ".guard"
 
 
 class CheckpointManager:
@@ -59,8 +60,11 @@ class CheckpointManager:
         checkpoints.sort(key=lambda x: x.get("step", 0), reverse=True)
         return checkpoints
 
-    def get_latest_checkpoint(self) -> Optional[str]:
+    def get_latest_checkpoint(self, require_guard: bool = False) -> Optional[str]:
         """Get the path to the latest checkpoint.
+
+        Args:
+            require_guard: Only consider checkpoints with the completion guard.
 
         Returns:
             Checkpoint directory name or None if no checkpoints exist
@@ -68,11 +72,17 @@ class CheckpointManager:
         try:
             dirs = os.listdir(self.output_dir) if os.path.exists(self.output_dir) else []
             checkpoint_dirs = [d for d in dirs if d.startswith("checkpoint") and not d.endswith("tmp")]
+            if require_guard:
+                checkpoint_dirs = [d for d in checkpoint_dirs if self.has_guard(d)]
             checkpoint_dirs = sorted(checkpoint_dirs, key=lambda x: int(x.split("-")[1]))
             return checkpoint_dirs[-1] if checkpoint_dirs else None
         except Exception as e:
             logger.debug(f"Error getting latest checkpoint: {e}")
             return None
+
+    def has_guard(self, checkpoint_name: str) -> bool:
+        """Return whether a checkpoint has the final completion guard."""
+        return os.path.exists(os.path.join(self.output_dir, checkpoint_name, CHECKPOINT_GUARD_FILENAME))
 
     def validate_checkpoint(self, checkpoint_name: str) -> Tuple[bool, Optional[str]]:
         """Validate a checkpoint for resuming training.
@@ -135,7 +145,13 @@ class CheckpointManager:
         files = [
             str(path.relative_to(root).as_posix())
             for path in root.rglob("*")
-            if path.is_file() and path.name != CHECKPOINT_MANIFEST_FILENAME
+            if path.is_file()
+            and path.name
+            not in {
+                CHECKPOINT_MANIFEST_FILENAME,
+                CHECKPOINT_GUARD_FILENAME,
+                f"{CHECKPOINT_GUARD_FILENAME}.tmp",
+            }
         ]
         files.sort()
         manifest: Dict[str, object] = {
@@ -148,6 +164,17 @@ class CheckpointManager:
         with manifest_path.open("w") as handle:
             json.dump(manifest, handle, indent=2)
         return manifest
+
+    def write_guard(self, checkpoint_path: str) -> None:
+        """Write the checkpoint completion guard as the final checkpoint file."""
+        root = Path(checkpoint_path)
+        if not root.exists():
+            raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
+        guard_path = root / CHECKPOINT_GUARD_FILENAME
+        guard_tmp_path = root / f"{CHECKPOINT_GUARD_FILENAME}.tmp"
+        with guard_tmp_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write("complete\n")
+        guard_tmp_path.replace(guard_path)
 
     def load_manifest(self, checkpoint_path: str) -> Optional[Dict[str, object]]:
         """Load a checkpoint manifest if present."""

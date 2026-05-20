@@ -1460,6 +1460,13 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 > ℹ️ Transformer models such as PixArt, SD3, or Hunyuan, use the `transformer` and `transformer_ema` subfolder names.
 
+### `--delete_invalid_checkpoints`
+
+- **What**: Delete local checkpoints that cannot be loaded while resuming.
+- **Behavior**: With `--resume_from_checkpoint=latest`, SimpleTuner removes invalid local checkpoints and retries the next latest checkpoint. New checkpoints write a `.guard` file after the required resume files are saved, so a newer checkpoint missing that guard can be discarded when an older guarded checkpoint exists.
+- **Safety**: Only local checkpoint directories under `output_dir` are deleted. Explicit checkpoint paths still raise the original load failure after deletion.
+- **Default**: `false`
+
 ### `--disk_low_threshold`
 
 - **What**: Minimum free disk space required before checkpoint saves.
@@ -1749,6 +1756,7 @@ usage: train.py [-h] --model_family
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
                 [--checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]]
+                [--delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]]
                 [--checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT]
                 [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
@@ -2445,6 +2453,9 @@ options:
   --checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]
                         Use temporary directory for checkpoint files before
                         final save
+  --delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]
+                        Delete local checkpoints that cannot be loaded while
+                        resuming.
   --checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT
                         Maximum number of rolling checkpoints to keep
   --tracker_run_name TRACKER_RUN_NAME
