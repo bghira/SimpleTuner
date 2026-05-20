@@ -478,6 +478,74 @@ class CrepaFeatureSourceTests(unittest.TestCase):
             )
 
 
+class _IdentityProjector(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self._dtype_anchor = torch.nn.Parameter(torch.ones(1))
+
+    def forward(self, hidden_states):
+        return hidden_states
+
+
+class CrepaNeighbourSumTests(unittest.TestCase):
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": None,
+            "crepa_encoder_image_size": 8,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "crepa_use_backbone_features": True,
+            "crepa_use_tae": False,
+            "crepa_normalize_neighbour_sum": False,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def _make_regularizer(self, **kwargs):
+        config = self._make_config(**kwargs)
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=3)
+        reg.projector = _IdentityProjector()
+        return reg
+
+    def test_paper_neighbour_sum_can_exceed_one(self):
+        reg = self._make_regularizer(crepa_normalize_neighbour_sum=False)
+        feature = torch.tensor([1.0, 0.0, 0.0]).view(1, 1, 1, 3).expand(1, 4, 1, 3).clone()
+
+        loss, logs = reg.compute_loss(
+            hidden_states=feature.clone(),
+            latents=None,
+            frame_features=feature.clone(),
+            step=0,
+        )
+
+        expected_score = 1.0 + 1.5 * math.exp(-1.0)
+        self.assertAlmostEqual(logs["crepa_alignment_score"], expected_score, places=6)
+        self.assertAlmostEqual(logs["crepa_similarity_self"], 1.0, places=6)
+        self.assertAlmostEqual(loss.item(), -0.5 * expected_score, places=6)
+
+    def test_normalized_neighbour_sum_keeps_alignment_score_bounded(self):
+        reg = self._make_regularizer(crepa_normalize_neighbour_sum=True)
+        feature = torch.tensor([1.0, 0.0, 0.0]).view(1, 1, 1, 3).expand(1, 4, 1, 3).clone()
+
+        loss, logs = reg.compute_loss(
+            hidden_states=feature.clone(),
+            latents=None,
+            frame_features=feature.clone(),
+            step=0,
+        )
+
+        self.assertAlmostEqual(logs["crepa_alignment_score"], 1.0, places=6)
+        self.assertAlmostEqual(logs["crepa_similarity_self"], 1.0, places=6)
+        self.assertAlmostEqual(loss.item(), -0.5, places=6)
+
+
 class CrepaBackboneDetachTests(unittest.TestCase):
     """Tests for CREPA backbone feature handling."""
 
