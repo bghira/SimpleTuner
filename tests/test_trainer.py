@@ -18,6 +18,7 @@ import torch
 
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 _OPTIONAL_MODULES = {
     "wandb",
@@ -598,7 +599,7 @@ sys.modules.setdefault("wandb", wandb_module)
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
-from simpletuner.helpers.training.trainer import Trainer
+from simpletuner.helpers.training.trainer import DistributedType, Trainer
 
 # Import test configuration to suppress logging/warnings
 try:
@@ -1693,6 +1694,163 @@ class TestTrainer(unittest.TestCase):
             manifest_filename="checkpoint_manifest.json",
         )
         trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-100")
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_deletes_invalid_latest_and_retries(self, mock_attention_backend):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "checkpoint-100").mkdir()
+            Path(tmpdir, "checkpoint-200").mkdir()
+
+            trainer = object.__new__(Trainer)
+            trainer.model = Mock()
+            trainer.config = SimpleNamespace(
+                output_dir=tmpdir,
+                resume_from_checkpoint="latest",
+                total_steps_remaining_at_start=100,
+                global_resume_step=1,
+                num_train_epochs=1,
+                max_train_steps=100,
+                musubi_blocks_to_swap=0,
+                lr_scheduler="constant",
+                learning_rate=0.001,
+                is_schedulefree=False,
+                overrode_max_train_steps=False,
+                ignore_final_epochs=False,
+                optimizer="adamw",
+                delete_invalid_checkpoints=True,
+            )
+            trainer.accelerator = Mock(num_processes=1)
+            trainer.accelerator.load_state.side_effect = [RuntimeError("bad safetensors"), None]
+            trainer.accelerator.wait_for_everyone = Mock()
+            trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+            trainer.optimizer = Mock(param_groups=[{"lr": 0.1}])
+            trainer.distiller = None
+            trainer.job_id = "test-job"
+            trainer._emit_event = Mock()
+            trainer.checkpoint_manager = CheckpointManager(tmpdir)
+
+            lr_scheduler = Mock()
+            lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
+                    with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
+                        with patch(
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}
+                        ):
+                            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
+                                with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
+                                    trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+            deleted_path = Path(tmpdir, "checkpoint-200")
+            self.assertFalse(deleted_path.exists())
+            trainer.accelerator.load_state.assert_any_call(os.path.join(tmpdir, "checkpoint-200"))
+            trainer.accelerator.load_state.assert_any_call(os.path.join(tmpdir, "checkpoint-100"))
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_deletes_unguarded_latest_when_guarded_checkpoint_exists(self, mock_attention_backend):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_100 = Path(tmpdir, "checkpoint-100")
+            checkpoint_100.mkdir()
+            Path(tmpdir, "checkpoint-200").mkdir()
+            checkpoint_manager = CheckpointManager(tmpdir)
+            checkpoint_manager.write_guard(str(checkpoint_100))
+
+            trainer = object.__new__(Trainer)
+            trainer.model = Mock()
+            trainer.config = SimpleNamespace(
+                output_dir=tmpdir,
+                resume_from_checkpoint="latest",
+                total_steps_remaining_at_start=100,
+                global_resume_step=1,
+                num_train_epochs=1,
+                max_train_steps=100,
+                musubi_blocks_to_swap=0,
+                lr_scheduler="constant",
+                learning_rate=0.001,
+                is_schedulefree=False,
+                overrode_max_train_steps=False,
+                ignore_final_epochs=False,
+                optimizer="adamw",
+                delete_invalid_checkpoints=True,
+            )
+            trainer.accelerator = Mock(num_processes=1)
+            trainer.accelerator.load_state = Mock()
+            trainer.accelerator.wait_for_everyone = Mock()
+            trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+            trainer.optimizer = Mock(param_groups=[{"lr": 0.1}])
+            trainer.distiller = None
+            trainer.job_id = "test-job"
+            trainer._emit_event = Mock()
+            trainer.checkpoint_manager = checkpoint_manager
+
+            lr_scheduler = Mock()
+            lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
+                    with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
+                        with patch(
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}
+                        ):
+                            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
+                                with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
+                                    trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+            self.assertFalse(Path(tmpdir, "checkpoint-200").exists())
+            trainer.accelerator.load_state.assert_called_once_with(os.path.join(tmpdir, "checkpoint-100"))
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
+    def test_checkpoint_state_save_writes_completion_guard(self, mock_attention_backend):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                output_dir=tmpdir,
+                checkpointing_use_tempdir=False,
+                disk_low_threshold=None,
+                use_deepspeed_optimizer=False,
+                fsdp_enable=False,
+            )
+            trainer.state = {"global_step": 100}
+            trainer.job_id = "test-job"
+            trainer.model = SimpleNamespace()
+            trainer.model_hooks = SimpleNamespace(
+                training_state_path="training_state.json",
+                get_modelspec_architecture=Mock(return_value="test/lora"),
+            )
+            trainer.checkpoint_manager = CheckpointManager(tmpdir)
+            trainer.mark_optimizer_eval = Mock()
+            trainer.mark_optimizer_train = Mock()
+            trainer._emit_event = Mock()
+            trainer._run_post_checkpoint_script = Mock()
+
+            checkpoint_dir = Path(tmpdir) / "checkpoint-100"
+            stale_guard = checkpoint_dir / ".guard"
+            checkpoint_dir.mkdir()
+            stale_guard.write_text("stale", encoding="utf-8")
+
+            def save_state(path):
+                Path(path).mkdir(parents=True, exist_ok=True)
+                (Path(path) / "pytorch_lora_weights.safetensors").write_bytes(b"weights")
+
+            trainer.accelerator = SimpleNamespace(
+                _models=[],
+                is_main_process=True,
+                distributed_type=DistributedType.NO,
+                save_state=Mock(side_effect=save_state),
+                wait_for_everyone=Mock(),
+            )
+
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+                save_path = trainer.checkpoint_state_save(tmpdir)
+
+            self.assertEqual(save_path, str(checkpoint_dir))
+            self.assertEqual(stale_guard.read_text(encoding="utf-8"), "complete\n")
+            self.assertTrue((checkpoint_dir / "checkpoint_manifest.json").exists())
+            manifest = trainer.checkpoint_manager.load_manifest(str(checkpoint_dir))
+            self.assertIn("pytorch_lora_weights.safetensors", manifest["files"])
+            self.assertNotIn(".guard", manifest["files"])
+            trainer.accelerator.wait_for_everyone.assert_not_called()
 
     @patch("simpletuner.helpers.training.trainer.logger")
     def test_init_resume_checkpoint_prodigy_without_split_groups(self, mock_logger):

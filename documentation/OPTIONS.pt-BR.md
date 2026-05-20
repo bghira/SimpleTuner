@@ -1451,6 +1451,13 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 
 > ℹ️ Modelos transformer como PixArt, SD3 ou Hunyuan usam os subdiretorios `transformer` e `transformer_ema`.
 
+### `--delete_invalid_checkpoints`
+
+- **O que**: Remove checkpoints locais que nao podem ser carregados ao retomar.
+- **Comportamento**: Com `--resume_from_checkpoint=latest`, o SimpleTuner remove checkpoints locais invalidos e tenta o proximo checkpoint mais recente. Checkpoints novos gravam um arquivo `.guard` depois que os arquivos necessarios para retomada sao salvos, entao um checkpoint mais novo sem esse guard pode ser descartado quando existe um checkpoint anterior com guard.
+- **Seguranca**: Somente diretorios locais de checkpoint dentro de `output_dir` sao removidos. Caminhos explicitos de checkpoint ainda levantam a falha original de carregamento depois da remocao.
+- **Padrao**: `false`
+
 ### `--disk_low_threshold`
 
 - **O que**: Espaco minimo livre em disco necessario antes de salvar checkpoints.
@@ -1740,6 +1747,7 @@ usage: train.py [-h] --model_family
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
                 [--checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]]
+                [--delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]]
                 [--checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT]
                 [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
@@ -2435,6 +2443,9 @@ options:
   --checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]
                         Use temporary directory for checkpoint files before
                         final save
+  --delete_invalid_checkpoints [DELETE_INVALID_CHECKPOINTS]
+                        Delete local checkpoints that cannot be loaded while
+                        resuming.
   --checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT
                         Maximum number of rolling checkpoints to keep
   --tracker_run_name TRACKER_RUN_NAME

@@ -141,6 +141,24 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="delete_invalid_checkpoints",
+            arg_name="--delete_invalid_checkpoints",
+            ui_label="Delete Invalid Resume Checkpoints",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="checkpointing",
+            subsection="advanced",
+            default_value=False,
+            help_text="Delete local checkpoints that cannot be loaded while resuming.",
+            tooltip="When resuming from latest, invalid checkpoints are removed and the next latest checkpoint is tried.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+            documentation="OPTIONS.md#--delete_invalid_checkpoints",
+        )
+    )
+
     # Checkpoints Rolling Total Limit
     registry._add_field(
         ConfigField(
@@ -156,7 +174,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Maximum number of rolling checkpoints to keep",
             tooltip="When using rolling checkpoints, limit the number of checkpoints in the rolling window.",
             importance=ImportanceLevel.ADVANCED,
-            order=5,
+            order=6,
         )
     )
 
