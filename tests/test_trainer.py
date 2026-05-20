@@ -651,6 +651,23 @@ class TestTrainer(unittest.TestCase):
 
         mock_all_reduce.assert_called_once()
 
+    def test_run_intermediary_validation_passes_step_to_would_validate(self):
+        trainer = object.__new__(Trainer)
+        validation = MagicMock()
+        validation.would_validate.return_value = False
+        trainer.validation = validation
+
+        result = trainer._run_intermediary_validation(8, epoch_end=True)
+
+        self.assertFalse(result)
+        validation.would_validate.assert_called_once_with(step=8, epoch_end=True)
+        validation.run_validations.assert_called_once_with(
+            validation_type="intermediary",
+            step=8,
+            force_evaluation=False,
+            epoch_end=True,
+        )
+
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")

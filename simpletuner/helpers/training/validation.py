@@ -2300,6 +2300,7 @@ class Validation:
         should_do_step_validation = False
         if (
             validation_prompts
+            and not epoch_end
             and step_interval is not None
             and step_interval > 0
             and self.global_step > self.global_resume_step

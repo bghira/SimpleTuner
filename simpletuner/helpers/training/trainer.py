@@ -5519,7 +5519,7 @@ class Trainer:
         if self.validation is None:
             return False
 
-        should_validate = manual_validation_requested or self.validation.would_validate(epoch_end=epoch_end)
+        should_validate = manual_validation_requested or self.validation.would_validate(step=step, epoch_end=epoch_end)
         if should_validate:
             self.mark_optimizer_eval()
             AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
@@ -6281,22 +6281,24 @@ class Trainer:
                     )
                     # Note: training_complete event is emitted after final validation and model save
                     break
-            if epoch_validation_boundary_reached:
-                self._run_intermediary_validation(step, epoch_end=True)
+            epoch_checkpoint_dir = None
             if epoch_checkpoint_pending:
                 epoch_message = f"Epoch {epoch} completed at step {self.state['global_step']}"
                 epoch_upload_to_hub = self.hub_manager is not None and (
                     self.state["global_step"] > self.state["global_resume_step"]
                 )
-                checkpoint_dir = self._run_standard_checkpoint(
+                epoch_checkpoint_dir = self._run_standard_checkpoint(
                     webhook_message=epoch_message,
                     parent_loss=parent_loss,
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
                 )
-                if checkpoint_dir:
-                    self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
-                    self._populate_checkpoint_assets(checkpoint_dir)
+                if epoch_checkpoint_dir:
+                    self._write_checkpoint_epoch(epoch_checkpoint_dir, epoch + 1)
+            if epoch_validation_boundary_reached:
+                self._run_intermediary_validation(step, epoch_end=True)
+            if epoch_checkpoint_dir:
+                self._populate_checkpoint_assets(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
