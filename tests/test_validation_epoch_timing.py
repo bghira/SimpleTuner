@@ -230,6 +230,34 @@ class TestValidationEpochBoundaryTiming(unittest.TestCase):
             f"epoch_step={validation.current_epoch_step} should be ~1, not 245",
         )
 
+    def test_epoch_end_signal_does_not_reuse_step_interval_validation(self):
+        validation = self._create_validation(
+            validation_epoch_interval=None,
+            validation_step_interval=10,
+            gradient_accumulation_steps=1,
+        )
+        prompts = [{"prompt": "test"}]
+        validation.global_step = 10
+        validation.current_epoch_step = 10
+        validation.current_epoch = 1
+
+        self.assertTrue(
+            validation.should_perform_intermediary_validation(
+                step=10,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+        self.assertFalse(
+            validation.should_perform_intermediary_validation(
+                step=10,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+                epoch_end=True,
+            ),
+            "Epoch-end validation should not duplicate a step-interval validation.",
+        )
+
 
 class TestValidationEpochStepReadyCalculation(unittest.TestCase):
     """Test the epoch_step_ready calculation specifically."""

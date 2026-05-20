@@ -5604,6 +5604,47 @@ class Trainer:
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
             return dirs[-1] if len(dirs) > 0 else None
 
+    def _run_intermediary_validation(
+        self,
+        step: int,
+        *,
+        manual_validation_requested: bool = False,
+        epoch_end: bool = False,
+    ) -> bool:
+        if self.validation is None:
+            return False
+
+        should_validate = manual_validation_requested or self.validation.would_validate(step=step, epoch_end=epoch_end)
+        if should_validate:
+            self.mark_optimizer_eval()
+            AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
+            self.disable_gradient_checkpointing()
+
+        try:
+            self.validation.run_validations(
+                validation_type="intermediary",
+                step=step,
+                force_evaluation=manual_validation_requested,
+                epoch_end=epoch_end,
+            )
+        except Exception as error:
+            from simpletuner.helpers.training.validation import ValidationAbortedException
+
+            if isinstance(error, ValidationAbortedException):
+                raise
+            root_logger = logging.getLogger()
+            root_logger.error(f"Validation run failed at step {step}: {error}")
+            import traceback
+
+            root_logger.debug(traceback.format_exc())
+
+        if should_validate:
+            AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
+            self.enable_gradient_checkpointing()
+            self.mark_optimizer_train()
+
+        return should_validate
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -5660,6 +5701,7 @@ class Trainer:
                     training_models.append(text_encoder)
 
             epoch_checkpoint_pending = False
+            epoch_validation_boundary_reached = False
             last_step_saved_checkpoint = False
 
             if current_epoch_step is not None:
@@ -5728,6 +5770,7 @@ class Trainer:
                 if epoch_end_reached:
                     if not local_epoch_end:
                         training_logger.debug("Reached the end of epoch because another rank exhausted its dataloader.")
+                    epoch_validation_boundary_reached = True
                     if (
                         self._should_checkpoint_epoch(epoch)
                         and not last_step_saved_checkpoint
@@ -6316,35 +6359,10 @@ class Trainer:
 
                 if self.validation is not None:
                     manual_validation_requested = self._consume_manual_validation_request()
-                    should_validate = manual_validation_requested or self.validation.would_validate()
-                    if should_validate:
-                        self.mark_optimizer_eval()
-                        AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
-                        self.disable_gradient_checkpointing()
-
-                    try:
-                        self.validation.run_validations(
-                            validation_type="intermediary",
-                            step=step,
-                            force_evaluation=manual_validation_requested,
-                        )
-                    except Exception as error:
-                        # Re-raise abort exceptions to allow graceful shutdown
-                        from simpletuner.helpers.training.validation import ValidationAbortedException
-
-                        if isinstance(error, ValidationAbortedException):
-                            raise
-                        # let's not crash training because of a validation error.
-                        root_logger = logging.getLogger()
-                        root_logger.error(f"Validation run failed at step {step}: {error}")
-                        import traceback
-
-                        root_logger.debug(traceback.format_exc())
-
-                    if should_validate:
-                        AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
-                        self.enable_gradient_checkpointing()
-                        self.mark_optimizer_train()
+                    self._run_intermediary_validation(
+                        step,
+                        manual_validation_requested=manual_validation_requested,
+                    )
                     if step_checkpoint_path:
                         self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
@@ -6358,20 +6376,24 @@ class Trainer:
                     )
                     # Note: training_complete event is emitted after final validation and model save
                     break
+            epoch_checkpoint_dir = None
             if epoch_checkpoint_pending:
                 epoch_message = f"Epoch {epoch} completed at step {self.state['global_step']}"
                 epoch_upload_to_hub = self.hub_manager is not None and (
                     self.state["global_step"] > self.state["global_resume_step"]
                 )
-                checkpoint_dir = self._run_standard_checkpoint(
+                epoch_checkpoint_dir = self._run_standard_checkpoint(
                     webhook_message=epoch_message,
                     parent_loss=parent_loss,
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
                 )
-                if checkpoint_dir:
-                    self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
-                    self._populate_checkpoint_assets(checkpoint_dir)
+                if epoch_checkpoint_dir:
+                    self._write_checkpoint_epoch(epoch_checkpoint_dir, epoch + 1)
+            if epoch_validation_boundary_reached:
+                self._run_intermediary_validation(step, epoch_end=True)
+            if epoch_checkpoint_dir:
+                self._populate_checkpoint_assets(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
