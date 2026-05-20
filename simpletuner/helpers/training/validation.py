@@ -14,9 +14,9 @@ from typing import Any, Optional, Union
 import diffusers
 import numpy as np
 import torch
+import wandb
 from tqdm import tqdm
 
-import wandb
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training import validation_audio
@@ -2089,12 +2089,16 @@ class Validation:
         step: int = 0,
         validation_type="intermediary",
         force_evaluation: bool = False,
+        epoch_end: bool = False,
     ):
         # a wrapper for should_perform_intermediary_validation that can run in the training loop
         self._update_state()
-        return self.should_perform_intermediary_validation(step, self.validation_prompt_metadata, validation_type) or (
-            step == 0 and validation_type == "base_model"
-        )
+        return self.should_perform_intermediary_validation(
+            step,
+            self.validation_prompt_metadata,
+            validation_type,
+            epoch_end=epoch_end,
+        ) or (step == 0 and validation_type == "base_model")
 
     def run_validations(
         self,
@@ -2102,6 +2106,7 @@ class Validation:
         validation_type="intermediary",
         force_evaluation: bool = False,
         skip_execution: bool = False,
+        epoch_end: bool = False,
     ):
         self._update_state()
         configured_validation_method = self._validation_method()
@@ -2110,7 +2115,10 @@ class Validation:
         content = self.validation_prompt_metadata.get("validation_prompts", None)
         has_validation_prompts = content is not None and len(content) > 0
         current_step_aligns_with_interval = self.should_perform_intermediary_validation(
-            step, self.validation_prompt_metadata, validation_type
+            step,
+            self.validation_prompt_metadata,
+            validation_type,
+            epoch_end=epoch_end,
         )
         is_base_model_benchmark = step == 0 and validation_type == "base_model"
         epoch_validation_pending = (
@@ -2249,7 +2257,14 @@ class Validation:
 
         return self
 
-    def should_perform_intermediary_validation(self, step, validation_prompts, validation_type):
+    def should_perform_intermediary_validation(
+        self,
+        step,
+        validation_prompts,
+        validation_type,
+        *,
+        epoch_end: bool = False,
+    ):
         if validation_prompts is None or (isinstance(validation_prompts, list) and len(validation_prompts) == 0):
             return False
         step_interval_value = getattr(self.config, "validation_step_interval", None)
@@ -2270,9 +2285,9 @@ class Validation:
         except (TypeError, ValueError):
             epoch_interval = None
 
-        epoch_step_ready = False
+        epoch_step_ready = validation_type == "intermediary" and epoch_end
         num_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", None)
-        if num_steps_per_epoch is not None:
+        if not epoch_step_ready and num_steps_per_epoch is not None:
             try:
                 steps_per_epoch_int = int(num_steps_per_epoch)
                 if steps_per_epoch_int > 0:
