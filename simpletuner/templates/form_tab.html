@@ -1,6 +1,7 @@
 <!-- Generic Form Tab Template for HTMX -->
 <!-- Used by Basic, Model, Training, and Advanced tabs -->
 {% from 'partials/hero_cta.html' import hero_cta %}
+{% from 'partials/optimizer_preset_selector.html' import optimizer_preset_selector %}
 <!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-form">
 {% if tab_name == 'publishing' %}
@@ -889,6 +890,8 @@ if (!window.hardwareHeroCTA) {
 (function() {
     'use strict';
 
+    const OptimizerPresets = window.SimpleTunerOptimizerPresets;
+
     function trainingEzModeComponent() {
         return {
             loading: true,
@@ -914,8 +917,12 @@ if (!window.hardwareHeroCTA) {
             lr_end: null,
 
             // Optimizer
+            model_type: null,
             optimizer: null,
             optimizerChoices: [],
+            selectedOptimizerPreset: null,
+            train_batch_size: null,
+            gradient_accumulation_steps: null,
             max_grad_norm: null,
 
             // Flow schedule
@@ -1068,14 +1075,14 @@ if (!window.hardwareHeroCTA) {
                     'num_train_epochs', 'max_train_steps',
                     'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
                     'learning_rate', 'lr_scheduler', 'lr_warmup_steps', 'lr_end',
-                    'optimizer', 'max_grad_norm',
+                    'model_type', 'optimizer', 'train_batch_size', 'gradient_accumulation_steps', 'max_grad_norm',
                     'flow_schedule_auto_shift', 'flow_schedule_shift'
                 ];
                 const numericFields = new Set([
                     'num_train_epochs', 'max_train_steps',
                     'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
                     'learning_rate', 'lr_warmup_steps', 'lr_end',
-                    'max_grad_norm', 'flow_schedule_shift'
+                    'train_batch_size', 'gradient_accumulation_steps', 'max_grad_norm', 'flow_schedule_shift'
                 ]);
 
                 // Read all values from activeEnvironmentConfig (single source of truth)
@@ -1106,6 +1113,8 @@ if (!window.hardwareHeroCTA) {
                         this[fieldName] = value;
                     }
                 }
+
+                this.syncSelectedOptimizerPreset();
             },
 
             setupFormWatchers() {
@@ -1113,7 +1122,7 @@ if (!window.hardwareHeroCTA) {
                     'num_train_epochs', 'max_train_steps',
                     'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
                     'learning_rate', 'lr_scheduler', 'lr_warmup_steps', 'lr_end',
-                    'optimizer', 'max_grad_norm',
+                    'model_type', 'optimizer', 'train_batch_size', 'gradient_accumulation_steps', 'max_grad_norm',
                     'flow_schedule_auto_shift', 'flow_schedule_shift'
                 ];
 
@@ -1176,6 +1185,53 @@ if (!window.hardwareHeroCTA) {
                 }
             },
 
+            getOptimizerModelType() {
+                return this.model_type === 'full' ? 'full' : 'lora';
+            },
+
+            getOptimizerPresetCards() {
+                return OptimizerPresets.getDisplayPresets(this.getOptimizerModelType());
+            },
+
+            syncSelectedOptimizerPreset() {
+                this.selectedOptimizerPreset = OptimizerPresets.findMatchingPresetKey({
+                    learning_rate: this.learning_rate,
+                    optimizer: this.optimizer,
+                    train_batch_size: this.train_batch_size,
+                    gradient_accumulation_steps: this.gradient_accumulation_steps
+                }, this.getOptimizerModelType());
+            },
+
+            clearSelectedOptimizerPreset() {
+                this.selectedOptimizerPreset = null;
+            },
+
+            resolveOptimizerSelection(preferredValue) {
+                return OptimizerPresets.resolveOptimizerSelection(preferredValue, this.optimizerChoices);
+            },
+
+            selectOptimizerPreset(presetKey) {
+                const values = OptimizerPresets.getPresetValues(presetKey, this.getOptimizerModelType());
+                if (!values) {
+                    console.warn('[TRAINING EZ MODE] Unknown optimizer preset selected:', presetKey);
+                    return;
+                }
+
+                this.selectedOptimizerPreset = presetKey;
+                this.learning_rate = values.learning_rate;
+                this.optimizer = this.resolveOptimizerSelection(values.optimizer);
+                this.train_batch_size = values.train_batch_size;
+                this.gradient_accumulation_steps = values.gradient_accumulation_steps;
+
+                this.updateFormField('learning_rate', values.learning_rate);
+                this.updateFormField('optimizer', this.optimizer);
+                this.updateFormField('train_batch_size', values.train_batch_size);
+                this.updateFormField('gradient_accumulation_steps', values.gradient_accumulation_steps);
+
+                const preset = OptimizerPresets.getPresetDefinition(presetKey);
+                window.showToast?.(`${preset.label} optimizer preset applied`, 'success');
+            },
+
             // Field change handlers with mutual exclusivity enforcement
             onNumEpochsChange(value) {
                 const parsed = parseInt(value, 10);
@@ -1203,11 +1259,11 @@ if (!window.hardwareHeroCTA) {
             onCheckpointStepIntervalChange(value) { const v = parseInt(value) || 500; this.checkpoint_step_interval = v; this.updateFormField('checkpoint_step_interval', v); },
             onCheckpointEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.checkpoint_epoch_interval = v; this.updateFormField('checkpoint_epoch_interval', v); },
             onCheckpointsTotalLimitChange(value) { const v = parseInt(value) || 5; this.checkpoints_total_limit = v; this.updateFormField('checkpoints_total_limit', v); },
-            onLearningRateChange(value) { const v = parseFloat(value) || 4e-7; this.learning_rate = v; this.updateFormField('learning_rate', v); },
+            onLearningRateChange(value) { const v = parseFloat(value) || 4e-7; this.learning_rate = v; this.clearSelectedOptimizerPreset(); this.updateFormField('learning_rate', v); },
             onLrSchedulerChange(value) { this.lr_scheduler = value; this.updateFormField('lr_scheduler', value); },
             onLrWarmupStepsChange(value) { const v = parseInt(value) || 0; this.lr_warmup_steps = v; this.updateFormField('lr_warmup_steps', v); },
             onLrEndChange(value) { const v = parseFloat(value) || 4e-7; this.lr_end = v; this.updateFormField('lr_end', v); },
-            onOptimizerChange(value) { this.optimizer = value; this.updateFormField('optimizer', value); },
+            onOptimizerChange(value) { this.optimizer = value; this.clearSelectedOptimizerPreset(); this.updateFormField('optimizer', value); },
             onMaxGradNormChange(value) { const v = parseFloat(value) || 2.0; this.max_grad_norm = v; this.updateFormField('max_grad_norm', v); },
             onFlowAutoShiftChange(checked) { this.flow_schedule_auto_shift = checked; this.updateFormField('flow_schedule_auto_shift', checked); },
             onFlowShiftChange(value) { const v = parseFloat(value) || 3.0; this.flow_schedule_shift = v; this.updateFormField('flow_schedule_shift', v); },
@@ -1238,6 +1294,7 @@ if (!window.hardwareHeroCTA) {
                     this.updateFormField(key, value);
                 }
 
+                this.clearSelectedOptimizerPreset();
                 window.showToast?.('Settings reset to defaults', 'success');
             }
         };
@@ -2276,6 +2333,7 @@ if (!window.hardwareHeroCTA) {
                         <p class="ez-step-description">
                             The optimizer is the algorithm that actually updates model weights based on gradients. Different optimizers have different memory requirements and behaviors.
                         </p>
+                        {{ optimizer_preset_selector('getOptimizerPresetCards()', 'selectedOptimizerPreset === preset.key', 'selectOptimizerPreset') }}
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label">Optimizer</label>
