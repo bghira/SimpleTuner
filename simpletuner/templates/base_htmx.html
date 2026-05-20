@@ -159,6 +159,9 @@
     <!-- Dataset wizard component (needs to load before Alpine) -->
     <script src="/static/js/dataset-wizard.js?v={{ asset_version }}"></script>
 
+    <!-- Shared optimizer preset definitions -->
+    <script src="/static/js/optimizer-presets.js?v={{ asset_version }}"></script>
+
     <!-- Training wizard component (needs to load before Alpine) -->
     <script src="/static/js/training-wizard.js?v={{ asset_version }}"></script>
     <!-- Shared create environment form component -->
@@ -387,6 +390,8 @@
     <!-- Training Wizard Styles -->
     <link href="/static/css/training-wizard.css" rel="stylesheet" id="css-training-wizard">
     <script>document.getElementById('css-training-wizard').href = '/static/css/training-wizard.css?t=' + cssTimestamp;</script>
+    <link href="/static/css/optimizer-presets.css" rel="stylesheet" id="css-optimizer-presets">
+    <script>document.getElementById('css-optimizer-presets').href = '/static/css/optimizer-presets.css?t=' + cssTimestamp;</script>
 
     {% block extra_css %}{% endblock %}
 </head>

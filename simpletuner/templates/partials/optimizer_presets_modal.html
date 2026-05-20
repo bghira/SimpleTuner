@@ -1,0 +1,39 @@
+{% from 'partials/optimizer_preset_selector.html' import optimizer_preset_selector %}
+<!-- Optimizer Presets Modal -->
+<div x-data="optimizerPresetsComponent()" x-cloak>
+    <template x-if="isOpen">
+        <div class="optimizer-presets-backdrop" @keydown.escape.window="close()" @click.self="close()">
+            <div class="optimizer-presets-modal" @click.stop>
+                <div class="modal-header d-flex align-items-start justify-content-between">
+                    <div>
+                        <h5 class="modal-title mb-1">Optimizer Presets</h5>
+                        <p class="text-muted small mb-0">
+                            Apply the same optimizer, learning rate, batch size, and gradient accumulation presets used by the training wizard.
+                        </p>
+                    </div>
+                    <button type="button" class="btn-close" aria-label="Close" @click="close()"></button>
+                </div>
+
+                <div class="modal-body">
+                    {{ optimizer_preset_selector('getOptimizerPresetCards()', 'isOptimizerPresetSelected(preset.key)', 'selectOptimizerPreset') }}
+                </div>
+
+                <div class="modal-footer d-flex justify-content-between align-items-center">
+                    <span class="text-muted small" x-show="!selectedPreset">No preset selected</span>
+                    <span class="text-muted small" x-show="selectedPreset">
+                        Selected: <span x-text="selectedPreset"></span>
+                    </span>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-secondary" @click="close()">Cancel</button>
+                        <button type="button"
+                                class="btn btn-primary"
+                                :disabled="!selectedPreset"
+                                @click="applySelectedPreset()">
+                            Apply Preset
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>

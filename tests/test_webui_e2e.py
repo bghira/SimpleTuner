@@ -1860,7 +1860,7 @@ class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
 
 
 class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
-    """Test that Easy Mode optimizer reflects the full form selection."""
+    """Test that Easy Mode optimizer controls reflect full form values."""
 
     MAX_BROWSERS = 1
 
@@ -1919,6 +1919,183 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
         self.for_each_browser("test_easy_mode_optimizer_syncs_from_full_form", scenario)
+
+    def test_easy_mode_max_grad_norm_uses_full_form_default(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return document.querySelector('.ez-mode-form input[x-model\\\\.number=\"max_grad_norm\"]') !== null;"
+                )
+            )
+
+            def get_grad_norm_values(active_driver):
+                return active_driver.execute_script(
+                    """
+                    const ez = document.querySelector('.ez-mode-form input[x-model\\\\.number="max_grad_norm"]');
+                    const full = document.getElementById('max_grad_norm');
+                    return { ez: ez ? ez.value : null, full: full ? full.value : null };
+                    """
+                )
+
+            WebDriverWait(driver, 10).until(lambda d: get_grad_norm_values(d)["full"])
+            WebDriverWait(driver, 10).until(lambda d: get_grad_norm_values(d)["ez"])
+
+            values = get_grad_norm_values(driver)
+            self.assertEqual(float(values["full"]), 2.0)
+            self.assertEqual(float(values["ez"]), 2.0)
+
+        self.for_each_browser("test_easy_mode_max_grad_norm_uses_full_form_default", scenario)
+
+    def test_easy_mode_optimizer_preset_selection_updates_from_full_form_batch_size(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    """
+                    return Array.from(document.querySelectorAll('.ez-mode-form .optimizer-preset-card'))
+                        .some(card => card.textContent.includes('Moderate'));
+                    """
+                )
+            )
+
+            driver.execute_script(
+                """
+                const moderateCard = Array.from(document.querySelectorAll('.ez-mode-form .optimizer-preset-card'))
+                    .find(card => card.textContent.includes('Moderate'));
+                moderateCard.click();
+                """
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    """
+                    const component = window.Alpine?.$data(document.getElementById('training-tab-content'));
+                    return component?.selectedOptimizerPreset === 'moderate';
+                    """
+                )
+            )
+
+            driver.execute_script(
+                """
+                const batchSizeInput = document.getElementById('train_batch_size');
+                batchSizeInput.value = '3';
+                batchSizeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                batchSizeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                """
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    """
+                    const component = window.Alpine?.$data(document.getElementById('training-tab-content'));
+                    const selectedCards = document.querySelectorAll('.ez-mode-form .optimizer-preset-card.selected');
+                    return component?.train_batch_size === 3
+                        && component?.selectedOptimizerPreset === null
+                        && selectedCards.length === 0;
+                    """
+                )
+            )
+
+        self.for_each_browser(
+            "test_easy_mode_optimizer_preset_selection_updates_from_full_form_batch_size",
+            scenario,
+        )
+
+    def test_full_form_optimizer_presets_button_applies_preset(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_training_tab()
+            trainer_page.wait_for_tab("training")
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.querySelector('.ez-mode-footer button') !== null;")
+            )
+
+            driver.execute_script(
+                """
+                const switchButton = Array.from(document.querySelectorAll('.ez-mode-footer button'))
+                    .find(button => button.textContent.includes('Switch to Full Form'));
+                if (switchButton) {
+                    switchButton.click();
+                }
+                """
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return document.querySelector('#section-optimizer_config .optimizer-presets-btn') !== null;"
+                )
+            )
+
+            driver.execute_script("document.querySelector('#section-optimizer_config .optimizer-presets-btn').click();")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    """
+                    return Array.from(document.querySelectorAll('.optimizer-presets-modal .optimizer-preset-card'))
+                        .some(card => card.textContent.includes('Moderate'));
+                    """
+                )
+            )
+
+            driver.execute_script(
+                """
+                const moderateCard = Array.from(document.querySelectorAll('.optimizer-presets-modal .optimizer-preset-card'))
+                    .find(card => card.textContent.includes('Moderate'));
+                moderateCard.click();
+                document.querySelector('.optimizer-presets-modal .modal-footer .btn-primary').click();
+                """
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.getElementById('learning_rate')?.value === '0.0001';")
+            )
+
+            values = driver.execute_script(
+                """
+                const store = window.Alpine?.store?.('trainer');
+                return {
+                    learningRate: document.getElementById('learning_rate')?.value,
+                    optimizer: document.getElementById('optimizer')?.value,
+                    trainBatchSize: store?.activeEnvironmentConfig?.['--train_batch_size'],
+                    gradAccum: store?.activeEnvironmentConfig?.['--gradient_accumulation_steps'],
+                    dirty: store?.formDirty
+                };
+                """
+            )
+
+            self.assertEqual(values["learningRate"], "0.0001")
+            self.assertEqual(values["optimizer"], "adamw_bf16")
+            self.assertEqual(values["trainBatchSize"], 2)
+            self.assertEqual(values["gradAccum"], 1)
+            self.assertTrue(values["dirty"])
+
+        self.for_each_browser("test_full_form_optimizer_presets_button_applies_preset", scenario)
 
 
 if __name__ == "__main__":
