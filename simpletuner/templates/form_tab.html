@@ -1061,6 +1061,28 @@ if (!window.hardwareHeroCTA) {
                 }
             },
 
+            readFormFieldValue(fieldName, numericFields) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (!el) {
+                    return undefined;
+                }
+
+                if (el.type === 'checkbox') {
+                    return el.checked;
+                }
+
+                const value = el.value;
+                if (numericFields.has(fieldName)) {
+                    if (value === '') {
+                        return null;
+                    }
+                    const num = Number(value);
+                    return Number.isFinite(num) ? num : null;
+                }
+
+                return value;
+            },
+
             syncFromForm() {
                 // Sync optimizer choices from Full form DOM (options come from server)
                 this.syncOptimizerChoicesFromForm();
@@ -1089,6 +1111,10 @@ if (!window.hardwareHeroCTA) {
                 for (const fieldName of fields) {
                     const prefixedKey = `--${fieldName}`;
                     let value = config[prefixedKey] ?? config[fieldName];
+
+                    if (value === undefined || value === null) {
+                        value = this.readFormFieldValue(fieldName, numericFields);
+                    }
 
                     if (value === undefined || value === null) {
                         continue;

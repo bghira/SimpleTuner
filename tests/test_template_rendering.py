@@ -240,6 +240,14 @@ class TemplateRenderingTests(unittest.TestCase):
         self.assertIn("optimizer-preset-options", rendered)
         self.assertIn("isOptimizerPresetSelected", rendered)
 
+    def test_optimizer_presets_modal_renders_shared_selector(self):
+        template = self.env.get_template("partials/optimizer_presets_modal.html")
+        rendered = template.render()
+
+        self.assertIn('x-data="optimizerPresetsComponent()"', rendered)
+        self.assertIn("optimizer-preset-options", rendered)
+        self.assertIn("applySelectedPreset", rendered)
+
     def test_dataloader_caption_strategy_lists_filename_option(self):
         template_dir = Path(__file__).parent.parent / "simpletuner" / "templates"
         relative_paths = [

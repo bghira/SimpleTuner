@@ -131,5 +131,11 @@ describe('Easy Mode Event Handler Static Analysis', () => {
             // Should have at least 4 (one per EZ Mode component: model, basic, training, validation)
             expect(updateFormFieldDefs.length).toBeGreaterThanOrEqual(4);
         });
+
+        test('Training Easy Mode sync falls back to rendered form defaults', () => {
+            expect(formTabContent).toContain('readFormFieldValue(fieldName, numericFields)');
+            expect(formTabContent).toContain("value = this.readFormFieldValue(fieldName, numericFields);");
+            expect(formTabContent).toContain("'max_grad_norm'");
+        });
     });
 });
