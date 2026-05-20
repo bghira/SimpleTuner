@@ -172,7 +172,7 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint path does not exist: {checkpoint_path}")
         guard_path = root / CHECKPOINT_GUARD_FILENAME
         guard_tmp_path = root / f"{CHECKPOINT_GUARD_FILENAME}.tmp"
-        with guard_tmp_path.open("w") as handle:
+        with guard_tmp_path.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write("complete\n")
         guard_tmp_path.replace(guard_path)
 
