@@ -41,6 +41,20 @@ class CheckpointCleanupTestCase(unittest.TestCase):
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0], "checkpoint-5")
 
+    def test_manager_guard_marks_latest_complete_checkpoint(self) -> None:
+        self.manager.write_guard(os.path.join(self.tempdir.name, "checkpoint-3"))
+        self.manager.write_guard(os.path.join(self.tempdir.name, "checkpoint-4"))
+
+        self.assertTrue(self.manager.has_guard("checkpoint-4"))
+        self.assertEqual(self.manager.get_latest_checkpoint(require_guard=True), "checkpoint-4")
+
+        guard_tmp = Path(self.tempdir.name) / "checkpoint-4" / ".guard.tmp"
+        guard_tmp.write_text("partial", encoding="utf-8")
+        manifest = self.manager.write_manifest(os.path.join(self.tempdir.name, "checkpoint-4"))
+
+        self.assertNotIn(".guard", manifest["files"])
+        self.assertNotIn(".guard.tmp", manifest["files"])
+
     def test_preview_and_execute_cleanup_counts(self) -> None:
         with self._patch_manager():
             preview = self.service.preview_cleanup("env", limit=1)
