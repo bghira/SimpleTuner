@@ -20,8 +20,6 @@ from diffusers.utils import USE_PEFT_BACKEND, deprecate, logging, scale_lora_lay
 from diffusers.utils.import_utils import is_torch_npu_available
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
 from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
     clone_flowmap_embedder,
@@ -34,6 +32,8 @@ from simpletuner.helpers.training.attention_backend import AttentionBackendContr
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):

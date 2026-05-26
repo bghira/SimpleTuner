@@ -134,7 +134,7 @@ class CosmosEmbedding(PatchableModule):
         hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
         r_timestep: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if timestep.ndim == 2:
             batch_size, sequence_length = timestep.shape
             timesteps_proj = self.time_proj(timestep.reshape(-1)).type_as(hidden_states)
