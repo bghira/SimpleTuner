@@ -13,6 +13,14 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import repeat
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    flowmap_timestep_embedding,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
@@ -152,6 +160,9 @@ class TimestepEmbed(nn.Module):
             downscale_freq_shift=0,
         )
         self.timestep_embedder = TimestepEmbedding(in_channels=frequency_embedding_size, time_embed_dim=hidden_size)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -165,14 +176,45 @@ class TimestepEmbed(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, timesteps, wdtype, timestep_sign: Optional[torch.Tensor] = None):
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="HiDream")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        timesteps,
+        wdtype,
+        timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ):
         if timesteps.ndim == 2:
             batch_size, sequence_length = timesteps.shape
-            t_emb = self.time_proj(timesteps.reshape(-1)).to(dtype=wdtype)
-            t_emb = self.timestep_embedder(t_emb).view(batch_size, sequence_length, -1)
-        else:
-            t_emb = self.time_proj(timesteps).to(dtype=wdtype)
-            t_emb = self.timestep_embedder(t_emb)
+        t_emb = flowmap_timestep_embedding(
+            time_proj=self.time_proj,
+            timestep_embedder=self.timestep_embedder,
+            timestep=timesteps,
+            dtype=wdtype,
+        )
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "HiDream FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timesteps,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="HiDream",
+            )
+            delta_emb = flowmap_timestep_embedding(
+                time_proj=self.time_proj,
+                timestep_embedder=self.delta_timestep_embedder,
+                timestep=delta_timestep,
+                dtype=wdtype,
+            )
+            t_emb = blend_flowmap_embeddings(t_emb, delta_emb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -961,6 +1003,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -983,12 +1027,19 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             enable_time_sign_embed=enable_time_sign_embed,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.llama_layers = llama_layers
 
         self.t_embedder = TimestepEmbed(self.inner_dim, enable_time_sign_embed=enable_time_sign_embed)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.p_embedder = PooledEmbed(text_emb_dim, self.inner_dim)
         self.x_embedder = PatchEmbed(
             patch_size=patch_size,
@@ -1122,6 +1173,10 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 f"HiDream expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(timesteps.shape)}."
             )
         return timesteps
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.t_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     def unpatchify(self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool) -> List[torch.Tensor]:
         if 0 and is_training:
@@ -1293,6 +1348,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         hidden_states: torch.Tensor,
         timesteps: torch.LongTensor = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         t5_hidden_states: torch.Tensor = None,
         llama_hidden_states: torch.Tensor = None,
         pooled_embeds: torch.Tensor = None,
@@ -1349,9 +1405,14 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         # Apply gradient checkpointing to this step if enabled
         if self.training and self.gradient_checkpointing:
 
-            def create_custom_forward_timestep(timesteps, timestep_sign=None):
+            def create_custom_forward_timestep(timesteps, timestep_sign=None, r_timestep=None):
                 def custom_forward(t_embedder):
-                    return t_embedder(timesteps, hidden_states_type, timestep_sign=timestep_sign)
+                    return t_embedder(
+                        timesteps,
+                        hidden_states_type,
+                        timestep_sign=timestep_sign,
+                        r_timestep=r_timestep,
+                    )
 
                 return custom_forward
 
@@ -1371,11 +1432,14 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
+            r_timesteps = (
+                self.expand_timesteps(r_timestep, batch_size, hidden_states.device) if r_timestep is not None else None
+            )
             sign = timestep_sign
             if sign is not None:
                 sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype)
             timesteps_emb = checkpoint_fn(
-                create_custom_forward_timestep(timesteps, sign),
+                create_custom_forward_timestep(timesteps, sign, r_timesteps),
                 self.t_embedder,
                 **ckpt_kwargs,
             )
@@ -1392,10 +1456,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         else:
             # Standard processing without checkpointing
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
+            r_timesteps = (
+                self.expand_timesteps(r_timestep, batch_size, hidden_states.device) if r_timestep is not None else None
+            )
             sign = timestep_sign
             if sign is not None:
                 sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype)
-            timesteps = self.t_embedder(timesteps, hidden_states_type, timestep_sign=sign)
+            timesteps = self.t_embedder(timesteps, hidden_states_type, timestep_sign=sign, r_timestep=r_timesteps)
             p_embedder = self.p_embedder(pooled_embeds)
             if timesteps.ndim == 3:
                 adaln_input = timesteps + p_embedder.unsqueeze(1)

@@ -34,6 +34,13 @@ from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, deprecate, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -361,6 +368,9 @@ class QwenTimestepProjEmbeddings(nn.Module):
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
         self.timestep_embedder.time_embed_dim = embedding_dim
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -408,7 +418,19 @@ class QwenTimestepProjEmbeddings(nn.Module):
         sign_idx = (sign_tensor.view(-1) < 0).long().to(device=target_device)
         return conditioning + self.time_sign_embed(sign_idx).to(dtype=conditioning.dtype, device=target_device)
 
-    def forward(self, timestep, hidden_states, timestep_sign: Optional[torch.Tensor] = None):
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Qwen")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        timestep,
+        hidden_states,
+        timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ):
         target_device = hidden_states.device
         target_dtype = hidden_states.dtype
 
@@ -421,6 +443,13 @@ class QwenTimestepProjEmbeddings(nn.Module):
                 self.timestep_embedder = self.timestep_embedder.to(device=target_device)
             if embedder_params[0].dtype != target_dtype:
                 self.timestep_embedder = self.timestep_embedder.to(dtype=target_dtype)
+        if self.delta_timestep_embedder is not None:
+            delta_embedder_params = list(self.delta_timestep_embedder.parameters())
+            if delta_embedder_params:
+                if delta_embedder_params[0].device != target_device:
+                    self.delta_timestep_embedder = self.delta_timestep_embedder.to(device=target_device)
+                if delta_embedder_params[0].dtype != target_dtype:
+                    self.delta_timestep_embedder = self.delta_timestep_embedder.to(dtype=target_dtype)
 
         timestep = timestep.to(device=target_device)
         if timestep.ndim == 2:
@@ -431,6 +460,27 @@ class QwenTimestepProjEmbeddings(nn.Module):
             timesteps_proj = self.time_proj(timestep)
             timesteps_proj = timesteps_proj.to(device=target_device, dtype=target_dtype)
             conditioning = self.timestep_embedder(timesteps_proj)
+
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError("Qwen FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Qwen",
+            )
+            if delta_timestep.ndim == 2:
+                delta_timesteps_proj = self.time_proj(delta_timestep.reshape(-1))
+                delta_timesteps_proj = delta_timesteps_proj.to(device=target_device, dtype=target_dtype)
+                delta_conditioning = self.delta_timestep_embedder(delta_timesteps_proj).view(
+                    delta_timestep.shape[0], delta_timestep.shape[1], -1
+                )
+            else:
+                delta_timesteps_proj = self.time_proj(delta_timestep)
+                delta_timesteps_proj = delta_timesteps_proj.to(device=target_device, dtype=target_dtype)
+                delta_conditioning = self.delta_timestep_embedder(delta_timesteps_proj)
+            conditioning = blend_flowmap_embeddings(conditioning, delta_conditioning, self.flowmap_delta_emb_gate)
 
         if conditioning.dtype != target_dtype:
             conditioning = conditioning.to(dtype=target_dtype)
@@ -974,6 +1024,8 @@ class QwenImageTransformer2DModel(
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -985,6 +1037,11 @@ class QwenImageTransformer2DModel(
             embedding_dim=self.inner_dim,
             enable_time_sign_embed=enable_time_sign_embed,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.time_sign_embed = self.time_text_embed.time_sign_embed
 
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
@@ -1024,6 +1081,10 @@ class QwenImageTransformer2DModel(
         """Set TREAD router and routes for token reduction during training."""
         self._tread_router = router
         self._tread_routes = routes
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_text_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     def _tokenize_hidden_states(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, Optional[int], Optional[int]]:
         """
@@ -1106,6 +1167,7 @@ class QwenImageTransformer2DModel(
         encoder_hidden_states_mask: torch.Tensor = None,
         timestep: torch.LongTensor = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
         txt_seq_lens: Optional[List[int]] = None,
         guidance: torch.Tensor = None,  # TODO: this should probably be removed
@@ -1207,11 +1269,15 @@ class QwenImageTransformer2DModel(
         if guidance is not None:
             guidance = guidance.to(hidden_states.dtype) * 1000
 
-        temb = (
-            self.time_text_embed(timestep, hidden_states, timestep_sign=timestep_sign)
-            if guidance is None
-            else self.time_text_embed(timestep, guidance, hidden_states, timestep_sign=timestep_sign)
-        )
+        if guidance is None:
+            temb = self.time_text_embed(
+                timestep,
+                hidden_states,
+                timestep_sign=timestep_sign,
+                r_timestep=r_timestep,
+            )
+        else:
+            temb = self.time_text_embed(timestep, guidance, hidden_states, timestep_sign=timestep_sign)
 
         image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens=text_seq_len, device=hidden_states.device)
 

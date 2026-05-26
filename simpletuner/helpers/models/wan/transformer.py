@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import math
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -242,6 +243,9 @@ class WanTimeTextImageEmbedding(nn.Module):
         if enable_time_sign_embed:
             self.time_sign_embed = nn.Embedding(2, dim)
             nn.init.zeros_(self.time_sign_embed.weight)
+        self.delta_embedder: Optional[TimestepEmbedding] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         self.act_fn = nn.SiLU()
         self.time_proj = nn.Linear(dim, time_proj_dim)
         self.text_embedder = PixArtAlphaTextProjection(text_embed_dim, dim, act_fn="gelu_tanh")
@@ -250,26 +254,98 @@ class WanTimeTextImageEmbedding(nn.Module):
         if image_embed_dim is not None:
             self.image_embedder = WanImageEmbedding(image_embed_dim, dim)
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        if deltatime_type not in ("r", "t-r"):
+            raise ValueError("Wan FlowMap deltatime_type must be 'r' or 't-r'.")
+        if self.delta_embedder is None:
+            self.delta_embedder = copy.deepcopy(self.time_embedder)
+        self.flowmap_deltatime_type = deltatime_type
+        self.flowmap_delta_emb_gate.data = torch.tensor(
+            [float(gate_value)],
+            device=self.flowmap_delta_emb_gate.device,
+            dtype=self.flowmap_delta_emb_gate.dtype,
+        )
+
+    def _embed_timestep(
+        self,
+        timestep: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        embedder: TimestepEmbedding,
+    ) -> tuple[torch.Tensor, Optional[int]]:
+        timestep_seq_len: Optional[int] = None
+        if timestep.ndim > 1:
+            timestep_seq_len = timestep.shape[1]
+            timestep = timestep.reshape(-1)
+
+        projected_timestep = self.timesteps_proj(timestep)
+        if timestep_seq_len is not None:
+            projected_timestep = projected_timestep.unflatten(0, (-1, timestep_seq_len))
+
+        embedder_dtype = next(iter(embedder.parameters())).dtype
+        if projected_timestep.dtype != embedder_dtype and embedder_dtype != torch.int8:
+            projected_timestep = projected_timestep.to(embedder_dtype)
+        return embedder(projected_timestep).type_as(encoder_hidden_states), timestep_seq_len
+
+    def _prepare_flowmap_delta_timestep(self, timestep: torch.Tensor, r_timestep: torch.Tensor) -> torch.Tensor:
+        if self.delta_embedder is None or self.flowmap_deltatime_type is None:
+            raise ValueError("Wan FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+
+        r_timestep = r_timestep.to(device=timestep.device, dtype=timestep.dtype)
+        if timestep.ndim == 1:
+            if r_timestep.ndim == 0:
+                r_timestep = r_timestep.expand(timestep.shape[0])
+            elif r_timestep.ndim == 1:
+                if r_timestep.shape[0] == 1:
+                    r_timestep = r_timestep.expand(timestep.shape[0])
+                elif r_timestep.shape[0] != timestep.shape[0]:
+                    raise ValueError(
+                        f"Wan FlowMap expected 1 or {timestep.shape[0]} r_timestep values, got {r_timestep.shape[0]}."
+                    )
+            else:
+                raise ValueError(
+                    f"Wan FlowMap expected scalar or 1D r_timestep for batch timesteps, got shape {tuple(r_timestep.shape)}."
+                )
+        elif timestep.ndim == 2:
+            if r_timestep.ndim == 0:
+                r_timestep = r_timestep.expand(timestep.shape)
+            elif r_timestep.ndim == 1:
+                if r_timestep.shape[0] == 1:
+                    r_timestep = r_timestep.expand(timestep.shape[0])
+                elif r_timestep.shape[0] != timestep.shape[0]:
+                    raise ValueError(
+                        f"Wan FlowMap expected 1 or {timestep.shape[0]} batch r_timestep values, got {r_timestep.shape[0]}."
+                    )
+                r_timestep = r_timestep[:, None].expand(-1, timestep.shape[1])
+            elif r_timestep.ndim == 2:
+                if r_timestep.shape != timestep.shape:
+                    raise ValueError(
+                        f"Wan FlowMap tokenwise r_timestep expected shape {tuple(timestep.shape)}, got {tuple(r_timestep.shape)}."
+                    )
+            else:
+                raise ValueError(f"Wan FlowMap expected scalar, 1D, or 2D r_timestep, got shape {tuple(r_timestep.shape)}.")
+        else:
+            raise ValueError(f"Wan FlowMap expected 1D or 2D timesteps, got shape {tuple(timestep.shape)}.")
+
+        if self.flowmap_deltatime_type == "r":
+            return r_timestep
+        if self.flowmap_deltatime_type == "t-r":
+            return timestep - r_timestep
+        raise ValueError(f"Unsupported Wan FlowMap deltatime_type '{self.flowmap_deltatime_type}'.")
+
     def forward(
         self,
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ):
-        timestep_seq_len: Optional[int] = None
-        if timestep.ndim > 1:
-            timestep_seq_len = timestep.shape[1]
-            timestep = timestep.reshape(-1)
-
-        timestep = self.timesteps_proj(timestep)
-        if timestep_seq_len is not None:
-            timestep = timestep.unflatten(0, (-1, timestep_seq_len))
-
-        time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
-        if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
-            timestep = timestep.to(time_embedder_dtype)
-        temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
+        temb, timestep_seq_len = self._embed_timestep(timestep, encoder_hidden_states, self.time_embedder)
+        if r_timestep is not None:
+            delta_timestep = self._prepare_flowmap_delta_timestep(timestep, r_timestep)
+            delta_emb, _ = self._embed_timestep(delta_timestep, encoder_hidden_states, self.delta_embedder)
+            gate = self.flowmap_delta_emb_gate.to(device=temb.device, dtype=temb.dtype)
+            temb = (1.0 - gate) * temb + gate * delta_emb
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -646,6 +722,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -670,6 +748,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
             enable_time_sign_embed=enable_time_sign_embed,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
 
         inner_dim = num_attention_heads * attention_head_dim
@@ -730,6 +810,15 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.condition_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     def set_time_embedding_v2_1(self, force_2_1_time_embedding: bool) -> None:
         """
@@ -791,6 +880,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         skip_layers: Optional[List[int]] = None,
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -828,6 +918,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             # Wan 2.1 uses a single timestep per batch entry. When forcing 2.1 behaviour with Wan 2.2
             # checkpoints we fall back to the first timestep value which matches the reference implementation.
             timestep = timestep[..., 0].contiguous()
+            if r_timestep is not None and r_timestep.dim() > 1:
+                r_timestep = r_timestep[..., 0].contiguous()
             if timestep_sign is not None and timestep_sign.dim() > 1:
                 timestep_sign = timestep_sign[..., 0].contiguous()
         else:
@@ -841,9 +933,18 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                     "WanTransformer3DModel received tokenwise timestep_sign values with sequence length "
                     f"{timestep_sign.shape[1]}, but the latent token sequence length is {token_sequence_length}."
                 )
+            if r_timestep is not None and r_timestep.ndim > 1 and r_timestep.shape[1] != token_sequence_length:
+                raise ValueError(
+                    "WanTransformer3DModel received tokenwise r_timestep values with sequence length "
+                    f"{r_timestep.shape[1]}, but the latent token sequence length is {token_sequence_length}."
+                )
 
         temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
-            timestep, encoder_hidden_states, encoder_hidden_states_image, timestep_sign=timestep_sign
+            timestep,
+            encoder_hidden_states,
+            encoder_hidden_states_image,
+            timestep_sign=timestep_sign,
+            r_timestep=r_timestep,
         )
         timestep_proj = timestep_proj.unflatten(-1, (6, -1))
 

@@ -30,6 +30,13 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNorm, FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -631,6 +638,9 @@ class WanTimeTextAudioPoseEmbedding(nn.Module):
 
         self.timesteps_proj = Timesteps(num_channels=time_freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.time_embedder = TimestepEmbedding(in_channels=time_freq_dim, time_embed_dim=dim)
+        self.delta_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         self.act_fn = nn.SiLU()
         self.time_proj = nn.Linear(dim, time_proj_dim)
         self.text_embedder = PixArtAlphaTextProjection(text_embed_dim, dim, act_fn="gelu_tanh")
@@ -643,12 +653,20 @@ class WanTimeTextAudioPoseEmbedding(nn.Module):
         )
         self.pose_embedder = nn.Conv3d(pose_embed_dim, dim, kernel_size=patch_size, stride=patch_size)
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="WanS2V")
+        if self.delta_embedder is None:
+            self.delta_embedder = clone_flowmap_embedder(self.time_embedder)
+        set_flowmap_gate(self, gate_value)
+
     def project_timestep(
         self,
         timestep: torch.Tensor,
         dtype_reference: torch.Tensor,
         timestep_seq_len: Optional[int] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        original_timestep = timestep
         if timestep.ndim > 1:
             timestep_seq_len = timestep.shape[1]
             timestep = timestep.reshape(-1)
@@ -661,6 +679,28 @@ class WanTimeTextAudioPoseEmbedding(nn.Module):
         if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
             timestep = timestep.to(time_embedder_dtype)
         temb = self.time_embedder(timestep).type_as(dtype_reference)
+        if r_timestep is not None:
+            if self.delta_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "WanS2V FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                original_timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="WanS2V",
+            )
+            delta_seq_len = delta_timestep.shape[1] if delta_timestep.ndim > 1 else None
+            if delta_timestep.ndim > 1:
+                delta_timestep = delta_timestep.reshape(-1)
+            delta_projected = self.timesteps_proj(delta_timestep)
+            if delta_seq_len is not None:
+                delta_projected = delta_projected.unflatten(0, (-1, delta_seq_len))
+            delta_embedder_dtype = next(iter(self.delta_embedder.parameters())).dtype
+            if delta_projected.dtype != delta_embedder_dtype and delta_embedder_dtype != torch.int8:
+                delta_projected = delta_projected.to(delta_embedder_dtype)
+            delta_temb = self.delta_embedder(delta_projected).type_as(dtype_reference)
+            temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
         timestep_proj = self.time_proj(self.act_fn(temb))
         return temb, timestep_proj
 
@@ -671,11 +711,13 @@ class WanTimeTextAudioPoseEmbedding(nn.Module):
         audio_hidden_states: torch.Tensor,
         pose_hidden_states: Optional[torch.Tensor] = None,
         timestep_seq_len: Optional[int] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ):
         temb, timestep_proj = self.project_timestep(
             timestep,
             encoder_hidden_states,
             timestep_seq_len=timestep_seq_len,
+            r_timestep=r_timestep,
         )
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
@@ -916,6 +958,8 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         zero_timestep: bool = True,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
 
@@ -959,6 +1003,11 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             enable_adain=enable_adain,
             num_weighted_avg_layers=num_weighted_avg_layers,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         # Transformer blocks
         self.blocks = nn.ModuleList(
@@ -994,6 +1043,10 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.condition_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):
@@ -1069,6 +1122,7 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         hidden_state_layer: Optional[int] = None,
         hidden_states_buffer: Optional[Dict[str, torch.Tensor]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         Forward pass for S2V generation.
@@ -1124,6 +1178,7 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             encoder_hidden_states,
             audio_embeds,
             pose_latents,
+            r_timestep=r_timestep,
         )
         timestep_proj = timestep_proj.unflatten(-1, (6, -1))
 

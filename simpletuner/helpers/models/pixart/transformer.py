@@ -27,6 +27,13 @@ from diffusers.models.normalization import AdaLayerNormSingle
 from diffusers.utils import logging
 from torch import nn
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -221,6 +228,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         attention_type: Optional[str] = "default",
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
 
@@ -265,6 +274,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             attention_type=attention_type,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
 
         # Set some common variables used across the board.
@@ -323,6 +334,14 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         )
 
         self.adaln_single = AdaLayerNormSingle(self.inner_dim, use_additional_conditions=self.use_additional_conditions)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.caption_projection = None
         if self.config.caption_channels is not None:
             self.caption_projection = PixArtAlphaTextProjection(
@@ -451,6 +470,13 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         self._tread_router = router
         self._tread_routes = routes
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="PixArt")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.adaln_single.emb.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -465,6 +491,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         return_dict: bool = True,
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ):
         """
         The [`PixArtTransformer2DModel`] forward method.
@@ -531,6 +558,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
             sequence_length=hidden_states.shape[1],
+            r_timestep=r_timestep,
         )
 
         if self.caption_projection is not None:
@@ -689,8 +717,9 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         batch_size: int,
         hidden_dtype: torch.dtype,
         sequence_length: int,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if timestep.ndim != 2:
+        if timestep.ndim != 2 and r_timestep is None:
             return self.adaln_single(
                 timestep,
                 added_cond_kwargs,
@@ -704,9 +733,29 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             )
 
         emb = self.adaln_single.emb
-        timestep_flat = timestep.reshape(-1)
+        timestep_flat = timestep.reshape(-1) if timestep.ndim == 2 else timestep
         timesteps_proj = emb.time_proj(timestep_flat)
-        timesteps_emb = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype)).view(batch_size, sequence_length, -1)
+        timesteps_emb = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        if timestep.ndim == 2:
+            timesteps_emb = timesteps_emb.view(batch_size, sequence_length, -1)
+
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "PixArt FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="PixArt",
+            )
+            delta_flat = delta_timestep.reshape(-1) if delta_timestep.ndim == 2 else delta_timestep
+            delta_proj = emb.time_proj(delta_flat)
+            delta_emb = self.delta_timestep_embedder(delta_proj.to(dtype=hidden_dtype))
+            if delta_timestep.ndim == 2:
+                delta_emb = delta_emb.view(delta_timestep.shape[0], delta_timestep.shape[1], -1)
+            timesteps_emb = blend_flowmap_embeddings(timesteps_emb, delta_emb, self.flowmap_delta_emb_gate)
 
         if self.use_additional_conditions:
             resolution = added_cond_kwargs["resolution"]
@@ -715,7 +764,10 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             resolution_emb = emb.resolution_embedder(resolution_emb).reshape(batch_size, -1)
             aspect_ratio_emb = emb.additional_condition_proj(aspect_ratio.flatten()).to(hidden_dtype)
             aspect_ratio_emb = emb.aspect_ratio_embedder(aspect_ratio_emb).reshape(batch_size, -1)
-            size_cond = torch.cat([resolution_emb, aspect_ratio_emb], dim=1).unsqueeze(1).expand(-1, sequence_length, -1)
+            if timesteps_emb.ndim == 3:
+                size_cond = torch.cat([resolution_emb, aspect_ratio_emb], dim=1).unsqueeze(1).expand(-1, sequence_length, -1)
+            else:
+                size_cond = torch.cat([resolution_emb, aspect_ratio_emb], dim=1)
             embedded_timestep = timesteps_emb + size_cond
         else:
             embedded_timestep = timesteps_emb

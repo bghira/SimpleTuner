@@ -29,6 +29,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput
 from torch import nn
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
+
 from .attention import LinearTransformerBlock, t2i_modulate
 from .lyrics_utils.lyric_encoder import ConformerEncoder as LyricEncoder
 
@@ -255,6 +263,8 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         max_height: int = 16,
         max_width: int = 4096,
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
         **kwargs,
     ):
         super().__init__()
@@ -296,6 +306,14 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.t_block = nn.Sequential(nn.SiLU(), nn.Linear(self.inner_dim, 6 * self.inner_dim, bias=True))
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
@@ -351,6 +369,13 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="ACEStep")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
@@ -469,6 +494,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         encoder_hidden_mask: torch.Tensor,
         timestep: Optional[torch.Tensor],
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         ssl_hidden_states: Optional[List[torch.Tensor]] = None,
         output_length: int = 0,
         block_controlnet_hidden_states: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
@@ -515,6 +541,28 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             timestep,
             dtype=hidden_states.dtype,
         )
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "ACEStep FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="ACEStep",
+            )
+            delta_emb = _acestep_apply_tokenwise_timestep_embed(
+                self.time_proj,
+                self.delta_timestep_embedder,
+                delta_timestep,
+                dtype=hidden_states.dtype,
+            )
+            embedded_timestep = blend_flowmap_embeddings(
+                embedded_timestep,
+                delta_emb,
+                self.flowmap_delta_emb_gate,
+            )
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -661,6 +709,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         lyric_mask: Optional[torch.LongTensor] = None,
         timestep: Optional[torch.Tensor] = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         ssl_hidden_states: Optional[List[torch.Tensor]] = None,
         block_controlnet_hidden_states: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
         controlnet_scale: Union[float, torch.Tensor] = 1.0,
@@ -684,6 +733,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             encoder_hidden_mask=encoder_hidden_mask,
             timestep=timestep,
             timestep_sign=timestep_sign,
+            r_timestep=r_timestep,
             ssl_hidden_states=ssl_hidden_states,
             output_length=output_length,
             block_controlnet_hidden_states=block_controlnet_hidden_states,

@@ -30,6 +30,13 @@ from diffusers.models.normalization import RMSNorm
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from torch.nn.utils.rnn import pad_sequence
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -83,6 +90,9 @@ class TimestepEmbedder(nn.Module):
                 bias=True,
             ),
         )
+        self.delta_mlp: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
 
         self.frequency_embedding_size = frequency_embedding_size
 
@@ -99,7 +109,18 @@ class TimestepEmbedder(nn.Module):
                 embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
             return embedding
 
-    def forward(self, t, timestep_sign: Optional[torch.Tensor] = None):
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Z-Image")
+        if self.delta_mlp is None:
+            self.delta_mlp = clone_flowmap_embedder(self.mlp)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        t,
+        timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ):
         if t.ndim == 2:
             t_freq = self.timestep_embedding(t.reshape(-1), self.frequency_embedding_size)
         else:
@@ -110,6 +131,27 @@ class TimestepEmbedder(nn.Module):
         t_emb = self.mlp(t_freq)
         if t.ndim == 2:
             t_emb = t_emb.view(t.shape[0], t.shape[1], -1)
+        if r_timestep is not None:
+            if self.delta_mlp is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Z-Image FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                t,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Z-Image",
+            )
+            if delta_timestep.ndim == 2:
+                delta_freq = self.timestep_embedding(delta_timestep.reshape(-1), self.frequency_embedding_size)
+            else:
+                delta_freq = self.timestep_embedding(delta_timestep, self.frequency_embedding_size)
+            if weight_dtype.is_floating_point:
+                delta_freq = delta_freq.to(weight_dtype)
+            delta_emb = self.delta_mlp(delta_freq)
+            if delta_timestep.ndim == 2:
+                delta_emb = delta_emb.view(delta_timestep.shape[0], delta_timestep.shape[1], -1)
+            t_emb = blend_flowmap_embeddings(t_emb, delta_emb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -455,6 +497,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -515,6 +559,11 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             mid_size=1024,
             enable_time_sign_embed=enable_time_sign_embed,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.cap_embedder = nn.Sequential(
             RMSNorm(cap_feat_dim, eps=norm_eps),
             nn.Linear(cap_feat_dim, dim, bias=True),
@@ -546,6 +595,10 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
         self._tread_routes = routes
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.t_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     def unpatchify(self, x: List[torch.Tensor], size: List[Tuple], patch_size, f_patch_size) -> List[torch.Tensor]:
         pH = pW = patch_size
@@ -678,6 +731,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         t,
         cap_feats: List[torch.Tensor],
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         patch_size=2,
         f_patch_size=1,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -691,6 +745,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         bsz = len(x)
         device = x[0].device
         t = t * self.t_scale
+        if r_timestep is not None:
+            r_timestep = r_timestep.to(device=t.device, dtype=t.dtype) * self.t_scale
 
         (
             x,
@@ -717,7 +773,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 raise ValueError(
                     f"Z-Image tokenwise timesteps expected shape ({bsz}, {expected_length}), got {tuple(t.shape)}."
                 )
-            adaln_input = self.t_embedder(t, timestep_sign=timestep_sign)
+            adaln_input = self.t_embedder(t, timestep_sign=timestep_sign, r_timestep=r_timestep)
             padded_adaln = []
             for batch_idx, padded_len in enumerate(x_item_seqlens):
                 pad_len = padded_len - x_image_seqlens[batch_idx]
@@ -728,7 +784,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                     padded_adaln.append(adaln_input[batch_idx])
             adaln_input = torch.stack(padded_adaln, dim=0)
         else:
-            adaln_input = self.t_embedder(t, timestep_sign=timestep_sign)
+            adaln_input = self.t_embedder(t, timestep_sign=timestep_sign, r_timestep=r_timestep)
 
         x = torch.cat(x, dim=0)
         x = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](x)
