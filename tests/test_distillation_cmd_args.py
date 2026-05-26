@@ -16,7 +16,7 @@ def _base_args():
 
 class DistillationCmdArgsTests(unittest.TestCase):
     def test_distillation_rejects_text_encoder_training(self):
-        for method in ("lcm", "dcm", "dmd", "perflow", "flow_dpo"):
+        for method in ("lcm", "dcm", "dmd", "perflow", "flow_dpo", "anyflow"):
             with self.subTest(method=method):
                 args_list = _base_args() + [f"--distillation_method={method}", "--train_text_encoder"]
 
@@ -24,7 +24,7 @@ class DistillationCmdArgsTests(unittest.TestCase):
                     parse_cmdline_args(input_args=args_list, exit_on_error=True)
 
     def test_distillation_text_encoder_guard_covers_registry_methods(self):
-        for method in ("lcm", "dcm", "dmd", "perflow", "self_forcing", "flow_dpo"):
+        for method in ("lcm", "dcm", "dmd", "perflow", "self_forcing", "flow_dpo", "anyflow"):
             with self.subTest(method=method):
                 with self.assertRaisesRegex(ValueError, "train_text_encoder"):
                     validate_distillation_text_encoder_training(method, True)

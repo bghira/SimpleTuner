@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Any, Dict, Optional, Union
 
 # Ensure registry-backed distillers (like self_forcing) register themselves on import.
+import simpletuner.helpers.distillation.anyflow  # noqa: F401
 import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
 import simpletuner.helpers.distillation.self_forcing  # noqa: F401
@@ -21,6 +22,7 @@ class DistillationMethod(Enum):
     LCM = "lcm"
     PERFLOW = "perflow"
     FLOW_DPO = "flow_dpo"
+    ANYFLOW = "anyflow"
     SELF_FORCING = "self_forcing"
 
     @classmethod
@@ -120,6 +122,19 @@ class DistillerFactory:
                 student_model=student_model,
             )
         elif method == DistillationMethod.FLOW_DPO:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                runtime_config_defaults={
+                    "model_type": model_type,
+                    "model_family": model_family,
+                    "prediction_type": prediction_type,
+                },
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.ANYFLOW:
             return DistillerFactory._create_registered_distiller(
                 registry_key=method.value,
                 teacher_model=teacher_model,

@@ -46,12 +46,12 @@ class SDCascadeLayerNorm(nn.LayerNorm):
 
 
 class SDCascadeTimestepBlock(nn.Module):
-    def __init__(self, c, c_timestep, conds=[]):
+    def __init__(self, c, c_timestep, conds: Optional[list[str]] = None):
         super().__init__()
 
         self.mapper = nn.Linear(c_timestep, c * 2)
-        self.conds = conds
-        for cname in conds:
+        self.conds = list(conds) if conds is not None else []
+        for cname in self.conds:
             setattr(self, f"mapper_{cname}", nn.Linear(c_timestep, c * 2))
         self.delta_mapper: Optional[nn.Module] = None
         self.flowmap_deltatime_type: Optional[str] = None

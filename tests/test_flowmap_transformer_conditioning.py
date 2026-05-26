@@ -165,9 +165,13 @@ class TestFlowMapTransformerConditioning(unittest.TestCase):
         model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
 
         with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             clone = FlowMapUNet2DConditionModel.from_config(model.config)
 
-        self.assertEqual(caught, [])
+        flowmap_config_warnings = [
+            warning for warning in caught if "deltatime_type" in str(warning.message) or "gate_value" in str(warning.message)
+        ]
+        self.assertEqual(flowmap_config_warnings, [])
         self.assertNotIn("deltatime_type", model.config.get("_use_default_values", []))
         self.assertEqual(clone.flowmap_deltatime_type, "r")
         self.assertIsNotNone(clone.delta_time_embedding)

@@ -1,3 +1,4 @@
+import contextvars
 import inspect
 from typing import Optional, Union
 
@@ -11,6 +12,11 @@ from simpletuner.helpers.models.flowmap import (
     register_flowmap_config,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
+)
+
+_FLOWMAP_UNET_TIME_CONTEXT: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "simpletuner_flowmap_unet_time_context",
+    default=None,
 )
 
 
@@ -31,11 +37,15 @@ class FlowMapUNet2DConditionModel(UNet2DConditionModel):
                 gate_value=0.25 if gate_value is None else float(gate_value),
                 deltatime_type=deltatime_type,
             )
+        self._flowmap_time_embedding_hook = self.time_embedding.register_forward_hook(
+            self._flowmap_time_embedding_forward_hook
+        )
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="UNet")
         if self.delta_time_embedding is None:
             self.delta_time_embedding = clone_flowmap_embedder(self.time_embedding)
+            self.delta_time_embedding._forward_hooks.clear()
         set_flowmap_gate(self, gate_value)
         register_flowmap_config(self, gate_value, deltatime_type)
 
@@ -65,14 +75,12 @@ class FlowMapUNet2DConditionModel(UNet2DConditionModel):
         sample: torch.Tensor,
         timestep: Union[torch.Tensor, float, int],
         r_timestep: torch.Tensor,
-        base_forward,
-        t_emb: torch.Tensor,
+        base_embedding: torch.Tensor,
         timestep_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.delta_time_embedding is None or self.flowmap_deltatime_type is None:
             raise ValueError("UNet FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
 
-        base_embedding = base_forward(t_emb, timestep_cond)
         timestep = self._normalize_unet_timestep(sample, timestep)
         delta_timestep = prepare_flowmap_delta_timestep(
             timestep,
@@ -84,6 +92,21 @@ class FlowMapUNet2DConditionModel(UNet2DConditionModel):
         delta_t_emb = delta_t_emb.to(dtype=sample.dtype)
         delta_embedding = self.delta_time_embedding(delta_t_emb, timestep_cond)
         return blend_flowmap_embeddings(base_embedding, delta_embedding, self.flowmap_delta_emb_gate)
+
+    def _flowmap_time_embedding_forward_hook(self, module, inputs, output):
+        del module
+        context = _FLOWMAP_UNET_TIME_CONTEXT.get()
+        if context is None or context.get("owner_id") != id(self):
+            return output
+
+        timestep_cond = inputs[1] if len(inputs) > 1 else None
+        return self._flowmap_time_embedding_forward(
+            sample=context["sample"],
+            timestep=context["timestep"],
+            r_timestep=context["r_timestep"],
+            base_embedding=output,
+            timestep_cond=timestep_cond,
+        )
 
     def forward(
         self,
@@ -97,23 +120,18 @@ class FlowMapUNet2DConditionModel(UNet2DConditionModel):
         if r_timestep is None:
             return super().forward(sample, timestep, encoder_hidden_states, *args, **kwargs)
 
-        base_forward = self.time_embedding.forward
-
-        def flowmap_forward(t_emb: torch.Tensor, timestep_cond: Optional[torch.Tensor] = None) -> torch.Tensor:
-            return self._flowmap_time_embedding_forward(
-                sample=sample,
-                timestep=timestep,
-                r_timestep=r_timestep,
-                base_forward=base_forward,
-                t_emb=t_emb,
-                timestep_cond=timestep_cond,
-            )
-
-        self.time_embedding.forward = flowmap_forward
+        token = _FLOWMAP_UNET_TIME_CONTEXT.set(
+            {
+                "owner_id": id(self),
+                "sample": sample,
+                "timestep": timestep,
+                "r_timestep": r_timestep,
+            }
+        )
         try:
             return super().forward(sample, timestep, encoder_hidden_states, *args, **kwargs)
         finally:
-            self.time_embedding.forward = base_forward
+            _FLOWMAP_UNET_TIME_CONTEXT.reset(token)
 
 
 def _flowmap_unet_init_signature() -> inspect.Signature:
