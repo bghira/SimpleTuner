@@ -117,6 +117,7 @@ SimpleTunerには、エンタープライズグレードの機能を備えた完
 - **グループオフロード** - Diffusers v0.33+モジュールグループCPU/ディスクステージング（オプションのCUDAストリーム付き）
 - **検証アダプタースイープ** - 検証中に一時的にLoRAアダプター（単一またはJSONプリセット）を接続して、トレーニングループに触れることなくアダプターのみまたは比較レンダリングを測定
 - **外部検証フック** - 組み込みの検証パイプラインまたはアップロード後のステップを独自のスクリプトに交換して、別のGPUでチェックを実行したり、任意のクラウドプロバイダーにアーティファクトを転送したりできます（[詳細](/documentation/OPTIONS.md#validation_method)）
+- **AnyFlow distillation** - online teacher target を使う flow-matching モデル向けの FlowMap interval conditioning（[ガイド](/documentation/experimental/ANYFLOW.ja.md)）
 - **CREPA正則化** - ビデオDiTのためのフレーム間表現アライメント（[ガイド](/documentation/experimental/VIDEO_CREPA.md)）
 - **LoRA I/Oフォーマット** - 標準のDiffusersレイアウトまたはComfyUIスタイルの`diffusion_model.*`キーでPEFT LoRAをロード/保存（Flux/Flux2/Lumina2/Z-ImageはComfyUI入力を自動検出）
 
