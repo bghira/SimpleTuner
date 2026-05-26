@@ -1654,18 +1654,15 @@ class ACEStep(AudioModelFoundation):
                 "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
                 "encoder_attention_mask": prepared_batch.get("encoder_attention_mask"),
                 "context_latents": prepared_batch["context_latents"],
+                "timestep_r": prepared_batch["timesteps"],
             }
-            if self.FLOWMAP_R_TIMESTEP_BATCH_KEY in prepared_batch:
-                applied_flowmap = self._apply_flowmap_r_timestep_kwargs(
-                    call_kwargs,
+            call_kwargs.update(
+                self._get_flowmap_r_timestep_forward_kwargs(
                     prepared_batch,
                     target=getattr(transformer, "forward", transformer),
                     kwarg_name="timestep_r",
                 )
-                if not applied_flowmap:
-                    call_kwargs["timestep_r"] = prepared_batch["timesteps"]
-            else:
-                call_kwargs["timestep_r"] = prepared_batch["timesteps"]
+            )
             output = transformer(**call_kwargs)
             flow_pred = output[0] if isinstance(output, (tuple, list)) else getattr(output, "sample", None)
             if flow_pred is None and hasattr(output, "__getitem__"):

@@ -1,4 +1,6 @@
+import inspect
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -95,6 +97,27 @@ class FlowMapRTimestepKwargsTests(unittest.TestCase):
 
         self.assertTrue(applied)
         self.assertIs(call_kwargs["timestep_r"], r_timesteps)
+
+    def test_forward_signature_support_is_cached(self):
+        r_timesteps = torch.tensor([0.25, 0.5])
+        target = _AcceptsRTimestep()
+
+        with patch(
+            "simpletuner.helpers.models.common.inspect.signature",
+            wraps=inspect.signature,
+        ) as signature:
+            self.model._apply_flowmap_r_timestep_kwargs(
+                {},
+                {self.model.FLOWMAP_R_TIMESTEP_BATCH_KEY: r_timesteps},
+                target=target.forward,
+            )
+            self.model._apply_flowmap_r_timestep_kwargs(
+                {},
+                {self.model.FLOWMAP_R_TIMESTEP_BATCH_KEY: r_timesteps},
+                target=target.forward,
+            )
+
+        self.assertEqual(signature.call_count, 1)
 
     def test_unsupported_forward_raises(self):
         with self.assertRaisesRegex(ValueError, "does not accept `r_timestep`"):

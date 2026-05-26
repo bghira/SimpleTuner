@@ -1086,12 +1086,31 @@ class ModelFoundation(ABC):
         """
         raise NotImplementedError("model_predict must be implemented in the child class.")
 
+    def _forward_kwarg_support_cache_key(self, target: Any, kwarg_name: str) -> tuple[Any, ...]:
+        owner = getattr(target, "__self__", None)
+        function = getattr(target, "__func__", None)
+        if owner is not None:
+            return (id(owner), id(function) if function is not None else None, kwarg_name)
+        return (id(target), type(target), kwarg_name)
+
     def _forward_accepts_kwarg(self, target: Any, kwarg_name: str) -> bool:
+        cache = getattr(self, "_forward_kwarg_support_cache", None)
+        if cache is None:
+            cache = {}
+            self._forward_kwarg_support_cache = cache
+
+        cache_key = self._forward_kwarg_support_cache_key(target, kwarg_name)
+        if cache_key in cache:
+            return cache[cache_key]
+
         signature = inspect.signature(target)
+        accepts_kwarg = False
         for parameter in signature.parameters.values():
             if parameter.name == kwarg_name:
-                return True
-        return False
+                accepts_kwarg = True
+                break
+        cache[cache_key] = accepts_kwarg
+        return accepts_kwarg
 
     def _flowmap_forward_target(self, target: Any = None) -> Any:
         if target is not None:
