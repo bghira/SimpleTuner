@@ -69,6 +69,15 @@ def _resolve_ramtorch_dependency() -> str:
     return "ramtorch"
 
 
+PYTORCH_DEPENDENCIES = [
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "torchaudio>=2.11.0",
+]
+
+TORCHAO_DEPENDENCY = "torchao>=0.17.0,<0.18.0"
+
+
 def _cuda_nightly_base_url() -> str:
     """Return the base URL for CUDA 12 nightly PyTorch wheels."""
     return os.environ.get(
@@ -125,12 +134,10 @@ def build_vllm_cuda13_wheel_url() -> str:
 def get_cuda13_dependencies():
     """Get CUDA 13 specific dependencies (use --extra-index-url https://download.pytorch.org/whl/cu130)."""
     dependencies = [
-        "torch>=2.10.0",
-        "torchvision>=0.25.0",
-        "torchaudio>=2.10.0",
+        *PYTORCH_DEPENDENCIES,
         "triton>=3.3.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.14.0,<0.16.0",
+        TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
@@ -158,7 +165,7 @@ def get_cuda_nightly_dependencies():
         build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.14.0,<0.16.0",
+        TORCHAO_DEPENDENCY,
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
@@ -181,7 +188,7 @@ def get_cuda13_nightly_dependencies():
         build_cuda13_nightly_wheel_url("torchaudio", torchaudio_version),
         build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
         "deepspeed>=0.17.2",
-        "torchao>=0.14.0,<0.16.0",
+        TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
@@ -194,13 +201,11 @@ def get_cuda13_nightly_dependencies():
 def get_cuda_dependencies():
     ramtorch_dep = _resolve_ramtorch_dependency()
     return [
-        "torch>=2.10.0",
-        "torchvision>=0.25.0",
-        "torchaudio>=2.10.0",
+        *PYTORCH_DEPENDENCIES,
         "triton>=3.3.0",
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.14.0,<0.16.0",
+        TORCHAO_DEPENDENCY,
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
@@ -212,30 +217,24 @@ def get_cuda_dependencies():
 def get_rocm_dependencies():
     """Get ROCm specific dependencies (use --extra-index-url https://download.pytorch.org/whl/rocm7.1)."""
     return [
-        "torch>=2.10.0",
-        "torchvision>=0.25.0",
-        "torchaudio>=2.10.0",
+        *PYTORCH_DEPENDENCIES,
         "triton>=3.3.0",
-        "torchao>=0.14.0,<0.16.0",
+        TORCHAO_DEPENDENCY,
         "ramtorch",
     ]
 
 
 def get_apple_dependencies():
     return [
-        "torch>=2.10.0",
-        "torchvision>=0.25.0",
-        "torchaudio>=2.10.0",
-        "torchao>=0.14.0,<0.16.0",
+        *PYTORCH_DEPENDENCIES,
+        TORCHAO_DEPENDENCY,
     ]
 
 
 def get_cpu_dependencies():
     return [
-        "torch>=2.10.0",
-        "torchvision>=0.25.0",
-        "torchaudio>=2.10.0",
-        "torchao>=0.14.0,<0.16.0",
+        *PYTORCH_DEPENDENCIES,
+        TORCHAO_DEPENDENCY,
     ]
 
 
