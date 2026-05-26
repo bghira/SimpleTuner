@@ -734,6 +734,7 @@ class LongCatImage(ImageModelFoundation):
             img_ids=img_ids_input,
             hidden_states_buffer=hidden_states_buffer,
             return_dict=False,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )[0]
 
         if self._is_edit_flavour():

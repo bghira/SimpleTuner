@@ -426,6 +426,7 @@ class StableCascadeStageC(ImageModelFoundation):
             clip_text_pooled=pooled,
             clip_img=clip_img,
             return_dict=False,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )[0]
 
         return {"model_prediction": model_output}

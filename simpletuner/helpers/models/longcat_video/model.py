@@ -416,6 +416,7 @@ class LongCatVideo(VideoModelFoundation):
             num_cond_latents=cond_count,
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )[0]
 
         if cond_count > 0 and model_pred.dim() == 5 and model_pred.shape[2] > cond_count:

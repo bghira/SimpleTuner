@@ -610,6 +610,7 @@ class HiDream(ImageModelFoundation):
                 return_dict=False,
                 hidden_states_buffer=hidden_states_buffer,
                 grounding_kwargs=grounding_kwargs,
+                **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
             )[0]
             * -1  # the model is trained with inverted velocity :(
         )

@@ -372,6 +372,7 @@ class OmniGen(ImageModelFoundation):
             input_image_sizes=processed_data["input_image_sizes"] or {},
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )[0]
 
         crepa_hidden = None

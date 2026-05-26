@@ -1232,6 +1232,7 @@ class Wan(VideoModelFoundation):
             wan_transformer_kwargs["grounding_kwargs"] = grounding_kwargs
 
         self._apply_i2v_conditioning_to_kwargs(prepared_batch, wan_transformer_kwargs)
+        self._apply_flowmap_r_timestep_kwargs(wan_transformer_kwargs, prepared_batch)
 
         # For masking with TREAD, avoid dropping any tokens that are in the mask
         if (

@@ -641,6 +641,7 @@ class Chroma(ImageModelFoundation):
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if grounding_kwargs is not None:
             transformer_kwargs["grounding_kwargs"] = grounding_kwargs
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
 
         if (
             getattr(self.config, "tread_config", None) is not None

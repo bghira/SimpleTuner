@@ -938,21 +938,21 @@ class Flux2(ImageModelFoundation):
             lat_in = packed_latents
             id_in = img_ids
 
-        # Forward pass using diffusers interface
-        # img_ids and txt_ids need to be 2D (S, 4) for the diffusers transformer
         timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
-        output = self.model(
-            hidden_states=lat_in,
-            encoder_hidden_states=txt,
-            timestep=timesteps,
-            timestep_sign=timestep_sign,
-            img_ids=id_in[0] if id_in.ndim == 3 else id_in,
-            txt_ids=txt_ids[0] if txt_ids.ndim == 3 else txt_ids,
-            guidance=guidance,
-            return_dict=True,
-            force_keep_mask=force_keep_mask,
-            hidden_states_buffer=hidden_states_buffer,
-        )
+        transformer_kwargs = {
+            "hidden_states": lat_in,
+            "encoder_hidden_states": txt,
+            "timestep": timesteps,
+            "timestep_sign": timestep_sign,
+            "img_ids": id_in[0] if id_in.ndim == 3 else id_in,
+            "txt_ids": txt_ids[0] if txt_ids.ndim == 3 else txt_ids,
+            "guidance": guidance,
+            "return_dict": True,
+            "force_keep_mask": force_keep_mask,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
+        output = self.model(**transformer_kwargs)
 
         # Extract sample from output
         model_pred = output.sample

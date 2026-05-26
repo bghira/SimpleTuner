@@ -400,6 +400,8 @@ class ModelFoundation(ABC):
     MAXIMUM_CANVAS_SIZE = None
     SUPPORTS_LORA = None
     SUPPORTS_CONTROLNET = None
+    FLOWMAP_R_TIMESTEP_BATCH_KEY = "flowmap_r_timesteps"
+    FLOWMAP_R_TIMESTEP_KWARG = "r_timestep"
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
@@ -1083,6 +1085,96 @@ class ModelFoundation(ABC):
         Must be implemented by the subclass.
         """
         raise NotImplementedError("model_predict must be implemented in the child class.")
+
+    def _forward_kwarg_support_cache_key(self, target: Any, kwarg_name: str) -> tuple[Any, ...]:
+        owner = getattr(target, "__self__", None)
+        function = getattr(target, "__func__", None)
+        if owner is not None:
+            return (id(owner), id(function) if function is not None else None, kwarg_name)
+        return (id(target), type(target), kwarg_name)
+
+    def _forward_accepts_kwarg(self, target: Any, kwarg_name: str) -> bool:
+        cache = getattr(self, "_forward_kwarg_support_cache", None)
+        if cache is None:
+            cache = {}
+            self._forward_kwarg_support_cache = cache
+
+        cache_key = self._forward_kwarg_support_cache_key(target, kwarg_name)
+        if cache_key in cache:
+            return cache[cache_key]
+
+        signature = inspect.signature(target)
+        accepts_kwarg = False
+        for parameter in signature.parameters.values():
+            if parameter.name == kwarg_name:
+                accepts_kwarg = True
+                break
+        cache[cache_key] = accepts_kwarg
+        return accepts_kwarg
+
+    def _flowmap_forward_target(self, target: Any = None) -> Any:
+        if target is not None:
+            return target
+
+        component = getattr(self, "model", None)
+        if component is not None:
+            component = self.unwrap_model(model=component)
+        if component is not None:
+            return getattr(component, "forward", component)
+        raise ValueError(f"{self.NAME} received FlowMap timesteps before a model component was loaded.")
+
+    def _apply_flowmap_r_timestep_kwargs(
+        self,
+        call_kwargs: dict[str, Any],
+        prepared_batch: Mapping[str, Any],
+        *,
+        target: Any = None,
+        kwarg_name: str | None = None,
+    ) -> bool:
+        if self.FLOWMAP_R_TIMESTEP_BATCH_KEY not in prepared_batch:
+            return False
+
+        r_timesteps = prepared_batch[self.FLOWMAP_R_TIMESTEP_BATCH_KEY]
+        if r_timesteps is None:
+            return False
+
+        kwarg_name = kwarg_name or self.FLOWMAP_R_TIMESTEP_KWARG
+        if kwarg_name in call_kwargs:
+            raise ValueError(f"{self.NAME} received duplicate `{kwarg_name}` while applying FlowMap timesteps.")
+
+        forward_target = self._flowmap_forward_target(target)
+        try:
+            accepts_kwarg = self._forward_accepts_kwarg(forward_target, kwarg_name)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{self.NAME} received `{self.FLOWMAP_R_TIMESTEP_BATCH_KEY}`, but the model component "
+                f"signature could not be inspected for `{kwarg_name}` support."
+            ) from exc
+
+        if not accepts_kwarg:
+            raise ValueError(
+                f"{self.NAME} received `{self.FLOWMAP_R_TIMESTEP_BATCH_KEY}`, but its model component does not "
+                f"accept `{kwarg_name}`. Add model-specific FlowMap interval conditioning before enabling AnyFlow."
+            )
+
+        call_kwargs[kwarg_name] = r_timesteps
+        return True
+
+    def _get_flowmap_r_timestep_forward_kwargs(
+        self,
+        prepared_batch: Mapping[str, Any],
+        *,
+        target: Any = None,
+        kwarg_name: str | None = None,
+    ) -> dict[str, Any]:
+        call_kwargs: dict[str, Any] = {}
+        self._apply_flowmap_r_timestep_kwargs(
+            call_kwargs,
+            prepared_batch,
+            target=target,
+            kwarg_name=kwarg_name,
+        )
+        return call_kwargs
 
     # -------------------------------------------------------------------------
     # Conditioning Capability Methods

@@ -732,6 +732,7 @@ class Flux(ImageModelFoundation):
             flux_transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if grounding_kwargs is not None:
             flux_transformer_kwargs["grounding_kwargs"] = grounding_kwargs
+        self._apply_flowmap_r_timestep_kwargs(flux_transformer_kwargs, prepared_batch)
         if self.config.flux_attention_masked_training:
             attention_mask = prepared_batch["encoder_attention_mask"]
             if attention_mask is None:
