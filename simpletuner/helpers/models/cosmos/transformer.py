@@ -32,6 +32,13 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torchvision_available, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -109,18 +116,61 @@ class CosmosEmbedding(PatchableModule):
         self.time_proj = Timesteps(embedding_dim, flip_sin_to_cos=True, downscale_freq_shift=0.0)
         self.t_embedder = CosmosTimestepEmbedding(embedding_dim, condition_dim)
         self.norm = RMSNorm(embedding_dim, eps=1e-6, elementwise_affine=True)
+        self.delta_t_embedder: Optional[PatchableModule] = None
+        self.delta_norm: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
 
-    def forward(self, hidden_states: torch.Tensor, timestep: torch.LongTensor) -> torch.Tensor:
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Cosmos")
+        if self.delta_t_embedder is None:
+            self.delta_t_embedder = clone_flowmap_embedder(self.t_embedder)
+        if self.delta_norm is None:
+            self.delta_norm = clone_flowmap_embedder(self.norm)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        timestep: torch.LongTensor,
+        r_timestep: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if timestep.ndim == 2:
             batch_size, sequence_length = timestep.shape
             timesteps_proj = self.time_proj(timestep.reshape(-1)).type_as(hidden_states)
             temb = self.t_embedder(timesteps_proj).view(batch_size, sequence_length, -1)
             embedded_timestep = self.norm(timesteps_proj).view(batch_size, sequence_length, -1)
-            return temb, embedded_timestep
+        else:
+            timesteps_proj = self.time_proj(timestep).type_as(hidden_states)
+            temb = self.t_embedder(timesteps_proj)
+            embedded_timestep = self.norm(timesteps_proj)
 
-        timesteps_proj = self.time_proj(timestep).type_as(hidden_states)
-        temb = self.t_embedder(timesteps_proj)
-        embedded_timestep = self.norm(timesteps_proj)
+        if r_timestep is not None:
+            if self.delta_t_embedder is None or self.delta_norm is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Cosmos FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Cosmos",
+            )
+            if delta_timestep.ndim == 2:
+                batch_size, sequence_length = delta_timestep.shape
+                delta_proj = self.time_proj(delta_timestep.reshape(-1)).type_as(hidden_states)
+                delta_temb = self.delta_t_embedder(delta_proj).view(batch_size, sequence_length, -1)
+                delta_embedded_timestep = self.delta_norm(delta_proj).view(batch_size, sequence_length, -1)
+            else:
+                delta_proj = self.time_proj(delta_timestep).type_as(hidden_states)
+                delta_temb = self.delta_t_embedder(delta_proj)
+                delta_embedded_timestep = self.delta_norm(delta_proj)
+            temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
+            embedded_timestep = blend_flowmap_embeddings(
+                embedded_timestep,
+                delta_embedded_timestep,
+                self.flowmap_delta_emb_gate,
+            )
         return temb, embedded_timestep
 
 
@@ -548,6 +598,8 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         extra_pos_embed_type: Optional[str] = "learnable",
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.register_to_config(
@@ -566,6 +618,8 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
             extra_pos_embed_type=extra_pos_embed_type,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         hidden_size = num_attention_heads * attention_head_dim
 
@@ -591,6 +645,11 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
 
         # 3. Time Embedding
         self.time_embed = CosmosEmbedding(hidden_size, hidden_size)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         # 4. Transformer Blocks
         self.transformer_blocks = MutableModuleList(
@@ -628,6 +687,10 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         self._tread_router = None
         self._tread_routes = None
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
         """Set TREAD router and routes for token reduction during training."""
         self._tread_router = router
@@ -646,6 +709,7 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -755,7 +819,7 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
 
         # 4. Timestep embeddings
         if timestep.ndim == 1:
-            temb, embedded_timestep = self.time_embed(hidden_states, timestep)
+            temb, embedded_timestep = self.time_embed(hidden_states, timestep, r_timestep=r_timestep)
         elif timestep.ndim == 2:
             if timestep.shape[1] != token_count:
                 raise ValueError(
@@ -767,7 +831,7 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
                 raise ValueError(
                     f"Cosmos expected tokenwise timesteps for batch size {batch_size}, got {timestep.shape[0]}."
                 )
-            temb, embedded_timestep = self.time_embed(hidden_states, timestep)
+            temb, embedded_timestep = self.time_embed(hidden_states, timestep, r_timestep=r_timestep)
         elif timestep.ndim == 5:
             assert timestep.shape == (
                 batch_size,
@@ -777,7 +841,9 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
                 1,
             ), f"Expected timestep to have shape [B, 1, T, 1, 1], but got {timestep.shape}"
             timestep = timestep.flatten()
-            temb, embedded_timestep = self.time_embed(hidden_states, timestep)
+            if r_timestep is not None and r_timestep.ndim == 5:
+                r_timestep = r_timestep.flatten()
+            temb, embedded_timestep = self.time_embed(hidden_states, timestep, r_timestep=r_timestep)
             # We can do this because num_frames == post_patch_num_frames, as p_t is 1
             temb, embedded_timestep = (
                 x.view(batch_size, post_patch_num_frames, 1, 1, -1)

@@ -72,6 +72,7 @@ class ErnieImageTransformer2DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         skip_layers: Optional[List[int]] = None,
     ):
         device, dtype = hidden_states.device, hidden_states.dtype
@@ -132,6 +133,8 @@ class ErnieImageTransformer2DModel(
 
         timestep_proj = self.time_proj(timestep).to(dtype=dtype)
         conditioning = self.time_embedding(timestep_proj)
+        if r_timestep is not None:
+            conditioning = self._apply_flowmap_time_conditioning(timestep, r_timestep, conditioning, dtype)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(

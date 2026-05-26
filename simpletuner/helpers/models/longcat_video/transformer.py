@@ -14,6 +14,13 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = logging.getLogger(__name__)
@@ -257,6 +264,9 @@ class TimestepEmbedder(nn.Module):
             nn.SiLU(),
             nn.Linear(t_embed_dim, t_embed_dim, bias=True),
         )
+        self.delta_mlp: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
 
     @staticmethod
     def timestep_embedding(t, dim, max_period=10000):
@@ -269,7 +279,19 @@ class TimestepEmbedder(nn.Module):
             embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
-    def forward(self, t, dtype, timestep_sign: Optional[torch.Tensor] = None):
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="LongCat-Video")
+        if self.delta_mlp is None:
+            self.delta_mlp = clone_flowmap_embedder(self.mlp)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        t,
+        dtype,
+        timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ):
         reshape = None
         if t.ndim == 2:
             reshape = t.shape
@@ -278,6 +300,28 @@ class TimestepEmbedder(nn.Module):
         if t_freq.dtype != dtype:
             t_freq = t_freq.to(dtype)
         t_emb = self.mlp(t_freq)
+        if reshape is not None:
+            t_emb = t_emb.view(reshape[0], reshape[1], -1)
+        if r_timestep is not None:
+            if self.delta_mlp is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "LongCat-Video FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            base_timestep = t.view(*reshape) if reshape is not None else t
+            delta_timestep = prepare_flowmap_delta_timestep(
+                base_timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="LongCat-Video",
+            )
+            delta_flat = delta_timestep.reshape(-1) if delta_timestep.ndim == 2 else delta_timestep
+            delta_freq = self.timestep_embedding(delta_flat, self.frequency_embedding_size)
+            if delta_freq.dtype != dtype:
+                delta_freq = delta_freq.to(dtype)
+            delta_emb = self.delta_mlp(delta_freq)
+            if delta_timestep.ndim == 2:
+                delta_emb = delta_emb.view(delta_timestep.shape[0], delta_timestep.shape[1], -1)
+            t_emb = blend_flowmap_embeddings(t_emb, delta_emb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -314,6 +358,8 @@ class TimestepEmbedder(nn.Module):
                         f"got shape {tuple(sign_tensor.shape)}."
                     )
                 sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=t_emb.device)
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
+                t_emb = t_emb + sign_emb.view(batch_size, sequence_length, -1)
             else:
                 if sign_tensor.ndim == 0:
                     sign_tensor = sign_tensor.expand(t_emb.shape[0])
@@ -330,9 +376,7 @@ class TimestepEmbedder(nn.Module):
                         f"got shape {tuple(sign_tensor.shape)}."
                     )
                 sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=t_emb.device)
-            t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
-        if reshape is not None:
-            t_emb = t_emb.view(reshape[0], reshape[1], -1)
+                t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
 
 
@@ -1017,6 +1061,8 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -1031,6 +1077,11 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             frequency_embedding_size=frequency_embedding_size,
             enable_time_sign_embed=enable_time_sign_embed,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.y_embedder = CaptionEmbedder(in_channels=caption_channels, hidden_size=hidden_size)
 
         self.blocks = nn.ModuleList(
@@ -1066,6 +1117,10 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.t_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+
     def forward(
         self,
         hidden_states,
@@ -1079,6 +1134,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         offload_kv_cache=False,
         return_dict: bool = True,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
     ):
         if kv_cache_dict is None:
@@ -1158,7 +1214,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states = self.x_embedder(hidden_states)
 
         with torch.autocast(device_type=timestep.device.type, dtype=torch.float32, enabled=timestep.device.type == "cuda"):
-            t = self.t_embedder(timestep.float(), dtype=torch.float32, timestep_sign=sign)
+            t = self.t_embedder(timestep.float(), dtype=torch.float32, timestep_sign=sign, r_timestep=r_timestep)
 
         encoder_hidden_states = self.y_embedder(encoder_hidden_states)
 

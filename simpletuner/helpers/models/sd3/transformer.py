@@ -28,6 +28,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    flowmap_timestep_embedding,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
@@ -59,6 +67,54 @@ def _sd3_tokenwise_conditioning(
         pooled_projections[:, None, :].expand(-1, sequence_length, -1).reshape(-1, pooled_projections.shape[-1])
     )
     conditioning = conditioning_module(flat_timestep, repeated_pooled)
+    return conditioning.view(batch_size, sequence_length, -1)
+
+
+def _sd3_tokenwise_flowmap_conditioning(
+    conditioning_module: CombinedTimestepTextProjEmbeddings,
+    delta_timestep_embedder: Optional[nn.Module],
+    timestep: torch.Tensor,
+    pooled_projections: torch.Tensor,
+    r_timestep: torch.Tensor,
+    deltatime_type: Optional[str],
+    gate: torch.Tensor,
+) -> torch.Tensor:
+    if delta_timestep_embedder is None or deltatime_type is None:
+        raise ValueError("SD3 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+
+    delta_timestep = prepare_flowmap_delta_timestep(
+        timestep,
+        r_timestep,
+        deltatime_type,
+        model_name="SD3",
+    )
+
+    def embed_time(time_values: torch.Tensor, timestep_embedder: nn.Module) -> torch.Tensor:
+        return flowmap_timestep_embedding(
+            time_proj=conditioning_module.time_proj,
+            timestep_embedder=timestep_embedder,
+            timestep=time_values,
+            dtype=pooled_projections.dtype,
+        )
+
+    if timestep.ndim != 2:
+        timestep_emb = embed_time(timestep, conditioning_module.timestep_embedder)
+        delta_emb = embed_time(delta_timestep, delta_timestep_embedder)
+        return blend_flowmap_embeddings(timestep_emb, delta_emb, gate) + conditioning_module.text_embedder(
+            pooled_projections
+        )
+
+    batch_size, sequence_length = timestep.shape
+    flat_timestep = timestep.reshape(-1)
+    flat_delta_timestep = delta_timestep.reshape(-1)
+    repeated_pooled = (
+        pooled_projections[:, None, :].expand(-1, sequence_length, -1).reshape(-1, pooled_projections.shape[-1])
+    )
+    timestep_emb = embed_time(flat_timestep, conditioning_module.timestep_embedder)
+    delta_emb = embed_time(flat_delta_timestep, delta_timestep_embedder)
+    conditioning = blend_flowmap_embeddings(timestep_emb, delta_emb, gate) + conditioning_module.text_embedder(
+        repeated_pooled
+    )
     return conditioning.view(batch_size, sequence_length, -1)
 
 
@@ -240,6 +296,8 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -261,6 +319,8 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             enable_time_sign_embed=enable_time_sign_embed,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -277,6 +337,14 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             embedding_dim=self.inner_dim,
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         # Signed-time embedding for TwinFlow adversarial branch; row 0 = positive/zero, row 1 = negative.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -323,6 +391,13 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
         self._tread_routes = routes
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="SD3")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.time_text_embed.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
@@ -477,6 +552,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         pooled_projections: torch.FloatTensor = None,
         timestep: torch.LongTensor = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         block_controlnet_hidden_states: List = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
@@ -575,7 +651,18 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             if timestep.ndim == 2:
                 sign_emb = sign_emb.view(timestep.shape[0], timestep.shape[1], -1)
 
-        temb = _sd3_tokenwise_conditioning(self.time_text_embed, timestep, pooled_projections)
+        if r_timestep is None:
+            temb = _sd3_tokenwise_conditioning(self.time_text_embed, timestep, pooled_projections)
+        else:
+            temb = _sd3_tokenwise_flowmap_conditioning(
+                self.time_text_embed,
+                self.delta_timestep_embedder,
+                timestep,
+                pooled_projections,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                self.flowmap_delta_emb_gate,
+            )
         if sign_emb is not None:
             temb = temb + sign_emb.to(device=hidden_states.device, dtype=temb.dtype)
         if temb.ndim == 3:

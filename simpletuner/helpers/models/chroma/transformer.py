@@ -22,6 +22,13 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import AttentionBackendController
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
@@ -585,6 +592,8 @@ class ChromaTransformer2DModel(
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -604,6 +613,8 @@ class ChromaTransformer2DModel(
             enable_time_sign_embed=enable_time_sign_embed,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
@@ -625,6 +636,14 @@ class ChromaTransformer2DModel(
             hidden_dim=approximator_hidden_dim,
             n_layers=approximator_layers,
         )
+        self.delta_distilled_guidance_layer: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         self.context_embedder = nn.Linear(joint_attention_dim, self.inner_dim)
         self.x_embedder = nn.Linear(in_channels, self.inner_dim)
@@ -681,6 +700,13 @@ class ChromaTransformer2DModel(
         self._tread_router = router
         self._tread_routes = routes
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Chroma")
+        if self.delta_distilled_guidance_layer is None:
+            self.delta_distilled_guidance_layer = clone_flowmap_embedder(self.distilled_guidance_layer)
+        set_flowmap_gate(self, gate_value)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+
     @staticmethod
     def _route_rope(rope, info, keep_len: int, batch: int):
         """
@@ -705,6 +731,7 @@ class ChromaTransformer2DModel(
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         attention_mask: torch.Tensor = None,
@@ -742,6 +769,21 @@ class ChromaTransformer2DModel(
 
         input_vec = _chroma_tokenwise_time_conditioning(self.time_text_embed, timestep)
         pooled_temb = self.distilled_guidance_layer(input_vec)
+        if r_timestep is not None:
+            if self.delta_distilled_guidance_layer is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Chroma FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            r_timestep = r_timestep.to(device=timestep.device, dtype=timestep.dtype) * 1000
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Chroma",
+            )
+            delta_input_vec = _chroma_tokenwise_time_conditioning(self.time_text_embed, delta_timestep)
+            delta_pooled_temb = self.delta_distilled_guidance_layer(delta_input_vec)
+            pooled_temb = blend_flowmap_embeddings(pooled_temb, delta_pooled_temb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(

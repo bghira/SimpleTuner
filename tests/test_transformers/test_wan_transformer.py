@@ -577,6 +577,64 @@ class TestWanTimeTextImageEmbedding(TransformerBaseTest, EmbeddingTestMixin):
         # Image embedding should be None since no image embedder and no image tokens supplied
         self.assertIsNone(image_emb)
 
+    def test_flowmap_requires_enable_before_forward(self):
+        """FlowMap r-timesteps should require explicit delta embedder setup."""
+        embedding = WanTimeTextImageEmbedding(**self.embedding_config)
+
+        timestep = torch.randint(0, 1000, (self.batch_size,))
+        r_timestep = torch.zeros_like(timestep)
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.embedding_config["text_embed_dim"])
+
+        with self.assertRaisesRegex(ValueError, "enable_flowmap_time_conditioning"):
+            embedding.forward(
+                timestep=timestep,
+                r_timestep=r_timestep,
+                encoder_hidden_states=encoder_hidden_states,
+            )
+
+    def test_flowmap_identical_r_matches_base_timestep_embedding(self):
+        """With copied delta weights, r=t should preserve the original timestep embedding."""
+        embedding = WanTimeTextImageEmbedding(**self.embedding_config)
+
+        timestep = torch.randint(0, 1000, (self.batch_size,))
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.embedding_config["text_embed_dim"])
+
+        base_temb, base_timestep_proj, _, _ = embedding.forward(
+            timestep=timestep,
+            encoder_hidden_states=encoder_hidden_states,
+        )
+        embedding.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        flow_temb, flow_timestep_proj, _, _ = embedding.forward(
+            timestep=timestep,
+            r_timestep=timestep,
+            encoder_hidden_states=encoder_hidden_states,
+        )
+
+        self.assertTrue(torch.allclose(flow_temb, base_temb, atol=1e-6, rtol=1e-6))
+        self.assertTrue(torch.allclose(flow_timestep_proj, base_timestep_proj, atol=1e-6, rtol=1e-6))
+
+    def test_flowmap_different_r_changes_timestep_embedding(self):
+        """FlowMap r-timesteps should affect the timestep conditioning."""
+        embedding = WanTimeTextImageEmbedding(**self.embedding_config)
+        embedding.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+
+        timestep = torch.full((self.batch_size,), 900)
+        r_timestep = torch.zeros_like(timestep)
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.embedding_config["text_embed_dim"])
+
+        base_temb, _, _, _ = embedding.forward(
+            timestep=timestep,
+            r_timestep=timestep,
+            encoder_hidden_states=encoder_hidden_states,
+        )
+        flow_temb, _, _, _ = embedding.forward(
+            timestep=timestep,
+            r_timestep=r_timestep,
+            encoder_hidden_states=encoder_hidden_states,
+        )
+
+        self.assertFalse(torch.allclose(flow_temb, base_temb))
+
     def test_timestep_projection_processing(self):
         """Test timestep projection and processing."""
         embedding = WanTimeTextImageEmbedding(**self.embedding_config)
@@ -1231,6 +1289,29 @@ class TestWanTransformer3DModel(TransformerBaseTest):
             output_tensor = output
 
         # Output should have same spatial structure as input
+        expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)
+        self.assert_tensor_shape(output_tensor, expected_shape)
+
+    def test_forward_pass_with_flowmap_r_timestep(self):
+        """Test FlowMap r-timestep conditioning through the full Wan transformer."""
+        model = WanTransformer3DModel(**self.model_config)
+        model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+
+        batch_size, in_channels, num_frames, height, width = 2, 16, 4, 8, 8
+        hidden_states = torch.randn(batch_size, in_channels, num_frames, height, width)
+        timestep = torch.randint(0, 1000, (batch_size,))
+        r_timestep = torch.zeros_like(timestep)
+        encoder_hidden_states = torch.randn(batch_size, 77, self.model_config["text_dim"])
+
+        with torch.no_grad():
+            output = model.forward(
+                hidden_states=hidden_states,
+                timestep=timestep,
+                r_timestep=r_timestep,
+                encoder_hidden_states=encoder_hidden_states,
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
         expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)
         self.assert_tensor_shape(output_tensor, expected_shape)
         self.assert_no_nan_or_inf(output_tensor)

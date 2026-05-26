@@ -17,6 +17,14 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformerBlock,
 )
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    flowmap_timestep_embedding,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = get_logger(__name__, log_level="INFO")
@@ -36,21 +44,52 @@ class TimestepEmbeddings(nn.Module):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
             self.time_sign_embed = nn.Embedding(2, embedding_dim)
             nn.init.zeros_(self.time_sign_embed.weight)
 
-    def forward(self, timestep, hidden_dtype, timestep_sign: Optional[torch.Tensor] = None):
-        if timestep.ndim == 2:
-            batch_size, sequence_length = timestep.shape
-            flat_timestep = timestep.reshape(-1)
-            timesteps_proj = self.time_proj(flat_timestep)
-            temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype)).view(batch_size, sequence_length, -1)
-        else:
-            timesteps_proj = self.time_proj(timestep)
-            temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="LongCat-Image")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        timestep,
+        hidden_dtype,
+        timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ):
+        temb = flowmap_timestep_embedding(
+            time_proj=self.time_proj,
+            timestep_embedder=self.timestep_embedder,
+            timestep=timestep,
+            dtype=hidden_dtype,
+        )
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "LongCat-Image FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="LongCat-Image",
+            )
+            delta_emb = flowmap_timestep_embedding(
+                time_proj=self.time_proj,
+                timestep_embedder=self.delta_timestep_embedder,
+                timestep=delta_timestep,
+                dtype=hidden_dtype,
+            )
+            temb = blend_flowmap_embeddings(temb, delta_emb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -256,6 +295,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         self.out_channels = in_channels
@@ -264,6 +305,11 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
         self.time_embed = TimestepEmbeddings(embedding_dim=self.inner_dim, enable_time_sign_embed=enable_time_sign_embed)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         self.context_embedder = nn.Linear(joint_attention_dim, self.inner_dim)
         self.x_embedder = torch.nn.Linear(in_channels, self.inner_dim)
@@ -307,6 +353,10 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             logger=logger,
         )
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -318,6 +368,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         guidance: torch.Tensor = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         Args:
@@ -361,9 +412,11 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             )
 
         timestep = timestep * 1000
+        if r_timestep is not None:
+            r_timestep = r_timestep.to(device=hidden_states.device, dtype=hidden_states.dtype) * 1000
         guidance = guidance.to(hidden_states.dtype) * 1000 if guidance is not None else None
 
-        temb = self.time_embed(timestep, hidden_states.dtype, timestep_sign=timestep_sign)
+        temb = self.time_embed(timestep, hidden_states.dtype, timestep_sign=timestep_sign, r_timestep=r_timestep)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         txt_len = encoder_hidden_states.shape[1]
 

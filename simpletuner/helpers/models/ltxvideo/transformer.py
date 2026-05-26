@@ -32,6 +32,13 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, deprecate, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
@@ -455,6 +462,8 @@ class LTXVideoTransformer3DModel(
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -478,6 +487,8 @@ class LTXVideoTransformer3DModel(
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
             enable_time_sign_embed=enable_time_sign_embed,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
 
         out_channels = effective_out_channels
@@ -487,6 +498,14 @@ class LTXVideoTransformer3DModel(
 
         self.scale_shift_table = nn.Parameter(torch.randn(2, inner_dim) / inner_dim**0.5)
         self.time_embed = AdaLayerNormSingle(inner_dim, use_additional_conditions=False)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
 
@@ -543,12 +562,20 @@ class LTXVideoTransformer3DModel(
         self._tread_router = router
         self._tread_routes = routes
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="LTXVideo")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.time_embed.emb.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
         encoder_attention_mask: torch.Tensor,
+        r_timestep: Optional[torch.Tensor] = None,
         num_frames: Optional[int] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -595,11 +622,35 @@ class LTXVideoTransformer3DModel(
             post_patch_width = width // self.config.patch_size
         hidden_states = self.proj_in(hidden_states)
 
-        temb, embedded_timestep = self.time_embed(
-            timestep.flatten(),
-            batch_size=batch_size,
-            hidden_dtype=hidden_states.dtype,
-        )
+        if r_timestep is None:
+            temb, embedded_timestep = self.time_embed(
+                timestep.flatten(),
+                batch_size=batch_size,
+                hidden_dtype=hidden_states.dtype,
+            )
+        else:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "LTXVideo FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            emb = self.time_embed.emb
+            timestep_flat = timestep.flatten()
+            timesteps_proj = emb.time_proj(timestep_flat)
+            embedded_timestep = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_states.dtype))
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="LTXVideo",
+            )
+            delta_proj = emb.time_proj(delta_timestep.flatten())
+            delta_emb = self.delta_timestep_embedder(delta_proj.to(dtype=hidden_states.dtype))
+            embedded_timestep = blend_flowmap_embeddings(
+                embedded_timestep,
+                delta_emb,
+                self.flowmap_delta_emb_gate,
+            )
+            temb = self.time_embed.linear(self.time_embed.silu(embedded_timestep))
 
         temb = temb.view(batch_size, -1, temb.size(-1))
         embedded_timestep = embedded_timestep.view(batch_size, -1, embedded_timestep.size(-1))
