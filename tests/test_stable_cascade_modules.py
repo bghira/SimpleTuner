@@ -11,11 +11,14 @@ try:
     from simpletuner.helpers.models.common import PipelineTypes
     from simpletuner.helpers.models.stable_cascade import DDPMWuerstchenScheduler, StableCascadeStageC
     from simpletuner.helpers.models.stable_cascade.autoencoder import StableCascadeStageCAutoencoder
+    from simpletuner.helpers.models.stable_cascade.unet import SDCascadeTimestepBlock, StableCascadeUNet
 except Exception:  # pragma: no cover - missing deps
     PipelineTypes = None
     DDPMWuerstchenScheduler = None
     StableCascadeStageC = None
     StableCascadeStageCAutoencoder = None
+    SDCascadeTimestepBlock = None
+    StableCascadeUNet = None
     STABLE_CASCADE_IMPORT_ERROR = True
 try:
     from simpletuner.helpers.models.registry import ModelRegistry
@@ -85,6 +88,119 @@ class StableCascadeSchedulerTests(unittest.TestCase):
         timestep = scheduler.timesteps[:1].to(latents.device)
         step_output = scheduler.step(noise, timestep, latents)
         self.assertEqual(step_output.prev_sample.shape, latents.shape)
+
+
+@unittest.skipIf(
+    torch is None or STABLE_CASCADE_IMPORT_ERROR,
+    "Stable Cascade UNet requirements are unavailable",
+)
+class StableCascadeFlowMapTests(unittest.TestCase):
+    def test_timestep_block_requires_enable_for_delta_timestep(self):
+        block = SDCascadeTimestepBlock(c=4, c_timestep=8, conds=["sca", "crp"])
+        sample = torch.randn(2, 4, 3, 3)
+        timestep = torch.randn(2, 24)
+
+        with self.assertRaisesRegex(ValueError, "enable_flowmap_time_conditioning"):
+            block(sample, timestep, delta_t=timestep)
+
+    def test_timestep_block_flowmap_equal_delta_matches_base(self):
+        torch.manual_seed(0)
+        block = SDCascadeTimestepBlock(c=4, c_timestep=8, conds=["sca", "crp"])
+        sample = torch.randn(2, 4, 3, 3)
+        timestep = torch.randn(2, 24)
+
+        base = block(sample, timestep)
+        block.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        flowmap = block(sample, timestep, delta_t=timestep)
+
+        self.assertTrue(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_timestep_block_flowmap_different_delta_changes_output(self):
+        torch.manual_seed(1)
+        block = SDCascadeTimestepBlock(c=4, c_timestep=8, conds=["sca", "crp"])
+        sample = torch.randn(2, 4, 3, 3)
+        timestep = torch.randn(2, 24)
+
+        base = block(sample, timestep)
+        block.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        flowmap = block(sample, timestep, delta_t=torch.zeros_like(timestep))
+
+        self.assertFalse(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_unet_flowmap_equal_r_matches_base_output(self):
+        torch.manual_seed(2)
+        model = self._tiny_unet()
+        model.eval()
+        sample, timestep_ratio, clip_text_pooled = self._tiny_unet_inputs()
+
+        with torch.no_grad():
+            base = model(sample=sample, timestep_ratio=timestep_ratio, clip_text_pooled=clip_text_pooled).sample
+            model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+            flowmap = model(
+                sample=sample,
+                timestep_ratio=timestep_ratio,
+                clip_text_pooled=clip_text_pooled,
+                r_timestep=timestep_ratio,
+            ).sample
+
+        self.assertTrue(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_unet_flowmap_different_r_changes_output(self):
+        torch.manual_seed(3)
+        model = self._tiny_unet()
+        model.eval()
+        sample, timestep_ratio, clip_text_pooled = self._tiny_unet_inputs()
+
+        with torch.no_grad():
+            base = model(sample=sample, timestep_ratio=timestep_ratio, clip_text_pooled=clip_text_pooled).sample
+            model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+            flowmap = model(
+                sample=sample,
+                timestep_ratio=timestep_ratio,
+                clip_text_pooled=clip_text_pooled,
+                r_timestep=torch.zeros_like(timestep_ratio),
+            ).sample
+
+        self.assertFalse(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_unet_flowmap_from_config_restores_delta_blocks(self):
+        model = self._tiny_unet()
+        model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+
+        clone = StableCascadeUNet.from_config(model.config)
+        has_delta_mapper = any(getattr(module, "delta_mapper", None) is not None for module in clone.modules())
+
+        self.assertEqual(clone.flowmap_deltatime_type, "r")
+        self.assertTrue(has_delta_mapper)
+
+    def _tiny_unet(self):
+        return StableCascadeUNet(
+            in_channels=4,
+            out_channels=4,
+            timestep_ratio_embedding_dim=8,
+            patch_size=1,
+            conditioning_dim=8,
+            block_out_channels=(8,),
+            num_attention_heads=(1,),
+            down_num_layers_per_block=(1,),
+            up_num_layers_per_block=(1,),
+            down_blocks_repeat_mappers=(1,),
+            up_blocks_repeat_mappers=(1,),
+            block_types_per_layer=(("SDCascadeResBlock", "SDCascadeTimestepBlock"),),
+            clip_text_pooled_in_channels=8,
+            clip_text_in_channels=None,
+            clip_image_in_channels=None,
+            clip_seq=1,
+            effnet_in_channels=None,
+            pixel_mapper_in_channels=None,
+            dropout=0.0,
+        )
+
+    def _tiny_unet_inputs(self):
+        sample = torch.randn(2, 4, 4, 4)
+        timestep_ratio = torch.tensor([0.2, 0.4])
+        clip_text_pooled = torch.randn(2, 1, 8)
+        return sample, timestep_ratio, clip_text_pooled
 
 
 @unittest.skipIf(

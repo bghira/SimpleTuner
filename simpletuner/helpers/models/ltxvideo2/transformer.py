@@ -34,6 +34,7 @@ from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
     clone_flowmap_embedder,
     prepare_flowmap_delta_timestep,
+    register_flowmap_config,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
@@ -1419,7 +1420,7 @@ class LTX2VideoTransformer3DModel(
         if self.audio_delta_timestep_embedder is None:
             self.audio_delta_timestep_embedder = clone_flowmap_embedder(self.audio_time_embed.emb.timestep_embedder)
         set_flowmap_gate(self, gate_value)
-        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def _prepare_flowmap_time_embedding(
         self,

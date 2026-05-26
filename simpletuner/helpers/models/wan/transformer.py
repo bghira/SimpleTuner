@@ -32,6 +32,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import register_flowmap_config
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
@@ -818,7 +819,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.condition_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
-        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def set_time_embedding_v2_1(self, force_2_1_time_embedding: bool) -> None:
         """

@@ -25,6 +25,14 @@ from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    validate_flowmap_deltatime_type,
+)
+
 
 # Copied from diffusers.pipelines.wuerstchen.modeling_wuerstchen_common.WuerstchenLayerNorm with WuerstchenLayerNorm -> SDCascadeLayerNorm
 class SDCascadeLayerNorm(nn.LayerNorm):
@@ -45,12 +53,60 @@ class SDCascadeTimestepBlock(nn.Module):
         self.conds = conds
         for cname in conds:
             setattr(self, f"mapper_{cname}", nn.Linear(c_timestep, c * 2))
+        self.delta_mapper: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
 
-    def forward(self, x, t):
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Stable Cascade")
+        if self.delta_mapper is None:
+            self.delta_mapper = clone_flowmap_embedder(self.mapper)
+        for cname in self.conds:
+            delta_name = f"delta_mapper_{cname}"
+            if not hasattr(self, delta_name):
+                setattr(self, delta_name, clone_flowmap_embedder(getattr(self, f"mapper_{cname}")))
+        self.flowmap_delta_emb_gate.data = torch.tensor(
+            [float(gate_value)],
+            device=self.flowmap_delta_emb_gate.device,
+            dtype=self.flowmap_delta_emb_gate.dtype,
+        )
+
+    def _map_timestep(
+        self,
+        mapper: nn.Module,
+        timestep: torch.Tensor,
+        delta_mapper: Optional[nn.Module] = None,
+        delta_timestep: Optional[torch.Tensor] = None,
+    ):
+        mapped = mapper(timestep)
+        if delta_timestep is not None:
+            if delta_mapper is None:
+                raise ValueError(
+                    "Stable Cascade FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            mapped = blend_flowmap_embeddings(mapped, delta_mapper(delta_timestep), self.flowmap_delta_emb_gate)
+        return mapped
+
+    def forward(self, x, t, delta_t=None):
         t = t.chunk(len(self.conds) + 1, dim=1)
-        a, b = self.mapper(t[0])[:, :, None, None].chunk(2, dim=1)
+        delta_t = delta_t.chunk(len(self.conds) + 1, dim=1) if delta_t is not None else None
+        delta_mapper = self.delta_mapper if delta_t is not None else None
+        a, b = self._map_timestep(
+            self.mapper,
+            t[0],
+            delta_mapper,
+            delta_t[0] if delta_t is not None else None,
+        )[
+            :, :, None, None
+        ].chunk(2, dim=1)
         for i, c in enumerate(self.conds):
-            ac, bc = getattr(self, f"mapper_{c}")(t[i + 1])[:, :, None, None].chunk(2, dim=1)
+            delta_cond_mapper = getattr(self, f"delta_mapper_{c}", None) if delta_t is not None else None
+            ac, bc = self._map_timestep(
+                getattr(self, f"mapper_{c}"),
+                t[i + 1],
+                delta_cond_mapper,
+                delta_t[i + 1] if delta_t is not None else None,
+            )[:, :, None, None].chunk(2, dim=1)
             a, b = a + ac, b + bc
         return x * (1 + a) + b
 
@@ -168,6 +224,8 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         self_attn: Union[bool, Tuple[bool]] = True,
         timestep_conditioning_type: Tuple[str] = ("sca", "crp"),
         switch_level: Optional[Tuple[bool]] = None,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         """
 
@@ -388,6 +446,19 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         )
 
         self.gradient_checkpointing = False
+        self.flowmap_deltatime_type: Optional[str] = None
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Stable Cascade")
+        for module in self.modules():
+            if isinstance(module, SDCascadeTimestepBlock):
+                module.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
@@ -448,7 +519,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             clip = clip_txt_pool
         return self.clip_norm(clip)
 
-    def _down_encode(self, x, r_embed, clip):
+    def _down_encode(self, x, r_embed, clip, delta_r_embed=None):
         level_outputs = []
         block_group = zip(self.down_blocks, self.down_downscalers, self.down_repeat_mappers)
 
@@ -462,7 +533,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                         elif isinstance(block, SDCascadeAttnBlock):
                             x = self._gradient_checkpointing_func(block, x, clip)
                         elif isinstance(block, SDCascadeTimestepBlock):
-                            x = self._gradient_checkpointing_func(block, x, r_embed)
+                            x = self._gradient_checkpointing_func(block, x, r_embed, delta_r_embed)
                         else:
                             x = self._gradient_checkpointing_func(block)
                     if i < len(repmap):
@@ -478,7 +549,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                         elif isinstance(block, SDCascadeAttnBlock):
                             x = block(x, clip)
                         elif isinstance(block, SDCascadeTimestepBlock):
-                            x = block(x, r_embed)
+                            x = block(x, r_embed, delta_r_embed)
                         else:
                             x = block(x)
                     if i < len(repmap):
@@ -486,7 +557,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 level_outputs.insert(0, x)
         return level_outputs
 
-    def _up_decode(self, level_outputs, r_embed, clip):
+    def _up_decode(self, level_outputs, r_embed, clip, delta_r_embed=None):
         x = level_outputs[0]
         block_group = zip(self.up_blocks, self.up_upscalers, self.up_repeat_mappers)
 
@@ -506,7 +577,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                         elif isinstance(block, SDCascadeAttnBlock):
                             x = self._gradient_checkpointing_func(block, x, clip)
                         elif isinstance(block, SDCascadeTimestepBlock):
-                            x = self._gradient_checkpointing_func(block, x, r_embed)
+                            x = self._gradient_checkpointing_func(block, x, r_embed, delta_r_embed)
                         else:
                             x = self._gradient_checkpointing_func(block, x)
                     if j < len(repmap):
@@ -528,7 +599,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                         elif isinstance(block, SDCascadeAttnBlock):
                             x = block(x, clip)
                         elif isinstance(block, SDCascadeTimestepBlock):
-                            x = block(x, r_embed)
+                            x = block(x, r_embed, delta_r_embed)
                         else:
                             x = block(x)
                     if j < len(repmap):
@@ -548,12 +619,26 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         sca=None,
         crp=None,
         return_dict=True,
+        r_timestep=None,
     ):
         if pixels is None:
             pixels = sample.new_zeros(sample.size(0), 3, 8, 8)
 
         # Process the conditioning embeddings
         timestep_ratio_embed = self.get_timestep_ratio_embedding(timestep_ratio)
+        delta_timestep_ratio_embed = None
+        if r_timestep is not None:
+            if self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Stable Cascade FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep_ratio = prepare_flowmap_delta_timestep(
+                timestep_ratio,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Stable Cascade",
+            )
+            delta_timestep_ratio_embed = self.get_timestep_ratio_embedding(delta_timestep_ratio)
         for c in self.config.timestep_conditioning_type:
             if c == "sca":
                 cond = sca
@@ -563,6 +648,11 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 cond = None
             t_cond = cond or torch.zeros_like(timestep_ratio)
             timestep_ratio_embed = torch.cat([timestep_ratio_embed, self.get_timestep_ratio_embedding(t_cond)], dim=1)
+            if delta_timestep_ratio_embed is not None:
+                delta_timestep_ratio_embed = torch.cat(
+                    [delta_timestep_ratio_embed, self.get_timestep_ratio_embedding(t_cond)],
+                    dim=1,
+                )
         clip = self.get_clip_embeddings(clip_txt_pooled=clip_text_pooled, clip_txt=clip_text, clip_img=clip_img)
 
         # Model Blocks
@@ -575,8 +665,8 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             x = x + nn.functional.interpolate(
                 self.pixels_mapper(pixels), size=x.shape[-2:], mode="bilinear", align_corners=True
             )
-        level_outputs = self._down_encode(x, timestep_ratio_embed, clip)
-        x = self._up_decode(level_outputs, timestep_ratio_embed, clip)
+        level_outputs = self._down_encode(x, timestep_ratio_embed, clip, delta_timestep_ratio_embed)
+        x = self._up_decode(level_outputs, timestep_ratio_embed, clip, delta_timestep_ratio_embed)
         sample = self.clf(x)
 
         if not return_dict:

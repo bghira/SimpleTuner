@@ -419,15 +419,19 @@ class StableCascadeStageC(ImageModelFoundation):
 
         timestep_ratio = self._compute_timestep_ratio(prepared_batch["timesteps"]).to(device=device, dtype=weight_dtype)
 
-        model_output = self.model(
-            sample=noisy_latents,
-            timestep_ratio=timestep_ratio,
-            clip_text=clip_text,
-            clip_text_pooled=pooled,
-            clip_img=clip_img,
-            return_dict=False,
-            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
-        )[0]
+        model_kwargs = {
+            "sample": noisy_latents,
+            "timestep_ratio": timestep_ratio,
+            "clip_text": clip_text,
+            "clip_text_pooled": pooled,
+            "clip_img": clip_img,
+            "return_dict": False,
+        }
+        r_timesteps = prepared_batch.get(self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
+        if r_timesteps is not None:
+            model_kwargs["r_timestep"] = self._compute_timestep_ratio(r_timesteps).to(device=device, dtype=weight_dtype)
+
+        model_output = self.model(**model_kwargs)[0]
 
         return {"model_prediction": model_output}
 

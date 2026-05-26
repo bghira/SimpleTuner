@@ -19,6 +19,13 @@ def set_flowmap_gate(module: torch.nn.Module, gate_value: float, *, buffer_name:
     gate.data = torch.tensor([float(gate_value)], device=gate.device, dtype=gate.dtype)
 
 
+def register_flowmap_config(module: Any, gate_value: float, deltatime_type: str) -> None:
+    module.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+    default_values = module.config.get("_use_default_values", []) or []
+    default_values = [key for key in default_values if key not in ("gate_value", "deltatime_type")]
+    module.register_to_config(_use_default_values=default_values)
+
+
 def prepare_flowmap_delta_timestep(
     timestep: torch.Tensor,
     r_timestep: torch.Tensor,

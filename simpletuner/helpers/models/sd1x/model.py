@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from diffusers import AutoencoderKL, ControlNetModel, UNet2DConditionModel
+from diffusers import AutoencoderKL, ControlNetModel
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from simpletuner.helpers.acceleration import (
@@ -21,6 +21,7 @@ from simpletuner.helpers.models.sd1x.pipeline import (
     StableDiffusionPipeline,
 )
 from simpletuner.helpers.models.tae.types import ImageTAESpec
+from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel as UNet2DConditionModel
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log

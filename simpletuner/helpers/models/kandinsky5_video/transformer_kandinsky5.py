@@ -34,6 +34,7 @@ from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
     clone_flowmap_embedder,
     prepare_flowmap_delta_timestep,
+    register_flowmap_config,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
@@ -792,7 +793,7 @@ class Kandinsky5Transformer3DModel(
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.time_embeddings.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
-        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
