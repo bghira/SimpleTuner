@@ -1647,15 +1647,26 @@ class ACEStep(AudioModelFoundation):
             raise ValueError("ACE-Step transformer has not been loaded before model_predict was invoked.")
 
         if self._is_v15_layout_active():
-            output = transformer(
-                hidden_states=prepared_batch["noisy_latents"],
-                timestep=prepared_batch["timesteps"],
-                timestep_r=prepared_batch["timesteps"],
-                attention_mask=prepared_batch["attention_mask"],
-                encoder_hidden_states=prepared_batch["encoder_hidden_states"],
-                encoder_attention_mask=prepared_batch.get("encoder_attention_mask"),
-                context_latents=prepared_batch["context_latents"],
-            )
+            call_kwargs = {
+                "hidden_states": prepared_batch["noisy_latents"],
+                "timestep": prepared_batch["timesteps"],
+                "attention_mask": prepared_batch["attention_mask"],
+                "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
+                "encoder_attention_mask": prepared_batch.get("encoder_attention_mask"),
+                "context_latents": prepared_batch["context_latents"],
+            }
+            if self.FLOWMAP_R_TIMESTEP_BATCH_KEY in prepared_batch:
+                applied_flowmap = self._apply_flowmap_r_timestep_kwargs(
+                    call_kwargs,
+                    prepared_batch,
+                    target=getattr(transformer, "forward", transformer),
+                    kwarg_name="timestep_r",
+                )
+                if not applied_flowmap:
+                    call_kwargs["timestep_r"] = prepared_batch["timesteps"]
+            else:
+                call_kwargs["timestep_r"] = prepared_batch["timesteps"]
+            output = transformer(**call_kwargs)
             flow_pred = output[0] if isinstance(output, (tuple, list)) else getattr(output, "sample", None)
             if flow_pred is None and hasattr(output, "__getitem__"):
                 flow_pred = output[0]
@@ -1683,22 +1694,28 @@ class ACEStep(AudioModelFoundation):
         sigmas = prepared_batch["sigmas"]
         ssl_hidden_states = prepared_batch.get("ssl_hidden_states")
 
-        output = transformer(
-            hidden_states=noise_latents,
-            attention_mask=attention_mask,
-            encoder_text_hidden_states=text_hidden_states,
-            text_attention_mask=text_attention_mask,
-            speaker_embeds=speaker_embeds,
-            lyric_token_idx=lyric_token_ids,
-            lyric_mask=lyric_mask,
-            timestep=timesteps,
-            timestep_sign=(
+        call_kwargs = {
+            "hidden_states": noise_latents,
+            "attention_mask": attention_mask,
+            "encoder_text_hidden_states": text_hidden_states,
+            "text_attention_mask": text_attention_mask,
+            "speaker_embeds": speaker_embeds,
+            "lyric_token_idx": lyric_token_ids,
+            "lyric_mask": lyric_mask,
+            "timestep": timesteps,
+            "timestep_sign": (
                 prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
             ),
-            ssl_hidden_states=ssl_hidden_states,
-            return_dict=True,
-            hidden_states_buffer=hidden_states_buffer,
+            "ssl_hidden_states": ssl_hidden_states,
+            "return_dict": True,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
+        self._apply_flowmap_r_timestep_kwargs(
+            call_kwargs,
+            prepared_batch,
+            target=getattr(transformer, "forward", transformer),
         )
+        output = transformer(**call_kwargs)
 
         # Precondition velocity to data prediction: x0_hat = noisy - sigma * v_theta(noisy, sigma)
         data_pred = (-sigmas) * output.sample + noise_latents

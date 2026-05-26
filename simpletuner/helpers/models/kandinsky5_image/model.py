@@ -500,6 +500,7 @@ class Kandinsky5Image(ImageModelFoundation):
             )
         if hidden_states_buffer is not None:
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
 
         model_output = self.model(
             hidden_states=latents.to(dtype),

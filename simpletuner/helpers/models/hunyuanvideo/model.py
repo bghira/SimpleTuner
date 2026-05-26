@@ -725,6 +725,7 @@ class HunyuanVideo(VideoModelFoundation):
             image_embeds=image_embeds,
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch, kwarg_name="timestep_r"),
         )[0]
         return {
             "model_prediction": model_pred,

@@ -164,6 +164,7 @@ class DeepFloydIF(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             )
+        self._apply_flowmap_r_timestep_kwargs(prediction_kwargs, prepared_batch)
         model_pred = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,

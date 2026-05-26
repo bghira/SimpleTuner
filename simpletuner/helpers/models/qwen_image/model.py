@@ -1239,6 +1239,7 @@ class QwenImage(ImageModelFoundation):
                 and "timestep_sign" in inspect.signature(self.model.__call__).parameters
             ):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+            self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
             noise_pred = self.model(**call_kwargs)[0]
 
         target_ndim = target_latents.dim()
@@ -1394,6 +1395,7 @@ class QwenImage(ImageModelFoundation):
                 and "timestep_sign" in inspect.signature(self.model.__call__).parameters
             ):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+            self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
             noise_pred = self.model(**call_kwargs)[0]
 
         noise_pred = noise_pred[:, : packed_latents.size(1)]
@@ -1543,6 +1545,7 @@ class QwenImage(ImageModelFoundation):
                 and "timestep_sign" in inspect.signature(self.model.__call__).parameters
             ):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+            self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
             noise_pred = self.model(**call_kwargs)[0]
 
         noise_pred = noise_pred[:, : packed_latents.size(1)]

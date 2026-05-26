@@ -172,22 +172,24 @@ class Sana(ImageModelFoundation):
             sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
         )
         grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
-        model_pred = self.model(
-            hidden_states=prepared_batch["noisy_latents"].to(
+        transformer_kwargs = {
+            "hidden_states": prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            timestep=timesteps,
-            timestep_sign=prepared_batch.get("twinflow_time_sign"),
-            encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+            "timestep": timesteps,
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
+            "encoder_attention_mask": prepared_batch["encoder_attention_mask"],
+            "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            return_dict=False,
-            hidden_states_buffer=hidden_states_buffer,
-            grounding_kwargs=grounding_kwargs,
-        )[0]
+            "return_dict": False,
+            "hidden_states_buffer": hidden_states_buffer,
+            "grounding_kwargs": grounding_kwargs,
+        }
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
+        model_pred = self.model(**transformer_kwargs)[0]
 
         return {
             "model_prediction": model_pred,

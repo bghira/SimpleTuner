@@ -240,7 +240,12 @@ class HeartMuLa(AudioModelFoundation):
         tokens = prepared_batch["tokens"]
         tokens_mask = prepared_batch["tokens_mask"]
         attention_mask = tokens_mask.any(dim=-1).to(dtype=torch.long)
-        return self.model(tokens=tokens, tokens_mask=tokens_mask, attention_mask=attention_mask)
+        return self.model(
+            tokens=tokens,
+            tokens_mask=tokens_mask,
+            attention_mask=attention_mask,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
+        )
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         del apply_conditioning_mask

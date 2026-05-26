@@ -282,6 +282,7 @@ class PixartSigma(ImageModelFoundation):
             cross_attention_kwargs=cross_attention_kwargs,
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )[0].chunk(2, dim=1)[0]
 
         return {

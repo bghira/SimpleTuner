@@ -213,6 +213,7 @@ class StableDiffusion1(ImageModelFoundation):
                     ),
                     cross_attention_kwargs=cross_attention_kwargs,
                     return_dict=False,
+                    **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
                 )[0]
                 urepa_hidden = capture.get_captured()
         else:
@@ -228,6 +229,7 @@ class StableDiffusion1(ImageModelFoundation):
                 ),
                 cross_attention_kwargs=cross_attention_kwargs,
                 return_dict=False,
+                **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
             )[0]
 
         return {

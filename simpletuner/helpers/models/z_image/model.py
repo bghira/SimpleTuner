@@ -453,6 +453,7 @@ class ZImage(ImageModelFoundation):
             call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
         if hidden_states_buffer is not None:
             call_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
         model_out_list = self.model(
             latent_list,
             normalized_t,

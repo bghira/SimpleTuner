@@ -451,25 +451,27 @@ class SD3(ImageModelFoundation):
         hidden_states_buffer = self._new_hidden_state_buffer()
         timesteps = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
-        model_pred = self.model(
-            hidden_states=prepared_batch["noisy_latents"].to(
+        transformer_kwargs = {
+            "hidden_states": prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            timestep=timesteps,
-            timestep_sign=prepared_batch.get("twinflow_time_sign"),
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+            "timestep": timesteps,
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
+            "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            pooled_projections=prepared_batch["add_text_embeds"].to(
+            "pooled_projections": prepared_batch["add_text_embeds"].to(
                 device=self.accelerator.device,
                 dtype=self.config.weight_dtype,
             ),
-            return_dict=False,
-            hidden_states_buffer=hidden_states_buffer,
-            grounding_kwargs=grounding_kwargs,
-        )[0]
+            "return_dict": False,
+            "hidden_states_buffer": hidden_states_buffer,
+            "grounding_kwargs": grounding_kwargs,
+        }
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
+        model_pred = self.model(**transformer_kwargs)[0]
 
         return {
             "model_prediction": model_pred,

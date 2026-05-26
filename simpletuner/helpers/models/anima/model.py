@@ -641,6 +641,7 @@ class Anima(ImageModelFoundation):
             t5xxl_ids=prepared_batch.get("t5xxl_ids"),
             t5xxl_weights=prepared_batch.get("t5xxl_weights"),
             hidden_states_buffer=hidden_states_buffer,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )
         if hasattr(noise_pred, "sample"):
             noise_pred = noise_pred.sample
