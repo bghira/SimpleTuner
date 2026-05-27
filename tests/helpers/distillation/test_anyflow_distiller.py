@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from types import SimpleNamespace
 
@@ -5,6 +6,7 @@ import torch
 
 import tests.test_stubs  # noqa: F401
 from simpletuner.helpers.distillation.anyflow.distiller import AnyFlowDistiller
+from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.factory import DistillerFactory
 from simpletuner.helpers.models.common import PredictionTypes
 
@@ -27,6 +29,12 @@ class _FlowMapComponent(torch.nn.Module):
 
     def disable_lora(self):
         self.adapter_enabled = False
+
+    def forward(self, timestep=None, r_timestep=None, **kwargs):
+        del kwargs
+        self.last_timestep = timestep
+        self.last_r_timestep = r_timestep
+        return (r_timestep,)
 
 
 class _FlowModel:
@@ -57,6 +65,38 @@ class _NoFlowMapModel(_FlowModel):
     def __init__(self):
         super().__init__()
         self.component = torch.nn.Linear(1, 1)
+
+
+class _ValidationScheduler:
+    order = 1
+
+    def __init__(self):
+        self.config = SimpleNamespace(num_train_timesteps=1000)
+        self.timesteps = torch.tensor([1000.0, 500.0])
+        self.sigmas = torch.tensor([1.0, 0.5, 0.0])
+
+    def set_timesteps(self, timesteps):
+        self.timesteps = torch.as_tensor(timesteps, dtype=torch.float32)
+
+    def step(self, *args, **kwargs):
+        self.step_args = args
+        self.step_kwargs = kwargs
+        return ("stepped",)
+
+
+class _TParameterComponent(torch.nn.Module):
+    def forward(self, x, t, cap_feats, r_timestep=None):
+        del x, cap_feats
+        self.last_timestep = t
+        self.last_r_timestep = r_timestep
+        return (r_timestep,)
+
+
+class _TimestepRComponent(torch.nn.Module):
+    def forward(self, timestep, timestep_r=None):
+        self.last_timestep = timestep
+        self.last_timestep_r = timestep_r
+        return (timestep_r,)
 
 
 def _prepared_batch():
@@ -198,6 +238,77 @@ class AnyFlowDistillerTests(unittest.TestCase):
                 noise_scheduler=None,
                 config={"model_type": "lora"},
             )
+
+    def test_validation_scheduler_derives_direct_interval_endpoint(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+
+        r_timestep = scheduler.r_timestep_for(torch.tensor([1000.0, 500.0]))
+
+        self.assertTrue(torch.equal(r_timestep, torch.tensor([500.0, 0.0])))
+
+    def test_validation_scheduler_derives_normalized_interval_endpoint(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+
+        r_timestep = scheduler.r_timestep_for(torch.tensor([1.0, 0.5]))
+
+        self.assertTrue(torch.equal(r_timestep, torch.tensor([0.5, 0.0])))
+
+    def test_validation_scheduler_derives_inverted_normalized_interval_endpoint(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+
+        r_timestep = scheduler.r_timestep_for(torch.tensor([0.0, 0.5]))
+
+        self.assertTrue(torch.equal(r_timestep, torch.tensor([0.5, 1.0])))
+
+    def test_validation_scheduler_reuses_inverted_normalized_mapping(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+
+        scheduler.r_timestep_for(torch.tensor([0.0]))
+        r_timestep = scheduler.r_timestep_for(torch.tensor([0.5]))
+
+        self.assertTrue(torch.equal(r_timestep, torch.tensor([1.0])))
+
+    def test_validation_scheduler_wraps_t_parameter_component(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+        component = _TParameterComponent()
+        pipeline = SimpleNamespace(transformer=component)
+
+        scheduler.install_pipeline_hooks(pipeline, component_names=("transformer",))
+        output = pipeline.transformer(torch.zeros(1), torch.tensor([1000.0]), torch.zeros(1))
+
+        self.assertIs(output[0], component.last_r_timestep)
+        self.assertTrue(torch.equal(component.last_r_timestep, torch.tensor([500.0])))
+
+    def test_validation_scheduler_replaces_none_timestep_r(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+        component = _TimestepRComponent()
+        pipeline = SimpleNamespace(transformer=component)
+
+        scheduler.install_pipeline_hooks(pipeline, component_names=("transformer",))
+        output = pipeline.transformer(timestep=torch.tensor([1000.0]), timestep_r=None)
+
+        self.assertIs(output[0], component.last_timestep_r)
+        self.assertTrue(torch.equal(component.last_timestep_r, torch.tensor([500.0])))
+
+    def test_validation_scheduler_preserves_underlying_set_timesteps_signature(self):
+        scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
+
+        self.assertIn("timesteps", inspect.signature(scheduler.set_timesteps).parameters)
+
+    def test_get_scheduler_installs_validation_pipeline_hook(self):
+        model = _FlowModel()
+        model.pipeline = SimpleNamespace(transformer=model.component, scheduler=_ValidationScheduler())
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "target_mode": "linear"},
+        )
+
+        scheduler = distiller.get_scheduler(model.pipeline.scheduler)
+        model.pipeline.transformer(timestep=torch.tensor([1000.0]))
+
+        self.assertIsInstance(scheduler, AnyFlowValidationScheduler)
+        self.assertTrue(torch.equal(model.component.last_r_timestep, torch.tensor([500.0])))
 
 
 if __name__ == "__main__":

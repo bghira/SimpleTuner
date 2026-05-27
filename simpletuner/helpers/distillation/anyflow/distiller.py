@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.models.flowmap import validate_flowmap_deltatime_type
@@ -128,6 +129,37 @@ class AnyFlowDistiller(DistillationBase):
                 torch.mean((prepared_batch["timesteps"].float() - r_timesteps.float())).detach()
             )
         return loss, logs
+
+    def get_scheduler(self, scheduler=None):
+        pipeline = getattr(self.teacher_model, "pipeline", None)
+        base_scheduler = scheduler
+        if base_scheduler is None and pipeline is not None:
+            base_scheduler = getattr(pipeline, "scheduler", None)
+        if base_scheduler is None:
+            base_scheduler = self.noise_scheduler
+        if base_scheduler is None:
+            raise ValueError("AnyFlow validation requires an inference scheduler on the validation pipeline.")
+
+        validation_scheduler = AnyFlowValidationScheduler(
+            base_scheduler,
+            num_train_timesteps=self.num_train_timesteps,
+        )
+        if pipeline is not None:
+            validation_scheduler.install_pipeline_hooks(
+                pipeline,
+                component_names=self._validation_component_names(),
+            )
+        return validation_scheduler
+
+    def _validation_component_names(self) -> tuple[str, ...]:
+        names: list[str] = []
+        model_type = getattr(getattr(self.teacher_model, "MODEL_TYPE", None), "value", None)
+        if isinstance(model_type, str) and model_type:
+            names.append(model_type)
+        for fallback_name in ("transformer", "unet"):
+            if fallback_name not in names:
+                names.append(fallback_name)
+        return tuple(names)
 
     @staticmethod
     def _normalize_target_mode(value: Any) -> str:
