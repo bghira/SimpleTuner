@@ -109,5 +109,5 @@ This is approximate and rank-dependent. The default script target set matches Si
 ## Current Limits
 
 - The public NVIDIA AnyFlow model license is noncommercial; check the upstream model card before publishing derived adapters.
-- Standard validation can run, but AnyFlow-style few-step validation still needs sampler or pipeline support that passes `r_timestep`.
+- AnyFlow validation is wired through the distiller scheduler hook for registered FlowMap-capable pipelines. Custom or external validation paths still need to pass `r_timestep` or `timestep_r` into the model component.
 - Full-rank online-teacher continuation still needs separate student and teacher wiring. LoRA continuation is the supported path for now.

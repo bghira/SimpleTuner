@@ -103,5 +103,5 @@ Isso e aproximado e depende do rank. O target padrao corresponde aos defaults PE
 ## Limites atuais
 
 - A licenca publica dos modelos NVIDIA AnyFlow e noncommercial; confira a model card upstream antes de publicar adapters derivados.
-- A validacao padrao pode rodar, mas validacao AnyFlow few-step ainda precisa de suporte no sampler ou pipeline que passe `r_timestep`.
+- A validacao AnyFlow esta conectada pelo hook de scheduler do distiller para pipelines FlowMap-capable registradas. Caminhos custom ou external de validacao ainda precisam passar `r_timestep` ou `timestep_r` ao componente do modelo.
 - Continuacao full-rank com online teacher ainda precisa de wiring separado de student e teacher. Por enquanto, LoRA continuation e o caminho suportado.

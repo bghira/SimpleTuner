@@ -66,4 +66,4 @@ SimpleTuner 的所有 distillation methods 都会禁止 text encoder training，
 - 需要每个样本一个 scalar timestep。Tokenwise AnyFlow intervals 还没有接入。
 - 需要 `r_timestep < timestep`；timestep zero 会被拒绝。
 - 当前 online teacher 模式面向 LoRA/LyCORIS。Full-rank online teacher 需要单独的 student/teacher wiring。
-- 标准 validation 仍可不传 `r_timestep` 运行，但 AnyFlow 式 few-step sampling 需要 sampler 或 pipeline 支持，把 interval endpoint 作为 `r_timestep` 传入。这个 generation-time integration 仍是后续工作。
+- validation 已通过 AnyFlow distiller 的 scheduler hook 接入。当前 pipeline scheduler 会被代理，validation transformer/UNet 会收到下一个 interval endpoint，作为 `r_timestep` 或 `timestep_r` 传入。已注册的 FlowMap-capable validation pipeline 会覆盖；自定义或 external validation path 仍需自行传递 FlowMap timestep kwarg。

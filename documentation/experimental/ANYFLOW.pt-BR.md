@@ -66,4 +66,4 @@ Com `target_mode=linear`, nenhum rollout teacher e usado. O target e `noise - la
 - Requer timesteps escalares por amostra. Intervalos AnyFlow tokenwise ainda nao estao conectados.
 - Requer `r_timestep < timestep`; timestep zero e rejeitado.
 - O modo online teacher atual e pensado para LoRA/LyCORIS. Full-rank online teacher precisa de wiring separado de student/teacher.
-- Validacao padrao ainda pode rodar sem `r_timestep`, mas sampling AnyFlow de poucos passos precisa de suporte no sampler ou pipeline para passar o endpoint do intervalo como `r_timestep`. Essa integracao de geracao ainda e um follow-up.
+- A validacao esta conectada pelo hook de scheduler do distiller AnyFlow. O scheduler ativo da pipeline e proxied, e o transformer/UNet de validacao recebe o proximo endpoint do intervalo como `r_timestep` ou `timestep_r`. Isso cobre pipelines de validacao FlowMap-capable registradas; caminhos custom ou external de validacao ainda precisam passar o FlowMap timestep kwarg por conta propria.

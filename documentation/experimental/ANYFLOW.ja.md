@@ -66,4 +66,4 @@ flow-matching batch ごとに SimpleTuner は次を行います。
 - sample ごとの scalar timestep が必要です。Tokenwise AnyFlow interval はまだ未対応です。
 - `r_timestep < timestep` が必要です。timestep zero は拒否されます。
 - 現在の online teacher mode は LoRA / LyCORIS 向けです。Full-rank online teacher には別の student/teacher wiring が必要です。
-- 通常の validation は `r_timestep` なしでも実行できますが、AnyFlow 型の few-step sampling では interval endpoint を `r_timestep` として渡す sampler または pipeline 側の対応が必要です。この generation-time integration は今後の対応です。
+- validation は AnyFlow distiller の scheduler hook で接続されています。active pipeline scheduler は proxy され、validation transformer/UNet には次の interval endpoint が `r_timestep` または `timestep_r` として渡されます。registered FlowMap-capable validation pipelines はこの経路で動作します。custom/external validation path では FlowMap timestep kwarg を自前で渡す必要があります。

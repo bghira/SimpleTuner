@@ -103,5 +103,5 @@ conversion matching Wan base transformer और AnyFlow transformer load कर�
 ## मौजूदा limits
 
 - public NVIDIA AnyFlow model license noncommercial है; derived adapters publish करने से पहले upstream model card देखें।
-- standard validation चल सकती है, लेकिन AnyFlow-style few-step validation को अभी sampler या pipeline support चाहिए जो `r_timestep` pass करे।
+- AnyFlow validation registered FlowMap-capable pipelines के लिए distiller scheduler hook से wired है। custom या external validation paths को model component में `r_timestep` या `timestep_r` pass करना होगा।
 - full-rank online-teacher continuation के लिए अलग student और teacher wiring चाहिए। अभी supported path LoRA continuation है।

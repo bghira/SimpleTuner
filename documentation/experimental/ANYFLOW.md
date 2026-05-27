@@ -76,7 +76,7 @@ The current implementation covers the registered FlowMap-capable transformer fam
 - Requires scalar per-sample timesteps. Tokenwise AnyFlow intervals are not wired yet.
 - Requires `r_timestep < timestep`; timestep zero is rejected for AnyFlow training.
 - The default online teacher mode is intended for LoRA/LyCORIS in the current trainer path. Full-rank online teacher training needs a separate student/teacher wiring pass.
-- Standard validation can still run without `r_timestep`, but AnyFlow-style few-step sampling needs sampler or pipeline support that passes the interval endpoint as `r_timestep`. That generation-time integration is still a follow-up.
+- Validation is wired through the AnyFlow distiller scheduler hook. The active pipeline scheduler is proxied, and the validation transformer/UNet receives the next interval endpoint as `r_timestep` or `timestep_r`. This covers registered FlowMap-capable validation pipelines; custom or external validation paths still need to pass the FlowMap timestep kwarg themselves.
 
 ## Logs
 
