@@ -2611,7 +2611,7 @@ class ModelFoundation(ABC):
 
     def get_text_encoder(self, index: int):
         if self.text_encoders is not None:
-            return self.text_encoders[index] if index in self.text_encoders else None
+            return self.text_encoders[index] if 0 <= index < len(self.text_encoders) else None
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:

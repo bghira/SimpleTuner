@@ -8,6 +8,55 @@ from simpletuner.helpers.models.hunyuanvideo.model import HunyuanVideo
 
 
 class HunyuanVideoModelTests(unittest.TestCase):
+    def test_load_text_encoder_registers_both_hunyuan_encoders_for_device_management(self):
+        model = HunyuanVideo.__new__(HunyuanVideo)
+        model.accelerator = SimpleNamespace(device=torch.device("cuda:0"))
+        model.config = SimpleNamespace(
+            hunyuan_text_encoder_path=None,
+            glyph_byt5_repo="glyph/repo",
+            glyph_byt5_fallback_repo="glyph/fallback",
+        )
+        model._ramtorch_text_encoders_requested = MagicMock(return_value=False)
+        model._ramtorch_text_encoder_percent = MagicMock(return_value=1.0)
+        model._apply_ramtorch_layers = MagicMock()
+
+        qwen_tokenizer = MagicMock()
+        byt5_tokenizer = MagicMock()
+        text_encoder = MagicMock()
+        text_encoder.to.return_value = text_encoder
+        byt5_model = MagicMock()
+        byt5_model.to.return_value = byt5_model
+
+        with (
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.Qwen2Tokenizer.from_pretrained",
+                return_value=qwen_tokenizer,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.Qwen2_5_VLTextModel.from_pretrained",
+                return_value=text_encoder,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.ByT5Tokenizer.from_pretrained",
+                return_value=byt5_tokenizer,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.T5EncoderModel.from_pretrained",
+                return_value=byt5_model,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.hf_hub_download",
+                side_effect=RuntimeError("no glyph checkpoint"),
+            ),
+        ):
+            model.load_text_encoder(move_to_device=True)
+
+        self.assertEqual(model.text_encoders, [text_encoder, byt5_model])
+        self.assertEqual(model.tokenizers, [qwen_tokenizer, byt5_tokenizer])
+        self.assertIs(model.text_encoder_1, text_encoder)
+        self.assertIs(model.text_encoder_2, byt5_model)
+        self.assertIs(model.get_text_encoder(1), byt5_model)
+
     def test_model_supports_crepa_self_flow(self):
         model = HunyuanVideo.__new__(HunyuanVideo)
         self.assertTrue(model.supports_crepa_self_flow())

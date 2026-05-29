@@ -338,9 +338,9 @@ class HunyuanVideo(VideoModelFoundation):
         self.tokenizer_2 = byt5_tokenizer
 
         # Maintain attributes expected by the training stack.
-        self.text_encoders = [text_encoder]
+        self.text_encoders = [text_encoder, byt5_model]
         self.text_encoder_1 = text_encoder
-        self.tokenizers = [tokenizer]
+        self.tokenizers = [tokenizer, byt5_tokenizer]
         self.tokenizer_1 = tokenizer
         self._image_encoder = None
         self._image_processor = None
