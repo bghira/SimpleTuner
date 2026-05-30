@@ -3,6 +3,9 @@ import safetensors.torch
 import torch
 
 
+ANYFLOW_SIDECAR_PREFIXES = ("condition_embedder.delta_embedder.",)
+
+
 def determine_adapter_target_modules(args, unet, transformer):
     if unet is not None:
         return ["to_k", "to_q", "to_v", "to_out.0"]
@@ -102,6 +105,27 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
         lora_layers = {
             (prefix + "." + x): y for (x, y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)
         }
+        model_state = model.state_dict()
+        sidecar_prefix = f"{prefix}."
+        for key, tensor in state_dict.items():
+            if not key.startswith(sidecar_prefix):
+                continue
+            model_key = key.removeprefix(sidecar_prefix)
+            if not model_key.startswith(ANYFLOW_SIDECAR_PREFIXES):
+                continue
+            try:
+                destination = model_state[model_key]
+            except KeyError as exc:
+                raise ValueError(
+                    f"LoRA file contains AnyFlow sidecar tensor `{key}`, but `{prefix}` does not have `{model_key}`. "
+                    "Call enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type='r') before loading this LoRA."
+                ) from exc
+            if destination.shape != tensor.shape:
+                raise ValueError(
+                    f"Shape mismatch for AnyFlow sidecar tensor `{key}`: "
+                    f"model {tuple(destination.shape)} vs file {tuple(tensor.shape)}."
+                )
+            destination.copy_(tensor.to(device=destination.device, dtype=destination.dtype))
     missing_keys = set(
         [x + ".lora_A.weight" for x in lora_layers.keys()]
         + [x + ".lora_B.weight" for x in lora_layers.keys()]
