@@ -142,6 +142,55 @@ class HunyuanVideoModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(transformer_kwargs["timestep"], tokenwise_timesteps))
         self.assertEqual(transformer_kwargs["hidden_states"].shape, (1, 5, 2, 2, 2))
 
+    def test_model_predict_moves_text_embeddings_to_latent_device(self):
+        model = HunyuanVideo.__new__(HunyuanVideo)
+        model.config = SimpleNamespace(
+            weight_dtype=torch.float32,
+            twinflow_enabled=False,
+            vision_num_semantic_tokens=4,
+            vision_states_dim=6,
+            text_embed_2_dim=4,
+        )
+        model.crepa_regularizer = None
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model._is_i2v_like_flavour = lambda: False
+        model._prepare_cond_latents = lambda conditioning_latents, latents, task_type: (
+            torch.zeros_like(latents),
+            torch.zeros(
+                latents.shape[0],
+                1,
+                latents.shape[2],
+                latents.shape[3],
+                latents.shape[4],
+                device=latents.device,
+                dtype=latents.dtype,
+            ),
+        )
+        model._get_flowmap_r_timestep_forward_kwargs = MagicMock(return_value={})
+        model._select_crepa_hidden_states = MagicMock(return_value=None)
+        model.model = MagicMock(
+            return_value=(torch.empty(1, 2, 2, 2, 2, device="meta"),),
+            config=SimpleNamespace(image_embed_dim=6, text_embed_2_dim=4),
+        )
+
+        prepared_batch = {
+            "noisy_latents": torch.empty(1, 2, 2, 2, 2, device="meta"),
+            "encoder_hidden_states": torch.randn(1, 3, 8),
+            "encoder_attention_mask": torch.ones(1, 3),
+            "encoder_hidden_states_2": torch.randn(1, 2, 4),
+            "encoder_attention_mask_2": torch.ones(1, 2),
+            "timesteps": torch.tensor([100.0]),
+        }
+
+        model.model_predict(prepared_batch)
+
+        transformer_kwargs = model.model.call_args.kwargs
+        self.assertEqual(transformer_kwargs["encoder_hidden_states"].device.type, "meta")
+        self.assertEqual(transformer_kwargs["encoder_attention_mask"].device.type, "meta")
+        self.assertEqual(transformer_kwargs["encoder_hidden_states_2"].device.type, "meta")
+        self.assertEqual(transformer_kwargs["encoder_attention_mask_2"].device.type, "meta")
+
 
 if __name__ == "__main__":
     unittest.main()

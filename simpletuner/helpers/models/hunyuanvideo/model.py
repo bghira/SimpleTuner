@@ -624,14 +624,16 @@ class HunyuanVideo(VideoModelFoundation):
             raise ValueError(f"Expected 5D video latents, got shape {latents.shape}")
 
         hidden_states_buffer = self._new_hidden_state_buffer()
-        encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(self.config.weight_dtype)
+        encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(
+            device=latents.device, dtype=self.config.weight_dtype
+        )
         encoder_attention_mask = prepared_batch.get("encoder_attention_mask")
         if encoder_attention_mask is not None:
             encoder_attention_mask = encoder_attention_mask.to(device=latents.device, dtype=torch.bool)
 
         encoder_hidden_states_2 = prepared_batch.get("encoder_hidden_states_2")
         if encoder_hidden_states_2 is not None:
-            encoder_hidden_states_2 = encoder_hidden_states_2.to(self.config.weight_dtype)
+            encoder_hidden_states_2 = encoder_hidden_states_2.to(device=latents.device, dtype=self.config.weight_dtype)
 
         encoder_attention_mask_2 = prepared_batch.get("encoder_attention_mask_2")
         if encoder_attention_mask_2 is not None:
