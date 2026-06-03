@@ -270,10 +270,40 @@ class Ideogram4Pipeline:
     self.device = device
     self.dtype = dtype
     self.caption_verifier = CaptionVerifier()
+    self._progress_bar_config = {}
 
     shift, scale = get_latent_norm()
     self.latent_shift = shift.to(device)
     self.latent_scale = scale.to(device)
+
+  def to(
+    self,
+    device: str | torch.device | None = None,
+    dtype: torch.dtype | None = None,
+  ) -> "Ideogram4Pipeline":
+    if device is not None:
+      device = torch.device(device)
+      self.device = device
+    if dtype is not None:
+      self.dtype = dtype
+
+    for module in (
+      self.conditional_transformer,
+      self.unconditional_transformer,
+      self.text_encoder,
+      self.autoencoder,
+    ):
+      if module is not None:
+        if dtype is not None:
+          module.to(device=self.device, dtype=dtype)
+        else:
+          module.to(device=self.device)
+    self.latent_shift = self.latent_shift.to(self.device)
+    self.latent_scale = self.latent_scale.to(self.device)
+    return self
+
+  def set_progress_bar_config(self, **kwargs) -> None:
+    self._progress_bar_config.update(kwargs)
 
   @classmethod
   def from_pretrained(
@@ -462,6 +492,15 @@ class Ideogram4Pipeline:
     )
     indicator[:, max_text_tokens:] = OUTPUT_IMAGE_INDICATOR
 
+    llm_features = torch.zeros(
+      batch_size,
+      total_seq_len,
+      prompt_embeds.shape[-1],
+      dtype=prompt_embeds.dtype,
+      device=prompt_embeds.device,
+    )
+    llm_features[:, :max_text_tokens] = prompt_embeds
+
     return {
       "text_position_ids": text_position_ids.to(self.device),
       "position_ids": position_ids.to(self.device),
@@ -471,7 +510,7 @@ class Ideogram4Pipeline:
       "grid_h": grid_h,  # type: ignore[dict-item]
       "grid_w": grid_w,  # type: ignore[dict-item]
       "max_text_tokens": max_text_tokens,  # type: ignore[dict-item]
-      "prompt_embeds": prompt_embeds.to(device=self.device, dtype=torch.float32),
+      "prompt_embeds": llm_features.to(device=self.device, dtype=torch.float32),
       "attention_mask": attention_mask.to(device=self.device),
     }
 

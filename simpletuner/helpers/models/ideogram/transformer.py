@@ -19,6 +19,7 @@ from simpletuner.helpers.models.ideogram.constants import (
   OUTPUT_IMAGE_INDICATOR,
   QWEN3_VL_ACTIVATION_LAYERS,
 )
+from simpletuner.helpers.models.ideogram.quantized_loading import Fp8Linear
 
 
 @dataclass
@@ -266,6 +267,8 @@ class Ideogram4FinalLayer(nn.Module):
 class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
   """Ideogram 4 flow-matching transformer."""
 
+  _supports_gradient_checkpointing = True
+
   def __init__(self, config: Ideogram4Config) -> None:
     super().__init__()
     self.config = config
@@ -304,6 +307,29 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
       out_channels=config.in_channels,
       adanln_dim=config.adanln_dim,
     )
+    self.gradient_checkpointing = False
+    self.gradient_checkpointing_backend = "torch"
+
+  def enable_gradient_checkpointing(self) -> None:
+    self.gradient_checkpointing = True
+
+  def disable_gradient_checkpointing(self) -> None:
+    self.gradient_checkpointing = False
+
+  def set_gradient_checkpointing_backend(self, backend: str) -> None:
+    self.gradient_checkpointing_backend = backend
+
+  def register_lora_custom_modules(self, lora_config) -> bool:
+    from peft.tuners.lora.layer import Linear as PeftLinear
+
+    custom_modules = getattr(lora_config, "_custom_modules", None)
+    if custom_modules is None:
+      custom_modules = {}
+      lora_config._custom_modules = custom_modules
+    if not isinstance(custom_modules, dict):
+      return False
+    custom_modules.setdefault(Fp8Linear, PeftLinear)
+    return True
 
   @property
   def device(self) -> torch.device:
@@ -373,8 +399,19 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
     cos = cos.to(h.dtype)
     sin = sin.to(h.dtype)
 
-    for layer in self.layers:
-      h = layer(h, segment_ids=segment_ids, cos=cos, sin=sin, adaln_input=adaln_input)
+    if torch.is_grad_enabled() and self.gradient_checkpointing:
+      if self.gradient_checkpointing_backend == "unsloth":
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+        checkpoint_fn = offloaded_checkpoint
+      else:
+        checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+      for layer in self.layers:
+        h = checkpoint_fn(layer, h, segment_ids, cos, sin, adaln_input, use_reentrant=False)
+    else:
+      for layer in self.layers:
+        h = layer(h, segment_ids=segment_ids, cos=cos, sin=sin, adaln_input=adaln_input)
 
     out = self.final_layer(h, c=adaln_input)
     return out.to(torch.float32)

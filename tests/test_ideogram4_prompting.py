@@ -7,6 +7,7 @@ import torch
 from simpletuner.helpers.models.ideogram.model import Ideogram4
 from simpletuner.helpers.models.ideogram.pipeline import Ideogram4Pipeline
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
 
 
 class Ideogram4PromptingTests(unittest.TestCase):
@@ -199,6 +200,35 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         self.assertEqual(encoded["prompt_embeds"].shape, (1, 2, 8))
         self.assertTrue(torch.equal(encoded["attention_mask"], torch.ones(1, 2, dtype=torch.bool)))
+
+    def test_transformer_gradient_checkpointing_forward_backward(self):
+        model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=192,
+                num_layers=2,
+                num_heads=1,
+                intermediate_size=384,
+                adanln_dim=32,
+                llm_features_dim=64,
+            )
+        )
+        model.train()
+        model.enable_gradient_checkpointing()
+
+        x = torch.randn(1, 6, 128, requires_grad=True)
+        out = model(
+            llm_features=torch.randn(1, 6, 64),
+            x=x,
+            t=torch.rand(1),
+            position_ids=torch.zeros(1, 6, 3, dtype=torch.long),
+            segment_ids=torch.zeros(1, 6, dtype=torch.long),
+            indicator=torch.tensor([[0, 0, 1, 1, 1, 1]], dtype=torch.long),
+        )
+        loss = out.square().mean()
+        loss.backward()
+
+        self.assertEqual(out.shape, (1, 6, 128))
+        self.assertIsNotNone(x.grad)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from simpletuner.helpers.models.ideogram.constants import (
     LLM_TOKEN_INDICATOR,
     OUTPUT_IMAGE_INDICATOR,
 )
+from simpletuner.helpers.models.ideogram.autoencoder import AutoEncoder
 from simpletuner.helpers.models.ideogram.latent_norm import get_latent_norm
 from simpletuner.helpers.models.ideogram.pipeline import (
     Ideogram4Config,
@@ -36,6 +37,7 @@ class Ideogram4(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     MODEL_CLASS = types.SimpleNamespace
+    AUTOENCODER_CLASS = AutoEncoder
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: Ideogram4Pipeline}
     TEXT_ENCODER_CONFIGURATION = {"text_encoder": {"name": "Qwen3-VL-8B-Instruct"}}
@@ -83,11 +85,12 @@ class Ideogram4(ImageModelFoundation):
             self.model.to(self.accelerator.device)
         return self.model
 
-    def load_vae(self):
+    def load_vae(self, move_to_device: bool = True):
         repo_id = getattr(self.config, "pretrained_model_name_or_path", None) or self.HUGGINGFACE_PATHS["fp8"]
         pipe_config = Ideogram4PipelineConfig(weights_repo=repo_id)
         autoencoder_weights = hf_hub_download(repo_id=repo_id, filename=pipe_config.autoencoder_filename)
-        self.vae = _load_autoencoder(autoencoder_weights, self.accelerator.device, self.config.weight_dtype)
+        device = self.accelerator.device if move_to_device else torch.device("cpu")
+        self.vae = _load_autoencoder(autoencoder_weights, device, self.config.weight_dtype)
         return self.vae
 
     def load_text_encoder(self, move_to_device: bool = True):

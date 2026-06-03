@@ -968,6 +968,11 @@ class ModelFoundation(ABC):
         if self._ramtorch_enabled():
             ramtorch_utils.register_lora_custom_module(self.lora_config)
 
+        trained_component = self.controlnet if getattr(self.config, "controlnet", False) else self.model
+        register_custom_lora_modules = getattr(trained_component, "register_lora_custom_modules", None)
+        if callable(register_custom_lora_modules):
+            register_custom_lora_modules(self.lora_config)
+
         if getattr(self.config, "controlnet", False):
             self.controlnet.add_adapter(self.lora_config)
         else:
