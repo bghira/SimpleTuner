@@ -394,7 +394,8 @@ class Ideogram4(ImageModelFoundation):
             indicator=indicator,
         )
         packed_prediction = model_output[:, text_tokens:]
-        return {"model_prediction": self._unpack_latents(packed_prediction, latent_height, latent_width)}
+        model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)
+        return {"model_prediction": model_prediction * -1}
 
     def requires_special_scheduler_setup(self) -> bool:
         return True

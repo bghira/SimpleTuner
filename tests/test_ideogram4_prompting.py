@@ -151,7 +151,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
             def __call__(self, **kwargs):
                 x = kwargs["x"]
                 self.last_kwargs = kwargs
-                return torch.zeros_like(x)
+                return torch.ones_like(x)
 
         model = Ideogram4.__new__(Ideogram4)
         model.accelerator = DummyAccelerator()
@@ -170,6 +170,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertEqual(result["model_prediction"].shape, (2, 32, 4, 4))
         self.assertEqual(model.model.last_kwargs["x"].shape, (2, 7, 128))
         self.assertEqual(model.model.last_kwargs["position_ids"].shape, (2, 7, 3))
+        self.assertTrue(torch.equal(result["model_prediction"], torch.full((2, 32, 4, 4), -1.0)))
 
     def test_negative_prompt_encoding_is_not_rejected(self):
         class DummyTokenizer:
