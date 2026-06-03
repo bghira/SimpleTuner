@@ -48,6 +48,7 @@ class Ideogram4(ImageModelFoundation):
     MODEL_LICENSE = "ideogram-4-non-commercial"
     VALIDATION_USES_NEGATIVE_PROMPT = True
     SUPPORTS_LORA = True
+    DEFAULT_LORA_TARGET = ["qkv", "o", "w1", "w2", "w3"]
     PATCH_SIZE = 2
     AE_SCALE_FACTOR = 8
 

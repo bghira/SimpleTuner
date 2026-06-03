@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from diffusers.loaders import PeftAdapterMixin
 
 from simpletuner.helpers.models.ideogram.constants import (
   LLM_TOKEN_INDICATOR,
@@ -262,7 +263,7 @@ class Ideogram4FinalLayer(nn.Module):
     return self.linear(self.norm_final(x) * scale)
 
 
-class Ideogram4Transformer(nn.Module):
+class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
   """Ideogram 4 flow-matching transformer."""
 
   def __init__(self, config: Ideogram4Config) -> None:
