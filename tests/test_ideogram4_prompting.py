@@ -61,11 +61,26 @@ class Ideogram4PromptingTests(unittest.TestCase):
         )
 
         self.assertIn("prompts", mapped)
-        self.assertIn("negative_prompts", mapped)
+        self.assertNotIn("negative_prompts", mapped)
         self.assertNotIn("prompt", mapped)
         self.assertNotIn("negative_prompt", mapped)
         self.assertEqual(mapped["num_steps"], 12)
         self.assertFalse(mapped["raise_on_caption_issues"])
+
+    def test_text_embed_conversion_and_collation_pad_at_batch_time(self):
+        model = Ideogram4.__new__(Ideogram4)
+        first = {"prompt_embeds": torch.ones(2, 4), "attention_mask": torch.ones(2, dtype=torch.bool)}
+        second = {"prompt_embeds": torch.ones(1, 4) * 2, "attention_mask": torch.ones(1, dtype=torch.bool)}
+
+        collated = model.collate_prompt_embeds([first, second])
+
+        self.assertEqual(collated["prompt_embeds"].shape, (2, 2, 4))
+        self.assertTrue(torch.equal(collated["attention_masks"], torch.tensor([[True, True], [True, False]])))
+
+        converted = model.convert_text_embed_for_pipeline(first)
+        negative = model.convert_negative_text_embed_for_pipeline(first)
+        self.assertEqual(converted["prompt_embeds"].shape, (1, 2, 4))
+        self.assertEqual(negative["negative_prompt_embeds"].shape, (1, 2, 4))
 
     def test_pipeline_cfg_fallback_uses_negative_prompt_with_conditional_transformer(self):
         class DummyTransformer:
@@ -108,7 +123,17 @@ class Ideogram4PromptingTests(unittest.TestCase):
             token_ids.shape[0], token_ids.shape[1], 8
         )
 
-        pipe("positive", negative_prompts="negative", height=16, width=16, num_steps=1, guidance_scale=2.0)
+        pipe(
+            None,
+            prompt_embeds=torch.zeros(1, 2, 8),
+            prompt_attention_mask=torch.ones(1, 2, dtype=torch.bool),
+            negative_prompt_embeds=torch.zeros(1, 1, 8),
+            negative_prompt_attention_mask=torch.ones(1, 1, dtype=torch.bool),
+            height=16,
+            width=16,
+            num_steps=1,
+            guidance_scale=2.0,
+        )
 
         self.assertEqual(len(transformer.calls), 2)
         self.assertEqual(transformer.calls[0]["x"].shape[1], 3)
@@ -144,6 +169,36 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertEqual(result["model_prediction"].shape, (2, 32, 4, 4))
         self.assertEqual(model.model.last_kwargs["x"].shape, (2, 7, 128))
         self.assertEqual(model.model.last_kwargs["position_ids"].shape, (2, 7, 3))
+
+    def test_negative_prompt_encoding_is_not_rejected(self):
+        class DummyTokenizer:
+            def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=False):
+                return messages[0]["content"][0]["text"]
+
+            def __call__(self, text, return_tensors="pt", add_special_tokens=False):
+                return {"input_ids": torch.tensor([[1, 2]], dtype=torch.long)}
+
+        class DummyPipeline:
+            def __init__(self, **kwargs):
+                pass
+
+            def _encode_text(self, token_ids, text_position_ids, indicator):
+                return torch.zeros(token_ids.shape[0], token_ids.shape[1], 8)
+
+        model = Ideogram4.__new__(Ideogram4)
+        model.accelerator = types.SimpleNamespace(device=torch.device("cpu"))
+        model.config = types.SimpleNamespace(ideogram_auto_json=True, weight_dtype=torch.float32)
+        model.tokenizers = [DummyTokenizer()]
+        model.text_encoders = [object()]
+        original_pipeline = __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline
+        try:
+            __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline = DummyPipeline
+            encoded = model._encode_prompts(["not blurry"], is_negative_prompt=True)
+        finally:
+            __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline = original_pipeline
+
+        self.assertEqual(encoded["prompt_embeds"].shape, (1, 2, 8))
+        self.assertTrue(torch.equal(encoded["attention_mask"], torch.ones(1, 2, dtype=torch.bool)))
 
 
 if __name__ == "__main__":

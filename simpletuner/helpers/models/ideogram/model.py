@@ -46,7 +46,7 @@ class Ideogram4(ImageModelFoundation):
         "nf4": "ideogram-ai/ideogram-4-nf4",
     }
     MODEL_LICENSE = "ideogram-4-non-commercial"
-    VALIDATION_USES_NEGATIVE_PROMPT = False
+    VALIDATION_USES_NEGATIVE_PROMPT = True
     SUPPORTS_LORA = True
     PATCH_SIZE = 2
     AE_SCALE_FACTOR = 8
@@ -135,24 +135,14 @@ class Ideogram4(ImageModelFoundation):
         return pipeline
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
-        if "prompt" in pipeline_kwargs:
+        if "prompt" in pipeline_kwargs and pipeline_kwargs["prompt"] is not None:
             pipeline_kwargs["prompts"] = maybe_convert_prompt_to_ideogram_json(
                 pipeline_kwargs.pop("prompt"),
                 enabled=getattr(self.config, "ideogram_auto_json", True),
             )
-        negative_prompt = pipeline_kwargs.pop("negative_prompt", None)
-        if negative_prompt is None:
-            try:
-                from simpletuner.helpers.training.state_tracker import StateTracker
-
-                negative_prompt = getattr(StateTracker.get_args(), "validation_negative_prompt", None)
-            except Exception:
-                negative_prompt = None
-        if negative_prompt not in (None, "None"):
-            pipeline_kwargs["negative_prompts"] = maybe_convert_prompt_to_ideogram_json(
-                negative_prompt,
-                enabled=getattr(self.config, "ideogram_auto_json", True),
-            )
+        elif pipeline_kwargs.get("prompt") is None:
+            pipeline_kwargs.pop("prompt", None)
+        pipeline_kwargs.pop("negative_prompt", None)
         if "num_inference_steps" in pipeline_kwargs:
             pipeline_kwargs["num_steps"] = pipeline_kwargs.pop("num_inference_steps")
         if "generator" in pipeline_kwargs:
@@ -165,8 +155,6 @@ class Ideogram4(ImageModelFoundation):
         return pipeline_kwargs
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
-        if is_negative_prompt:
-            raise ValueError("Ideogram uses a separate unconditional transformer; negative prompt encoding is unsupported.")
         if getattr(self, "text_encoders", None) is None:
             self.load_text_encoder(move_to_device=True)
 
@@ -216,14 +204,74 @@ class Ideogram4(ImageModelFoundation):
     def _format_text_embedding(self, text_embedding: dict):
         return text_embedding
 
-    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        return {}
+    def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
+        prompt_embeds = text_embedding["prompt_embeds"]
+        attention_mask = text_embedding.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = text_embedding.get("attention_masks")
+        if prompt_embeds.dim() == 2:
+            prompt_embeds = prompt_embeds.unsqueeze(0)
+        if attention_mask is not None and attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)
+        return {
+            "prompt_embeds": prompt_embeds,
+            "prompt_attention_mask": attention_mask,
+        }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        return {}
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
+        prompt_embeds = text_embedding["prompt_embeds"]
+        attention_mask = text_embedding.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = text_embedding.get("attention_masks")
+        if prompt_embeds.dim() == 2:
+            prompt_embeds = prompt_embeds.unsqueeze(0)
+        if attention_mask is not None and attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)
+        return {
+            "negative_prompt_embeds": prompt_embeds,
+            "negative_prompt_attention_mask": attention_mask,
+        }
 
-    def collate_prompt_embeds(self, text_encoder_output: dict) -> dict:
-        return text_encoder_output
+    def collate_prompt_embeds(self, text_encoder_output: list[dict]) -> dict:
+        if not text_encoder_output:
+            return {}
+
+        embeds = []
+        masks = []
+        max_len = 0
+        for item in text_encoder_output:
+            prompt_embeds = item["prompt_embeds"]
+            attention_mask = item.get("attention_mask")
+            if attention_mask is None:
+                attention_mask = item.get("attention_masks")
+            if prompt_embeds.dim() == 3:
+                prompt_embeds = prompt_embeds.squeeze(0)
+            if attention_mask is None:
+                attention_mask = torch.ones(prompt_embeds.shape[0], dtype=torch.bool, device=prompt_embeds.device)
+            elif attention_mask.dim() == 2:
+                attention_mask = attention_mask.squeeze(0)
+            attention_mask = attention_mask.to(dtype=torch.bool)
+            length = int(attention_mask.sum().item())
+            prompt_embeds = prompt_embeds[:length]
+            attention_mask = attention_mask[:length]
+            embeds.append(prompt_embeds)
+            masks.append(attention_mask)
+            max_len = max(max_len, length)
+
+        padded_embeds = []
+        padded_masks = []
+        for prompt_embeds, attention_mask in zip(embeds, masks):
+            pad_len = max_len - prompt_embeds.shape[0]
+            if pad_len > 0:
+                prompt_embeds = torch.nn.functional.pad(prompt_embeds, (0, 0, 0, pad_len))
+                attention_mask = torch.nn.functional.pad(attention_mask, (0, pad_len), value=False)
+            padded_embeds.append(prompt_embeds.unsqueeze(0))
+            padded_masks.append(attention_mask.unsqueeze(0))
+
+        return {
+            "prompt_embeds": torch.cat(padded_embeds, dim=0),
+            "attention_masks": torch.cat(padded_masks, dim=0),
+        }
 
     @torch.no_grad()
     def encode_with_vae(self, vae, samples):
@@ -275,7 +323,11 @@ class Ideogram4(ImageModelFoundation):
         if prompt_embeds is None:
             prompt_embeds = prepared_batch["encoder_hidden_states"]
         prompt_embeds = prompt_embeds.to(device=self.accelerator.device, dtype=torch.float32)
-        attention_mask = prepared_batch.get("attention_mask")
+        attention_mask = prepared_batch.get("encoder_attention_mask")
+        if attention_mask is None:
+            attention_mask = prepared_batch.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = prepared_batch.get("attention_masks")
         if attention_mask is None:
             attention_mask = torch.ones(prompt_embeds.shape[:2], dtype=torch.bool, device=self.accelerator.device)
         else:

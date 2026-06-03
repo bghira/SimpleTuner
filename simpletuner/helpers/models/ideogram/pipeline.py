@@ -412,6 +412,69 @@ class Ideogram4Pipeline:
       "max_text_tokens": max_text_tokens,  # type: ignore[dict-item]
     }
 
+  def _build_inputs_from_embeds(
+    self,
+    prompt_embeds: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    height: int,
+    width: int,
+  ) -> dict[str, torch.Tensor]:
+    batch_size, max_text_tokens, _ = prompt_embeds.shape
+    if attention_mask is None:
+      attention_mask = torch.ones(
+        batch_size, max_text_tokens, dtype=torch.bool, device=prompt_embeds.device
+      )
+    else:
+      attention_mask = attention_mask.to(device=prompt_embeds.device, dtype=torch.bool)
+
+    patch = self.config.patch_size * self.config.ae_scale_factor
+    if height % patch != 0 or width % patch != 0:
+      raise ValueError(
+        f"height/width must be divisible by patch_size*ae_scale_factor={patch}"
+      )
+    grid_h = height // patch
+    grid_w = width // patch
+    num_image_tokens = grid_h * grid_w
+    total_seq_len = max_text_tokens + num_image_tokens
+
+    h_idx = torch.arange(grid_h, device=prompt_embeds.device).view(-1, 1).expand(grid_h, grid_w).reshape(-1)
+    w_idx = torch.arange(grid_w, device=prompt_embeds.device).view(1, -1).expand(grid_h, grid_w).reshape(-1)
+    t_idx = torch.zeros_like(h_idx)
+    image_pos = torch.stack([t_idx, h_idx, w_idx], dim=1) + IMAGE_POSITION_OFFSET
+
+    text_pos = torch.arange(max_text_tokens, device=prompt_embeds.device)
+    text_pos_3d = torch.stack([text_pos, text_pos, text_pos], dim=1)
+    position_ids = torch.zeros(batch_size, total_seq_len, 3, dtype=torch.long, device=prompt_embeds.device)
+    text_position_ids = torch.zeros_like(position_ids)
+    position_ids[:, :max_text_tokens] = text_pos_3d
+    text_position_ids[:, :max_text_tokens] = text_pos_3d
+    position_ids[:, max_text_tokens:] = image_pos
+
+    segment_ids = torch.zeros(batch_size, total_seq_len, dtype=torch.long, device=prompt_embeds.device)
+    segment_ids[:, :max_text_tokens] = attention_mask.to(torch.long)
+    segment_ids[:, max_text_tokens:] = 1
+
+    indicator = torch.zeros(batch_size, total_seq_len, dtype=torch.long, device=prompt_embeds.device)
+    indicator[:, :max_text_tokens] = torch.where(
+      attention_mask,
+      torch.full_like(attention_mask, LLM_TOKEN_INDICATOR, dtype=torch.long),
+      torch.zeros_like(attention_mask, dtype=torch.long),
+    )
+    indicator[:, max_text_tokens:] = OUTPUT_IMAGE_INDICATOR
+
+    return {
+      "text_position_ids": text_position_ids.to(self.device),
+      "position_ids": position_ids.to(self.device),
+      "segment_ids": segment_ids.to(self.device),
+      "indicator": indicator.to(self.device),
+      "num_image_tokens": num_image_tokens,  # type: ignore[dict-item]
+      "grid_h": grid_h,  # type: ignore[dict-item]
+      "grid_w": grid_w,  # type: ignore[dict-item]
+      "max_text_tokens": max_text_tokens,  # type: ignore[dict-item]
+      "prompt_embeds": prompt_embeds.to(device=self.device, dtype=torch.float32),
+      "attention_mask": attention_mask.to(device=self.device),
+    }
+
   def _get_qwen3_vl_embeddings(
     self,
     token_ids: torch.Tensor,
@@ -519,9 +582,13 @@ class Ideogram4Pipeline:
   @torch.no_grad()
   def __call__(
     self,
-    prompts: str | list[str],
+    prompts: str | list[str] | None = None,
     *,
+    prompt_embeds: torch.Tensor | None = None,
+    prompt_attention_mask: torch.Tensor | None = None,
     negative_prompts: str | list[str] | None = None,
+    negative_prompt_embeds: torch.Tensor | None = None,
+    negative_prompt_attention_mask: torch.Tensor | None = None,
     height: int = 1024,
     width: int = 1024,
     num_steps: int = 128,
@@ -534,10 +601,13 @@ class Ideogram4Pipeline:
     raise_on_caption_issues: bool = True,
   ) -> list[Image.Image]:
     """Generate images for the given prompts."""
-    if isinstance(prompts, str):
+    if prompts is not None and isinstance(prompts, str):
       prompts = [prompts]
 
-    self._verify_prompts(prompts, raise_on_issues=raise_on_caption_issues)
+    if prompt_embeds is None:
+      if prompts is None:
+        raise ValueError("Either prompts or prompt_embeds must be provided.")
+      self._verify_prompts(prompts, raise_on_issues=raise_on_caption_issues)
 
     schedule = schedule or get_schedule_for_resolution(
       (height, width), known_mean=mu, std=std
@@ -559,29 +629,51 @@ class Ideogram4Pipeline:
       )
     do_cfg = bool(torch.any(gw_per_step > 1.0).item())
 
-    inputs = self._build_inputs(prompts, height=height, width=width)
-    batch_size = len(prompts)
+    if prompt_embeds is None:
+      inputs = self._build_inputs(prompts, height=height, width=width)
+      llm_features = self._encode_text(
+        inputs["token_ids"], inputs["text_position_ids"], inputs["indicator"]
+      )
+      batch_size = len(prompts)
+    else:
+      if prompt_embeds.dim() == 2:
+        prompt_embeds = prompt_embeds.unsqueeze(0)
+      if prompt_attention_mask is not None and prompt_attention_mask.dim() == 1:
+        prompt_attention_mask = prompt_attention_mask.unsqueeze(0)
+      inputs = self._build_inputs_from_embeds(prompt_embeds, prompt_attention_mask, height=height, width=width)
+      llm_features = inputs["prompt_embeds"]
+      batch_size = prompt_embeds.shape[0]
     num_image_tokens = inputs["num_image_tokens"]
     grid_h, grid_w = inputs["grid_h"], inputs["grid_w"]
     max_text_tokens = inputs["max_text_tokens"]
     latent_dim = self.conditional_transformer.config.in_channels
-
-    llm_features = self._encode_text(
-      inputs["token_ids"], inputs["text_position_ids"], inputs["indicator"]
-    )
 
     neg_inputs = None
     neg_llm_features = None
     neg_text_z_padding = None
     neg_max_text_tokens = 0
     if do_cfg and self.unconditional_transformer is None:
-      negative_prompts = self._normalize_negative_prompts(negative_prompts, batch_size)
-      self._verify_prompts(negative_prompts, raise_on_issues=False)
-      neg_inputs = self._build_inputs(negative_prompts, height=height, width=width)
-      neg_max_text_tokens = neg_inputs["max_text_tokens"]
-      neg_llm_features = self._encode_text(
-        neg_inputs["token_ids"], neg_inputs["text_position_ids"], neg_inputs["indicator"]
-      )
+      if negative_prompt_embeds is not None:
+        if negative_prompt_embeds.dim() == 2:
+          negative_prompt_embeds = negative_prompt_embeds.unsqueeze(0)
+        if negative_prompt_attention_mask is not None and negative_prompt_attention_mask.dim() == 1:
+          negative_prompt_attention_mask = negative_prompt_attention_mask.unsqueeze(0)
+        neg_inputs = self._build_inputs_from_embeds(
+          negative_prompt_embeds,
+          negative_prompt_attention_mask,
+          height=height,
+          width=width,
+        )
+        neg_llm_features = neg_inputs["prompt_embeds"]
+        neg_max_text_tokens = neg_inputs["max_text_tokens"]
+      else:
+        negative_prompts = self._normalize_negative_prompts(negative_prompts, batch_size)
+        self._verify_prompts(negative_prompts, raise_on_issues=False)
+        neg_inputs = self._build_inputs(negative_prompts, height=height, width=width)
+        neg_max_text_tokens = neg_inputs["max_text_tokens"]
+        neg_llm_features = self._encode_text(
+          neg_inputs["token_ids"], neg_inputs["text_position_ids"], neg_inputs["indicator"]
+        )
       neg_text_z_padding = torch.zeros(  # type: ignore[call-overload]
         batch_size,
         neg_max_text_tokens,
