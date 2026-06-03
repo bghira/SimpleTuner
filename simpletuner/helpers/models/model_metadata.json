@@ -1,4 +1,14 @@
 {
+    "ideogram": {
+        "class_name": "Ideogram4",
+        "module_path": "simpletuner.helpers.models.ideogram.model",
+        "name": "Ideogram 4",
+        "prediction_type": "flow_matching",
+        "flavour_choices": [
+            "fp8",
+            "nf4"
+        ]
+    },
     "flux2": {
         "class_name": "Flux2",
         "module_path": "simpletuner.helpers.models.flux2.model",

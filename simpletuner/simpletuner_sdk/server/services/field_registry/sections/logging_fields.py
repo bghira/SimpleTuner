@@ -692,6 +692,43 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Ideogram 4 structured caption conversion
+    registry._add_field(
+        ConfigField(
+            name="ideogram_auto_json",
+            arg_name="--ideogram_auto_json",
+            ui_label="Ideogram Auto JSON",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=True,
+            help_text="Convert non-JSON Ideogram 4 prompts into the structured JSON caption schema.",
+            tooltip="When enabled, plain validation prompts are wrapped into Ideogram 4's JSON caption format.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=33,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_validation",
+            arg_name="--ideogram_validation",
+            ui_label="Ideogram Validation",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Temporarily enable Ideogram validation by reusing the conditional transformer for CFG's unconditional pass.",
+            tooltip="Validation is off by default for Ideogram until separate unconditional-model handling is implemented.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=34,
+        )
+    )
+
     # Sana Complex Human Instruction
     registry._add_field(
         ConfigField(

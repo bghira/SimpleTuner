@@ -97,6 +97,7 @@ flow_matching_model_families = [
     "qwen_image",
     "z_image",
     "z_image_omni",
+    "ideogram",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -112,6 +113,7 @@ upstream_config_sources = {
     "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
+    "ideogram": "ideogram-ai/ideogram-4-fp8",
 }
 
 
