@@ -16,7 +16,15 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 - **低VRAM:** ベースモデルに NF4 を使う。
 - **高VRAM:** 十分なVRAMがある場合は bf16-upcast 重みで量子化ロードを避ける。
 
-80G NVIDIA GPU では、1024px、batch size 1 の FP8 または bf16-upcast LoRA 学習は通常収まります。小さいGPUでは FP8 または NF4、rank 8-16、gradient checkpointing、offload から始めてください。Apple GPU は Ideogram 4 学習には推奨しません。
+H100 80GB での実測値です。native FP8（`base_model_precision=fp8-torchao`、`quantize_via=pipeline`）、rank 32 LoRA、bf16 mixed precision、gradient checkpointing 有効、1024px square、validation 無効のトレーニングピーク:
+
+| Batch size | Peak VRAM |
+| --- | ---: |
+| 1 | 15,999 MiB / 15.6 GiB |
+| 2 | 20,095 MiB / 19.6 GiB |
+| 4 | 28,603 MiB / 27.9 GiB |
+
+Validation には別の生成ピークがあるため、`ideogram_validation=true` を使う場合は余裕を見てください。小さいGPUでは FP8 または NF4、rank 8-16、gradient checkpointing、offload から始めてください。Apple GPU は Ideogram 4 学習には推奨しません。
 
 ## 設定
 

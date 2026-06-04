@@ -16,7 +16,15 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 - **低显存：** 基础模型使用 NF4。
 - **高显存：** 如果显存充足，可以使用 bf16-upcast 权重以避免量化加载开销。
 
-80G NVIDIA GPU 上，1024px、batch size 1 的 FP8 或 bf16-upcast LoRA 训练通常可以正常运行。小显存机器建议使用 FP8 或 NF4、rank 8-16、梯度检查点和 offload。Apple GPU 不推荐用于 Ideogram 4 训练。
+在 H100 80GB 上实测，原生 FP8（`base_model_precision=fp8-torchao`、`quantize_via=pipeline`）、rank 32 LoRA、bf16 mixed precision、启用梯度检查点、1024px 方图、关闭 validation 时的训练峰值显存为：
+
+| Batch size | 峰值 VRAM |
+| --- | ---: |
+| 1 | 15,999 MiB / 15.6 GiB |
+| 2 | 20,095 MiB / 19.6 GiB |
+| 4 | 28,603 MiB / 27.9 GiB |
+
+Validation 会有单独的生成峰值，所以启用 `ideogram_validation=true` 时请预留额外显存。小显存机器建议使用 FP8 或 NF4、rank 8-16、梯度检查点和 offload。Apple GPU 不推荐用于 Ideogram 4 训练。
 
 ## 配置
 
