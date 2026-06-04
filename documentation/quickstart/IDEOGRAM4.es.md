@@ -16,7 +16,15 @@ Puntos de partida recomendados:
 - **Baja VRAM:** NF4 para el modelo base.
 - **Alta VRAM:** pesos bf16-upcast si tienes suficiente VRAM y quieres evitar la carga cuantizada.
 
-En GPUs NVIDIA de 80G, el entrenamiento LoRA FP8 o bf16-upcast a 1024px con batch size 1 debería caber normalmente. En GPUs más pequeñas, empieza con FP8 o NF4, rank 8-16, gradient checkpointing y offload. Las GPUs Apple no se recomiendan para entrenar Ideogram 4.
+Medido en H100 80GB con FP8 nativo (`base_model_precision=fp8-torchao`, `quantize_via=pipeline`), LoRA rank 32, mixed precision bf16, gradient checkpointing activado, entrenamiento square 1024px y validación desactivada:
+
+| Batch size | Pico de VRAM |
+| --- | ---: |
+| 1 | 15,999 MiB / 15.6 GiB |
+| 2 | 20,095 MiB / 19.6 GiB |
+| 4 | 28,603 MiB / 27.9 GiB |
+
+La validación tiene un pico de generación separado, así que deja margen adicional con `ideogram_validation=true`. En GPUs más pequeñas, empieza con FP8 o NF4, rank 8-16, gradient checkpointing y offload. Las GPUs Apple no se recomiendan para entrenar Ideogram 4.
 
 ## Configuración
 

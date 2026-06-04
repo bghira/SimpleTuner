@@ -18,7 +18,15 @@ Recommended starting points:
 - **Low VRAM fallback:** NF4 quantisation for the base model.
 - **High VRAM / fastest iteration:** bf16-upcast transformer weights if you have enough VRAM and want to avoid quantised base loading.
 
-Expected memory varies with rank, optimiser, resolution, and offload strategy. On 80G NVIDIA cards, FP8 and bf16-upcast LoRA training should fit comfortably at 1024px with batch size 1. On smaller cards, start with FP8 or NF4, rank 8-16, gradient checkpointing, and offload.
+Expected memory varies with rank, optimiser, resolution, validation, and offload strategy. Measured on an H100 80GB with native FP8 (`base_model_precision=fp8-torchao`, `quantize_via=pipeline`), rank 32 LoRA, bf16 mixed precision, gradient checkpointing enabled, 1024px square training, and validation disabled:
+
+| Batch size | Peak VRAM |
+| --- | ---: |
+| 1 | 15,999 MiB / 15.6 GiB |
+| 2 | 20,095 MiB / 19.6 GiB |
+| 4 | 28,603 MiB / 27.9 GiB |
+
+Validation has a separate generation peak, so leave extra headroom when `ideogram_validation=true`. On smaller cards, start with FP8 or NF4, rank 8-16, gradient checkpointing, and offload.
 
 Apple GPUs are not recommended for Ideogram 4 training.
 
