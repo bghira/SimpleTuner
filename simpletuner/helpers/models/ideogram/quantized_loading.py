@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import warnings
 
-import bitsandbytes as bnb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,6 +24,14 @@ FP8_SCALE_SUFFIX = ".weight_scale"
 FP8_TEXT_ENCODER_CONFIG_FLAG = "ideogram_fp8_weight_only"
 
 
+def _require_bitsandbytes():
+  try:
+    import bitsandbytes as bnb
+  except ImportError as exc:
+    raise ImportError("Ideogram NF4/bnb 4-bit weights require bitsandbytes to be installed.") from exc
+  return bnb
+
+
 def is_bnb4bit_state_dict(state_dict: dict[str, torch.Tensor]) -> bool:
   """True if any key looks like a bnb 4-bit quant_state sibling."""
   return any(".quant_state.bitsandbytes__" in k for k in state_dict)
@@ -37,6 +44,7 @@ def swap_linears_to_bnb4bit(
   quant_type: str = "nf4",
   compress_statistics: bool = False,
 ) -> None:
+  bnb = _require_bitsandbytes()
   for name, child in list(module.named_children()):
     if isinstance(child, nn.Linear):
       new_linear = bnb.nn.Linear4bit(
@@ -63,6 +71,7 @@ def load_bnb4bit_state_dict(
   device: torch.device,
   dtype: torch.dtype,
 ) -> None:
+  bnb = _require_bitsandbytes()
   consumed: set[str] = set()
   for full_name, tensor in state_dict.items():
     if ".quant_state." in full_name or full_name.endswith(_BNB_SIBLING_SUFFIXES):

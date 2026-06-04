@@ -2112,7 +2112,9 @@ class Validation:
         configured_validation_method = self._validation_method()
         if self.validation_prompt_metadata is None:
             return self
-        if self.config.model_family == "ideogram" and not getattr(self.config, "ideogram_validation", False):
+        if getattr(self.config, "model_family", None) == "ideogram" and not getattr(
+            self.config, "ideogram_validation", False
+        ):
             logger.info("Skipping Ideogram validation because --ideogram_validation was not supplied.")
             return self
         content = self.validation_prompt_metadata.get("validation_prompts", None)
