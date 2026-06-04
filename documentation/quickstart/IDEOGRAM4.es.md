@@ -26,6 +26,19 @@ Medido en H100 80GB con FP8 nativo (`base_model_precision=fp8-torchao`, `quantiz
 
 La validación tiene un pico de generación separado, así que deja margen adicional con `ideogram_validation=true`. En GPUs más pequeñas, empieza con FP8 o NF4, rank 8-16, gradient checkpointing y offload. Las GPUs Apple no se recomiendan para entrenar Ideogram 4.
 
+### Torch compile
+
+Para `torch.compile`, prefiere regional compilation con pesos FP8 nativos:
+
+```json
+{
+  "dynamo_backend": "inductor",
+  "dynamo_use_regional_compilation": true
+}
+```
+
+`dynamo_backend="inductor"` puro también funciona, pero el compile del primer step del modelo completo es lento. Por ahora, evita `dynamo_mode="reduce-overhead"` y `dynamo_fullgraph=true` para Ideogram 4 LoRA; las capas PEFT LoRA pueden activar CUDA graph output reuse en la segunda invocación compilada.
+
 ## Configuración
 
 Copia la configuración y el dataloader de ejemplo:

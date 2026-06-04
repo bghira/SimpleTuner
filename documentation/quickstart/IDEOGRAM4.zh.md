@@ -26,6 +26,19 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 
 Validation 会有单独的生成峰值，所以启用 `ideogram_validation=true` 时请预留额外显存。小显存机器建议使用 FP8 或 NF4、rank 8-16、梯度检查点和 offload。Apple GPU 不推荐用于 Ideogram 4 训练。
 
+### Torch compile
+
+使用 `torch.compile` 时，建议对原生 FP8 权重启用 regional compilation：
+
+```json
+{
+  "dynamo_backend": "inductor",
+  "dynamo_use_regional_compilation": true
+}
+```
+
+普通 `dynamo_backend="inductor"` 也可用，但整模型第一次 step 的编译很慢。暂时不要为 Ideogram 4 LoRA 使用 `dynamo_mode="reduce-overhead"` 或 `dynamo_fullgraph=true`；PEFT LoRA 层可能在第二次 compiled invocation 时触发 CUDA graph output reuse。
+
 ## 配置
 
 复制示例配置和 dataloader：
