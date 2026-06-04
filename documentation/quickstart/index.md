@@ -18,6 +18,7 @@ Step-by-step guides for training each supported model architecture.
 | **Lumina2** | 2B | [Lumina2 Guide](LUMINA2.md) |
 | **HiDream** | 17B MoE | [HiDream Guide](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image Guide](ZIMAGE.md) |
+| **Ideogram 4** | 9B | [Ideogram 4 Guide](IDEOGRAM4.md) |
 | **ERNIE-Image** | - | [ERNIE Guide](ERNIE.md) |
 
 ### DiT / Transformer

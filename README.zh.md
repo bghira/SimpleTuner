@@ -87,6 +87,7 @@ SimpleTuner 包含完整的多用户训练平台，具有企业级功能——**
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | 无 |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
@@ -140,6 +141,7 @@ SimpleTuner 包含完整的多用户训练平台，具有企业级功能——**
 - **[Flux.1 指南](/documentation/quickstart/FLUX.md)** - 包括 Kontext 编辑支持和 QKV 融合
 - **[Flux.2 指南](/documentation/quickstart/FLUX2.md)** - **新！** 带有 Mistral-3 文本编码器的最新超大 Flux 模型
 - **[Z-Image 指南](/documentation/quickstart/ZIMAGE.md)** - 带助手适配器的 Base/Turbo LoRA + TREAD 加速
+- **[Ideogram 4 指南](/documentation/quickstart/IDEOGRAM4.zh.md)** - **新！** FP8 优先的 LoRA 训练，使用结构化 JSON caption
 - **[ACE-Step 指南](/documentation/quickstart/ACE_STEP.md)** - **新！** 音频生成模型训练（文本到音乐）
 - **[HeartMuLa 指南](/documentation/quickstart/HEARTMULA.md)** - **新！** 自回归音频生成模型训练（文本到音频）
 - **[Chroma 指南](/documentation/quickstart/CHROMA.md)** - Lodestone 的 flow-matching transformer，带 Chroma 特定调度
