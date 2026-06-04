@@ -127,7 +127,7 @@ class Ideogram4RMSNorm(nn.Module):
     return F.rms_norm(x, self.weight.shape, self.weight, self.eps)
 
 
-class Ideogram4Attention(nn.Module):
+class Attention(nn.Module):
   def __init__(self, hidden_size: int, num_heads: int, eps: float = 1e-5) -> None:
     super().__init__()
     assert hidden_size % num_heads == 0
@@ -171,7 +171,7 @@ class Ideogram4Attention(nn.Module):
     return self.o(out)
 
 
-class Ideogram4MLP(nn.Module):
+class FeedForward(nn.Module):
   def __init__(self, dim: int, hidden_dim: int) -> None:
     super().__init__()
     self.w1 = nn.Linear(dim, hidden_dim, bias=False)
@@ -192,8 +192,8 @@ class Ideogram4TransformerBlock(nn.Module):
     adanln_dim: int,
   ) -> None:
     super().__init__()
-    self.attention = Ideogram4Attention(hidden_size, num_heads, eps=1e-5)
-    self.feed_forward = Ideogram4MLP(hidden_size, intermediate_size)
+    self.attention = Attention(hidden_size, num_heads, eps=1e-5)
+    self.feed_forward = FeedForward(hidden_size, intermediate_size)
 
     self.attention_norm1 = Ideogram4RMSNorm(hidden_size, eps=norm_eps)
     self.ffn_norm1 = Ideogram4RMSNorm(hidden_size, eps=norm_eps)
