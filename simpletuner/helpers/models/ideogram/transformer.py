@@ -67,6 +67,12 @@ def _apply_rotary_pos_emb(
 class Ideogram4MRoPE(nn.Module):
   inv_freq: torch.Tensor
 
+  @staticmethod
+  def build_inv_freq(head_dim: int, base: int, device: torch.device | None = None) -> torch.Tensor:
+    return 1.0 / (
+      base ** (torch.arange(0, head_dim, 2, dtype=torch.float32, device=device) / head_dim)
+    )
+
   def __init__(
     self,
     head_dim: int,
@@ -74,12 +80,17 @@ class Ideogram4MRoPE(nn.Module):
     mrope_section: tuple[int, ...],
   ) -> None:
     super().__init__()
-    inv_freq = 1.0 / (
-      base ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim)
-    )
-    self.register_buffer("inv_freq", inv_freq, persistent=False)
+    self.base = base
+    self.register_buffer("inv_freq", self.build_inv_freq(head_dim, base), persistent=False)
     self.mrope_section = tuple(mrope_section)
     self.head_dim = head_dim
+
+  def materialize_buffers(self, device: torch.device) -> None:
+    self.register_buffer(
+      "inv_freq",
+      self.build_inv_freq(self.head_dim, self.base, device=device),
+      persistent=False,
+    )
 
   @torch.no_grad()
   def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

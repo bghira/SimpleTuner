@@ -5,11 +5,14 @@ import importlib.util
 import types
 import warnings
 from dataclasses import dataclass
+from pathlib import Path
 from posixpath import dirname as _posix_dirname, join as _posix_join
 from typing import Callable, Optional, Sequence
 
 import torch
 from diffusers.loaders.lora_base import LoraBaseMixin
+from diffusers.loaders.lora_base import _fetch_state_dict
+from diffusers.utils import USE_PEFT_BACKEND, get_adapter_name, get_peft_kwargs, is_peft_version
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 from PIL import Image
@@ -33,6 +36,7 @@ from simpletuner.helpers.models.ideogram.constants import (
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
 from simpletuner.helpers.models.ideogram.quantized_loading import (
   FP8_TEXT_ENCODER_CONFIG_FLAG,
+  Fp8Linear,
   is_bnb4bit_state_dict,
   is_fp8_state_dict,
   load_bnb4bit_state_dict,
@@ -167,19 +171,23 @@ def _build_transformer(
   device: torch.device,
   dtype: torch.dtype,
 ) -> "Ideogram4Transformer":
-  model = Ideogram4Transformer(transformer_config)
-  if is_bnb4bit_state_dict(state_dict):
+  if is_fp8_state_dict(state_dict):
+    # Weight-only FP8 checkpoints can be assigned directly into a meta-created
+    # module. This avoids allocating full precision Linear weights just to swap
+    # them out for Fp8Linear buffers immediately afterward.
+    with torch.device("meta"):
+      model = Ideogram4Transformer(transformer_config)
+    swap_linears_to_fp8(model, state_dict, compute_dtype=dtype)
+    model.rotary_emb.materialize_buffers(device)
+    load_fp8_state_dict(model, state_dict, device=device, dtype=dtype, assign=True)
+  elif is_bnb4bit_state_dict(state_dict):
+    model = Ideogram4Transformer(transformer_config)
     if device.type != "cuda":
       raise ValueError(f"bnb 4-bit weights require a CUDA device, got device={device}")
     swap_linears_to_bnb4bit(model, compute_dtype=dtype)
     load_bnb4bit_state_dict(model, state_dict, device=device, dtype=dtype)
-  elif is_fp8_state_dict(state_dict):
-    # Weight-only FP8: cast the unquantized params to the compute dtype first,
-    # then swap in Fp8Linear layers (which keep their weights as float8).
-    model.to(dtype)
-    swap_linears_to_fp8(model, state_dict, compute_dtype=dtype)
-    load_fp8_state_dict(model, state_dict, device=device, dtype=dtype)
   else:
+    model = Ideogram4Transformer(transformer_config)
     model.load_state_dict(state_dict)
     model.to(device=device, dtype=dtype)
   model.eval()
@@ -205,7 +213,12 @@ def _load_sharded_state_dict(
   the index are interpreted relative to that index's directory, matching the
   layout written by ``huggingface_hub.save_torch_state_dict``.
   """
-  index_path = hf_hub_download(repo_id=repo_id, filename=index_filename)
+  local_index_path = Path(repo_id) / index_filename
+  index_path = (
+    local_index_path
+    if local_index_path.is_file()
+    else Path(hf_hub_download(repo_id=repo_id, filename=index_filename))
+  )
   with open(index_path) as f:
     index = json.load(f)
   weight_map: dict[str, str] = index["weight_map"]
@@ -215,7 +228,12 @@ def _load_sharded_state_dict(
   state_dict: dict[str, torch.Tensor] = {}
   for shard in shard_filenames:
     shard_repo_path = _posix_join(shard_dir, shard) if shard_dir else shard
-    shard_path = hf_hub_download(repo_id=repo_id, filename=shard_repo_path)
+    local_shard_path = Path(repo_id) / shard_repo_path
+    shard_path = (
+      local_shard_path
+      if local_shard_path.is_file()
+      else Path(hf_hub_download(repo_id=repo_id, filename=shard_repo_path))
+    )
     state_dict.update(load_file(shard_path))
   return state_dict
 
@@ -234,7 +252,12 @@ def _load_indexed_or_single_state_dict(
     return _load_sharded_state_dict(repo_id, index_filename)
   except EntryNotFoundError:
     single_filename = index_filename.removesuffix(".index.json")
-    single_path = hf_hub_download(repo_id=repo_id, filename=single_filename)
+    local_single_path = Path(repo_id) / single_filename
+    single_path = (
+      local_single_path
+      if local_single_path.is_file()
+      else Path(hf_hub_download(repo_id=repo_id, filename=single_filename))
+    )
     return load_file(single_path)
 
 
@@ -261,6 +284,172 @@ class Ideogram4LoraLoaderMixin(LoraBaseMixin):
   _lora_loadable_modules = ["transformer", "text_encoder"]
   transformer_name = "transformer"
   text_encoder_name = "text_encoder"
+
+  @classmethod
+  def lora_state_dict(
+    cls,
+    pretrained_model_name_or_path_or_dict: str | dict[str, torch.Tensor],
+    **kwargs,
+  ):
+    cache_dir = kwargs.pop("cache_dir", None)
+    force_download = kwargs.pop("force_download", False)
+    proxies = kwargs.pop("proxies", None)
+    local_files_only = kwargs.pop("local_files_only", None)
+    token = kwargs.pop("token", None)
+    revision = kwargs.pop("revision", None)
+    subfolder = kwargs.pop("subfolder", None)
+    weight_name = kwargs.pop("weight_name", None)
+    use_safetensors = kwargs.pop("use_safetensors", None)
+    return_lora_metadata = kwargs.pop("return_lora_metadata", False)
+
+    allow_pickle = False
+    if use_safetensors is None:
+      use_safetensors = True
+      allow_pickle = True
+
+    state_dict, metadata = _fetch_state_dict(
+      pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
+      weight_name=weight_name,
+      use_safetensors=use_safetensors,
+      local_files_only=local_files_only,
+      cache_dir=cache_dir,
+      force_download=force_download,
+      proxies=proxies,
+      token=token,
+      revision=revision,
+      subfolder=subfolder,
+      user_agent={"file_type": "attn_procs_weights", "framework": "pytorch"},
+      allow_pickle=allow_pickle,
+    )
+
+    if any("dora_scale" in key for key in state_dict):
+      warnings.warn(
+        "DoRA scale tensors are not supported by this Ideogram LoRA loader and will be ignored.",
+        stacklevel=2,
+      )
+      state_dict = {key: value for key, value in state_dict.items() if "dora_scale" not in key}
+
+    return (state_dict, metadata) if return_lora_metadata else state_dict
+
+  def load_lora_weights(
+    self,
+    pretrained_model_name_or_path_or_dict: str | dict[str, torch.Tensor],
+    adapter_name: str | None = None,
+    hotswap: bool = False,
+    **kwargs,
+  ) -> None:
+    if not USE_PEFT_BACKEND:
+      raise ValueError("PEFT backend is required for this method.")
+
+    low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", False)
+    if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+      raise ValueError(
+        "`low_cpu_mem_usage=True` is not compatible with this PEFT version. Please update PEFT."
+      )
+
+    if isinstance(pretrained_model_name_or_path_or_dict, dict):
+      pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
+
+    kwargs["return_lora_metadata"] = True
+    state_dict, metadata = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+
+    if not all("lora" in key for key in state_dict):
+      raise ValueError("Invalid LoRA checkpoint. Make sure all LoRA parameter names contain `lora`.")
+
+    self.load_lora_into_transformer(
+      state_dict,
+      transformer=self.conditional_transformer,
+      adapter_name=adapter_name,
+      metadata=metadata,
+      _pipeline=self,
+      low_cpu_mem_usage=low_cpu_mem_usage,
+      hotswap=hotswap,
+    )
+
+  def get_list_adapters(self) -> dict[str, list[str]]:
+    if not USE_PEFT_BACKEND:
+      raise ValueError("PEFT backend is required for this method.")
+    if self.conditional_transformer is None or not hasattr(self.conditional_transformer, "peft_config"):
+      return {}
+    return {self.transformer_name: list(self.conditional_transformer.peft_config.keys())}
+
+  def set_adapters(
+    self,
+    adapter_names: list[str] | str,
+    adapter_weights: float | dict | list[float] | list[dict] | None = None,
+  ) -> None:
+    if self.conditional_transformer is None or not hasattr(self.conditional_transformer, "set_adapters"):
+      raise ValueError("Cannot set Ideogram LoRA adapters without a PEFT-enabled conditional transformer.")
+
+    names = [adapter_names] if isinstance(adapter_names, str) else list(adapter_names)
+    present = set(getattr(self.conditional_transformer, "peft_config", {}).keys())
+    missing = set(names) - present
+    if missing:
+      raise ValueError(f"Adapter name(s) {missing} not in the list of present adapters: {present}.")
+
+    self.conditional_transformer.set_adapters(names, adapter_weights)
+
+  @classmethod
+  def load_lora_into_transformer(
+    cls,
+    state_dict: dict[str, torch.Tensor],
+    transformer,
+    adapter_name: str | None = None,
+    _pipeline=None,
+    low_cpu_mem_usage: bool = False,
+    hotswap: bool = False,
+    metadata: dict | None = None,
+  ) -> None:
+    if transformer is None:
+      raise ValueError("Cannot load Ideogram LoRA weights without a conditional transformer.")
+    if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+      raise ValueError(
+        "`low_cpu_mem_usage=True` is not compatible with this PEFT version. Please update PEFT."
+      )
+
+    from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+
+    prefix = f"{cls.transformer_name}."
+    prefixed_keys = [key for key in state_dict if key.startswith(prefix)]
+    if prefixed_keys:
+      state_dict = {key[len(prefix) :]: value for key, value in state_dict.items() if key in prefixed_keys}
+
+    if not state_dict:
+      warnings.warn("No Ideogram transformer LoRA keys were found in the provided state dict.", stacklevel=2)
+      return
+
+    if adapter_name in getattr(transformer, "peft_config", {}):
+      raise ValueError(f"Adapter name {adapter_name} already exists in the transformer.")
+
+    rank = {}
+    for key, value in state_dict.items():
+      if "lora_B" in key and value.ndim > 1:
+        rank[key] = value.shape[1]
+
+    lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=None, peft_state_dict=state_dict)
+    if "use_dora" in lora_config_kwargs and not lora_config_kwargs["use_dora"]:
+      lora_config_kwargs.pop("use_dora")
+    lora_config = LoraConfig(**lora_config_kwargs)
+
+    if adapter_name is None:
+      adapter_name = get_adapter_name(transformer)
+
+    peft_kwargs = {}
+    if is_peft_version(">=", "0.13.1"):
+      peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
+
+    inject_adapter_in_model(lora_config, transformer, adapter_name=adapter_name, **peft_kwargs)
+    incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
+    if incompatible_keys is not None:
+      unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+      if unexpected_keys:
+        lora_unexpected = [key for key in unexpected_keys if "lora_" in key and adapter_name in key]
+        if lora_unexpected:
+          warnings.warn(
+            "Loading Ideogram LoRA weights produced unexpected LoRA keys: "
+            + ", ".join(lora_unexpected),
+            stacklevel=2,
+          )
 
   @classmethod
   def save_lora_weights(
@@ -316,6 +505,7 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
     prompt_enhancer_head: Ideogram4PromptEnhancerHead | None = None,
   ) -> None:
     self.conditional_transformer = conditional_transformer
+    self.transformer = conditional_transformer
     self.unconditional_transformer = unconditional_transformer
     self.text_encoder = text_encoder
     self.text_tokenizer = text_tokenizer
@@ -329,6 +519,7 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
     self._prompt_enhancer = None
     self._caption_logits_processor = None
     self._prompt_upsample_unconstrained_warned = False
+    self.hf_device_map = None
 
   def to(
     self,
@@ -350,13 +541,32 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
     ):
       if module is not None:
         if dtype is not None:
-          module.to(device=self.device, dtype=dtype)
+          if self._module_has_fp8_linears(module):
+            module.to(device=self.device)
+          else:
+            module.to(device=self.device, dtype=dtype)
         else:
           module.to(device=self.device)
     return self
 
   def set_progress_bar_config(self, **kwargs) -> None:
     self._progress_bar_config.update(kwargs)
+
+  @property
+  def components(self) -> dict[str, object]:
+    return {
+      "transformer": self.conditional_transformer,
+      "conditional_transformer": self.conditional_transformer,
+      "unconditional_transformer": self.unconditional_transformer,
+      "text_encoder": self.text_encoder,
+      "text_tokenizer": self.text_tokenizer,
+      "autoencoder": self.autoencoder,
+      "prompt_enhancer_head": self.prompt_enhancer_head,
+    }
+
+  @staticmethod
+  def _module_has_fp8_linears(module) -> bool:
+    return any(isinstance(child, Fp8Linear) for child in module.modules())
 
   @classmethod
   def from_pretrained(
@@ -912,16 +1122,14 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
     batch_size = z.shape[0]
     patch = self.config.patch_size
 
-    ae_channels = z.shape[-1] // (patch * patch)
-    z = z.view(batch_size, grid_h, grid_w, z.shape[-1]).permute(0, 3, 1, 2).contiguous()
-    bn_mean = self.autoencoder.bn.running_mean.view(1, -1, 1, 1).to(device=z.device, dtype=z.dtype)
-    bn_std = torch.sqrt(self.autoencoder.bn.running_var.view(1, -1, 1, 1) + self.autoencoder.bn.eps).to(
-      device=z.device, dtype=z.dtype
-    )
+    bn_mean = self.autoencoder.bn.running_mean.view(1, 1, -1).to(device=z.device, dtype=z.dtype)
+    bn_std = torch.sqrt(self.autoencoder.bn.running_var + self.autoencoder.bn.eps).view(1, 1, -1)
+    bn_std = bn_std.to(device=z.device, dtype=z.dtype)
     z = z * bn_std + bn_mean
 
-    z = z.view(batch_size, ae_channels, patch, patch, grid_h, grid_w)
-    z = z.permute(0, 1, 4, 2, 5, 3).contiguous()
+    ae_channels = z.shape[-1] // (patch * patch)
+    z = z.view(batch_size, grid_h, grid_w, patch, patch, ae_channels)
+    z = z.permute(0, 5, 1, 3, 2, 4).contiguous()
     z = z.view(batch_size, ae_channels, grid_h * patch, grid_w * patch)
 
     z = z.to(self.dtype)

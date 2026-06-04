@@ -50,6 +50,7 @@ class Ideogram4(ImageModelFoundation):
     }
     MODEL_LICENSE = "ideogram-4-non-commercial"
     VALIDATION_USES_NEGATIVE_PROMPT = True
+    VALIDATION_USE_AUTOCAST = False
     SUPPORTS_LORA = True
     DEFAULT_LORA_TARGET = ["qkv", "o", "w1", "w2", "w3"]
     DEFAULT_PROMPT_ENHANCER_HEAD = "diffusers/qwen3-vl-8b-instruct-lm-head"
@@ -139,7 +140,7 @@ class Ideogram4(ImageModelFoundation):
             self.load_text_encoder(move_to_device=True)
 
         repo_id = getattr(self.config, "pretrained_model_name_or_path", None) or self.HUGGINGFACE_PATHS["fp8"]
-        transformer = self.unwrap_model(self.model)
+        transformer = self.unwrap_model(self.model, keep_fp32_wrapper=False)
         pipeline = Ideogram4Pipeline(
             conditional_transformer=transformer,
             unconditional_transformer=None,
@@ -347,15 +348,17 @@ class Ideogram4(ImageModelFoundation):
         if height % patch != 0 or width % patch != 0:
             raise ValueError(f"Ideogram latent height/width must be divisible by {patch}, got {height}x{width}.")
         latents = latents.view(batch_size, channels, height // patch, patch, width // patch, patch)
-        latents = latents.permute(0, 1, 3, 5, 2, 4).contiguous()
-        return latents.view(batch_size, channels * patch * patch, height // patch, width // patch)
+        latents = latents.permute(0, 2, 4, 3, 5, 1).contiguous()
+        latents = latents.view(batch_size, height // patch, width // patch, patch * patch * channels)
+        return latents.permute(0, 3, 1, 2).contiguous()
 
     def _unpatchify_vae_latents(self, latents: torch.Tensor) -> torch.Tensor:
         batch_size, channels, height, width = latents.shape
         patch = self.PATCH_SIZE
         ae_channels = channels // (patch * patch)
-        latents = latents.view(batch_size, ae_channels, patch, patch, height, width)
-        latents = latents.permute(0, 1, 4, 2, 5, 3).contiguous()
+        latents = latents.permute(0, 2, 3, 1).contiguous()
+        latents = latents.view(batch_size, height, width, patch, patch, ae_channels)
+        latents = latents.permute(0, 5, 1, 3, 2, 4).contiguous()
         return latents.view(batch_size, ae_channels, height * patch, width * patch)
 
     def _normalize_packed_vae_latents(self, latents: torch.Tensor) -> torch.Tensor:

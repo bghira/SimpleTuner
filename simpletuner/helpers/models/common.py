@@ -464,6 +464,7 @@ class ModelFoundation(ABC):
     GLIGEN_LORA_TARGET = ["position_net", "fuser"]
     GLIGEN_LYCORIS_TARGET = ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
+    VALIDATION_USE_AUTOCAST = True
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
     DEFAULT_AUDIO_CHANNELS = 1
@@ -1970,14 +1971,14 @@ class ModelFoundation(ABC):
 
         return self._single_file_component_cache
 
-    def unwrap_model(self, model=None):
+    def unwrap_model(self, model=None, keep_fp32_wrapper: bool = True):
         if self.config.controlnet and model is None:
             if self.controlnet is None:
                 return None
-            return unwrap_model(self.accelerator, self.controlnet)
+            return unwrap_model(self.accelerator, self.controlnet, keep_fp32_wrapper=keep_fp32_wrapper)
         if self.model is None:
             return None
-        return unwrap_model(self.accelerator, model or self.model)
+        return unwrap_model(self.accelerator, model or self.model, keep_fp32_wrapper=keep_fp32_wrapper)
 
     @staticmethod
     def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:

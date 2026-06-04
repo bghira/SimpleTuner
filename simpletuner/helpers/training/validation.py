@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import inspect
 import logging
 import math
@@ -540,6 +541,15 @@ def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
     return validation_set
 
 
+def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
+    if getattr(args, "model_family", None) != "ideogram":
+        return shortname
+    if str(prompt) == "":
+        return shortname
+    prompt_hash = hashlib.md5(str(prompt).encode("utf-8")).hexdigest()
+    return f"{shortname}:{prompt_hash}"
+
+
 def prepare_validation_prompt_list(args, embed_cache, model):
     validation_prompts: list[PromptLibraryEntry] = (
         [PromptLibraryEntry(prompt="")] if not StateTracker.get_args().validation_disable_unconditional else []
@@ -719,7 +729,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         # Use the same key format as retrieval to ensure cache hit
         prompt_record = {
             "prompt": args.validation_prompt,
-            "key": "validation",
+            "key": _validation_text_cache_key(args, "validation", args.validation_prompt),
         }
         embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
@@ -1801,7 +1811,11 @@ class Validation:
         cache_shortname: str | None = None,
     ):
         # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
-        cache_key = cache_shortname or validation_shortname
+        cache_key = _validation_text_cache_key(
+            StateTracker.get_args(),
+            cache_shortname or validation_shortname,
+            validation_prompt,
+        )
         prompt_record = {
             "prompt": validation_prompt,
             "key": cache_key,
@@ -2862,6 +2876,21 @@ class Validation:
         elif lora_type == "standard":
             self._set_peft_adapter_strength(target_strength)
 
+    def _prepare_pipeline_kwarg_for_inference(self, key: str, value: Any) -> Any:
+        if not hasattr(value, "to") or not hasattr(value, "dtype"):
+            return value
+        if value.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+            return value
+        if getattr(self.config, "model_family", None) == "ideogram" and key in (
+            "prompt_embeds",
+            "negative_prompt_embeds",
+        ):
+            return value.to(device=self.inference_device, dtype=torch.float32)
+        return value.to(
+            device=self.inference_device,
+            dtype=self.config.weight_dtype,
+        )
+
     def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
         if content is None:
             return []
@@ -3839,15 +3868,7 @@ class Validation:
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
                     pipeline_kwargs = {
-                        k: (
-                            v.to(
-                                device=self.inference_device,
-                                dtype=self.config.weight_dtype,
-                            )
-                            if hasattr(v, "to") and v.dtype in (torch.bfloat16, torch.float16, torch.float32)
-                            else v
-                        )
-                        for k, v in pipeline_kwargs.items()
+                        k: self._prepare_pipeline_kwarg_for_inference(k, v) for k, v in pipeline_kwargs.items()
                     }
 
                     call_kwargs = inspect.signature(self.model.pipeline.__call__).parameters
@@ -3911,10 +3932,15 @@ class Validation:
                             ),
                         )
                     with preview_ctx:
-                        with torch.amp.autocast(
-                            self.inference_device.type,
-                            dtype=self.config.weight_dtype,
-                        ):
+                        autocast_ctx = (
+                            torch.amp.autocast(
+                                self.inference_device.type,
+                                dtype=self.config.weight_dtype,
+                            )
+                            if self.model.VALIDATION_USE_AUTOCAST
+                            else torch.amp.autocast(self.inference_device.type, enabled=False)
+                        )
+                        with autocast_ctx:
                             if self.model.supports_multistage_validation():
 
                                 def _pipeline_call(kwargs):
