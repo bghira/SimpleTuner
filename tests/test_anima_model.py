@@ -414,6 +414,55 @@ class TestAnimaModel(unittest.TestCase):
         for name, parameter in loaded.llm_adapter.state_dict().items():
             torch.testing.assert_close(parameter, source.llm_adapter.state_dict()[name])
 
+    def test_diffusers_adapter_config_defaults_source_and_target_dim(self):
+        from tempfile import TemporaryDirectory
+
+        from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel
+
+        with TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            with open(config_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "model_dim": 8,
+                        "num_layers": 1,
+                        "num_attention_heads": 2,
+                        "target_vocab_size": 32128,
+                    },
+                    handle,
+                )
+
+            with patch.object(
+                AnimaTransformerModel,
+                "_resolve_diffusers_llm_adapter_config_path",
+                return_value=str(config_path),
+            ):
+                adapter_config = AnimaTransformerModel._load_diffusers_llm_adapter_config("repo")
+
+            with open(config_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "source_dim": 16,
+                        "target_dim": 8,
+                        "model_dim": 8,
+                        "num_layers": 1,
+                        "num_attention_heads": 2,
+                        "target_vocab_size": 32128,
+                    },
+                    handle,
+                )
+            with (
+                patch.object(
+                    AnimaTransformerModel,
+                    "_resolve_diffusers_llm_adapter_config_path",
+                    return_value=str(config_path),
+                ),
+                self.assertRaisesRegex(ValueError, "source_dim, target_dim, and model_dim must match"),
+            ):
+                AnimaTransformerModel._load_diffusers_llm_adapter_config("repo")
+
+        self.assertEqual(adapter_config["model_dim"], 8)
+
     def test_pipeline_import(self):
         from simpletuner.helpers.models.anima.pipeline import AnimaPipeline
 
@@ -627,7 +676,8 @@ class TestAnimaModel(unittest.TestCase):
         model = Anima.__new__(Anima)
         model.accelerator = SimpleNamespace(device=torch.device("cpu"))
         model.config = SimpleNamespace(weight_dtype=torch.float32)
-        model.model = MagicMock(config=SimpleNamespace(patch_size=(1, 2, 2)))
+        patch_size = (1, 3, 4)
+        model.model = MagicMock(config=SimpleNamespace(patch_size=patch_size))
         model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
 
         prepared_batch = {
@@ -638,9 +688,13 @@ class TestAnimaModel(unittest.TestCase):
             "t5xxl_weights": None,
         }
 
-        with self.assertRaisesRegex(ValueError, "pixel resolutions divisible by 16"):
+        with self.assertRaises(ValueError) as cm:
             model.model_predict(prepared_batch)
 
+        message = str(cm.exception)
+        self.assertIn("divisible by transformer patch size", message)
+        self.assertIn(f"Latent frames/height/width must be multiples of {patch_size}", message)
+        self.assertIn(f"source pixel height/width multiples of {(patch_size[1] * 8, patch_size[2] * 8)}", message)
         model.model.assert_not_called()
 
     def test_expand_sigmas_matches_anima_latent_rank(self):

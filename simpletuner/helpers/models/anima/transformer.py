@@ -18,7 +18,18 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, set_weights_and_activate_adapters
 from huggingface_hub import hf_hub_download
-from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError
+
+try:
+    from huggingface_hub.utils import EntryNotFoundError
+except ImportError:
+    from huggingface_hub.errors import EntryNotFoundError
+try:
+    from huggingface_hub.utils import LocalEntryNotFoundError
+except ImportError:
+    try:
+        from huggingface_hub.errors import LocalEntryNotFoundError
+    except ImportError:
+        LocalEntryNotFoundError = EntryNotFoundError
 from safetensors.torch import load_file
 from torch import nn
 
@@ -621,10 +632,9 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             adapter_config = json.load(handle)
 
         model_dim = cls._adapter_config_int(adapter_config, "model_dim")
-        if (
-            cls._adapter_config_int(adapter_config, "source_dim") != model_dim
-            or cls._adapter_config_int(adapter_config, "target_dim") != model_dim
-        ):
+        source_dim = int(adapter_config.get("source_dim", model_dim))
+        target_dim = int(adapter_config.get("target_dim", model_dim))
+        if source_dim != model_dim or target_dim != model_dim:
             raise ValueError("Anima text adapter source_dim, target_dim, and model_dim must match.")
         return adapter_config
 

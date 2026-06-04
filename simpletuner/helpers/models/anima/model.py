@@ -20,6 +20,7 @@ from .loading import (
     load_text_encoder_single_file,
     load_vae_single_file,
     resolve_text_encoder_dtype,
+    resolve_vae_scale_factor,
 )
 from .options import AnimaLoaderOptions
 from .pipeline import AnimaPipeline
@@ -184,10 +185,15 @@ class Anima(ImageModelFoundation):
         p_t, p_h, p_w = self._crepa_self_flow_patch_size()
         _, _, frames, height, width = latent_tensor.shape
         if frames % p_t != 0 or height % p_h != 0 or width % p_w != 0:
+            vae = getattr(self, "vae", None)
+            vae_scale_factor = resolve_vae_scale_factor(vae=vae) if vae is not None else 8
+            pixel_multiples = (p_h * vae_scale_factor, p_w * vae_scale_factor)
             raise ValueError(
                 "Anima latent shape must be divisible by transformer patch size "
                 f"{(p_t, p_h, p_w)}, got latent shape {tuple(latent_tensor.shape)}. "
-                "Rebuild the VAE/aspect bucket cache with pixel resolutions divisible by 16."
+                f"Latent frames/height/width must be multiples of {(p_t, p_h, p_w)}. "
+                "Rebuild the VAE/aspect bucket cache with "
+                f"frame counts divisible by {p_t} and source pixel height/width multiples of {pixel_multiples}."
             )
         return max(
             (frames // p_t) * (height // p_h) * (width // p_w),
