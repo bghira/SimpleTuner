@@ -2330,6 +2330,88 @@ class Validation:
             should_validate = should_validate and self.accelerator.is_main_process
         return bool(should_validate)
 
+    def _loaded_scheduler_for_validation(self):
+        pipeline = getattr(self.model, "pipeline", None)
+        if pipeline is not None:
+            scheduler = getattr(pipeline, "scheduler", None)
+            if scheduler is not None and hasattr(scheduler, "config"):
+                return scheduler
+
+        scheduler = getattr(self.model, "noise_schedule", None)
+        if scheduler is not None and hasattr(scheduler, "config"):
+            return scheduler
+
+        return None
+
+    def _build_scheduler_from_loaded_config(self, scheduler_cls, scheduler_args: dict):
+        source_scheduler = self._loaded_scheduler_for_validation()
+        if source_scheduler is None:
+            return None
+
+        config_scheduler_cls = scheduler_cls
+        try:
+            if issubclass(source_scheduler.__class__, scheduler_cls):
+                config_scheduler_cls = source_scheduler.__class__
+        except TypeError:
+            pass
+
+        from_config = getattr(config_scheduler_cls, "from_config", None)
+        if not callable(from_config):
+            return None
+
+        scheduler_kwargs = dict(scheduler_args)
+        timestep_spacing = getattr(self.config, "inference_scheduler_timestep_spacing", None)
+        if timestep_spacing is not None:
+            scheduler_kwargs["timestep_spacing"] = timestep_spacing
+
+        rescale_betas_zero_snr = getattr(self.config, "rescale_betas_zero_snr", None)
+        if rescale_betas_zero_snr is not None:
+            scheduler_kwargs["rescale_betas_zero_snr"] = rescale_betas_zero_snr
+
+        try:
+            return from_config(source_scheduler.config, **scheduler_kwargs)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            scheduler_name = getattr(config_scheduler_cls, "__name__", str(config_scheduler_cls))
+            logger.debug(
+                "Unable to build validation scheduler %s from loaded scheduler config: %s",
+                scheduler_name,
+                exc,
+            )
+            return None
+
+    def _validation_scheduler_pretrained_path(self):
+        model_config_path = getattr(self.model, "_model_config_path", None)
+        if callable(model_config_path):
+            return model_config_path()
+        return self.config.pretrained_model_name_or_path
+
+    def _scheduler_from_pretrained_kwargs(self, scheduler_args: dict) -> dict:
+        kwargs = {
+            "subfolder": "scheduler",
+            **scheduler_args,
+        }
+        revision = getattr(self.config, "revision", None)
+        if revision is not None:
+            kwargs["revision"] = revision
+
+        timestep_spacing = getattr(self.config, "inference_scheduler_timestep_spacing", None)
+        if timestep_spacing is not None:
+            kwargs["timestep_spacing"] = timestep_spacing
+
+        rescale_betas_zero_snr = getattr(self.config, "rescale_betas_zero_snr", None)
+        if rescale_betas_zero_snr is not None:
+            kwargs["rescale_betas_zero_snr"] = rescale_betas_zero_snr
+
+        cache_dir = getattr(self.config, "cache_dir", None)
+        if cache_dir is not None:
+            kwargs["cache_dir"] = cache_dir
+
+        local_files_only = getattr(self.config, "local_files_only", None)
+        if local_files_only is not None:
+            kwargs["local_files_only"] = local_files_only
+
+        return kwargs
+
     def setup_scheduler(self):
         if self.distiller is not None:
             distillation_scheduler = self.distiller.get_scheduler()
@@ -2391,8 +2473,9 @@ class Validation:
         if self.config.prediction_type is not None:
             scheduler_args["prediction_type"] = self.config.prediction_type
 
-        if self.model.pipeline is not None and "variance_type" in self.model.pipeline.scheduler.config:
-            variance_type = self.model.pipeline.scheduler.config.variance_type
+        loaded_scheduler = self._loaded_scheduler_for_validation()
+        if loaded_scheduler is not None and "variance_type" in loaded_scheduler.config:
+            variance_type = loaded_scheduler.config.variance_type
 
             if variance_type in ["learned", "learned_range"]:
                 variance_type = "fixed_small"
@@ -2413,14 +2496,12 @@ class Validation:
         elif scheduler_cls is TwinFlowScheduler:
             scheduler = scheduler_cls(**scheduler_args)
         else:
-            scheduler = scheduler_cls.from_pretrained(
-                self.config.pretrained_model_name_or_path,
-                subfolder="scheduler",
-                revision=self.config.revision,
-                timestep_spacing=self.config.inference_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
-                **scheduler_args,
-            )
+            scheduler = self._build_scheduler_from_loaded_config(scheduler_cls, scheduler_args)
+            if scheduler is None:
+                scheduler = scheduler_cls.from_pretrained(
+                    self._validation_scheduler_pretrained_path(),
+                    **self._scheduler_from_pretrained_kwargs(scheduler_args),
+                )
         if self.model.pipeline is not None:
             self.model.pipeline.scheduler = scheduler
         return scheduler
