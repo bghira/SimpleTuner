@@ -1978,7 +1978,8 @@ class ModelFoundation(ABC):
             return unwrap_model(self.accelerator, self.controlnet, keep_fp32_wrapper=keep_fp32_wrapper)
         if self.model is None:
             return None
-        return unwrap_model(self.accelerator, model or self.model, keep_fp32_wrapper=keep_fp32_wrapper)
+        target_model = model if model is not None else self.model
+        return unwrap_model(self.accelerator, target_model, keep_fp32_wrapper=keep_fp32_wrapper)
 
     @staticmethod
     def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:

@@ -52,6 +52,19 @@ Optional disk offload:
 - Group offload is not compatible with Quanto quantisation.
 - Prefer fast local NVMe when offloading to disk.
 
+### Torch compile
+
+For `torch.compile`, prefer regional compilation with native FP8 weights:
+
+```json
+{
+  "dynamo_backend": "inductor",
+  "dynamo_use_regional_compilation": true
+}
+```
+
+Plain `dynamo_backend="inductor"` also works, but the whole-model first-step compile is slow. Avoid `dynamo_mode="reduce-overhead"` and `dynamo_fullgraph=true` for Ideogram 4 LoRA for now; PEFT LoRA layers can trip CUDA graph output reuse during the second compiled invocation.
+
 ## Installation
 
 Install SimpleTuner via pip:
