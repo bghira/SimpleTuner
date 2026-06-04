@@ -87,6 +87,7 @@ SimpleTunerには、エンタープライズグレードの機能を備えた完
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | なし |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
@@ -140,6 +141,7 @@ SimpleTunerには、エンタープライズグレードの機能を備えた完
 - **[Flux.1ガイド](/documentation/quickstart/FLUX.md)** - Kontext編集サポートとQKVフュージョンを含む
 - **[Flux.2ガイド](/documentation/quickstart/FLUX2.md)** - **NEW!** Mistral-3テキストエンコーダーを搭載した最新の巨大なFluxモデル
 - **[Z-Imageガイド](/documentation/quickstart/ZIMAGE.md)** - アシスタントアダプター + TREAD高速化を備えたBase/Turbo LoRA
+- **[Ideogram 4ガイド](/documentation/quickstart/IDEOGRAM4.ja.md)** - **NEW!** 構造化JSON captionを使うFP8優先のLoRAトレーニング
 - **[ACE-Stepガイド](/documentation/quickstart/ACE_STEP.md)** - **NEW!** 音声生成モデルトレーニング（text-to-music）
 - **[HeartMuLaガイド](/documentation/quickstart/HEARTMULA.md)** - **NEW!** 自己回帰の音声生成モデルトレーニング（text-to-audio）
 - **[Chromaガイド](/documentation/quickstart/CHROMA.md)** - ChromaSpecificスケジュールを持つLodestoneのflow-matching transformer

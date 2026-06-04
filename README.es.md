@@ -87,6 +87,7 @@ Para detalles de despliegue, consulta la [Guía Enterprise](/documentation/exper
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | Ninguno |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
@@ -140,6 +141,7 @@ Hay guías detalladas de inicio rápido disponibles para todos los modelos sopor
 - **[Guía de Flux.1](/documentation/quickstart/FLUX.md)** - Incluye soporte de edición Kontext y fusión QKV
 - **[Guía de Flux.2](/documentation/quickstart/FLUX2.md)** - **NUEVO**. Último y enorme modelo Flux con codificador de texto Mistral-3
 - **[Guía de Z-Image](/documentation/quickstart/ZIMAGE.md)** - LoRA Base/Turbo con adaptador asistente + aceleración TREAD
+- **[Guía de Ideogram 4](/documentation/quickstart/IDEOGRAM4.es.md)** - **NUEVO**. Entrenamiento LoRA con FP8 primero y captions JSON estructuradas
 - **[Guía de ACE-Step](/documentation/quickstart/ACE_STEP.md)** - **NUEVO**. Entrenamiento de modelo de generación de audio (text-to-music)
 - **[Guía de HeartMuLa](/documentation/quickstart/HEARTMULA.md)** - **NUEVO**. Entrenamiento de modelo de audio autoregresivo (text-to-audio)
 - **[Guía de Chroma](/documentation/quickstart/CHROMA.md)** - Transformer de flow-matching de Lodestone con schedules específicos de Chroma

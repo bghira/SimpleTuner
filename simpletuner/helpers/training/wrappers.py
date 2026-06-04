@@ -1,8 +1,11 @@
 from diffusers.utils.torch_utils import is_compiled_module
 
 
-def unwrap_model(accelerator, model):
-    model = accelerator.unwrap_model(model)
+def unwrap_model(accelerator, model, keep_fp32_wrapper: bool = True):
+    try:
+        model = accelerator.unwrap_model(model, keep_fp32_wrapper=keep_fp32_wrapper)
+    except TypeError:
+        model = accelerator.unwrap_model(model)
     model = model._orig_mod if is_compiled_module(model) else model
     return model
 
