@@ -11,7 +11,7 @@ import torch
 @dataclass(frozen=True)
 class LogitNormalSchedule:
   mean: float
-  std: float = 1.0
+  std: float = 1.5
   logsnr_min: float = -15.0
   logsnr_max: float = 18.0
 
@@ -29,8 +29,8 @@ class LogitNormalSchedule:
 def get_schedule_for_resolution(
   image_resolution: tuple[int, int],
   known_resolution: tuple[int, int] = (512, 512),
-  known_mean: float = 1.0,
-  std: float = 1.0,
+  known_mean: float = 0.0,
+  std: float = 1.5,
 ) -> LogitNormalSchedule:
   """Resolution-aware schedule used at eval time."""
   num_pixels = image_resolution[0] * image_resolution[1]
@@ -60,7 +60,7 @@ class SamplerParameters:
   num_steps: int
   guidance_schedule: tuple[float, ...]
   mu: float
-  std: float = 1.0
+  std: float = 1.5
 
   def __post_init__(self) -> None:
     if len(self.guidance_schedule) != self.num_steps:

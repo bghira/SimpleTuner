@@ -729,6 +729,60 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="ideogram_prompt_upsample",
+            arg_name="--ideogram_prompt_upsample",
+            ui_label="Ideogram Prompt Upsample",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Use Ideogram 4's prompt enhancer to rewrite prompts before text embedding cache generation.",
+            tooltip="When enabled and supported by the loaded pipeline, captions are expanded with Ideogram's prompt upsampler before JSON conversion and encoding.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=35,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_schedule_mu",
+            arg_name="--ideogram_schedule_mu",
+            ui_label="Ideogram Schedule Mu",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=0.0,
+            help_text="Base mean used by Ideogram 4's resolution-aware logit-normal training timestep schedule.",
+            tooltip="Matches the default mu used by the vendored Ideogram validation pipeline.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=36,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_schedule_std",
+            arg_name="--ideogram_schedule_std",
+            ui_label="Ideogram Schedule Std",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=1.5,
+            help_text="Standard deviation used by Ideogram 4's logit-normal training timestep schedule.",
+            tooltip="Matches the default std used by the vendored Ideogram validation pipeline.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=37,
+        )
+    )
+
     # Sana Complex Human Instruction
     registry._add_field(
         ConfigField(

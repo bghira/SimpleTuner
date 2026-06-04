@@ -14,7 +14,6 @@ from simpletuner.helpers.models.ideogram.constants import (
     OUTPUT_IMAGE_INDICATOR,
 )
 from simpletuner.helpers.models.ideogram.autoencoder import AutoEncoder
-from simpletuner.helpers.models.ideogram.latent_norm import get_latent_norm
 from simpletuner.helpers.models.ideogram.pipeline import (
     Ideogram4Config,
     Ideogram4Pipeline,
@@ -25,6 +24,7 @@ from simpletuner.helpers.models.ideogram.pipeline import (
     _load_qwen3_vl,
 )
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
@@ -158,15 +158,66 @@ class Ideogram4(ImageModelFoundation):
         pipeline_kwargs.setdefault("raise_on_caption_issues", False)
         return pipeline_kwargs
 
+    def _prompt_upsample_resolution(self) -> tuple[int, int]:
+        resolution = (
+            getattr(self.config, "resolution", None)
+            or getattr(self.config, "validation_resolution", None)
+            or getattr(self.config, "maximum_image_size", None)
+            or "1024x1024"
+        )
+        if isinstance(resolution, (tuple, list)) and len(resolution) >= 2:
+            return int(resolution[0]), int(resolution[1])
+        if isinstance(resolution, int):
+            return resolution, resolution
+        if isinstance(resolution, str):
+            parts = resolution.lower().replace(",", "x").split("x")
+            if len(parts) >= 2:
+                try:
+                    return int(parts[0].strip()), int(parts[1].strip())
+                except ValueError:
+                    pass
+            try:
+                parsed = int(resolution)
+                return parsed, parsed
+            except ValueError:
+                pass
+        return 1024, 1024
+
+    def _maybe_upsample_prompt(self, prompt: str, encoder_shell: Ideogram4Pipeline) -> str:
+        if not getattr(self.config, "ideogram_prompt_upsample", False):
+            return prompt
+        upsample_prompt = getattr(encoder_shell, "upsample_prompt", None)
+        if upsample_prompt is None:
+            if not getattr(self, "_ideogram_prompt_upsample_warned", False):
+                logger.warning(
+                    "--ideogram_prompt_upsample was supplied, but this Ideogram pipeline does not expose "
+                    "upsample_prompt(); falling back to --ideogram_auto_json conversion."
+                )
+                self._ideogram_prompt_upsample_warned = True
+            return prompt
+        height, width = self._prompt_upsample_resolution()
+        return upsample_prompt(prompt, height=height, width=width)
+
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         if getattr(self, "text_encoders", None) is None:
             self.load_text_encoder(move_to_device=True)
 
         tokenizer = self.tokenizers[0]
+        encoder_shell = Ideogram4Pipeline(
+            conditional_transformer=None,
+            unconditional_transformer=None,
+            text_encoder=self.text_encoders[0],
+            text_tokenizer=tokenizer,
+            autoencoder=None,
+            config=Ideogram4PipelineConfig(weights_repo=self._repo_id()),
+            device=self.accelerator.device,
+            dtype=self.config.weight_dtype,
+        )
         tokenized = []
         for prompt in prompts:
+            prompt = self._maybe_upsample_prompt(str(prompt), encoder_shell)
             prompt = maybe_convert_prompt_to_ideogram_json(
-                str(prompt),
+                prompt,
                 enabled=getattr(self.config, "ideogram_auto_json", True),
             )
             messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
@@ -190,16 +241,6 @@ class Ideogram4(ImageModelFoundation):
             text_position_ids[batch_idx, :num_text] = torch.stack([text_pos, text_pos, text_pos], dim=1)
             attention_mask[batch_idx, :num_text] = True
 
-        encoder_shell = Ideogram4Pipeline(
-            conditional_transformer=None,
-            unconditional_transformer=None,
-            text_encoder=self.text_encoders[0],
-            text_tokenizer=tokenizer,
-            autoencoder=None,
-            config=Ideogram4PipelineConfig(weights_repo=self._repo_id()),
-            device=self.accelerator.device,
-            dtype=self.config.weight_dtype,
-        )
         indicator = torch.full_like(token_ids, LLM_TOKEN_INDICATOR)
         prompt_embeds = encoder_shell._encode_text(token_ids, text_position_ids, indicator)
         prompt_embeds = prompt_embeds * attention_mask.to(prompt_embeds.dtype).unsqueeze(-1)
@@ -283,34 +324,51 @@ class Ideogram4(ImageModelFoundation):
         mean, _logvar = encoded.chunk(2, dim=1)
         return mean
 
-    def post_vae_encode_transform_sample(self, sample):
-        shift, scale = get_latent_norm()
-        shift = shift[: sample.shape[1]].view(1, sample.shape[1], 1, 1).to(device=sample.device, dtype=sample.dtype)
-        scale = scale[: sample.shape[1]].view(1, sample.shape[1], 1, 1).to(device=sample.device, dtype=sample.dtype)
-        return (sample - shift) / scale
-
-    def _pack_latents(self, latents: torch.Tensor) -> torch.Tensor:
+    def _patchify_vae_latents(self, latents: torch.Tensor) -> torch.Tensor:
         batch_size, channels, height, width = latents.shape
         patch = self.PATCH_SIZE
         if height % patch != 0 or width % patch != 0:
             raise ValueError(f"Ideogram latent height/width must be divisible by {patch}, got {height}x{width}.")
         latents = latents.view(batch_size, channels, height // patch, patch, width // patch, patch)
-        latents = latents.permute(0, 2, 4, 3, 5, 1).contiguous()
-        return latents.view(batch_size, (height // patch) * (width // patch), channels * patch * patch)
+        latents = latents.permute(0, 1, 3, 5, 2, 4).contiguous()
+        return latents.view(batch_size, channels * patch * patch, height // patch, width // patch)
+
+    def _unpatchify_vae_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        batch_size, channels, height, width = latents.shape
+        patch = self.PATCH_SIZE
+        ae_channels = channels // (patch * patch)
+        latents = latents.view(batch_size, ae_channels, patch, patch, height, width)
+        latents = latents.permute(0, 1, 4, 2, 5, 3).contiguous()
+        return latents.view(batch_size, ae_channels, height * patch, width * patch)
+
+    def _normalize_packed_vae_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        vae = self.get_vae()
+        if vae is None:
+            raise ValueError("Cannot normalize Ideogram latents without a loaded VAE.")
+        mean = vae.bn.running_mean.view(1, -1, 1, 1).to(device=latents.device, dtype=latents.dtype)
+        std = torch.sqrt(vae.bn.running_var.view(1, -1, 1, 1) + vae.bn.eps).to(device=latents.device, dtype=latents.dtype)
+        return (latents - mean) / std
+
+    def post_vae_encode_transform_sample(self, sample):
+        if hasattr(sample, "latent_dist"):
+            sample = sample.latent_dist.mode()
+        elif hasattr(sample, "sample") and not torch.is_tensor(sample):
+            sample = sample.sample
+        packed = self._patchify_vae_latents(sample)
+        return self._normalize_packed_vae_latents(packed)
+
+    def _pack_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        batch_size, channels, height, width = latents.shape
+        expected_channels = self.LATENT_CHANNEL_COUNT * self.PATCH_SIZE * self.PATCH_SIZE
+        if channels != expected_channels:
+            raise ValueError(f"Ideogram expects packed 128-channel latents, got {channels} channels.")
+        return latents.permute(0, 2, 3, 1).contiguous().view(batch_size, height * width, channels)
 
     def _unpack_latents(self, packed: torch.Tensor, height: int, width: int) -> torch.Tensor:
         batch_size, _tokens, channels = packed.shape
-        patch = self.PATCH_SIZE
-        ae_channels = channels // (patch * patch)
-        grid_h = height // patch
-        grid_w = width // patch
-        latents = packed.view(batch_size, grid_h, grid_w, patch, patch, ae_channels)
-        latents = latents.permute(0, 5, 1, 3, 2, 4).contiguous()
-        return latents.view(batch_size, ae_channels, height, width)
+        return packed.view(batch_size, height, width, channels).permute(0, 3, 1, 2).contiguous()
 
-    def _image_position_ids(self, batch_size: int, latent_height: int, latent_width: int) -> torch.Tensor:
-        grid_h = latent_height // self.PATCH_SIZE
-        grid_w = latent_width // self.PATCH_SIZE
+    def _image_position_ids(self, batch_size: int, grid_h: int, grid_w: int) -> torch.Tensor:
         h_idx = torch.arange(grid_h, device=self.accelerator.device).view(-1, 1).expand(grid_h, grid_w).reshape(-1)
         w_idx = torch.arange(grid_w, device=self.accelerator.device).view(1, -1).expand(grid_h, grid_w).reshape(-1)
         t_idx = torch.zeros_like(h_idx)
@@ -384,6 +442,7 @@ class Ideogram4(ImageModelFoundation):
             timesteps = timesteps.expand(batch_size)
         if timesteps.max() > 1:
             timesteps = timesteps / 1000.0
+        timesteps = 1.0 - timesteps
 
         model_output = self.model(
             llm_features=llm_features,
@@ -396,6 +455,21 @@ class Ideogram4(ImageModelFoundation):
         packed_prediction = model_output[:, text_tokens:]
         model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)
         return {"model_prediction": model_prediction * -1}
+
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        bsz = batch["latents"].shape[0]
+        device = self.accelerator.device
+        latents = batch["latents"]
+        image_height = int(latents.shape[-2] * self.AE_SCALE_FACTOR * self.PATCH_SIZE)
+        image_width = int(latents.shape[-1] * self.AE_SCALE_FACTOR * self.PATCH_SIZE)
+        mu = float(getattr(self.config, "ideogram_schedule_mu", 0.0) or 0.0)
+        std = float(getattr(self.config, "ideogram_schedule_std", 1.5) or 1.5)
+        schedule = get_schedule_for_resolution((image_height, image_width), known_mean=mu, std=std)
+        schedule_u = torch.rand((bsz,), device=device, dtype=torch.float32)
+        model_t = schedule(schedule_u).to(device=device, dtype=torch.float32)
+        sigmas = (1.0 - model_t).clamp(0.0, 1.0)
+        timesteps = sigmas * 1000.0
+        return sigmas, timesteps
 
     def requires_special_scheduler_setup(self) -> bool:
         return True

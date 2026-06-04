@@ -1,12 +1,15 @@
 import json
 import types
 import unittest
+from unittest import mock
 
 import torch
+import torch.nn as nn
 
 from simpletuner.helpers.models.ideogram.model import Ideogram4
 from simpletuner.helpers.models.ideogram.pipeline import Ideogram4Pipeline
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
 
 
@@ -160,17 +163,51 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         result = model.model_predict(
             {
-                "noisy_latents": torch.randn(2, 32, 4, 4),
+                "noisy_latents": torch.randn(2, 128, 4, 4),
                 "prompt_embeds": torch.randn(2, 3, 4096),
                 "attention_mask": torch.ones(2, 3, dtype=torch.bool),
                 "timesteps": torch.tensor([100.0, 500.0]),
             }
         )
 
-        self.assertEqual(result["model_prediction"].shape, (2, 32, 4, 4))
-        self.assertEqual(model.model.last_kwargs["x"].shape, (2, 7, 128))
-        self.assertEqual(model.model.last_kwargs["position_ids"].shape, (2, 7, 3))
-        self.assertTrue(torch.equal(result["model_prediction"], torch.full((2, 32, 4, 4), -1.0)))
+        self.assertEqual(result["model_prediction"].shape, (2, 128, 4, 4))
+        self.assertEqual(model.model.last_kwargs["x"].shape, (2, 19, 128))
+        self.assertEqual(model.model.last_kwargs["position_ids"].shape, (2, 19, 3))
+        self.assertTrue(torch.equal(result["model_prediction"], torch.full((2, 128, 4, 4), -1.0)))
+        self.assertTrue(torch.allclose(model.model.last_kwargs["t"], torch.tensor([0.9, 0.5])))
+
+    def test_vae_latent_norm_matches_flux2_batch_norm_layout(self):
+        model = Ideogram4.__new__(Ideogram4)
+        latents = torch.arange(1 * 32 * 4 * 4, dtype=torch.float32).view(1, 32, 4, 4) / 100.0
+        bn = nn.BatchNorm2d(128, eps=1e-4, affine=False, track_running_stats=True)
+        bn.running_mean.copy_(torch.linspace(-1.0, 1.0, 128))
+        bn.running_var.copy_(torch.linspace(0.25, 2.0, 128))
+        model.vae = types.SimpleNamespace(bn=bn)
+        model.get_vae = lambda: model.vae
+
+        normalized = model.post_vae_encode_transform_sample(latents)
+        packed = model._patchify_vae_latents(latents)
+        expected = (packed - bn.running_mean.view(1, -1, 1, 1)) / torch.sqrt(
+            bn.running_var.view(1, -1, 1, 1) + bn.eps
+        )
+
+        self.assertEqual(normalized.shape, (1, 128, 2, 2))
+        self.assertTrue(torch.allclose(normalized, expected))
+
+    def test_sample_flow_sigmas_uses_ideogram_schedule_as_complement(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.accelerator = types.SimpleNamespace(device=torch.device("cpu"))
+        model.config = types.SimpleNamespace(ideogram_schedule_mu=0.0, ideogram_schedule_std=1.5)
+        batch = {"latents": torch.zeros(2, 128, 64, 64)}
+        schedule_u = torch.tensor([0.25, 0.75], dtype=torch.float32)
+
+        with mock.patch("torch.rand", return_value=schedule_u):
+            sigmas, timesteps = model.sample_flow_sigmas(batch=batch, state={})
+
+        model_t = get_schedule_for_resolution((1024, 1024), known_mean=0.0, std=1.5)(schedule_u)
+        expected_sigmas = 1.0 - model_t
+        self.assertTrue(torch.allclose(sigmas, expected_sigmas))
+        self.assertTrue(torch.allclose(timesteps, expected_sigmas * 1000.0))
 
     def test_negative_prompt_encoding_is_not_rejected(self):
         class DummyTokenizer:
@@ -201,6 +238,59 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         self.assertEqual(encoded["prompt_embeds"].shape, (1, 2, 8))
         self.assertTrue(torch.equal(encoded["attention_mask"], torch.ones(1, 2, dtype=torch.bool)))
+
+    def test_prompt_upsample_runs_before_json_conversion(self):
+        class DummyTokenizer:
+            captured_text = None
+
+            def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=False):
+                self.captured_text = messages[0]["content"][0]["text"]
+                return self.captured_text
+
+            def __call__(self, text, return_tensors="pt", add_special_tokens=False):
+                return {"input_ids": torch.tensor([[1, 2]], dtype=torch.long)}
+
+        class DummyPipeline:
+            last_upsample_args = None
+
+            def __init__(self, **kwargs):
+                pass
+
+            def upsample_prompt(self, prompt, height, width):
+                self.__class__.last_upsample_args = (prompt, height, width)
+                return json.dumps(
+                    {
+                        "high_level_description": f"upsampled {prompt}",
+                        "style_description": {"medium": "photograph"},
+                        "compositional_deconstruction": {"background": "studio", "elements": []},
+                    }
+                )
+
+            def _encode_text(self, token_ids, text_position_ids, indicator):
+                return torch.zeros(token_ids.shape[0], token_ids.shape[1], 8)
+
+        model = Ideogram4.__new__(Ideogram4)
+        model.accelerator = types.SimpleNamespace(device=torch.device("cpu"))
+        model.config = types.SimpleNamespace(
+            ideogram_auto_json=True,
+            ideogram_prompt_upsample=True,
+            resolution="768x1024",
+            weight_dtype=torch.float32,
+        )
+        tokenizer = DummyTokenizer()
+        model.tokenizers = [tokenizer]
+        model.text_encoders = [object()]
+        module = __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"])
+        original_pipeline = module.Ideogram4Pipeline
+        try:
+            module.Ideogram4Pipeline = DummyPipeline
+            encoded = model._encode_prompts(["plain prompt"])
+        finally:
+            module.Ideogram4Pipeline = original_pipeline
+
+        self.assertEqual(DummyPipeline.last_upsample_args, ("plain prompt", 768, 1024))
+        self.assertIn("upsampled plain prompt", tokenizer.captured_text)
+        self.assertEqual(encoded["prompt_embeds"].shape, (1, 2, 8))
 
     def test_transformer_gradient_checkpointing_forward_backward(self):
         model = Ideogram4Transformer(

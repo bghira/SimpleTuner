@@ -28,7 +28,6 @@ from simpletuner.helpers.models.ideogram.constants import (
   SEQUENCE_PADDING_INDICATOR,
   QWEN3_VL_ACTIVATION_LAYERS,
 )
-from simpletuner.helpers.models.ideogram.latent_norm import get_latent_norm
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
 from simpletuner.helpers.models.ideogram.quantized_loading import (
   FP8_TEXT_ENCODER_CONFIG_FLAG,
@@ -272,10 +271,6 @@ class Ideogram4Pipeline:
     self.caption_verifier = CaptionVerifier()
     self._progress_bar_config = {}
 
-    shift, scale = get_latent_norm()
-    self.latent_shift = shift.to(device)
-    self.latent_scale = scale.to(device)
-
   def to(
     self,
     device: str | torch.device | None = None,
@@ -298,8 +293,6 @@ class Ideogram4Pipeline:
           module.to(device=self.device, dtype=dtype)
         else:
           module.to(device=self.device)
-    self.latent_shift = self.latent_shift.to(self.device)
-    self.latent_scale = self.latent_scale.to(self.device)
     return self
 
   def set_progress_bar_config(self, **kwargs) -> None:
@@ -633,8 +626,8 @@ class Ideogram4Pipeline:
     num_steps: int = 128,
     guidance_scale: float = 7.0,
     guidance_schedule: Optional[Sequence[float] | torch.Tensor] = None,
-    mu: float = 0.5,
-    std: float = 1.0,
+    mu: float = 0.0,
+    std: float = 1.5,
     seed: Optional[int] = None,
     schedule: Optional[LogitNormalSchedule] = None,
     raise_on_caption_issues: bool = True,
@@ -806,11 +799,16 @@ class Ideogram4Pipeline:
     batch_size = z.shape[0]
     patch = self.config.patch_size
 
-    z = z * self.latent_scale + self.latent_shift
-
     ae_channels = z.shape[-1] // (patch * patch)
-    z = z.view(batch_size, grid_h, grid_w, patch, patch, ae_channels)
-    z = z.permute(0, 5, 1, 3, 2, 4).contiguous()
+    z = z.view(batch_size, grid_h, grid_w, z.shape[-1]).permute(0, 3, 1, 2).contiguous()
+    bn_mean = self.autoencoder.bn.running_mean.view(1, -1, 1, 1).to(device=z.device, dtype=z.dtype)
+    bn_std = torch.sqrt(self.autoencoder.bn.running_var.view(1, -1, 1, 1) + self.autoencoder.bn.eps).to(
+      device=z.device, dtype=z.dtype
+    )
+    z = z * bn_std + bn_mean
+
+    z = z.view(batch_size, ae_channels, patch, patch, grid_h, grid_w)
+    z = z.permute(0, 1, 4, 2, 5, 3).contiguous()
     z = z.view(batch_size, ae_channels, grid_h * patch, grid_w * patch)
 
     z = z.to(self.dtype)
