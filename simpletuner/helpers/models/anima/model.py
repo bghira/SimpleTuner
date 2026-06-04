@@ -68,6 +68,8 @@ class Anima(ImageModelFoundation):
 
     DEFAULT_MODEL_FLAVOUR = "preview-3"
     HUGGINGFACE_PATHS = {
+        "release": "circlestone-labs/Anima-Base-v1.0-Diffusers",
+        "base-v1.0": "circlestone-labs/Anima-Base-v1.0-Diffusers",
         "preview-3": "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
         "preview-2": "CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
         "preview": "CalamitousFelicitousness/Anima-sdnext-diffusers",
@@ -180,8 +182,15 @@ class Anima(ImageModelFoundation):
 
     def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
         p_t, p_h, p_w = self._crepa_self_flow_patch_size()
+        _, _, frames, height, width = latent_tensor.shape
+        if frames % p_t != 0 or height % p_h != 0 or width % p_w != 0:
+            raise ValueError(
+                "Anima latent shape must be divisible by transformer patch size "
+                f"{(p_t, p_h, p_w)}, got latent shape {tuple(latent_tensor.shape)}. "
+                "Rebuild the VAE/aspect bucket cache with pixel resolutions divisible by 16."
+            )
         return max(
-            (latent_tensor.shape[2] // p_t) * (latent_tensor.shape[3] // p_h) * (latent_tensor.shape[4] // p_w),
+            (frames // p_t) * (height // p_h) * (width // p_w),
             1,
         )
 

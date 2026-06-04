@@ -18,6 +18,7 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, set_weights_and_activate_adapters
 from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError
 from safetensors.torch import load_file
 from torch import nn
 
@@ -26,6 +27,16 @@ from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DMod
 DEFAULT_ANIMA_TRANSFORMER_FILENAME = "anima-preview.safetensors"
 DIFFUSERS_LLM_ADAPTER_FILENAME = "llm_adapter/diffusion_pytorch_model.safetensors"
 DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME = "llm_adapter/config.json"
+DIFFUSERS_TEXT_CONDITIONER_FILENAME = "text_conditioner/diffusion_pytorch_model.safetensors"
+DIFFUSERS_TEXT_CONDITIONER_CONFIG_FILENAME = "text_conditioner/config.json"
+DIFFUSERS_ADAPTER_WEIGHT_FILENAMES = (
+    DIFFUSERS_LLM_ADAPTER_FILENAME,
+    DIFFUSERS_TEXT_CONDITIONER_FILENAME,
+)
+DIFFUSERS_ADAPTER_CONFIG_FILENAMES = (
+    DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME,
+    DIFFUSERS_TEXT_CONDITIONER_CONFIG_FILENAME,
+)
 
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -496,6 +507,49 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         return pretrained_model_name_or_path
 
     @staticmethod
+    def _resolve_diffusers_adapter_file(
+        pretrained_model_name_or_path: str,
+        *,
+        filenames: tuple[str, ...],
+        component_name: str,
+        subfolder: Optional[str] = None,
+        revision: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        force_download: bool = False,
+        local_files_only: bool = False,
+        token: str | bool | None = None,
+    ) -> str:
+        if os.path.isdir(pretrained_model_name_or_path):
+            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
+            for filename in filenames:
+                candidate = os.path.join(repo_root, filename)
+                if os.path.isfile(candidate):
+                    return candidate
+            raise FileNotFoundError(
+                f"Anima Diffusers directory {repo_root!r} is missing {component_name}; "
+                f"expected one of: {', '.join(filenames)}"
+            )
+        normalized_token = None if token is False else token
+        last_error: Exception | None = None
+        for filename in filenames:
+            try:
+                return hf_hub_download(
+                    pretrained_model_name_or_path,
+                    filename=filename,
+                    revision=revision,
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    local_files_only=local_files_only,
+                    token=normalized_token,
+                )
+            except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
+                last_error = exc
+        raise FileNotFoundError(
+            f"Anima Diffusers repository {pretrained_model_name_or_path!r} is missing {component_name}; "
+            f"expected one of: {', '.join(filenames)}"
+        ) from last_error
+
+    @staticmethod
     def _resolve_diffusers_llm_adapter_path(
         pretrained_model_name_or_path: str,
         *,
@@ -506,18 +560,16 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         local_files_only: bool = False,
         token: str | bool | None = None,
     ) -> str:
-        if os.path.isdir(pretrained_model_name_or_path):
-            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
-            return os.path.join(repo_root, DIFFUSERS_LLM_ADAPTER_FILENAME)
-        normalized_token = None if token is False else token
-        return hf_hub_download(
+        return AnimaTransformerModel._resolve_diffusers_adapter_file(
             pretrained_model_name_or_path,
-            filename=DIFFUSERS_LLM_ADAPTER_FILENAME,
+            filenames=DIFFUSERS_ADAPTER_WEIGHT_FILENAMES,
+            component_name="text adapter weights",
+            subfolder=subfolder,
             revision=revision,
             cache_dir=cache_dir,
             force_download=force_download,
             local_files_only=local_files_only,
-            token=normalized_token,
+            token=token,
         )
 
     @staticmethod
@@ -531,19 +583,24 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         local_files_only: bool = False,
         token: str | bool | None = None,
     ) -> str:
-        if os.path.isdir(pretrained_model_name_or_path):
-            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
-            return os.path.join(repo_root, DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME)
-        normalized_token = None if token is False else token
-        return hf_hub_download(
+        return AnimaTransformerModel._resolve_diffusers_adapter_file(
             pretrained_model_name_or_path,
-            filename=DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME,
+            filenames=DIFFUSERS_ADAPTER_CONFIG_FILENAMES,
+            component_name="text adapter config",
+            subfolder=subfolder,
             revision=revision,
             cache_dir=cache_dir,
             force_download=force_download,
             local_files_only=local_files_only,
-            token=normalized_token,
+            token=token,
         )
+
+    @staticmethod
+    def _adapter_config_int(adapter_config: dict[str, Any], *keys: str) -> int:
+        for key in keys:
+            if key in adapter_config:
+                return int(adapter_config[key])
+        raise KeyError(f"Anima text adapter config is missing one of: {', '.join(keys)}")
 
     @classmethod
     def _load_diffusers_llm_adapter_config(
@@ -563,12 +620,12 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         with open(config_path, encoding="utf-8") as handle:
             adapter_config = json.load(handle)
 
-        model_dim = int(adapter_config["model_dim"])
+        model_dim = cls._adapter_config_int(adapter_config, "model_dim")
         if (
-            int(adapter_config.get("source_dim", model_dim)) != model_dim
-            or int(adapter_config.get("target_dim", model_dim)) != model_dim
+            cls._adapter_config_int(adapter_config, "source_dim") != model_dim
+            or cls._adapter_config_int(adapter_config, "target_dim") != model_dim
         ):
-            raise ValueError("Anima llm_adapter source_dim, target_dim, and model_dim must match.")
+            raise ValueError("Anima text adapter source_dim, target_dim, and model_dim must match.")
         return adapter_config
 
     @classmethod
@@ -592,10 +649,10 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             max_size=tuple(config.max_size),
             patch_size=tuple(config.patch_size),
             rope_scale=tuple(config.rope_scale),
-            adapter_vocab_size=int(adapter_config["vocab_size"]),
-            adapter_dim=int(adapter_config["model_dim"]),
-            adapter_layers=int(adapter_config["num_layers"]),
-            adapter_heads=int(adapter_config["num_heads"]),
+            adapter_vocab_size=cls._adapter_config_int(adapter_config, "vocab_size", "target_vocab_size"),
+            adapter_dim=cls._adapter_config_int(adapter_config, "model_dim"),
+            adapter_layers=cls._adapter_config_int(adapter_config, "num_layers"),
+            adapter_heads=cls._adapter_config_int(adapter_config, "num_heads", "num_attention_heads"),
         )
         _patch_diffusers_rmsnorm_to_anima(core)
         transformer.core = core
