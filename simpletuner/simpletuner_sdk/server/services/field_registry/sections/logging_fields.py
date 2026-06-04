@@ -749,6 +749,24 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="ideogram_prompt_enhancer_head_id",
+            arg_name="--ideogram_prompt_enhancer_head_id",
+            ui_label="Ideogram Prompt Enhancer Head",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value="diffusers/qwen3-vl-8b-instruct-lm-head",
+            help_text="Hugging Face repo id for Ideogram 4's prompt upsampling LM head.",
+            tooltip="Used when --ideogram_prompt_upsample is enabled to rewrite prompts into Ideogram's structured JSON caption schema.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=36,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="ideogram_schedule_mu",
             arg_name="--ideogram_schedule_mu",
             ui_label="Ideogram Schedule Mu",
@@ -761,7 +779,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Matches the default mu used by the vendored Ideogram validation pipeline.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=36,
+            order=37,
         )
     )
 
@@ -779,7 +797,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Matches the default std used by the vendored Ideogram validation pipeline.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=37,
+            order=38,
         )
     )
 

@@ -23,6 +23,7 @@ from simpletuner.helpers.models.ideogram.pipeline import (
     _load_indexed_or_single_state_dict,
     _load_qwen3_vl,
 )
+from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -51,6 +52,7 @@ class Ideogram4(ImageModelFoundation):
     VALIDATION_USES_NEGATIVE_PROMPT = True
     SUPPORTS_LORA = True
     DEFAULT_LORA_TARGET = ["qkv", "o", "w1", "w2", "w3"]
+    DEFAULT_PROMPT_ENHANCER_HEAD = "diffusers/qwen3-vl-8b-instruct-lm-head"
     PATCH_SIZE = 2
     AE_SCALE_FACTOR = 8
 
@@ -105,7 +107,21 @@ class Ideogram4(ImageModelFoundation):
         )
         self.tokenizers = [tokenizer]
         self.text_encoders = [text_encoder]
+        if getattr(self.config, "ideogram_prompt_upsample", False):
+            self.load_prompt_enhancer_head(move_to_device=move_to_device)
         return text_encoder
+
+    def load_prompt_enhancer_head(self, move_to_device: bool = True):
+        repo_id = (
+            getattr(self.config, "ideogram_prompt_enhancer_head_id", None)
+            or self.DEFAULT_PROMPT_ENHANCER_HEAD
+        )
+        self.prompt_enhancer_head = Ideogram4PromptEnhancerHead.from_pretrained(repo_id)
+        self.prompt_enhancer_head.to(dtype=self.config.weight_dtype)
+        if move_to_device:
+            self.prompt_enhancer_head.to(self.accelerator.device)
+        self.prompt_enhancer_head.eval()
+        return self.prompt_enhancer_head
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         if pipeline_type != PipelineTypes.TEXT2IMG:
@@ -133,6 +149,7 @@ class Ideogram4(ImageModelFoundation):
             config=Ideogram4PipelineConfig(weights_repo=repo_id),
             device=self.accelerator.device,
             dtype=self.config.weight_dtype,
+            prompt_enhancer_head=getattr(self, "prompt_enhancer_head", None),
         )
         self.pipelines[pipeline_type] = pipeline
         self.pipeline = pipeline
@@ -188,19 +205,18 @@ class Ideogram4(ImageModelFoundation):
             return prompt
         upsample_prompt = getattr(encoder_shell, "upsample_prompt", None)
         if upsample_prompt is None:
-            if not getattr(self, "_ideogram_prompt_upsample_warned", False):
-                logger.warning(
-                    "--ideogram_prompt_upsample was supplied, but this Ideogram pipeline does not expose "
-                    "upsample_prompt(); falling back to --ideogram_auto_json conversion."
-                )
-                self._ideogram_prompt_upsample_warned = True
-            return prompt
+            raise ValueError("--ideogram_prompt_upsample requires an Ideogram pipeline with upsample_prompt().")
         height, width = self._prompt_upsample_resolution()
-        return upsample_prompt(prompt, height=height, width=width)
+        upsampled = upsample_prompt(prompt, height=height, width=width, device=self.accelerator.device)
+        if isinstance(upsampled, list):
+            return upsampled[0]
+        return upsampled
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         if getattr(self, "text_encoders", None) is None:
             self.load_text_encoder(move_to_device=True)
+        if getattr(self.config, "ideogram_prompt_upsample", False) and getattr(self, "prompt_enhancer_head", None) is None:
+            self.load_prompt_enhancer_head(move_to_device=True)
 
         tokenizer = self.tokenizers[0]
         encoder_shell = Ideogram4Pipeline(
@@ -212,6 +228,7 @@ class Ideogram4(ImageModelFoundation):
             config=Ideogram4PipelineConfig(weights_repo=self._repo_id()),
             device=self.accelerator.device,
             dtype=self.config.weight_dtype,
+            prompt_enhancer_head=getattr(self, "prompt_enhancer_head", None),
         )
         tokenized = []
         for prompt in prompts:

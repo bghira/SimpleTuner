@@ -9,6 +9,7 @@
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-example-ideogram-fp8-peft-lora",
     "ideogram_auto_json": true,
+    "ideogram_prompt_enhancer_head_id": "diffusers/qwen3-vl-8b-instruct-lm-head",
     "ideogram_prompt_upsample": false,
     "ideogram_schedule_mu": 0.0,
     "ideogram_schedule_std": 1.5,

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import types
 import warnings
 from dataclasses import dataclass
 from posixpath import dirname as _posix_dirname, join as _posix_join
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import torch
+from diffusers.loaders.lora_base import LoraBaseMixin
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 from PIL import Image
@@ -37,6 +39,13 @@ from simpletuner.helpers.models.ideogram.quantized_loading import (
   load_fp8_state_dict,
   swap_linears_to_bnb4bit,
   swap_linears_to_fp8,
+)
+from simpletuner.helpers.models.ideogram.prompt_enhancer import (
+  PROMPT_UPSAMPLE_TEMPERATURE,
+  Ideogram4PromptEnhancerHead,
+  build_caption_logits_processor,
+  build_prompt_enhancer,
+  generate_captions,
 )
 from simpletuner.helpers.models.ideogram.scheduler import (
   LogitNormalSchedule,
@@ -246,7 +255,52 @@ class Ideogram4PipelineConfig:
   max_text_tokens: int = 2048
 
 
-class Ideogram4Pipeline:
+class Ideogram4LoraLoaderMixin(LoraBaseMixin):
+  """LoRA save/load surface for the vendored Ideogram 4 pipeline."""
+
+  _lora_loadable_modules = ["transformer", "text_encoder"]
+  transformer_name = "transformer"
+  text_encoder_name = "text_encoder"
+
+  @classmethod
+  def save_lora_weights(
+    cls,
+    save_directory: str,
+    transformer_lora_layers: dict[str, torch.nn.Module | torch.Tensor] | None = None,
+    text_encoder_lora_layers: dict[str, torch.nn.Module | torch.Tensor] | None = None,
+    is_main_process: bool = True,
+    weight_name: str | None = None,
+    save_function: Callable | None = None,
+    safe_serialization: bool = True,
+    transformer_lora_adapter_metadata: dict | None = None,
+    text_encoder_lora_adapter_metadata: dict | None = None,
+  ) -> None:
+    lora_layers = {}
+    lora_metadata = {}
+
+    if transformer_lora_layers:
+      lora_layers[cls.transformer_name] = transformer_lora_layers
+      lora_metadata[cls.transformer_name] = transformer_lora_adapter_metadata
+
+    if text_encoder_lora_layers:
+      lora_layers[cls.text_encoder_name] = text_encoder_lora_layers
+      lora_metadata[cls.text_encoder_name] = text_encoder_lora_adapter_metadata
+
+    if not lora_layers:
+      raise ValueError("You must pass at least one of `transformer_lora_layers` or `text_encoder_lora_layers`.")
+
+    cls._save_lora_weights(
+      save_directory=save_directory,
+      lora_layers=lora_layers,
+      lora_metadata=lora_metadata,
+      is_main_process=is_main_process,
+      weight_name=weight_name,
+      save_function=save_function,
+      safe_serialization=safe_serialization,
+    )
+
+
+class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
   """Ideogram 4 text-to-image pipeline."""
 
   def __init__(
@@ -259,17 +313,22 @@ class Ideogram4Pipeline:
     config: Ideogram4PipelineConfig,
     device: torch.device,
     dtype: torch.dtype,
+    prompt_enhancer_head: Ideogram4PromptEnhancerHead | None = None,
   ) -> None:
     self.conditional_transformer = conditional_transformer
     self.unconditional_transformer = unconditional_transformer
     self.text_encoder = text_encoder
     self.text_tokenizer = text_tokenizer
     self.autoencoder = autoencoder
+    self.prompt_enhancer_head = prompt_enhancer_head
     self.config = config
     self.device = device
     self.dtype = dtype
     self.caption_verifier = CaptionVerifier()
     self._progress_bar_config = {}
+    self._prompt_enhancer = None
+    self._caption_logits_processor = None
+    self._prompt_upsample_unconstrained_warned = False
 
   def to(
     self,
@@ -286,6 +345,7 @@ class Ideogram4Pipeline:
       self.conditional_transformer,
       self.unconditional_transformer,
       self.text_encoder,
+      self.prompt_enhancer_head,
       self.autoencoder,
     ):
       if module is not None:
@@ -306,6 +366,7 @@ class Ideogram4Pipeline:
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.bfloat16,
     transformer_config: Optional[Ideogram4Config] = None,
+    prompt_enhancer_head: Ideogram4PromptEnhancerHead | None = None,
   ) -> "Ideogram4Pipeline":
     config = config or Ideogram4PipelineConfig()
     transformer_config = transformer_config or Ideogram4Config()
@@ -348,6 +409,47 @@ class Ideogram4Pipeline:
       config=config,
       device=device,
       dtype=dtype,
+      prompt_enhancer_head=prompt_enhancer_head,
+    )
+
+  def upsample_prompt(
+    self,
+    prompt: str | list[str],
+    height: int = 2048,
+    width: int = 2048,
+    temperature: float = PROMPT_UPSAMPLE_TEMPERATURE,
+    max_new_tokens: int = 1024,
+    generator: torch.Generator | list[torch.Generator] | None = None,
+    device: torch.device | None = None,
+  ) -> list[str]:
+    """Rewrite prompt(s) into Ideogram 4's structured JSON caption schema."""
+    if self.prompt_enhancer_head is None:
+      raise ValueError(
+        "Prompt upsampling requires a prompt_enhancer_head. Load "
+        "Ideogram4PromptEnhancerHead and pass it to Ideogram4Pipeline."
+      )
+    if self._prompt_enhancer is None:
+      self._prompt_enhancer = build_prompt_enhancer(self.text_encoder, self.prompt_enhancer_head)
+    if self._caption_logits_processor is None and importlib.util.find_spec("outlines") is not None:
+      self._caption_logits_processor = build_caption_logits_processor(self._prompt_enhancer, self.text_tokenizer)
+    if self._caption_logits_processor is None and not self._prompt_upsample_unconstrained_warned:
+      warnings.warn(
+        "`outlines` is not installed; Ideogram prompt upsampling runs unconstrained and may not return schema-valid JSON.",
+        stacklevel=2,
+      )
+      self._prompt_upsample_unconstrained_warned = True
+
+    return generate_captions(
+      self._prompt_enhancer,
+      self.text_tokenizer,
+      self._caption_logits_processor,
+      prompt,
+      height,
+      width,
+      temperature=temperature,
+      max_new_tokens=max_new_tokens,
+      generator=generator,
+      device=device or self.device,
     )
 
   def _tokenize(self, prompt: str) -> tuple[torch.Tensor, int]:
@@ -628,6 +730,8 @@ class Ideogram4Pipeline:
     guidance_schedule: Optional[Sequence[float] | torch.Tensor] = None,
     mu: float = 0.0,
     std: float = 1.5,
+    prompt_upsampling: bool = False,
+    prompt_upsampling_temperature: float = PROMPT_UPSAMPLE_TEMPERATURE,
     seed: Optional[int] = None,
     schedule: Optional[LogitNormalSchedule] = None,
     raise_on_caption_issues: bool = True,
@@ -639,6 +743,15 @@ class Ideogram4Pipeline:
     if prompt_embeds is None:
       if prompts is None:
         raise ValueError("Either prompts or prompt_embeds must be provided.")
+      if prompt_upsampling:
+        prompts = self.upsample_prompt(
+          prompts,
+          height=height,
+          width=width,
+          temperature=prompt_upsampling_temperature,
+          max_new_tokens=self.config.max_text_tokens,
+          device=self.device,
+        )
       self._verify_prompts(prompts, raise_on_issues=raise_on_caption_issues)
 
     schedule = schedule or get_schedule_for_resolution(

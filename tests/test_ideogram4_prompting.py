@@ -1,10 +1,13 @@
 import json
+import os
+import tempfile
 import types
 import unittest
 from unittest import mock
 
 import torch
 import torch.nn as nn
+from safetensors.torch import load_file
 
 from simpletuner.helpers.models.ideogram.model import Ideogram4
 from simpletuner.helpers.models.ideogram.pipeline import Ideogram4Pipeline
@@ -256,7 +259,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
             def __init__(self, **kwargs):
                 pass
 
-            def upsample_prompt(self, prompt, height, width):
+            def upsample_prompt(self, prompt, height, width, device=None):
                 self.__class__.last_upsample_args = (prompt, height, width)
                 return json.dumps(
                     {
@@ -278,6 +281,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
             weight_dtype=torch.float32,
         )
         tokenizer = DummyTokenizer()
+        model.prompt_enhancer_head = object()
         model.tokenizers = [tokenizer]
         model.text_encoders = [object()]
         module = __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"])
@@ -291,6 +295,54 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertEqual(DummyPipeline.last_upsample_args, ("plain prompt", 768, 1024))
         self.assertIn("upsampled plain prompt", tokenizer.captured_text)
         self.assertEqual(encoded["prompt_embeds"].shape, (1, 2, 8))
+
+    def test_prompt_enhancer_head_uses_configured_repo(self):
+        class DummyHead:
+            loaded_repo = None
+
+            @classmethod
+            def from_pretrained(cls, repo_id):
+                cls.loaded_repo = repo_id
+                return cls()
+
+            def to(self, *args, **kwargs):
+                return self
+
+            def eval(self):
+                return self
+
+        model = Ideogram4.__new__(Ideogram4)
+        model.accelerator = types.SimpleNamespace(device=torch.device("cpu"))
+        model.config = types.SimpleNamespace(
+            ideogram_prompt_enhancer_head_id="example/head",
+            weight_dtype=torch.float32,
+        )
+        module = __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4PromptEnhancerHead"])
+        original_head = module.Ideogram4PromptEnhancerHead
+        try:
+            module.Ideogram4PromptEnhancerHead = DummyHead
+            loaded = model.load_prompt_enhancer_head(move_to_device=True)
+        finally:
+            module.Ideogram4PromptEnhancerHead = original_head
+
+        self.assertIs(loaded, model.prompt_enhancer_head)
+        self.assertEqual(DummyHead.loaded_repo, "example/head")
+
+    def test_pipeline_saves_lora_weights_with_transformer_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            Ideogram4Pipeline.save_lora_weights(
+                save_directory=tmp_dir,
+                transformer_lora_layers={"layers.0.attention.qkv.lora_A.weight": torch.ones(1, 2)},
+                weight_name="ideogram-test.safetensors",
+                safe_serialization=True,
+            )
+
+            saved_path = os.path.join(tmp_dir, "ideogram-test.safetensors")
+            self.assertTrue(os.path.exists(saved_path))
+            saved = load_file(saved_path)
+
+        self.assertIn("transformer.layers.0.attention.qkv.lora_A.weight", saved)
+        self.assertTrue(torch.equal(saved["transformer.layers.0.attention.qkv.lora_A.weight"], torch.ones(1, 2)))
 
     def test_transformer_gradient_checkpointing_forward_backward(self):
         model = Ideogram4Transformer(
