@@ -18,6 +18,7 @@
 | **Lumina2** | 2B | [Lumina2 गाइड](LUMINA2.md) |
 | **HiDream** | 17B MoE | [HiDream गाइड](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image गाइड](ZIMAGE.md) |
+| **Ideogram 4** | 9B | [Ideogram 4 गाइड](IDEOGRAM4.hi.md) |
 | **ERNIE-Image** | - | [ERNIE गाइड](ERNIE.md) |
 
 ### DiT / ट्रांसफ़ॉर्मर

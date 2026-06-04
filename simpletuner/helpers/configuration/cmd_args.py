@@ -1220,6 +1220,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
 
+    if getattr(args, "model_family", None) != "ideogram" and getattr(args, "ideogram_auto_json", None) == "None":
+        args.ideogram_auto_json = None
+    if getattr(args, "model_family", None) != "ideogram" and getattr(args, "ideogram_validation", None) == "None":
+        args.ideogram_validation = None
+
     if isinstance(getattr(args, "validation_adapter_path", None), str):
         candidate = args.validation_adapter_path.strip()
         args.validation_adapter_path = candidate or None

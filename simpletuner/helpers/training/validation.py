@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import inspect
 import logging
 import math
@@ -540,6 +541,15 @@ def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
     return validation_set
 
 
+def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
+    if getattr(args, "model_family", None) != "ideogram":
+        return shortname
+    if str(prompt) == "":
+        return shortname
+    prompt_hash = hashlib.md5(str(prompt).encode("utf-8")).hexdigest()
+    return f"{shortname}:{prompt_hash}"
+
+
 def prepare_validation_prompt_list(args, embed_cache, model):
     validation_prompts: list[PromptLibraryEntry] = (
         [PromptLibraryEntry(prompt="")] if not StateTracker.get_args().validation_disable_unconditional else []
@@ -719,7 +729,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         # Use the same key format as retrieval to ensure cache hit
         prompt_record = {
             "prompt": args.validation_prompt,
-            "key": "validation",
+            "key": _validation_text_cache_key(args, "validation", args.validation_prompt),
         }
         embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
@@ -1801,7 +1811,11 @@ class Validation:
         cache_shortname: str | None = None,
     ):
         # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
-        cache_key = cache_shortname or validation_shortname
+        cache_key = _validation_text_cache_key(
+            StateTracker.get_args(),
+            cache_shortname or validation_shortname,
+            validation_prompt,
+        )
         prompt_record = {
             "prompt": validation_prompt,
             "key": cache_key,
@@ -2112,6 +2126,11 @@ class Validation:
         configured_validation_method = self._validation_method()
         if self.validation_prompt_metadata is None:
             return self
+        if getattr(self.config, "model_family", None) == "ideogram" and not getattr(
+            self.config, "ideogram_validation", False
+        ):
+            logger.info("Skipping Ideogram validation because --ideogram_validation was not supplied.")
+            return self
         content = self.validation_prompt_metadata.get("validation_prompts", None)
         has_validation_prompts = content is not None and len(content) > 0
         current_step_aligns_with_interval = self.should_perform_intermediary_validation(
@@ -2330,6 +2349,88 @@ class Validation:
             should_validate = should_validate and self.accelerator.is_main_process
         return bool(should_validate)
 
+    def _loaded_scheduler_for_validation(self):
+        pipeline = getattr(self.model, "pipeline", None)
+        if pipeline is not None:
+            scheduler = getattr(pipeline, "scheduler", None)
+            if scheduler is not None and hasattr(scheduler, "config"):
+                return scheduler
+
+        scheduler = getattr(self.model, "noise_schedule", None)
+        if scheduler is not None and hasattr(scheduler, "config"):
+            return scheduler
+
+        return None
+
+    def _build_scheduler_from_loaded_config(self, scheduler_cls, scheduler_args: dict):
+        source_scheduler = self._loaded_scheduler_for_validation()
+        if source_scheduler is None:
+            return None
+
+        config_scheduler_cls = scheduler_cls
+        try:
+            if issubclass(source_scheduler.__class__, scheduler_cls):
+                config_scheduler_cls = source_scheduler.__class__
+        except TypeError:
+            pass
+
+        from_config = getattr(config_scheduler_cls, "from_config", None)
+        if not callable(from_config):
+            return None
+
+        scheduler_kwargs = dict(scheduler_args)
+        timestep_spacing = getattr(self.config, "inference_scheduler_timestep_spacing", None)
+        if timestep_spacing is not None:
+            scheduler_kwargs["timestep_spacing"] = timestep_spacing
+
+        rescale_betas_zero_snr = getattr(self.config, "rescale_betas_zero_snr", None)
+        if rescale_betas_zero_snr is not None:
+            scheduler_kwargs["rescale_betas_zero_snr"] = rescale_betas_zero_snr
+
+        try:
+            return from_config(source_scheduler.config, **scheduler_kwargs)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            scheduler_name = getattr(config_scheduler_cls, "__name__", str(config_scheduler_cls))
+            logger.debug(
+                "Unable to build validation scheduler %s from loaded scheduler config: %s",
+                scheduler_name,
+                exc,
+            )
+            return None
+
+    def _validation_scheduler_pretrained_path(self):
+        model_config_path = getattr(self.model, "_model_config_path", None)
+        if callable(model_config_path):
+            return model_config_path()
+        return self.config.pretrained_model_name_or_path
+
+    def _scheduler_from_pretrained_kwargs(self, scheduler_args: dict) -> dict:
+        kwargs = {
+            "subfolder": "scheduler",
+            **scheduler_args,
+        }
+        revision = getattr(self.config, "revision", None)
+        if revision is not None:
+            kwargs["revision"] = revision
+
+        timestep_spacing = getattr(self.config, "inference_scheduler_timestep_spacing", None)
+        if timestep_spacing is not None:
+            kwargs["timestep_spacing"] = timestep_spacing
+
+        rescale_betas_zero_snr = getattr(self.config, "rescale_betas_zero_snr", None)
+        if rescale_betas_zero_snr is not None:
+            kwargs["rescale_betas_zero_snr"] = rescale_betas_zero_snr
+
+        cache_dir = getattr(self.config, "cache_dir", None)
+        if cache_dir is not None:
+            kwargs["cache_dir"] = cache_dir
+
+        local_files_only = getattr(self.config, "local_files_only", None)
+        if local_files_only is not None:
+            kwargs["local_files_only"] = local_files_only
+
+        return kwargs
+
     def setup_scheduler(self):
         if self.distiller is not None:
             distillation_scheduler = self.distiller.get_scheduler()
@@ -2391,8 +2492,9 @@ class Validation:
         if self.config.prediction_type is not None:
             scheduler_args["prediction_type"] = self.config.prediction_type
 
-        if self.model.pipeline is not None and "variance_type" in self.model.pipeline.scheduler.config:
-            variance_type = self.model.pipeline.scheduler.config.variance_type
+        loaded_scheduler = self._loaded_scheduler_for_validation()
+        if loaded_scheduler is not None and "variance_type" in loaded_scheduler.config:
+            variance_type = loaded_scheduler.config.variance_type
 
             if variance_type in ["learned", "learned_range"]:
                 variance_type = "fixed_small"
@@ -2413,14 +2515,12 @@ class Validation:
         elif scheduler_cls is TwinFlowScheduler:
             scheduler = scheduler_cls(**scheduler_args)
         else:
-            scheduler = scheduler_cls.from_pretrained(
-                self.config.pretrained_model_name_or_path,
-                subfolder="scheduler",
-                revision=self.config.revision,
-                timestep_spacing=self.config.inference_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
-                **scheduler_args,
-            )
+            scheduler = self._build_scheduler_from_loaded_config(scheduler_cls, scheduler_args)
+            if scheduler is None:
+                scheduler = scheduler_cls.from_pretrained(
+                    self._validation_scheduler_pretrained_path(),
+                    **self._scheduler_from_pretrained_kwargs(scheduler_args),
+                )
         if self.model.pipeline is not None:
             self.model.pipeline.scheduler = scheduler
         return scheduler
@@ -2856,6 +2956,21 @@ class Validation:
                 lycoris_network.set_multiplier(target_strength)
         elif lora_type == "standard":
             self._set_peft_adapter_strength(target_strength)
+
+    def _prepare_pipeline_kwarg_for_inference(self, key: str, value: Any) -> Any:
+        if not hasattr(value, "to") or not hasattr(value, "dtype"):
+            return value
+        if value.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+            return value
+        if getattr(self.config, "model_family", None) == "ideogram" and key in (
+            "prompt_embeds",
+            "negative_prompt_embeds",
+        ):
+            return value.to(device=self.inference_device, dtype=torch.float32)
+        return value.to(
+            device=self.inference_device,
+            dtype=self.config.weight_dtype,
+        )
 
     def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
         if content is None:
@@ -3834,15 +3949,7 @@ class Validation:
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
                     pipeline_kwargs = {
-                        k: (
-                            v.to(
-                                device=self.inference_device,
-                                dtype=self.config.weight_dtype,
-                            )
-                            if hasattr(v, "to") and v.dtype in (torch.bfloat16, torch.float16, torch.float32)
-                            else v
-                        )
-                        for k, v in pipeline_kwargs.items()
+                        k: self._prepare_pipeline_kwarg_for_inference(k, v) for k, v in pipeline_kwargs.items()
                     }
 
                     call_kwargs = inspect.signature(self.model.pipeline.__call__).parameters
@@ -3906,10 +4013,15 @@ class Validation:
                             ),
                         )
                     with preview_ctx:
-                        with torch.amp.autocast(
-                            self.inference_device.type,
-                            dtype=self.config.weight_dtype,
-                        ):
+                        autocast_ctx = (
+                            torch.amp.autocast(
+                                self.inference_device.type,
+                                dtype=self.config.weight_dtype,
+                            )
+                            if self.model.VALIDATION_USE_AUTOCAST
+                            else torch.amp.autocast(self.inference_device.type, enabled=False)
+                        )
+                        with autocast_ctx:
                             if self.model.supports_multistage_validation():
 
                                 def _pipeline_call(kwargs):

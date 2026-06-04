@@ -97,6 +97,7 @@ flow_matching_model_families = [
     "qwen_image",
     "z_image",
     "z_image_omni",
+    "ideogram",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -112,6 +113,7 @@ upstream_config_sources = {
     "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
+    "ideogram": "ideogram-ai/ideogram-4-fp8",
 }
 
 
@@ -462,6 +464,7 @@ class ModelFoundation(ABC):
     GLIGEN_LORA_TARGET = ["position_net", "fuser"]
     GLIGEN_LYCORIS_TARGET = ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
+    VALIDATION_USE_AUTOCAST = True
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
     DEFAULT_AUDIO_CHANNELS = 1
@@ -965,6 +968,11 @@ class ModelFoundation(ABC):
 
         if self._ramtorch_enabled():
             ramtorch_utils.register_lora_custom_module(self.lora_config)
+
+        trained_component = self.controlnet if getattr(self.config, "controlnet", False) else self.model
+        register_custom_lora_modules = getattr(trained_component, "register_lora_custom_modules", None)
+        if callable(register_custom_lora_modules):
+            register_custom_lora_modules(self.lora_config)
 
         if getattr(self.config, "controlnet", False):
             self.controlnet.add_adapter(self.lora_config)
@@ -1963,14 +1971,15 @@ class ModelFoundation(ABC):
 
         return self._single_file_component_cache
 
-    def unwrap_model(self, model=None):
+    def unwrap_model(self, model=None, keep_fp32_wrapper: bool = True):
         if self.config.controlnet and model is None:
             if self.controlnet is None:
                 return None
-            return unwrap_model(self.accelerator, self.controlnet)
+            return unwrap_model(self.accelerator, self.controlnet, keep_fp32_wrapper=keep_fp32_wrapper)
         if self.model is None:
             return None
-        return unwrap_model(self.accelerator, model or self.model)
+        target_model = model if model is not None else self.model
+        return unwrap_model(self.accelerator, target_model, keep_fp32_wrapper=keep_fp32_wrapper)
 
     @staticmethod
     def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:
@@ -2611,7 +2620,7 @@ class ModelFoundation(ABC):
 
     def get_text_encoder(self, index: int):
         if self.text_encoders is not None:
-            return self.text_encoders[index] if index in self.text_encoders else None
+            return self.text_encoders[index] if 0 <= index < len(self.text_encoders) else None
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:
