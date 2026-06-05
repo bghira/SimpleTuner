@@ -272,7 +272,24 @@ class Fp8Linear(nn.Module):
     else:
       self.bias = None
 
+  def _apply(self, fn, recurse: bool = True):
+    weight = self._buffers.pop("weight")
+    weight_scale = self._buffers.pop("weight_scale")
+    try:
+      super()._apply(fn, recurse=recurse)
+      device_probe = fn(torch.empty(0, device=weight.device, dtype=torch.uint8))
+    finally:
+      self._buffers["weight"] = weight
+      self._buffers["weight_scale"] = weight_scale
+    self._buffers["weight"] = weight.to(device=device_probe.device)
+    self._buffers["weight_scale"] = weight_scale.to(device=device_probe.device)
+    return self
+
   def forward(self, x: torch.Tensor) -> torch.Tensor:
+    if self.weight.dtype != FP8_WEIGHT_DTYPE:
+      raise RuntimeError(f"Fp8Linear weight must be {FP8_WEIGHT_DTYPE}, got {self.weight.dtype}.")
+    if self.weight_scale.dtype != torch.float32:
+      raise RuntimeError(f"Fp8Linear weight_scale must be torch.float32, got {self.weight_scale.dtype}.")
     if _scaled_mm_supported(x):
       return _Fp8LinearScaledMm.apply(
         x,
