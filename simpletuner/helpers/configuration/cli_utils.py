@@ -237,7 +237,14 @@ def mapping_to_cli_args(
             is_text_json_field = getattr(field, "field_type", None) == FieldType.TEXT_JSON
 
         if (
-            canonical_key in {"webhook_config", "deepspeed_config", "publishing_config", "peft_lora_target_modules"}
+            canonical_key
+            in {
+                "webhook_config",
+                "deepspeed_config",
+                "distillation_config",
+                "publishing_config",
+                "peft_lora_target_modules",
+            }
             or is_text_json_field
         ):
             if isinstance(value, (Mapping, list)):
