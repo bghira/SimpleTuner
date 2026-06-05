@@ -6824,7 +6824,10 @@ function trainerComponent() {
                      },
 
                      async saveAsNew() {
-                         const name = prompt('Enter name for new configuration:');
+                         // Sanitize to match the backend's _validate_config_name (trim + strip
+                         // trailing .json). Otherwise the config is created under the sanitized
+                         // name while the UI tries to switch to the raw one (e.g. "foo.json").
+                         const name = sanitizeConfigName(prompt('Enter name for new configuration:'));
                          if (!name) return;
 
                          const formElement = document.getElementById('trainer-form');
@@ -6834,7 +6837,7 @@ function trainerComponent() {
                          }
 
                          const trainerStore = Alpine.store('trainer');
-                         const sourceName = trainerStore?.activeEnvironment || this.activeConfig || null;
+                         const sourceName = sanitizeConfigName(trainerStore?.activeEnvironment || this.activeConfig || '') || null;
 
                          // Capture the COMPLETE loaded config, not just the inputs currently in
                          // the DOM. A bare FormData omits fields on inactive tabs, which is why

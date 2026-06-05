@@ -2156,8 +2156,10 @@ class SaveAsNewConfigurationTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
             # Trigger Save As through the real header dropdown. window.prompt is
-            # overridden because Selenium cannot interact with the native dialog.
-            driver.execute_script("window.prompt = function () { return 'rank64-clone'; };")
+            # overridden because Selenium cannot interact with the native dialog. The
+            # ".json" suffix exercises name sanitization: the backend strips it, so the
+            # UI must switch to the sanitized "rank64-clone", not "rank64-clone.json".
+            driver.execute_script("window.prompt = function () { return 'rank64-clone.json'; };")
             toggle = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, ".config-selector__toggle-wrapper button")),
                 message="config selector toggle not clickable",
@@ -2180,6 +2182,13 @@ class SaveAsNewConfigurationTestCase(_TrainerPageMixin, WebUITestCase):
                 message="Save As did not create the new configuration",
             )
             body = config_response.json().get("config") or {}
+
+            # The UI must switch to the sanitized name, not the raw "rank64-clone.json".
+            active_env = driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "return store ? store.activeEnvironment : null;"
+            )
+            self.assertEqual(active_env, "rank64-clone")
 
             # Live edit captured.
             self.assertIn(body.get("--lora_rank"), ("64", "64.0"))
