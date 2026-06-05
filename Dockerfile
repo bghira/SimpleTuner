@@ -43,14 +43,15 @@ RUN python${PYTHON_VERSION} -m venv /opt/venv \
        "huggingface_hub[cli,hf_transfer]" \
        wandb \
        mpi4py \
-       ninja
+       ninja \
+       "torchao>=0.17.0,<0.18.0"
 
 # 3. Install SimpleTuner
 # Using 'release' branch for stability. Change to 'main' for latest features.
 ARG SIMPLETUNER_BRANCH=release
 RUN git clone https://github.com/bghira/SimpleTuner --branch $SIMPLETUNER_BRANCH \
     && cd SimpleTuner \
-    && pip install --no-cache-dir -e .[cuda,jxl] \
+    && pip install --no-cache-dir -e .[jxl] \
     && pip install --no-build-isolation --no-cache-dir sageattention==1.0.6
 
 # 4. Setup Runtime
