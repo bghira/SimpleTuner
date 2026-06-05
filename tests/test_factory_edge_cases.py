@@ -1479,6 +1479,41 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             mock_backend.assert_called_once()
             self.assertIs(init_backend["metadata_backend"], mock_backend_instance)
 
+    def test_configure_metadata_backend_filesystem_alias_uses_discovery(self):
+        """metadata_backend='filesystem' should remain compatible with older local configs."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "test_filesystem_alias",
+            "type": "local",
+            "metadata_backend": "filesystem",
+        }
+        init_backend = {
+            "id": "test_filesystem_alias",
+            "config": backend.copy(),
+            "instance_data_dir": "/tmp/images",
+            "data_backend": MagicMock(),
+            "bucket_report": MagicMock(),
+        }
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_backend:
+            mock_backend_instance = MagicMock()
+            mock_backend.return_value = mock_backend_instance
+
+            factory._configure_metadata_backend(backend, init_backend)
+
+            mock_backend.assert_called_once()
+            self.assertEqual(backend["metadata_backend"], "discovery")
+            self.assertIs(init_backend["metadata_backend"], mock_backend_instance)
+
     def test_caption_strategy_parquet_validation_with_empty_metadata_backend(self):
         """caption_strategy=parquet with empty metadata_backend (defaults to discovery) should error."""
         from simpletuner.helpers.data_backend.factory import init_backend_config

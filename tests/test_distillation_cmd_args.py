@@ -1,5 +1,7 @@
 import unittest
+from tempfile import NamedTemporaryFile
 
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
 from simpletuner.helpers.distillation.common import validate_distillation_text_encoder_training
 
@@ -34,6 +36,45 @@ class DistillationCmdArgsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "flow_timesteps_mode"):
             parse_cmdline_args(input_args=args_list, exit_on_error=True)
+
+    def test_distillation_config_json_string_is_parsed(self):
+        args_list = _base_args() + [
+            "--distillation_method=anyflow",
+            '--distillation_config={"anyflow":{"target_mode":"linear","teacher_rollout_steps":2}}',
+        ]
+
+        args = parse_cmdline_args(input_args=args_list, exit_on_error=True)
+
+        self.assertEqual(
+            args.distillation_config,
+            {"anyflow": {"target_mode": "linear", "teacher_rollout_steps": 2}},
+        )
+
+    def test_distillation_config_file_is_loaded(self):
+        with NamedTemporaryFile("w", suffix=".json") as handle:
+            handle.write('{"anyflow":{"target_mode":"linear","r_timestep_sampler":"zero"}}')
+            handle.flush()
+
+            args = parse_cmdline_args(
+                input_args=_base_args() + ["--distillation_method=anyflow", f"--distillation_config={handle.name}"],
+                exit_on_error=True,
+            )
+
+        self.assertEqual(
+            args.distillation_config,
+            {"anyflow": {"target_mode": "linear", "r_timestep_sampler": "zero"}},
+        )
+
+    def test_mapping_to_cli_args_preserves_distillation_config_mapping(self):
+        cli_args = mapping_to_cli_args(
+            {
+                "distillation_method": "anyflow",
+                "distillation_config": {"anyflow": {"target_mode": "linear"}},
+            }
+        )
+
+        self.assertIn("--distillation_method=anyflow", cli_args)
+        self.assertIn('--distillation_config={"anyflow": {"target_mode": "linear"}}', cli_args)
 
 
 if __name__ == "__main__":
