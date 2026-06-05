@@ -7,7 +7,7 @@ from simpletuner.helpers.models.ideogram import quantized_loading
 from simpletuner.helpers.models.ideogram.quantized_loading import (
   FP8_WEIGHT_DTYPE,
   Fp8Linear,
-  _Fp8LinearScaledMm,
+  quantize_weight_to_fp8,
 )
 
 
@@ -37,7 +37,7 @@ class IdeogramFp8LinearTests(unittest.TestCase):
 
     scaled_mm.assert_not_called()
 
-  def test_scaled_mm_adds_float32_bias_outside_kernel(self):
+  def test_scaled_mm_uses_supported_kernel_dtype_for_float32_input(self):
     x = torch.randn(2, 4, dtype=torch.float32)
     weight = torch.zeros(3, 4, dtype=FP8_WEIGHT_DTYPE)
     weight_scale = torch.ones(3, dtype=torch.float32)
@@ -46,14 +46,32 @@ class IdeogramFp8LinearTests(unittest.TestCase):
 
     def fake_scaled_mm(*args, **kwargs):
       calls.append(kwargs)
-      return torch.zeros(2, 3, dtype=torch.float32)
+      return torch.zeros(2, 3, dtype=kwargs["out_dtype"])
 
     with mock.patch.object(torch, "_scaled_mm", side_effect=fake_scaled_mm):
-      out = _Fp8LinearScaledMm.apply(x, weight, weight_scale, bias, 3)
+      out = quantized_loading._Fp8LinearScaledMm.apply(x, weight, weight_scale, bias, 3)
 
-    self.assertIsNone(calls[0]["bias"])
-    self.assertEqual(calls[0]["out_dtype"], torch.float32)
-    torch.testing.assert_close(out, bias.to(torch.float32).expand_as(out))
+    self.assertEqual(calls[0]["bias"].dtype, torch.bfloat16)
+    self.assertEqual(calls[0]["out_dtype"], torch.bfloat16)
+    self.assertEqual(out.dtype, torch.float32)
+
+  @unittest.skipUnless(torch.cuda.is_available() and hasattr(torch, "_scaled_mm"), "CUDA _scaled_mm required")
+  def test_scaled_mm_cuda_forward_supports_float32_input_with_bias(self):
+    layer = Fp8Linear(16, 16, bias=True, compute_dtype=torch.float32).cuda()
+    weight = torch.randn(16, 16, dtype=torch.bfloat16)
+    quantized_weight, weight_scale = quantize_weight_to_fp8(weight)
+    layer.weight = quantized_weight.cuda()
+    layer.weight_scale = weight_scale.cuda()
+    layer.bias = torch.randn(16, device="cuda", dtype=torch.float32)
+    x = torch.randn(8, 16, device="cuda", dtype=torch.float32, requires_grad=True)
+
+    with mock.patch.object(quantized_loading, "_scaled_mm_supported", return_value=True):
+      out = layer(x)
+      out.sum().backward()
+
+    self.assertEqual(out.shape, (8, 16))
+    self.assertEqual(out.dtype, torch.float32)
+    self.assertEqual(x.grad.shape, x.shape)
 
 
 if __name__ == "__main__":
