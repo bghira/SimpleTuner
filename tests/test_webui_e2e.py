@@ -2098,5 +2098,114 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_full_form_optimizer_presets_button_applies_preset", scenario)
 
 
+class SaveAsNewConfigurationTestCase(_TrainerPageMixin, WebUITestCase):
+    """Regression coverage for the top-bar "Save As..." config cloning flow.
+
+    Previously Save As captured only the inputs materialized in the DOM, so any
+    field on an unvisited tab was dropped and the new config came back as mostly
+    defaults. It must now clone the complete loaded config (including a live
+    edit) and repoint name-derived identity fields to the new name.
+    """
+
+    MAX_BROWSERS = 1
+
+    def _seed_source_config(self) -> None:
+        env_dir = self.config_dir / "rank32-src"
+        env_dir.mkdir(parents=True, exist_ok=True)
+        config_payload = {
+            "--model_family": "flux",
+            "--model_type": "lora",
+            "--model_flavour": "libreflux",
+            "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
+            "--lora_rank": "32",
+            "--output_dir": "output/rank32-src",
+            "--tracker_run_name": "rank32-src-run",
+            "--data_backend_config": str(env_dir / "multidatabackend.json"),
+            "--job_id": "rank32-src",
+            "--report_to": "none",
+        }
+        (env_dir / "config.json").write_text(json.dumps(config_payload), encoding="utf-8")
+        (env_dir / "multidatabackend.json").write_text("[]", encoding="utf-8")
+        self.seed_defaults(active_config="rank32-src", output_dir="output/rank32-src")
+
+    def test_save_as_preserves_config_and_repoints_identity(self) -> None:
+        self._seed_source_config()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            # Confirm the source config loaded before we edit it.
+            trainer_page.switch_to_model_tab()
+            trainer_page.wait_for_tab("model")
+            WebDriverWait(driver, 10).until(
+                lambda d: d.find_element(By.ID, "lora_rank").get_attribute("value") in ("32", "32.0"),
+                message="lora_rank did not populate from the loaded config",
+            )
+
+            # The user's scenario: bump rank 32 -> 64 in the form.
+            driver.execute_script(
+                "const el = document.getElementById('lora_rank');"
+                "el.value = arguments[0];"
+                "el.dispatchEvent(new Event('input', { bubbles: true }));"
+                "el.dispatchEvent(new Event('change', { bubbles: true }));",
+                "64",
+            )
+
+            # Trigger Save As through the real header dropdown. window.prompt is
+            # overridden because Selenium cannot interact with the native dialog.
+            driver.execute_script("window.prompt = function () { return 'rank64-clone'; };")
+            toggle = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".config-selector__toggle-wrapper button")),
+                message="config selector toggle not clickable",
+            )
+            toggle.click()
+            save_as = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//div[contains(@class, 'config-selector')]//a[contains(normalize-space(.), 'Save As')]")
+                ),
+                message="Save As menu item not clickable",
+            )
+            save_as.click()
+
+            def _config_created(_driver):
+                response = requests.get(f"{self.base_url}/api/configs/rank64-clone", timeout=5)
+                return response if response.status_code == 200 else False
+
+            config_response = WebDriverWait(driver, 10).until(
+                _config_created,
+                message="Save As did not create the new configuration",
+            )
+            body = config_response.json().get("config") or {}
+
+            # Live edit captured.
+            self.assertIn(body.get("--lora_rank"), ("64", "64.0"))
+            # Untouched fields preserved (would be absent/default under the old bug).
+            self.assertEqual(body.get("--model_flavour"), "libreflux")
+            self.assertEqual(
+                body.get("--pretrained_model_name_or_path"),
+                "jimmycarter/LibreFlux-SimpleTuner",
+            )
+            # Identity fields repointed to the new name, not the source's.
+            output_dir = body.get("--output_dir") or ""
+            self.assertIn("rank64-clone", output_dir)
+            self.assertNotIn("rank32-src", output_dir)
+            tracker_run = body.get("--tracker_run_name") or ""
+            self.assertIn("rank64-clone", tracker_run)
+            self.assertNotIn("rank32-src", tracker_run)
+
+            # The original config is untouched.
+            source_response = requests.get(f"{self.base_url}/api/configs/rank32-src", timeout=5)
+            source_response.raise_for_status()
+            source_body = source_response.json().get("config") or {}
+            self.assertIn(source_body.get("--lora_rank"), ("32", "32.0"))
+            self.assertEqual(source_body.get("--output_dir"), "output/rank32-src")
+
+        self.for_each_browser("test_save_as_preserves_config_and_repoints_identity", scenario)
+
+
 if __name__ == "__main__":
     unittest.main()

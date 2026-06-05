@@ -6827,12 +6827,52 @@ function trainerComponent() {
                          const name = prompt('Enter name for new configuration:');
                          if (!name) return;
 
-                         const formData = new FormData(document.getElementById('trainer-form'));
-                         const config = {};
+                         const formElement = document.getElementById('trainer-form');
+                         if (!formElement) {
+                             window.showToast('Trainer form not found', 'error');
+                             return;
+                         }
 
+                         const trainerStore = Alpine.store('trainer');
+                         const sourceName = trainerStore?.activeEnvironment || this.activeConfig || null;
+
+                         // Capture the COMPLETE loaded config, not just the inputs currently in
+                         // the DOM. A bare FormData omits fields on inactive tabs, which is why
+                         // Save As previously reverted every untouched field to its default. This
+                         // mirrors the regular save path: form values win, with the active config
+                         // filling in anything not materialized in the DOM.
+                         const formData = new FormData(formElement);
+                         if (trainerStore) {
+                             trainerStore.normalizeCheckboxFormData?.(formData);
+                             trainerStore.ensureCompleteFormData?.(formData);
+                             trainerStore.appendConfigValuesToFormData?.(formData, trainerStore.activeEnvironmentConfig || {});
+                             trainerStore.normalizeCheckboxFormData?.(formData);
+                         }
+
+                         const config = {};
                          for (const [key, value] of formData.entries()) {
-                             if (key.startsWith('--')) {
+                             if (!key.startsWith('--')) continue;
+                             if (Object.prototype.hasOwnProperty.call(config, key)) {
+                                 const existing = config[key];
+                                 config[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
+                             } else {
                                  config[key] = value;
+                             }
+                         }
+
+                         // The new project must train into its own location and report under its
+                         // own name, so identity fields that embed the source name are repointed.
+                         // The dataloader reference is intentionally left shared so the variant
+                         // trains on the same dataset.
+                         if (sourceName && name !== sourceName) {
+                             const repoint = (value) =>
+                                 (typeof value === 'string' && value.includes(sourceName))
+                                     ? value.split(sourceName).join(name)
+                                     : value;
+                             for (const key of ['--output_dir', '--tracker_run_name', '--tracker_project_name']) {
+                                 if (typeof config[key] === 'string') {
+                                     config[key] = repoint(config[key]);
+                                 }
                              }
                          }
 
@@ -6853,6 +6893,15 @@ function trainerComponent() {
                                  // Use the main component's switchEnvironment method
                                 await Alpine.store('trainer').switchEnvironment(name);
                                  window.showToast(`Created new configuration: ${name}`, 'success');
+                             } else {
+                                 let detail = '';
+                                 try {
+                                     const error = await response.json();
+                                     detail = error?.detail ? `: ${error.detail}` : '';
+                                 } catch (parseError) {
+                                     console.debug('Could not parse error response', parseError);
+                                 }
+                                 window.showToast(`Failed to create configuration${detail}`, 'error');
                              }
                          } catch (error) {
                              console.error('Failed to create config:', error);
