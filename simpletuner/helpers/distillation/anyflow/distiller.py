@@ -156,7 +156,7 @@ class AnyFlowDistiller(DistillationBase):
         model_type = getattr(getattr(self.teacher_model, "MODEL_TYPE", None), "value", None)
         if isinstance(model_type, str) and model_type:
             names.append(model_type)
-        for fallback_name in ("transformer", "unet"):
+        for fallback_name in ("transformer", "conditional_transformer", "unet"):
             if fallback_name not in names:
                 names.append(fallback_name)
         return tuple(names)

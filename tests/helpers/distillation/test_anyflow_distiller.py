@@ -310,6 +310,21 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertIsInstance(scheduler, AnyFlowValidationScheduler)
         self.assertTrue(torch.equal(model.component.last_r_timestep, torch.tensor([500.0])))
 
+    def test_get_scheduler_wraps_conditional_transformer_pipeline(self):
+        model = _FlowModel()
+        model.pipeline = SimpleNamespace(conditional_transformer=model.component, scheduler=_ValidationScheduler())
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "target_mode": "linear"},
+        )
+
+        scheduler = distiller.get_scheduler(model.pipeline.scheduler)
+        model.pipeline.conditional_transformer(timestep=torch.tensor([1000.0]))
+
+        self.assertIsInstance(scheduler, AnyFlowValidationScheduler)
+        self.assertTrue(torch.equal(model.component.last_r_timestep, torch.tensor([500.0])))
+
 
 if __name__ == "__main__":
     unittest.main()

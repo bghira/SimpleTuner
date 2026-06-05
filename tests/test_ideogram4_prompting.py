@@ -190,9 +190,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         normalized = model.post_vae_encode_transform_sample(latents)
         packed = model._patchify_vae_latents(latents)
-        expected = (packed - bn.running_mean.view(1, -1, 1, 1)) / torch.sqrt(
-            bn.running_var.view(1, -1, 1, 1) + bn.eps
-        )
+        expected = (packed - bn.running_mean.view(1, -1, 1, 1)) / torch.sqrt(bn.running_var.view(1, -1, 1, 1) + bn.eps)
 
         self.assertEqual(normalized.shape, (1, 128, 2, 2))
         self.assertTrue(torch.allclose(normalized, expected))
@@ -232,12 +230,18 @@ class Ideogram4PromptingTests(unittest.TestCase):
         model.config = types.SimpleNamespace(ideogram_auto_json=True, weight_dtype=torch.float32)
         model.tokenizers = [DummyTokenizer()]
         model.text_encoders = [object()]
-        original_pipeline = __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline
+        original_pipeline = __import__(
+            "simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]
+        ).Ideogram4Pipeline
         try:
-            __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline = DummyPipeline
+            __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline = (
+                DummyPipeline
+            )
             encoded = model._encode_prompts(["not blurry"], is_negative_prompt=True)
         finally:
-            __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline = original_pipeline
+            __import__("simpletuner.helpers.models.ideogram.model", fromlist=["Ideogram4Pipeline"]).Ideogram4Pipeline = (
+                original_pipeline
+            )
 
         self.assertEqual(encoded["prompt_embeds"].shape, (1, 2, 8))
         self.assertTrue(torch.equal(encoded["attention_mask"], torch.ones(1, 2, dtype=torch.bool)))
@@ -372,6 +376,125 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         self.assertEqual(out.shape, (1, 6, 128))
         self.assertIsNotNone(x.grad)
+
+    def test_transformer_flowmap_requires_enable_for_r_timestep(self):
+        model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=192,
+                num_layers=1,
+                num_heads=1,
+                intermediate_size=384,
+                adanln_dim=32,
+                llm_features_dim=64,
+            )
+        )
+        inputs = self._tiny_transformer_inputs()
+
+        with self.assertRaisesRegex(ValueError, "enable_flowmap_time_conditioning"):
+            model(**inputs, r_timestep=inputs["t"])
+
+    def test_transformer_flowmap_equal_r_matches_base_output(self):
+        torch.manual_seed(123)
+        model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=192,
+                num_layers=1,
+                num_heads=1,
+                intermediate_size=384,
+                adanln_dim=32,
+                llm_features_dim=64,
+            )
+        )
+        model.eval()
+        inputs = self._tiny_transformer_inputs()
+
+        with torch.no_grad():
+            base = model(**inputs)
+            model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+            flowmap = model(**inputs, r_timestep=inputs["t"])
+
+        self.assertTrue(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_transformer_flowmap_different_r_changes_output(self):
+        torch.manual_seed(456)
+        model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=192,
+                num_layers=1,
+                num_heads=1,
+                intermediate_size=384,
+                adanln_dim=32,
+                llm_features_dim=64,
+            )
+        )
+        model.eval()
+        model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        inputs = self._tiny_transformer_inputs()
+
+        with torch.no_grad():
+            base = model(**inputs)
+            flowmap = model(**inputs, r_timestep=torch.zeros_like(inputs["t"]))
+
+        self.assertFalse(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_model_predict_converts_flowmap_r_timestep_to_ideogram_time(self):
+        class DummyAccelerator:
+            device = torch.device("cpu")
+
+            def unwrap_model(self, model, keep_fp32_wrapper=True):
+                del keep_fp32_wrapper
+                return model
+
+        class DummyTransformer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.received_t = None
+                self.received_r_timestep = None
+
+            def forward(
+                self,
+                *,
+                llm_features,
+                x,
+                t,
+                position_ids,
+                segment_ids,
+                indicator,
+                r_timestep=None,
+            ):
+                del llm_features, position_ids, segment_ids, indicator
+                self.received_t = t.detach().clone()
+                self.received_r_timestep = None if r_timestep is None else r_timestep.detach().clone()
+                return torch.zeros_like(x)
+
+        model = Ideogram4.__new__(Ideogram4)
+        model.accelerator = DummyAccelerator()
+        model.config = types.SimpleNamespace(weight_dtype=torch.float32, controlnet=False)
+        model.model = DummyTransformer()
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 128, 2, 2),
+            "timesteps": torch.tensor([800.0]),
+            model.FLOWMAP_R_TIMESTEP_BATCH_KEY: torch.tensor([200.0]),
+            "prompt_embeds": torch.randn(1, 3, 64),
+            "attention_mask": torch.ones(1, 3, dtype=torch.bool),
+        }
+
+        output = model.model_predict(prepared_batch)
+
+        self.assertEqual(output["model_prediction"].shape, (1, 128, 2, 2))
+        self.assertTrue(torch.allclose(model.model.received_t, torch.tensor([0.2])))
+        self.assertTrue(torch.allclose(model.model.received_r_timestep, torch.tensor([0.8])))
+
+    def _tiny_transformer_inputs(self):
+        return {
+            "llm_features": torch.randn(1, 6, 64),
+            "x": torch.randn(1, 6, 128),
+            "t": torch.tensor([0.25], dtype=torch.float32),
+            "position_ids": torch.zeros(1, 6, 3, dtype=torch.long),
+            "segment_ids": torch.zeros(1, 6, dtype=torch.long),
+            "indicator": torch.tensor([[0, 0, 1, 1, 1, 1]], dtype=torch.long),
+        }
 
 
 if __name__ == "__main__":
