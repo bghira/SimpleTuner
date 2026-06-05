@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import warnings
 
 import torch
@@ -18,10 +19,78 @@ _BNB_SIBLING_SUFFIXES = (
 # scales map each row's max abs value onto this so we use the full range.
 FP8_E4M3_MAX = 448.0
 FP8_WEIGHT_DTYPE = torch.float8_e4m3fn
+FP8_INPUT_DTYPE = torch.float8_e5m2
 FP8_SCALE_SUFFIX = ".weight_scale"
 # Marker written into the text encoder's config.json so the loader knows to take
 # the custom weight-only FP8 path instead of transformers' from_pretrained.
 FP8_TEXT_ENCODER_CONFIG_FLAG = "ideogram_fp8_weight_only"
+
+
+def _scaled_mm_supported(x: torch.Tensor) -> bool:
+  if not x.is_cuda or not hasattr(torch, "_scaled_mm"):
+    return False
+  mode = os.environ.get("SIMPLETUNER_IDEOGRAM_FP8_SCALED_MM", "auto").strip().lower()
+  if mode in {"0", "false", "off", "no"}:
+    return False
+  if mode in {"1", "true", "on", "yes"}:
+    return True
+  try:
+    # Ada (L40S/4090) benefits most from scaled FP8 matmul. Hopper's bf16 path is
+    # competitive enough that we leave it on the dequantized fallback by default.
+    return torch.cuda.get_device_capability(x.device) == (8, 9)
+  except Exception:
+    return False
+
+
+class _Fp8LinearScaledMm(torch.autograd.Function):
+  @staticmethod
+  def forward(
+    ctx,
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+    out_features: int,
+  ) -> torch.Tensor:
+    input_shape = x.shape
+    x_2d = x.reshape(-1, x.shape[-1])
+    input_max = torch.finfo(FP8_INPUT_DTYPE).max
+    input_scale = (input_max / x_2d.detach().abs().amax().clamp(min=1e-12)).clamp(
+      max=input_max,
+    )
+    x_fp8 = (x_2d * input_scale).clamp(-input_max, input_max).to(FP8_INPUT_DTYPE)
+
+    bias_arg = bias.to(x.dtype) if bias is not None else None
+    scale_a = input_scale.reciprocal().to(torch.float32).expand(x_2d.shape[0], 1).contiguous()
+    scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
+    out = torch._scaled_mm(
+      x_fp8,
+      weight.T,
+      scale_a=scale_a,
+      scale_b=scale_b,
+      bias=bias_arg,
+      out_dtype=x.dtype,
+      use_fast_accum=True,
+    )
+    if isinstance(out, tuple):
+      out = out[0]
+
+    ctx.save_for_backward(weight, weight_scale)
+    ctx.input_shape = input_shape
+    ctx.out_features = out_features
+    return out.reshape(*input_shape[:-1], out_features)
+
+  @staticmethod
+  def backward(ctx, grad_output: torch.Tensor):
+    weight, weight_scale = ctx.saved_tensors
+    grad_x = None
+    if ctx.needs_input_grad[0]:
+      grad_2d = grad_output.reshape(-1, ctx.out_features)
+      dequant_weight = weight.to(grad_output.dtype) * weight_scale.to(
+        grad_output.dtype,
+      ).unsqueeze(1)
+      grad_x = grad_2d.matmul(dequant_weight).reshape(ctx.input_shape)
+    return grad_x, None, None, None, None
 
 
 def _require_bitsandbytes():
@@ -204,6 +273,14 @@ class Fp8Linear(nn.Module):
       self.bias = None
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
+    if _scaled_mm_supported(x):
+      return _Fp8LinearScaledMm.apply(
+        x,
+        self.weight,
+        self.weight_scale,
+        self.bias,
+        self.out_features,
+      )
     w = self.weight.to(x.dtype) * self.weight_scale.to(x.dtype).unsqueeze(1)
     bias = self.bias.to(x.dtype) if self.bias is not None else None
     return F.linear(x, w, bias)
