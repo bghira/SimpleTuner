@@ -60,7 +60,7 @@ class _Fp8LinearScaledMm(torch.autograd.Function):
     )
     x_fp8 = (x_2d * input_scale).clamp(-input_max, input_max).to(FP8_INPUT_DTYPE)
 
-    bias_arg = bias.to(x.dtype) if bias is not None else None
+    bias_arg = bias.to(x.dtype) if bias is not None and x.dtype != torch.float32 else None
     scale_a = input_scale.reciprocal().to(torch.float32).expand(x_2d.shape[0], 1).contiguous()
     scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
     out = torch._scaled_mm(
@@ -74,6 +74,8 @@ class _Fp8LinearScaledMm(torch.autograd.Function):
     )
     if isinstance(out, tuple):
       out = out[0]
+    if bias is not None and bias_arg is None:
+      out = out + bias.to(out.dtype)
 
     ctx.save_for_backward(weight, weight_scale)
     ctx.input_shape = input_shape
