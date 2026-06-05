@@ -44,6 +44,19 @@ def _scaled_mm_supported(x: torch.Tensor) -> bool:
 
 class _Fp8LinearScaledMm(torch.autograd.Function):
   @staticmethod
+  def _dequantized_forward(
+    x_2d: torch.Tensor,
+    input_shape: torch.Size,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+    out_features: int,
+  ) -> torch.Tensor:
+    w = weight.to(x_2d.dtype) * weight_scale.to(x_2d.dtype).unsqueeze(1)
+    bias_arg = bias.to(x_2d.dtype) if bias is not None else None
+    return F.linear(x_2d, w, bias_arg).reshape(*input_shape[:-1], out_features)
+
+  @staticmethod
   def forward(
     ctx,
     x: torch.Tensor,
@@ -62,17 +75,38 @@ class _Fp8LinearScaledMm(torch.autograd.Function):
 
     kernel_out_dtype = x.dtype if x.dtype in {torch.bfloat16, torch.float16} else torch.bfloat16
     bias_arg = bias.to(kernel_out_dtype) if bias is not None else None
-    scale_a = input_scale.reciprocal().to(torch.float32).expand(x_2d.shape[0], 1).contiguous()
-    scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
-    out = torch._scaled_mm(
-      x_fp8,
-      weight.T,
-      scale_a=scale_a,
-      scale_b=scale_b,
-      bias=bias_arg,
-      out_dtype=kernel_out_dtype,
-      use_fast_accum=True,
+    scale_a = torch.empty(
+      (x_2d.shape[0], 1),
+      device=x_2d.device,
+      dtype=torch.float32,
     )
+    scale_a.copy_(input_scale.reciprocal().to(torch.float32).expand_as(scale_a))
+    scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
+    try:
+      out = torch._scaled_mm(
+        x_fp8,
+        weight.T,
+        scale_a=scale_a,
+        scale_b=scale_b,
+        bias=bias_arg,
+        out_dtype=kernel_out_dtype,
+        use_fast_accum=True,
+      )
+    except RuntimeError as exc:
+      if "scale_a" not in str(exc) and "Invalid scaling configuration" not in str(exc):
+        raise
+      out = _Fp8LinearScaledMm._dequantized_forward(
+        x_2d,
+        input_shape,
+        weight,
+        weight_scale,
+        bias,
+        out_features,
+      )
+      ctx.save_for_backward(weight, weight_scale)
+      ctx.input_shape = input_shape
+      ctx.out_features = out_features
+      return out
     if isinstance(out, tuple):
       out = out[0]
     if out.dtype != x.dtype:
