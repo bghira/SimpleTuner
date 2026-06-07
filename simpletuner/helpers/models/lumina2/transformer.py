@@ -39,6 +39,15 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import LuminaLayerNormContinuous, LuminaRMSNormZero, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    flowmap_timestep_embedding,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -68,20 +77,51 @@ class Lumina2CombinedTimestepCaptionEmbedding(nn.Module):
         self.timestep_embedder = TimestepEmbedding(
             in_channels=frequency_embedding_size, time_embed_dim=min(hidden_size, 1024)
         )
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
 
         self.caption_embedder = nn.Sequential(
             RMSNorm(cap_feat_dim, eps=norm_eps), nn.Linear(cap_feat_dim, hidden_size, bias=True)
         )
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Lumina2")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+
     def forward(
-        self, hidden_states: torch.Tensor, timestep: torch.Tensor, encoder_hidden_states: torch.Tensor
+        self,
+        hidden_states: torch.Tensor,
+        timestep: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if timestep.ndim == 2:
-            timestep_proj = self.time_proj(timestep.reshape(-1)).type_as(hidden_states)
-            time_embed = self.timestep_embedder(timestep_proj).view(timestep.shape[0], timestep.shape[1], -1)
-        else:
-            timestep_proj = self.time_proj(timestep).type_as(hidden_states)
-            time_embed = self.timestep_embedder(timestep_proj)
+        time_embed = flowmap_timestep_embedding(
+            time_proj=self.time_proj,
+            timestep_embedder=self.timestep_embedder,
+            timestep=timestep,
+            dtype=hidden_states.dtype,
+        ).to(device=hidden_states.device, dtype=hidden_states.dtype)
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Lumina2 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Lumina2",
+            )
+            delta_embed = flowmap_timestep_embedding(
+                time_proj=self.time_proj,
+                timestep_embedder=self.delta_timestep_embedder,
+                timestep=delta_timestep,
+                dtype=hidden_states.dtype,
+            ).to(device=hidden_states.device, dtype=hidden_states.dtype)
+            time_embed = blend_flowmap_embeddings(time_embed, delta_embed, self.flowmap_delta_emb_gate)
         caption_embed = self.caption_embedder(encoder_hidden_states)
         return time_embed, caption_embed
 
@@ -419,6 +459,8 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         cap_feat_dim: int = 1024,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -433,6 +475,11 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         self.time_caption_embed = Lumina2CombinedTimestepCaptionEmbedding(
             hidden_size=hidden_size, cap_feat_dim=cap_feat_dim, norm_eps=norm_eps
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         # 2. Noise and context refinement blocks
         self.noise_refiner = nn.ModuleList(
@@ -500,12 +547,17 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             logger=logger,
         )
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_caption_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         encoder_attention_mask: torch.Tensor,
+        r_timestep: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
@@ -532,7 +584,12 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                 f"Lumina2 tokenwise timesteps expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
             )
 
-        temb, encoder_hidden_states = self.time_caption_embed(hidden_states, timestep, encoder_hidden_states)
+        temb, encoder_hidden_states = self.time_caption_embed(
+            hidden_states,
+            timestep,
+            encoder_hidden_states,
+            r_timestep=r_timestep,
+        )
 
         (
             hidden_states,

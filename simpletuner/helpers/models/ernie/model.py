@@ -440,6 +440,7 @@ class Ernie(ImageModelFoundation):
             call_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if getattr(self.config, "twinflow_enabled", False):
             call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+        self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
 
         model_pred = self.model(**call_kwargs)[0].float()
 

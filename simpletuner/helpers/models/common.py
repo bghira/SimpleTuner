@@ -97,6 +97,7 @@ flow_matching_model_families = [
     "qwen_image",
     "z_image",
     "z_image_omni",
+    "ideogram",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -112,6 +113,7 @@ upstream_config_sources = {
     "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
+    "ideogram": "ideogram-ai/ideogram-4-fp8",
 }
 
 
@@ -400,6 +402,8 @@ class ModelFoundation(ABC):
     MAXIMUM_CANVAS_SIZE = None
     SUPPORTS_LORA = None
     SUPPORTS_CONTROLNET = None
+    FLOWMAP_R_TIMESTEP_BATCH_KEY = "flowmap_r_timesteps"
+    FLOWMAP_R_TIMESTEP_KWARG = "r_timestep"
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
@@ -460,6 +464,7 @@ class ModelFoundation(ABC):
     GLIGEN_LORA_TARGET = ["position_net", "fuser"]
     GLIGEN_LYCORIS_TARGET = ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
+    VALIDATION_USE_AUTOCAST = True
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
     DEFAULT_AUDIO_CHANNELS = 1
@@ -964,6 +969,11 @@ class ModelFoundation(ABC):
         if self._ramtorch_enabled():
             ramtorch_utils.register_lora_custom_module(self.lora_config)
 
+        trained_component = self.controlnet if getattr(self.config, "controlnet", False) else self.model
+        register_custom_lora_modules = getattr(trained_component, "register_lora_custom_modules", None)
+        if callable(register_custom_lora_modules):
+            register_custom_lora_modules(self.lora_config)
+
         if getattr(self.config, "controlnet", False):
             self.controlnet.add_adapter(self.lora_config)
         else:
@@ -1041,7 +1051,16 @@ class ModelFoundation(ABC):
             for i, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
                     continue
-                logger.debug(f"Text encoder {i} device: {text_encoder.device}")
+                device = getattr(text_encoder, "device", None)
+                if device is None:
+                    try:
+                        device = next(text_encoder.parameters()).device
+                    except StopIteration:
+                        try:
+                            device = next(text_encoder.buffers()).device
+                        except StopIteration:
+                            device = "unknown"
+                logger.debug(f"Text encoder {i} device: {device}")
 
     def setup_model_flavour(self):
         """
@@ -1083,6 +1102,96 @@ class ModelFoundation(ABC):
         Must be implemented by the subclass.
         """
         raise NotImplementedError("model_predict must be implemented in the child class.")
+
+    def _forward_kwarg_support_cache_key(self, target: Any, kwarg_name: str) -> tuple[Any, ...]:
+        owner = getattr(target, "__self__", None)
+        function = getattr(target, "__func__", None)
+        if owner is not None:
+            return (id(owner), id(function) if function is not None else None, kwarg_name)
+        return (id(target), type(target), kwarg_name)
+
+    def _forward_accepts_kwarg(self, target: Any, kwarg_name: str) -> bool:
+        cache = getattr(self, "_forward_kwarg_support_cache", None)
+        if cache is None:
+            cache = {}
+            self._forward_kwarg_support_cache = cache
+
+        cache_key = self._forward_kwarg_support_cache_key(target, kwarg_name)
+        if cache_key in cache:
+            return cache[cache_key]
+
+        signature = inspect.signature(target)
+        accepts_kwarg = False
+        for parameter in signature.parameters.values():
+            if parameter.name == kwarg_name:
+                accepts_kwarg = True
+                break
+        cache[cache_key] = accepts_kwarg
+        return accepts_kwarg
+
+    def _flowmap_forward_target(self, target: Any = None) -> Any:
+        if target is not None:
+            return target
+
+        component = getattr(self, "model", None)
+        if component is not None:
+            component = self.unwrap_model(model=component)
+        if component is not None:
+            return getattr(component, "forward", component)
+        raise ValueError(f"{self.NAME} received FlowMap timesteps before a model component was loaded.")
+
+    def _apply_flowmap_r_timestep_kwargs(
+        self,
+        call_kwargs: dict[str, Any],
+        prepared_batch: Mapping[str, Any],
+        *,
+        target: Any = None,
+        kwarg_name: str | None = None,
+    ) -> bool:
+        if self.FLOWMAP_R_TIMESTEP_BATCH_KEY not in prepared_batch:
+            return False
+
+        r_timesteps = prepared_batch[self.FLOWMAP_R_TIMESTEP_BATCH_KEY]
+        if r_timesteps is None:
+            return False
+
+        kwarg_name = kwarg_name or self.FLOWMAP_R_TIMESTEP_KWARG
+        if kwarg_name in call_kwargs:
+            raise ValueError(f"{self.NAME} received duplicate `{kwarg_name}` while applying FlowMap timesteps.")
+
+        forward_target = self._flowmap_forward_target(target)
+        try:
+            accepts_kwarg = self._forward_accepts_kwarg(forward_target, kwarg_name)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{self.NAME} received `{self.FLOWMAP_R_TIMESTEP_BATCH_KEY}`, but the model component "
+                f"signature could not be inspected for `{kwarg_name}` support."
+            ) from exc
+
+        if not accepts_kwarg:
+            raise ValueError(
+                f"{self.NAME} received `{self.FLOWMAP_R_TIMESTEP_BATCH_KEY}`, but its model component does not "
+                f"accept `{kwarg_name}`. Add model-specific FlowMap interval conditioning before enabling AnyFlow."
+            )
+
+        call_kwargs[kwarg_name] = r_timesteps
+        return True
+
+    def _get_flowmap_r_timestep_forward_kwargs(
+        self,
+        prepared_batch: Mapping[str, Any],
+        *,
+        target: Any = None,
+        kwarg_name: str | None = None,
+    ) -> dict[str, Any]:
+        call_kwargs: dict[str, Any] = {}
+        self._apply_flowmap_r_timestep_kwargs(
+            call_kwargs,
+            prepared_batch,
+            target=target,
+            kwarg_name=kwarg_name,
+        )
+        return call_kwargs
 
     # -------------------------------------------------------------------------
     # Conditioning Capability Methods
@@ -1871,14 +1980,15 @@ class ModelFoundation(ABC):
 
         return self._single_file_component_cache
 
-    def unwrap_model(self, model=None):
+    def unwrap_model(self, model=None, keep_fp32_wrapper: bool = True):
         if self.config.controlnet and model is None:
             if self.controlnet is None:
                 return None
-            return unwrap_model(self.accelerator, self.controlnet)
+            return unwrap_model(self.accelerator, self.controlnet, keep_fp32_wrapper=keep_fp32_wrapper)
         if self.model is None:
             return None
-        return unwrap_model(self.accelerator, model or self.model)
+        target_model = model if model is not None else self.model
+        return unwrap_model(self.accelerator, target_model, keep_fp32_wrapper=keep_fp32_wrapper)
 
     @staticmethod
     def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:
@@ -2519,7 +2629,7 @@ class ModelFoundation(ABC):
 
     def get_text_encoder(self, index: int):
         if self.text_encoders is not None:
-            return self.text_encoders[index] if index in self.text_encoders else None
+            return self.text_encoders[index] if 0 <= index < len(self.text_encoders) else None
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:

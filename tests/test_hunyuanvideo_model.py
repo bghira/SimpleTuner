@@ -8,6 +8,55 @@ from simpletuner.helpers.models.hunyuanvideo.model import HunyuanVideo
 
 
 class HunyuanVideoModelTests(unittest.TestCase):
+    def test_load_text_encoder_registers_both_hunyuan_encoders_for_device_management(self):
+        model = HunyuanVideo.__new__(HunyuanVideo)
+        model.accelerator = SimpleNamespace(device=torch.device("cuda:0"))
+        model.config = SimpleNamespace(
+            hunyuan_text_encoder_path=None,
+            glyph_byt5_repo="glyph/repo",
+            glyph_byt5_fallback_repo="glyph/fallback",
+        )
+        model._ramtorch_text_encoders_requested = MagicMock(return_value=False)
+        model._ramtorch_text_encoder_percent = MagicMock(return_value=1.0)
+        model._apply_ramtorch_layers = MagicMock()
+
+        qwen_tokenizer = MagicMock()
+        byt5_tokenizer = MagicMock()
+        text_encoder = MagicMock()
+        text_encoder.to.return_value = text_encoder
+        byt5_model = MagicMock()
+        byt5_model.to.return_value = byt5_model
+
+        with (
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.Qwen2Tokenizer.from_pretrained",
+                return_value=qwen_tokenizer,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.Qwen2_5_VLTextModel.from_pretrained",
+                return_value=text_encoder,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.ByT5Tokenizer.from_pretrained",
+                return_value=byt5_tokenizer,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.T5EncoderModel.from_pretrained",
+                return_value=byt5_model,
+            ),
+            patch(
+                "simpletuner.helpers.models.hunyuanvideo.model.hf_hub_download",
+                side_effect=RuntimeError("no glyph checkpoint"),
+            ),
+        ):
+            model.load_text_encoder(move_to_device=True)
+
+        self.assertEqual(model.text_encoders, [text_encoder, byt5_model])
+        self.assertEqual(model.tokenizers, [qwen_tokenizer, byt5_tokenizer])
+        self.assertIs(model.text_encoder_1, text_encoder)
+        self.assertIs(model.text_encoder_2, byt5_model)
+        self.assertIs(model.get_text_encoder(1), byt5_model)
+
     def test_model_supports_crepa_self_flow(self):
         model = HunyuanVideo.__new__(HunyuanVideo)
         self.assertTrue(model.supports_crepa_self_flow())
@@ -92,6 +141,55 @@ class HunyuanVideoModelTests(unittest.TestCase):
         transformer_kwargs = model.model.call_args.kwargs
         self.assertTrue(torch.equal(transformer_kwargs["timestep"], tokenwise_timesteps))
         self.assertEqual(transformer_kwargs["hidden_states"].shape, (1, 5, 2, 2, 2))
+
+    def test_model_predict_moves_text_embeddings_to_latent_device(self):
+        model = HunyuanVideo.__new__(HunyuanVideo)
+        model.config = SimpleNamespace(
+            weight_dtype=torch.float32,
+            twinflow_enabled=False,
+            vision_num_semantic_tokens=4,
+            vision_states_dim=6,
+            text_embed_2_dim=4,
+        )
+        model.crepa_regularizer = None
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model._is_i2v_like_flavour = lambda: False
+        model._prepare_cond_latents = lambda conditioning_latents, latents, task_type: (
+            torch.zeros_like(latents),
+            torch.zeros(
+                latents.shape[0],
+                1,
+                latents.shape[2],
+                latents.shape[3],
+                latents.shape[4],
+                device=latents.device,
+                dtype=latents.dtype,
+            ),
+        )
+        model._get_flowmap_r_timestep_forward_kwargs = MagicMock(return_value={})
+        model._select_crepa_hidden_states = MagicMock(return_value=None)
+        model.model = MagicMock(
+            return_value=(torch.empty(1, 2, 2, 2, 2, device="meta"),),
+            config=SimpleNamespace(image_embed_dim=6, text_embed_2_dim=4),
+        )
+
+        prepared_batch = {
+            "noisy_latents": torch.empty(1, 2, 2, 2, 2, device="meta"),
+            "encoder_hidden_states": torch.randn(1, 3, 8),
+            "encoder_attention_mask": torch.ones(1, 3),
+            "encoder_hidden_states_2": torch.randn(1, 2, 4),
+            "encoder_attention_mask_2": torch.ones(1, 2),
+            "timesteps": torch.tensor([100.0]),
+        }
+
+        model.model_predict(prepared_batch)
+
+        transformer_kwargs = model.model.call_args.kwargs
+        self.assertEqual(transformer_kwargs["encoder_hidden_states"].device.type, "meta")
+        self.assertEqual(transformer_kwargs["encoder_attention_mask"].device.type, "meta")
+        self.assertEqual(transformer_kwargs["encoder_hidden_states_2"].device.type, "meta")
+        self.assertEqual(transformer_kwargs["encoder_attention_mask_2"].device.type, "meta")
 
 
 if __name__ == "__main__":

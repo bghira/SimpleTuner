@@ -87,6 +87,7 @@ Para detalles de despliegue, consulta la [Guía Enterprise](/documentation/exper
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | Ninguno |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
@@ -117,6 +118,7 @@ Para detalles de despliegue, consulta la [Guía Enterprise](/documentation/exper
 - **Group offloading** - Staging de módulos por grupo a CPU/disco en Diffusers v0.33+ con streams CUDA opcionales
 - **Barridos de adaptadores de validación** - Adjunta temporalmente adaptadores LoRA (individuales o presets JSON) durante la validación para medir renders solo de adaptador o comparativos sin tocar el training loop
 - **Hooks de validación externos** - Sustituye el pipeline de validación integrado o los pasos post-upload por tus scripts, para ejecutar checks en otra GPU o reenviar artefactos a cualquier proveedor cloud que elijas ([detalles](/documentation/OPTIONS.md#validation_method))
+- **Destilación AnyFlow** - Conditioning de intervalos FlowMap para modelos de flow matching con targets online del teacher ([guía](/documentation/experimental/ANYFLOW.es.md))
 - **Regularización CREPA** - Alineación de representación entre frames para video DiTs ([guía](/documentation/experimental/VIDEO_CREPA.md))
 - **Formatos de I/O de LoRA** - Carga/guarda LoRAs PEFT en layout estándar de Diffusers o claves estilo ComfyUI `diffusion_model.*` (Flux/Flux2/Lumina2/Z-Image detectan automáticamente entradas ComfyUI)
 
@@ -140,6 +142,7 @@ Hay guías detalladas de inicio rápido disponibles para todos los modelos sopor
 - **[Guía de Flux.1](/documentation/quickstart/FLUX.md)** - Incluye soporte de edición Kontext y fusión QKV
 - **[Guía de Flux.2](/documentation/quickstart/FLUX2.md)** - **NUEVO**. Último y enorme modelo Flux con codificador de texto Mistral-3
 - **[Guía de Z-Image](/documentation/quickstart/ZIMAGE.md)** - LoRA Base/Turbo con adaptador asistente + aceleración TREAD
+- **[Guía de Ideogram 4](/documentation/quickstart/IDEOGRAM4.es.md)** - **NUEVO**. Entrenamiento LoRA con FP8 primero y captions JSON estructuradas
 - **[Guía de ACE-Step](/documentation/quickstart/ACE_STEP.md)** - **NUEVO**. Entrenamiento de modelo de generación de audio (text-to-music)
 - **[Guía de HeartMuLa](/documentation/quickstart/HEARTMULA.md)** - **NUEVO**. Entrenamiento de modelo de audio autoregresivo (text-to-audio)
 - **[Guía de Chroma](/documentation/quickstart/CHROMA.md)** - Transformer de flow-matching de Lodestone con schedules específicos de Chroma

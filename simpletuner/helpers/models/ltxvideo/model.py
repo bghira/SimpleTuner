@@ -374,6 +374,7 @@ class LTXVideo(VideoModelFoundation):
         grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         if grounding_kwargs is not None:
             transformer_kwargs["grounding_kwargs"] = grounding_kwargs
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
 
         model_output = self.model(
             packed_noisy_latents,

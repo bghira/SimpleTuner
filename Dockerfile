@@ -43,7 +43,8 @@ RUN python${PYTHON_VERSION} -m venv /opt/venv \
        "huggingface_hub[cli,hf_transfer]" \
        wandb \
        mpi4py \
-       ninja
+       ninja \
+       "torchao>=0.17.0,<0.18.0"
 
 # 3. Install SimpleTuner
 # Using 'release' branch for stability. Change to 'main' for latest features.

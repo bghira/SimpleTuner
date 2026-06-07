@@ -3010,6 +3010,12 @@ class FactoryRegistry:
         info_log(f"(id={init_backend['id']}) Loading bucket manager.")
         metadata_backend_args = {}
         metadata_backend = backend.get("metadata_backend") or "discovery"
+        if metadata_backend == "filesystem":
+            logger.warning(
+                "metadata_backend='filesystem' is deprecated; using metadata_backend='discovery' for local file discovery."
+            )
+            metadata_backend = "discovery"
+            backend["metadata_backend"] = metadata_backend
         if metadata_backend == "json" or metadata_backend == "discovery":
             from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 

@@ -391,6 +391,7 @@ class WanS2V(VideoModelFoundation):
         force_keep_mask = prepared_batch.get("force_keep_mask")
         if force_keep_mask is not None:
             wan_s2v_kwargs["force_keep_mask"] = force_keep_mask
+        self._apply_flowmap_r_timestep_kwargs(wan_s2v_kwargs, prepared_batch)
 
         model_output = self.model(**wan_s2v_kwargs)
 

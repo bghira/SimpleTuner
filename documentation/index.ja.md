@@ -72,9 +72,9 @@
 
     ---
 
-    Self-Flow、Flow-DPO、LayerSync、Diff2Flow、Video CREPA などの研究向け機能
+    AnyFlow、Self-Flow、Flow-DPO、LayerSync、Diff2Flow、Video CREPA などの研究向け機能
 
-    [:octicons-arrow-right-24: Flow-DPO](experimental/FLOW_DPO.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md)
 
 </div>
 

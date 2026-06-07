@@ -30,6 +30,14 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from torch import nn
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
@@ -268,6 +276,9 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
             self.time_sign_embed = nn.Embedding(2, embedding_dim)
@@ -279,12 +290,19 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
         self.silu = nn.SiLU()
         self.linear = nn.Linear(embedding_dim, 6 * embedding_dim, bias=True)
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="SanaVideo")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+
     def forward(
         self,
         timestep: torch.Tensor,
         guidance: torch.Tensor = None,
         hidden_dtype: torch.dtype = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ):
         tokenwise_timestep = timestep.ndim == 2
         if tokenwise_timestep:
@@ -297,6 +315,21 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
 
         timesteps_proj = self.time_proj(flat_timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))  # (N, D)
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "SanaVideo FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="SanaVideo",
+            )
+            delta_flat = delta_timestep.reshape(-1) if delta_timestep.ndim == 2 else delta_timestep
+            delta_proj = self.time_proj(delta_flat)
+            delta_emb = self.delta_timestep_embedder(delta_proj.to(dtype=hidden_dtype))
+            timesteps_emb = blend_flowmap_embeddings(timesteps_emb, delta_emb, self.flowmap_delta_emb_gate)
 
         if guidance is None:
             raise ValueError(
@@ -672,6 +705,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -695,6 +730,14 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             if enable_time_sign_embed:
                 self.time_sign_embed = nn.Embedding(2, inner_dim)
                 nn.init.zeros_(self.time_sign_embed.weight)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
@@ -734,12 +777,23 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             logger=logger,
         )
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        if hasattr(self.time_embed, "enable_flowmap_time_conditioning"):
+            self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        else:
+            self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="SanaVideo")
+            if self.delta_timestep_embedder is None:
+                self.delta_timestep_embedder = clone_flowmap_embedder(self.time_embed.emb.timestep_embedder)
+            set_flowmap_gate(self, gate_value)
+        register_flowmap_config(self, gate_value, deltatime_type)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         guidance: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -808,19 +862,53 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         if guidance is not None:
             timestep, embedded_timestep = self.time_embed(
-                timestep, guidance=guidance, hidden_dtype=hidden_states.dtype, timestep_sign=timestep_sign
+                timestep,
+                guidance=guidance,
+                hidden_dtype=hidden_states.dtype,
+                timestep_sign=timestep_sign,
+                r_timestep=r_timestep,
             )
         else:
-            projected_timestep, embedded_timestep = self.time_embed(
-                timestep.flatten() if tokenwise_timestep else timestep,
-                batch_size=batch_size,
-                hidden_dtype=hidden_states.dtype,
-            )
-            if tokenwise_timestep:
-                timestep = projected_timestep.view(batch_size, token_count, projected_timestep.size(-1))
-                embedded_timestep = embedded_timestep.view(batch_size, token_count, embedded_timestep.size(-1))
+            base_timestep = timestep
+            if r_timestep is None:
+                projected_timestep, embedded_timestep = self.time_embed(
+                    timestep.flatten() if tokenwise_timestep else timestep,
+                    batch_size=batch_size,
+                    hidden_dtype=hidden_states.dtype,
+                )
+                if tokenwise_timestep:
+                    timestep = projected_timestep.view(batch_size, token_count, projected_timestep.size(-1))
+                    embedded_timestep = embedded_timestep.view(batch_size, token_count, embedded_timestep.size(-1))
+                else:
+                    timestep = projected_timestep
             else:
-                timestep = projected_timestep
+                if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                    raise ValueError(
+                        "SanaVideo FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                    )
+                emb = self.time_embed.emb
+                timestep_flat = base_timestep.reshape(-1) if tokenwise_timestep else base_timestep
+                timesteps_proj = emb.time_proj(timestep_flat)
+                embedded_timestep = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_states.dtype))
+                if tokenwise_timestep:
+                    embedded_timestep = embedded_timestep.view(batch_size, token_count, -1)
+                delta_timestep = prepare_flowmap_delta_timestep(
+                    base_timestep,
+                    r_timestep,
+                    self.flowmap_deltatime_type,
+                    model_name="SanaVideo",
+                )
+                delta_flat = delta_timestep.reshape(-1) if delta_timestep.ndim == 2 else delta_timestep
+                delta_proj = emb.time_proj(delta_flat)
+                delta_emb = self.delta_timestep_embedder(delta_proj.to(dtype=hidden_states.dtype))
+                if delta_timestep.ndim == 2:
+                    delta_emb = delta_emb.view(delta_timestep.shape[0], delta_timestep.shape[1], -1)
+                embedded_timestep = blend_flowmap_embeddings(
+                    embedded_timestep,
+                    delta_emb,
+                    self.flowmap_delta_emb_gate,
+                )
+                timestep = self.time_embed.linear(self.time_embed.silu(embedded_timestep))
             if timestep_sign is not None:
                 if self.time_sign_embed is None:
                     raise ValueError(

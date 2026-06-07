@@ -30,6 +30,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import logging
 from torch import Tensor
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
@@ -204,20 +212,54 @@ class Kandinsky5TimeEmbeddings(nn.Module):
         self.in_layer = nn.Linear(model_dim, time_dim, bias=True)
         self.activation = nn.SiLU()
         self.out_layer = nn.Linear(time_dim, time_dim, bias=True)
+        self.delta_in_layer: Optional[nn.Module] = None
+        self.delta_out_layer: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
             self.time_sign_embed = nn.Embedding(2, time_dim)
             nn.init.zeros_(self.time_sign_embed.weight)
 
-    @torch.autocast(device_type="cuda", dtype=torch.float32)
-    def forward(self, time, timestep_sign: Optional[torch.Tensor] = None):
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Kandinsky5")
+        if self.delta_in_layer is None:
+            self.delta_in_layer = clone_flowmap_embedder(self.in_layer)
+        if self.delta_out_layer is None:
+            self.delta_out_layer = clone_flowmap_embedder(self.out_layer)
+        set_flowmap_gate(self, gate_value)
+
+    def _embed_time(self, time: torch.Tensor, in_layer: nn.Module, out_layer: nn.Module) -> torch.Tensor:
         original_shape = time.shape
         time = time.reshape(-1)
         args = torch.outer(time, self.freqs.to(device=time.device))
         time_embed = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        time_embed = self.out_layer(self.activation(self.in_layer(time_embed)))
-        time_embed = time_embed.view(*original_shape, -1)
+        time_embed = out_layer(self.activation(in_layer(time_embed)))
+        return time_embed.view(*original_shape, -1)
+
+    @torch.autocast(device_type="cuda", dtype=torch.float32)
+    def forward(
+        self,
+        time,
+        timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ):
+        original_shape = time.shape
+        time_embed = self._embed_time(time, self.in_layer, self.out_layer)
+        if r_timestep is not None:
+            if self.delta_in_layer is None or self.delta_out_layer is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Kandinsky5 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                time,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Kandinsky5",
+            )
+            delta_embed = self._embed_time(delta_timestep, self.delta_in_layer, self.delta_out_layer)
+            time_embed = blend_flowmap_embeddings(time_embed, delta_embed, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -696,6 +738,8 @@ class Kandinsky5Transformer3DModel(
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
 
@@ -714,6 +758,11 @@ class Kandinsky5Transformer3DModel(
             time_dim,
             enable_time_sign_embed=enable_time_sign_embed,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.text_embeddings = Kandinsky5TextEmbeddings(in_text_dim, model_dim)
         self.pooled_text_embeddings = Kandinsky5TextEmbeddings(in_text_dim2, time_dim)
         self.visual_embeddings = Kandinsky5VisualEmbeddings(visual_embed_dim, model_dim, patch_size)
@@ -741,6 +790,10 @@ class Kandinsky5Transformer3DModel(
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_embeddings.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
@@ -783,6 +836,7 @@ class Kandinsky5Transformer3DModel(
         hidden_states_buffer: Optional[dict] = None,
         timestep_sign: Optional[torch.Tensor] = None,
         grounding_kwargs: Optional[Dict[str, Any]] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
         Forward pass of the Kandinsky5 3D Transformer.
@@ -815,6 +869,7 @@ class Kandinsky5Transformer3DModel(
         time_embed = self.time_embeddings(
             time,
             timestep_sign=timestep_sign,
+            r_timestep=r_timestep,
         )
         pooled_time_embed = self.pooled_text_embeddings(pooled_text_embed)
         if time_embed.dim() == 2:

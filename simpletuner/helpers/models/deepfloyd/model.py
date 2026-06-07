@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from diffusers import AutoencoderKL, UNet2DConditionModel
+from diffusers import AutoencoderKL
 from diffusers.pipelines import IFPipeline, IFSuperResolutionPipeline
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from peft import set_peft_model_state_dict
@@ -19,6 +19,7 @@ from simpletuner.helpers.acceleration import (
     get_torchao_presets,
 )
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel as UNet2DConditionModel
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -164,6 +165,7 @@ class DeepFloydIF(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             )
+        self._apply_flowmap_r_timestep_kwargs(prediction_kwargs, prepared_batch)
         model_pred = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,

@@ -1093,12 +1093,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise
 
     if args.distillation_config is not None:
-        if args.distillation_config.startswith("{"):
-            try:
-                args.distillation_config = ast.literal_eval(args.distillation_config)
-            except Exception as e:
-                logger.error(f"Could not load distillation_config: {e}")
-                raise
+        try:
+            args.distillation_config = _parse_json_like_option(args.distillation_config, "distillation_config")
+        except ValueError as parse_error:
+            logger.error(str(parse_error))
+            raise
 
     if hasattr(args, "deepspeed_config"):
         try:
@@ -1219,6 +1218,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
+
+    if getattr(args, "model_family", None) != "ideogram" and getattr(args, "ideogram_auto_json", None) == "None":
+        args.ideogram_auto_json = None
+    if getattr(args, "model_family", None) != "ideogram" and getattr(args, "ideogram_validation", None) == "None":
+        args.ideogram_validation = None
 
     if isinstance(getattr(args, "validation_adapter_path", None), str):
         candidate = args.validation_adapter_path.strip()

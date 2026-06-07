@@ -487,6 +487,7 @@ class Cosmos2Image(VideoModelFoundation):
             padding_mask=pad_mask,
             return_dict=False,
             hidden_states_buffer=hidden_states_buffer,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )[
             0
         ]  # transformer output

@@ -35,6 +35,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -258,6 +266,15 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
         if use_meanflow:
             self.time_proj_r = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
             self.timestep_embedder_r = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="HunyuanVideo")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
 
     def forward(
         self,
@@ -271,6 +288,21 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=timestep_flat.dtype))
         if timestep.ndim > 1:
             timesteps_emb = timesteps_emb.view(*original_shape, -1)
+        if timestep_r is not None and self.flowmap_deltatime_type is not None:
+            if self.delta_timestep_embedder is None:
+                raise ValueError("HunyuanVideo FlowMap time conditioning is missing the delta timestep embedder.")
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                timestep_r,
+                self.flowmap_deltatime_type,
+                model_name="HunyuanVideo",
+            )
+            delta_timestep_flat = delta_timestep.reshape(-1)
+            delta_proj = self.time_proj(delta_timestep_flat)
+            delta_emb = self.delta_timestep_embedder(delta_proj.to(dtype=timestep_flat.dtype))
+            if delta_timestep.ndim > 1:
+                delta_emb = delta_emb.view(*delta_timestep.shape, -1)
+            timesteps_emb = blend_flowmap_embeddings(timesteps_emb, delta_emb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
@@ -310,7 +342,11 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
                 sign_emb = sign_emb.view(*original_shape, -1)
             timesteps_emb = timesteps_emb + sign_emb
 
-        if timestep_r is not None:
+        if timestep_r is not None and self.flowmap_deltatime_type is None:
+            if self.time_proj_r is None or self.timestep_embedder_r is None:
+                raise ValueError(
+                    "HunyuanVideo received `timestep_r`, but neither mean-flow nor FlowMap time conditioning is enabled."
+                )
             if timestep.ndim == 2 and timestep_r.ndim == 1:
                 timestep_r = timestep_r[:, None].expand(-1, timestep.shape[1])
             elif timestep.ndim == 2 and timestep_r.ndim == 2:
@@ -751,6 +787,8 @@ class HunyuanVideo15Transformer3DModel(
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
         self._tread_router = None
@@ -774,6 +812,11 @@ class HunyuanVideo15Transformer3DModel(
             use_meanflow=use_meanflow,
             enable_time_sign_embed=enable_time_sign_embed,
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         self.cond_type_embed = nn.Embedding(3, inner_dim)
 
@@ -801,6 +844,10 @@ class HunyuanVideo15Transformer3DModel(
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def forward(
         self,

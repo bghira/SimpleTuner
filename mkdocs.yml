@@ -253,6 +253,7 @@ nav:
       - Cosmos2: quickstart/COSMOS2IMAGE.md
       - OmniGen: quickstart/OMNIGEN.md
       - Z-Image: quickstart/ZIMAGE.md
+      - Ideogram 4: quickstart/IDEOGRAM4.md
       - ERNIE-Image: quickstart/ERNIE.md
       - Qwen Image: quickstart/QWEN_IMAGE.md
       - Qwen Edit: quickstart/QWEN_EDIT.md
@@ -286,6 +287,7 @@ nav:
       - TREAD: TREAD.md
       - Mixture of Experts: MIXTURE_OF_EXPERTS.md
     - Distillation:
+      - AnyFlow Continuation: quickstart/ANYFLOW.md
       - TwinFlow (RCGM): distillation/TWINFLOW.md
       - SDXL LCM: distillation/SDXL_LCM.md
       - Wan DCM: distillation/WAN_DCM.md
@@ -337,6 +339,7 @@ nav:
       - FlexAttention: attention/FLEX.md
       - Sliding Window (SLA): attention/SLA.md
     - Experimental:
+      - AnyFlow: experimental/ANYFLOW.md
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - LayerSync: experimental/LAYERSYNC.md

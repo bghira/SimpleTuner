@@ -32,6 +32,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import BaseOutput, logging
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -307,6 +315,8 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -322,6 +332,14 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         self.text_proj = nn.Linear(text_in_dim, hidden_size, bias=False) if text_in_dim != hidden_size else None
         self.time_proj = Timesteps(hidden_size, flip_sin_to_cos=False, downscale_freq_shift=0)
         self.time_embedding = TimestepEmbedding(hidden_size, hidden_size)
+        self.delta_time_embedding: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.time_sign_embed = None
         if enable_time_sign_embed:
             self.time_sign_embed = nn.Embedding(2, hidden_size)
@@ -351,6 +369,34 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
             logger=logger,
         )
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="ERNIE")
+        if self.delta_time_embedding is None:
+            self.delta_time_embedding = clone_flowmap_embedder(self.time_embedding)
+        set_flowmap_gate(self, gate_value)
+        register_flowmap_config(self, gate_value, deltatime_type)
+
+    def _apply_flowmap_time_conditioning(
+        self,
+        timestep: torch.Tensor,
+        r_timestep: torch.Tensor,
+        conditioning: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if self.delta_time_embedding is None or self.flowmap_deltatime_type is None:
+            raise ValueError("ERNIE FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+        delta_timestep = prepare_flowmap_delta_timestep(
+            timestep,
+            r_timestep,
+            self.flowmap_deltatime_type,
+            model_name="ERNIE",
+        )
+        delta_proj = self.time_proj(delta_timestep.reshape(-1)).to(dtype=dtype)
+        delta_conditioning = self.delta_time_embedding(delta_proj)
+        if delta_timestep.ndim > 1:
+            delta_conditioning = delta_conditioning.view(*delta_timestep.shape, -1)
+        return blend_flowmap_embeddings(conditioning, delta_conditioning, self.flowmap_delta_emb_gate)
+
     @property
     def device(self):
         return next(self.x_embedder.parameters()).device
@@ -364,6 +410,7 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         text_lens: torch.Tensor,
         return_dict: bool = True,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         skip_layers: Optional[List[int]] = None,
     ):
         device, dtype = hidden_states.device, hidden_states.dtype
@@ -421,6 +468,8 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         sample = self.time_proj(timestep)
         sample = sample.to(dtype=dtype)
         c = self.time_embedding(sample)
+        if r_timestep is not None:
+            c = self._apply_flowmap_time_conditioning(timestep, r_timestep, c, dtype)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(

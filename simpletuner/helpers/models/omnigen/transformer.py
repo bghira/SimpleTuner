@@ -36,6 +36,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNorm, RMSNorm
 from diffusers.utils import logging
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -377,6 +385,8 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
         timestep_activation_fn: str = "silu",
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -392,6 +402,15 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
         self.time_proj = Timesteps(time_step_dim, flip_sin_to_cos, downscale_freq_shift)
         self.time_token = TimestepEmbedding(time_step_dim, hidden_size, timestep_activation_fn)
         self.t_embedder = TimestepEmbedding(time_step_dim, hidden_size, timestep_activation_fn)
+        self.delta_time_token: Optional[nn.Module] = None
+        self.delta_t_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
 
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size, pad_token_id)
         self.rope = OmniGenSuScaledRotaryEmbedding(
@@ -422,6 +441,15 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
             logger=logger,
         )
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="OmniGen")
+        if self.delta_time_token is None:
+            self.delta_time_token = clone_flowmap_embedder(self.time_token)
+        if self.delta_t_embedder is None:
+            self.delta_t_embedder = clone_flowmap_embedder(self.t_embedder)
+        set_flowmap_gate(self, gate_value)
+        register_flowmap_config(self, gate_value, deltatime_type)
+
     def _get_multimodal_embeddings(
         self, input_ids: torch.Tensor, input_img_latents: List[torch.Tensor], input_image_sizes: Dict
     ) -> Optional[torch.Tensor]:
@@ -450,6 +478,7 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
         position_ids: torch.Tensor,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> Union[Transformer2DModelOutput, Tuple[torch.Tensor]]:
         batch_size, num_channels, height, width = hidden_states.shape
         p = self.config.patch_size
@@ -500,6 +529,36 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
             pooled_timestep_proj = timestep_proj
 
         time_token = self.time_token(pooled_timestep_proj).unsqueeze(1)
+        if r_timestep is not None:
+            if self.delta_time_token is None or self.delta_t_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "OmniGen FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="OmniGen",
+            )
+            if delta_timestep.ndim == 2:
+                delta_timestep_proj = (
+                    self.time_proj(delta_timestep.reshape(-1))
+                    .type_as(hidden_states)
+                    .view(
+                        batch_size,
+                        num_tokens_for_output_image,
+                        -1,
+                    )
+                )
+                delta_temb = self.delta_t_embedder(delta_timestep_proj)
+                delta_pooled_timestep_proj = delta_timestep_proj.mean(dim=1)
+            else:
+                delta_timestep_proj = self.time_proj(delta_timestep).type_as(hidden_states)
+                delta_temb = self.delta_t_embedder(delta_timestep_proj)
+                delta_pooled_timestep_proj = delta_timestep_proj
+            temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
+            delta_time_token = self.delta_time_token(delta_pooled_timestep_proj).unsqueeze(1)
+            time_token = blend_flowmap_embeddings(time_token, delta_time_token, self.flowmap_delta_emb_gate)
 
         condition_tokens = self._get_multimodal_embeddings(input_ids, input_img_latents, input_image_sizes)
         if condition_tokens is not None:

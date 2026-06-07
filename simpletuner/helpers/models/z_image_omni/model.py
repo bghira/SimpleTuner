@@ -524,17 +524,21 @@ class ZImageOmni(ImageModelFoundation):
         )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
+        call_kwargs = {
+            "timestep_sign": (
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
+            "return_dict": False,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
+        self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
         model_out_list = self.model(
             [sample for sample in latents],
             normalized_t,
             prompt_list,
             cond_latent_list,
             siglip_feats,
-            timestep_sign=(
-                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
-            ),
-            return_dict=False,
-            hidden_states_buffer=hidden_states_buffer,
+            **call_kwargs,
         )[0]
 
         noise_pred = torch.stack([out.float() for out in model_out_list], dim=0)

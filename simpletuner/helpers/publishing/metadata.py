@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+from enum import Enum
+from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
@@ -108,6 +110,31 @@ allowed_licenses = [
     "other",
     "array",
 ]
+
+_EXCLUDED_TRAINING_CONFIG_KEYS = {
+    "publishing_config",
+    "webhook_config",
+}
+_SENSITIVE_TRAINING_CONFIG_KEY_PARTS = (
+    "secret",
+    "password",
+    "credential",
+    "access_key",
+    "api_key",
+    "private_key",
+)
+_SENSITIVE_TRAINING_CONFIG_KEYS = {
+    "token",
+    "access_token",
+    "api_token",
+    "auth_token",
+    "bearer_token",
+    "client_secret",
+    "hf_token",
+    "hub_token",
+    "session_token",
+    "upload_token",
+}
 for _model, _license in licenses.items():
     if _license not in allowed_licenses:
         licenses[_model] = "other"
@@ -772,27 +799,52 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
         f.write(yaml_content + model_card_content)
 
 
+def _normalise_training_config_key(key: Any) -> str:
+    return str(key).strip().lower().replace("-", "_")
+
+
+def _should_skip_training_config_key(key: Any) -> bool:
+    normalised_key = _normalise_training_config_key(key)
+    if normalised_key in _EXCLUDED_TRAINING_CONFIG_KEYS:
+        return True
+    if normalised_key in _SENSITIVE_TRAINING_CONFIG_KEYS:
+        return True
+    return any(part in normalised_key for part in _SENSITIVE_TRAINING_CONFIG_KEY_PARTS)
+
+
+def _make_training_config_serializable(obj: Any) -> Any:
+    if isinstance(obj, Enum):
+        return _make_training_config_serializable(obj.value)
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, torch.dtype):
+        return str(obj)
+    if isinstance(obj, torch.device):
+        return str(obj)
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {
+            str(key): _make_training_config_serializable(value)
+            for key, value in obj.items()
+            if not _should_skip_training_config_key(key)
+        }
+    if isinstance(obj, (list, tuple, set)):
+        return [_make_training_config_serializable(value) for value in obj]
+    if hasattr(obj, "__dict__"):
+        return _make_training_config_serializable(vars(obj))
+    return str(obj)
+
+
 def save_training_config(repo_folder: str = None, config: dict = None):
-    import types
-
-    def make_serializable(obj):
-        if isinstance(obj, dict):
-            return {k: make_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [make_serializable(v) for v in obj]
-        elif hasattr(obj, "__dict__"):
-            return make_serializable(vars(obj))
-        elif isinstance(obj, types.SimpleNamespace):
-            return make_serializable(vars(obj))
-        elif isinstance(obj, (str, int, float, bool)) or obj is None:
-            return obj
-        else:
-            return str(obj)
-
     if repo_folder is None:
         raise ValueError("The repo_folder must be specified and not be None.")
     config_path = os.path.join(repo_folder, "simpletuner_config.json")
-    serializable_config = make_serializable(config)
+    serializable_config = _make_training_config_serializable(config)
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(serializable_config, f, indent=4)
     logger.debug(f"Saved model config to {config_path}")

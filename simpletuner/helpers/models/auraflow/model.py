@@ -310,6 +310,7 @@ class Auraflow(ImageModelFoundation):
             return_dict=True,
             hidden_states_buffer=hidden_states_buffer,
             grounding_kwargs=grounding_kwargs,
+            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         ).sample
 
         return {

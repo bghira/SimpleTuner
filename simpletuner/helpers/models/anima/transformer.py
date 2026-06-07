@@ -11,19 +11,44 @@ from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
-from diffusers import CosmosTransformer3DModel, ModelMixin
+from diffusers import ModelMixin
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, set_weights_and_activate_adapters
 from huggingface_hub import hf_hub_download
+
+try:
+    from huggingface_hub.utils import EntryNotFoundError
+except ImportError:
+    from huggingface_hub.errors import EntryNotFoundError
+try:
+    from huggingface_hub.utils import LocalEntryNotFoundError
+except ImportError:
+    try:
+        from huggingface_hub.errors import LocalEntryNotFoundError
+    except ImportError:
+        LocalEntryNotFoundError = EntryNotFoundError
 from safetensors.torch import load_file
 from torch import nn
+
+from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
+from simpletuner.helpers.models.flowmap import register_flowmap_config
 
 DEFAULT_ANIMA_TRANSFORMER_FILENAME = "anima-preview.safetensors"
 DIFFUSERS_LLM_ADAPTER_FILENAME = "llm_adapter/diffusion_pytorch_model.safetensors"
 DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME = "llm_adapter/config.json"
+DIFFUSERS_TEXT_CONDITIONER_FILENAME = "text_conditioner/diffusion_pytorch_model.safetensors"
+DIFFUSERS_TEXT_CONDITIONER_CONFIG_FILENAME = "text_conditioner/config.json"
+DIFFUSERS_ADAPTER_WEIGHT_FILENAMES = (
+    DIFFUSERS_LLM_ADAPTER_FILENAME,
+    DIFFUSERS_TEXT_CONDITIONER_FILENAME,
+)
+DIFFUSERS_ADAPTER_CONFIG_FILENAMES = (
+    DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME,
+    DIFFUSERS_TEXT_CONDITIONER_CONFIG_FILENAME,
+)
 
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -325,6 +350,8 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         adapter_dim: int = 1024,
         adapter_layers: int = 6,
         adapter_heads: int = 16,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         core = _create_anima_transformer_core_model(
@@ -339,6 +366,8 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             max_size=tuple(max_size),
             patch_size=tuple(patch_size),
             rope_scale=tuple(rope_scale),
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         _patch_diffusers_rmsnorm_to_anima(core)
         self.core = core
@@ -369,6 +398,7 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         return_dict: bool = True,
+        r_timestep: Optional[torch.Tensor] = None,
         **kwargs: Any,
     ) -> Transformer2DModelOutput | tuple[torch.Tensor]:
         t5xxl_ids = kwargs.pop("t5xxl_ids", None)
@@ -401,6 +431,7 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             sample = self.core(
                 hidden_states=hidden_states,
                 timestep=timestep,
+                r_timestep=r_timestep,
                 encoder_hidden_states=encoder_hidden_states,
                 padding_mask=padding_mask,
                 return_dict=False,
@@ -412,6 +443,10 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         if not return_dict:
             return (sample,)
         return Transformer2DModelOutput(sample=sample)
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.core.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def set_adapters(
         self,
@@ -484,6 +519,49 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         return pretrained_model_name_or_path
 
     @staticmethod
+    def _resolve_diffusers_adapter_file(
+        pretrained_model_name_or_path: str,
+        *,
+        filenames: tuple[str, ...],
+        component_name: str,
+        subfolder: Optional[str] = None,
+        revision: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        force_download: bool = False,
+        local_files_only: bool = False,
+        token: str | bool | None = None,
+    ) -> str:
+        if os.path.isdir(pretrained_model_name_or_path):
+            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
+            for filename in filenames:
+                candidate = os.path.join(repo_root, filename)
+                if os.path.isfile(candidate):
+                    return candidate
+            raise FileNotFoundError(
+                f"Anima Diffusers directory {repo_root!r} is missing {component_name}; "
+                f"expected one of: {', '.join(filenames)}"
+            )
+        normalized_token = None if token is False else token
+        last_error: Exception | None = None
+        for filename in filenames:
+            try:
+                return hf_hub_download(
+                    pretrained_model_name_or_path,
+                    filename=filename,
+                    revision=revision,
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    local_files_only=local_files_only,
+                    token=normalized_token,
+                )
+            except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
+                last_error = exc
+        raise FileNotFoundError(
+            f"Anima Diffusers repository {pretrained_model_name_or_path!r} is missing {component_name}; "
+            f"expected one of: {', '.join(filenames)}"
+        ) from last_error
+
+    @staticmethod
     def _resolve_diffusers_llm_adapter_path(
         pretrained_model_name_or_path: str,
         *,
@@ -494,18 +572,16 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         local_files_only: bool = False,
         token: str | bool | None = None,
     ) -> str:
-        if os.path.isdir(pretrained_model_name_or_path):
-            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
-            return os.path.join(repo_root, DIFFUSERS_LLM_ADAPTER_FILENAME)
-        normalized_token = None if token is False else token
-        return hf_hub_download(
+        return AnimaTransformerModel._resolve_diffusers_adapter_file(
             pretrained_model_name_or_path,
-            filename=DIFFUSERS_LLM_ADAPTER_FILENAME,
+            filenames=DIFFUSERS_ADAPTER_WEIGHT_FILENAMES,
+            component_name="text adapter weights",
+            subfolder=subfolder,
             revision=revision,
             cache_dir=cache_dir,
             force_download=force_download,
             local_files_only=local_files_only,
-            token=normalized_token,
+            token=token,
         )
 
     @staticmethod
@@ -519,19 +595,24 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         local_files_only: bool = False,
         token: str | bool | None = None,
     ) -> str:
-        if os.path.isdir(pretrained_model_name_or_path):
-            repo_root = AnimaTransformerModel._diffusers_repo_root(pretrained_model_name_or_path, subfolder=subfolder)
-            return os.path.join(repo_root, DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME)
-        normalized_token = None if token is False else token
-        return hf_hub_download(
+        return AnimaTransformerModel._resolve_diffusers_adapter_file(
             pretrained_model_name_or_path,
-            filename=DIFFUSERS_LLM_ADAPTER_CONFIG_FILENAME,
+            filenames=DIFFUSERS_ADAPTER_CONFIG_FILENAMES,
+            component_name="text adapter config",
+            subfolder=subfolder,
             revision=revision,
             cache_dir=cache_dir,
             force_download=force_download,
             local_files_only=local_files_only,
-            token=normalized_token,
+            token=token,
         )
+
+    @staticmethod
+    def _adapter_config_int(adapter_config: dict[str, Any], *keys: str) -> int:
+        for key in keys:
+            if key in adapter_config:
+                return int(adapter_config[key])
+        raise KeyError(f"Anima text adapter config is missing one of: {', '.join(keys)}")
 
     @classmethod
     def _load_diffusers_llm_adapter_config(
@@ -551,12 +632,11 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         with open(config_path, encoding="utf-8") as handle:
             adapter_config = json.load(handle)
 
-        model_dim = int(adapter_config["model_dim"])
-        if (
-            int(adapter_config.get("source_dim", model_dim)) != model_dim
-            or int(adapter_config.get("target_dim", model_dim)) != model_dim
-        ):
-            raise ValueError("Anima llm_adapter source_dim, target_dim, and model_dim must match.")
+        model_dim = cls._adapter_config_int(adapter_config, "model_dim")
+        source_dim = int(adapter_config.get("source_dim", model_dim))
+        target_dim = int(adapter_config.get("target_dim", model_dim))
+        if source_dim != model_dim or target_dim != model_dim:
+            raise ValueError("Anima text adapter source_dim, target_dim, and model_dim must match.")
         return adapter_config
 
     @classmethod
@@ -580,10 +660,10 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             max_size=tuple(config.max_size),
             patch_size=tuple(config.patch_size),
             rope_scale=tuple(config.rope_scale),
-            adapter_vocab_size=int(adapter_config["vocab_size"]),
-            adapter_dim=int(adapter_config["model_dim"]),
-            adapter_layers=int(adapter_config["num_layers"]),
-            adapter_heads=int(adapter_config["num_heads"]),
+            adapter_vocab_size=cls._adapter_config_int(adapter_config, "vocab_size", "target_vocab_size"),
+            adapter_dim=cls._adapter_config_int(adapter_config, "model_dim"),
+            adapter_layers=cls._adapter_config_int(adapter_config, "num_layers"),
+            adapter_heads=cls._adapter_config_int(adapter_config, "num_heads", "num_attention_heads"),
         )
         _patch_diffusers_rmsnorm_to_anima(core)
         transformer.core = core
@@ -668,6 +748,8 @@ def _create_anima_transformer_core_model(
     max_size: tuple[int, int, int] = (128, 240, 240),
     patch_size: tuple[int, int, int] = (1, 2, 2),
     rope_scale: tuple[float, float, float] = (1.0, 4.0, 4.0),
+    gate_value: Optional[float] = None,
+    deltatime_type: Optional[str] = None,
 ) -> CosmosTransformer3DModel:
     return CosmosTransformer3DModel(
         in_channels=in_channels,
@@ -683,6 +765,8 @@ def _create_anima_transformer_core_model(
         rope_scale=rope_scale,
         concat_padding_mask=True,
         extra_pos_embed_type=None,
+        gate_value=gate_value,
+        deltatime_type=deltatime_type,
     )
 
 

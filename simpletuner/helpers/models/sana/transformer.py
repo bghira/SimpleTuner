@@ -26,6 +26,14 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from torch import nn
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
@@ -355,6 +363,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -394,6 +404,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             enable_time_sign_embed=enable_time_sign_embed,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
 
         out_channels = effective_out_channels
@@ -415,6 +427,14 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         # condition embeddings
         self.time_embed = AdaLayerNormSingle(inner_dim)
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -557,12 +577,20 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Sana")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.time_embed.emb.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+        register_flowmap_config(self, gate_value, deltatime_type)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[dict] = None,
@@ -618,6 +646,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
             sequence_length=hidden_states.shape[1],
+            r_timestep=r_timestep,
         )
         if timestep_sign is not None:
             if self.time_sign_embed is None:
@@ -813,21 +842,43 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         batch_size: int,
         hidden_dtype: torch.dtype,
         sequence_length: int,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if timestep.ndim != 2:
+        if timestep.ndim != 2 and r_timestep is None:
             return self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_dtype)
 
-        if timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length:
+        if timestep.ndim == 2 and (timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length):
             raise ValueError(
                 f"Sana tokenwise timestep embedding expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
             )
 
         emb = self.time_embed.emb
-        timestep_flat = timestep.reshape(-1)
+        timestep_flat = timestep.reshape(-1) if timestep.ndim == 2 else timestep
         timesteps_proj = emb.time_proj(timestep_flat)
-        embedded_timestep = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype)).view(
-            batch_size, sequence_length, -1
-        )
+        embedded_timestep = emb.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        if timestep.ndim == 2:
+            embedded_timestep = embedded_timestep.view(batch_size, sequence_length, -1)
+
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError("Sana FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Sana",
+            )
+            delta_flat = delta_timestep.reshape(-1) if delta_timestep.ndim == 2 else delta_timestep
+            delta_proj = emb.time_proj(delta_flat)
+            delta_emb = self.delta_timestep_embedder(delta_proj.to(dtype=hidden_dtype))
+            if delta_timestep.ndim == 2:
+                delta_emb = delta_emb.view(delta_timestep.shape[0], delta_timestep.shape[1], -1)
+            embedded_timestep = blend_flowmap_embeddings(
+                embedded_timestep,
+                delta_emb,
+                self.flowmap_delta_emb_gate,
+            )
+
         modulation = self.time_embed.linear(self.time_embed.silu(embedded_timestep))
         return modulation, embedded_timestep
 

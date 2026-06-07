@@ -87,6 +87,7 @@ Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/se
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
 | **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | Nenhum |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
@@ -117,6 +118,7 @@ Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/se
 - **Group offloading** - Diffusers v0.33+ com staging de modulos em CPU/disco e streams CUDA opcionais
 - **Varreduras de validation adapter** - Anexe LoRAs temporariamente (single ou presets JSON) durante validacao para comparar renders sem tocar o loop de treino
 - **External validation hooks** - Troque o pipeline de validacao embutido ou passos pos-upload pelos seus scripts, rodando checks em outra GPU ou enviando artefatos para qualquer provedor cloud ([detalhes](/documentation/OPTIONS.pt-BR.md#validation_method))
+- **Destilacao AnyFlow** - Condicionamento de intervalos FlowMap para modelos flow-matching com targets teacher online ([guia](/documentation/experimental/ANYFLOW.pt-BR.md))
 - **Regularizacao CREPA** - Alinhamento de representacao entre frames para video DiTs ([guia](/documentation/experimental/VIDEO_CREPA.pt-BR.md))
 - **Formatos de I/O LoRA** - Load/save de LoRAs PEFT no layout Diffusers ou no estilo ComfyUI `diffusion_model.*` (Flux/Flux2/Lumina2/Z-Image detectam ComfyUI automaticamente)
 
@@ -140,6 +142,7 @@ Guias detalhados estao disponiveis para todos os modelos suportados:
 - **[Guia Flux.1](/documentation/quickstart/FLUX.pt-BR.md)** - Inclui suporte a edicao Kontext e fusao QKV
 - **[Guia Flux.2](/documentation/quickstart/FLUX2.pt-BR.md)** - **NOVO!** Modelo Flux enorme com text encoder Mistral-3
 - **[Guia Z-Image](/documentation/quickstart/ZIMAGE.pt-BR.md)** - Base/Turbo LoRA com adaptador assistente + aceleracao TREAD
+- **[Guia Ideogram 4](/documentation/quickstart/IDEOGRAM4.pt-BR.md)** - **NOVO!** Treinamento LoRA com FP8 primeiro e captions JSON estruturadas
 - **[Guia ACE-Step](/documentation/quickstart/ACE_STEP.pt-BR.md)** - **NOVO!** Treinamento de modelo de geracao de audio (texto-para-musica)
 - **[Guia HeartMuLa](/documentation/quickstart/HEARTMULA.pt-BR.md)** - **NOVO!** Treinamento de modelo de audio autoregressivo (texto-para-audio)
 - **[Guia Chroma](/documentation/quickstart/CHROMA.pt-BR.md)** - Transformer flow-matching da Lodestone com schedules especificos

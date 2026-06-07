@@ -30,6 +30,14 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_npu_available, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 
@@ -658,6 +666,9 @@ class Flux2TimestepGuidanceEmbeddings(nn.Module):
         self.timestep_embedder = TimestepEmbedding(
             in_channels=in_channels, time_embed_dim=embedding_dim, sample_proj_bias=bias
         )
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
 
         self.guidance_embedder = None
         if guidance_embeds:
@@ -665,13 +676,39 @@ class Flux2TimestepGuidanceEmbeddings(nn.Module):
                 in_channels=in_channels, time_embed_dim=embedding_dim, sample_proj_bias=bias
             )
 
-    def forward(self, timestep: torch.Tensor, guidance: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Flux2")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        timestep: torch.Tensor,
+        guidance: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         original_shape = timestep.shape
         timestep_flat = timestep.reshape(-1)
         timesteps_proj = self.time_proj(timestep_flat)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(timestep_flat.dtype))
         if timestep.ndim > 1:
             timesteps_emb = timesteps_emb.view(*original_shape, -1)
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError("Flux2 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Flux2",
+            )
+            delta_timestep_flat = delta_timestep.reshape(-1)
+            delta_timesteps_proj = self.time_proj(delta_timestep_flat)
+            delta_timesteps_emb = self.delta_timestep_embedder(delta_timesteps_proj.to(timestep_flat.dtype))
+            if delta_timestep.ndim > 1:
+                delta_timesteps_emb = delta_timesteps_emb.view(*delta_timestep.shape, -1)
+            timesteps_emb = blend_flowmap_embeddings(timesteps_emb, delta_timesteps_emb, self.flowmap_delta_emb_gate)
 
         if guidance is not None and self.guidance_embedder is not None:
             if not torch.is_tensor(guidance):
@@ -809,6 +846,8 @@ class Flux2Transformer2DModel(
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -821,6 +860,11 @@ class Flux2Transformer2DModel(
         self.time_guidance_embed = Flux2TimestepGuidanceEmbeddings(
             in_channels=timestep_guidance_channels, embedding_dim=self.inner_dim, bias=False, guidance_embeds=guidance_embeds
         )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -923,6 +967,10 @@ class Flux2Transformer2DModel(
             )
         self._tread_routes = normalized_routes
 
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_guidance_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
+
     def _get_tread_route_for_layer(self, layer_idx: int) -> Optional[Dict[str, Any]]:
         """Get the TREAD route configuration for a given layer index."""
         if self._tread_routes is None:
@@ -938,6 +986,7 @@ class Flux2Transformer2DModel(
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
@@ -993,10 +1042,12 @@ class Flux2Transformer2DModel(
 
         # 1. Calculate timestep embedding and modulation parameters
         timestep = timestep.to(hidden_states.dtype) * 1000
+        if r_timestep is not None:
+            r_timestep = r_timestep.to(device=hidden_states.device, dtype=hidden_states.dtype) * 1000
         if guidance is not None:
             guidance = guidance.to(hidden_states.dtype) * 1000
 
-        temb = self.time_guidance_embed(timestep, guidance)
+        temb = self.time_guidance_embed(timestep, guidance, r_timestep=r_timestep)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(

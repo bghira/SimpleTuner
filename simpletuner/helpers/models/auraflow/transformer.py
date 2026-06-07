@@ -19,6 +19,14 @@ from diffusers.models.normalization import AdaLayerNormZero, FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
@@ -402,6 +410,8 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -421,6 +431,8 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             enable_time_sign_embed=enable_time_sign_embed,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -441,6 +453,14 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         )
         self.time_step_embed = Timesteps(num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True)
         self.time_step_proj = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
+        self.delta_time_step_proj: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         # Signed-time embedding for TwinFlow-style negative time handling.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -503,6 +523,13 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         """Set the TREAD router and routing configuration."""
         self._tread_router = router
         self._tread_routes = routes
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="AuraFlow")
+        if self.delta_time_step_proj is None:
+            self.delta_time_step_proj = clone_flowmap_embedder(self.time_step_proj)
+        set_flowmap_gate(self, gate_value)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
         """
@@ -633,6 +660,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         block_controlnet_hidden_states: List = None,
         return_dict: bool = True,
         skip_layers: Optional[List[int]] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         hidden_states_buffer: Optional[dict] = None,
         grounding_kwargs: dict | None = None,
@@ -682,6 +710,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             sequence_length=hidden_states.shape[1],
             dtype=next(self.parameters()).dtype,
             device=hidden_states.device,
+            r_timestep=r_timestep,
         )
         if timestep_sign is not None:
             if self.time_sign_embed is None:
@@ -1048,17 +1077,39 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         sequence_length: int,
         dtype: torch.dtype,
         device: torch.device,
+        r_timestep: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if timestep.ndim != 2:
+        if timestep.ndim != 2 and r_timestep is None:
             temb = self.time_step_embed(timestep).to(dtype=dtype)
-            return self.time_step_proj(temb)
+            return self.time_step_proj(temb).to(device=device, dtype=dtype)
 
-        if timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length:
+        if timestep.ndim == 2 and (timestep.shape[0] != batch_size or timestep.shape[1] != sequence_length):
             raise ValueError(
                 f"AuraFlow tokenwise timestep embedding expected shape ({batch_size}, {sequence_length}), got {tuple(timestep.shape)}."
             )
 
-        timestep_flat = timestep.reshape(-1)
+        timestep_flat = timestep.reshape(-1) if timestep.ndim == 2 else timestep
         temb = self.time_step_embed(timestep_flat).to(dtype=dtype)
         temb = self.time_step_proj(temb)
-        return temb.view(batch_size, sequence_length, -1).to(device=device, dtype=dtype)
+        if timestep.ndim == 2:
+            temb = temb.view(batch_size, sequence_length, -1)
+
+        if r_timestep is not None:
+            if self.delta_time_step_proj is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "AuraFlow FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="AuraFlow",
+            )
+            delta_flat = delta_timestep.reshape(-1) if delta_timestep.ndim == 2 else delta_timestep
+            delta_temb = self.time_step_embed(delta_flat).to(dtype=dtype)
+            delta_temb = self.delta_time_step_proj(delta_temb)
+            if delta_timestep.ndim == 2:
+                delta_temb = delta_temb.view(delta_timestep.shape[0], delta_timestep.shape[1], -1)
+            temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
+
+        return temb.to(device=device, dtype=dtype)

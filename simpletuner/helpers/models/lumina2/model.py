@@ -238,6 +238,7 @@ class Lumina2(ImageModelFoundation):
             "return_dict": False,
             "hidden_states_buffer": hidden_states_buffer,
         }
+        self._apply_flowmap_r_timestep_kwargs(lumina_transformer_kwargs, prepared_batch)
 
         # Get model prediction
         model_pred = self.model(**lumina_transformer_kwargs)[0]

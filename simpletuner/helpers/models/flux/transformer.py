@@ -33,6 +33,15 @@ try:
 except:
     pass
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    flowmap_timestep_embedding,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
 from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
@@ -258,6 +267,95 @@ def _flux_tokenwise_conditioning(
             )
         conditioning = conditioning_module(flat_timestep, guidance.reshape(-1), repeated_pooled)
 
+    return conditioning.view(batch_size, sequence_length, -1)
+
+
+def _flux_tokenwise_flowmap_conditioning(
+    conditioning_module,
+    delta_timestep_embedder: Optional[nn.Module],
+    timestep: torch.Tensor,
+    pooled_projections: torch.Tensor,
+    r_timestep: torch.Tensor,
+    deltatime_type: Optional[str],
+    gate: torch.Tensor,
+    guidance: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if delta_timestep_embedder is None or deltatime_type is None:
+        raise ValueError("Flux FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training.")
+
+    delta_timestep = prepare_flowmap_delta_timestep(
+        timestep,
+        r_timestep,
+        deltatime_type,
+        model_name="Flux",
+    )
+
+    def embed_time(time_values: torch.Tensor) -> torch.Tensor:
+        return flowmap_timestep_embedding(
+            time_proj=conditioning_module.time_proj,
+            timestep_embedder=conditioning_module.timestep_embedder,
+            timestep=time_values,
+            dtype=pooled_projections.dtype,
+        )
+
+    def embed_delta_time(time_values: torch.Tensor) -> torch.Tensor:
+        return flowmap_timestep_embedding(
+            time_proj=conditioning_module.time_proj,
+            timestep_embedder=delta_timestep_embedder,
+            timestep=time_values,
+            dtype=pooled_projections.dtype,
+        )
+
+    if timestep.ndim != 2:
+        conditioning = blend_flowmap_embeddings(embed_time(timestep), embed_delta_time(delta_timestep), gate)
+        if guidance is not None:
+            guidance_proj = conditioning_module.time_proj(guidance)
+            conditioning = conditioning + conditioning_module.guidance_embedder(
+                guidance_proj.to(dtype=pooled_projections.dtype)
+            )
+        return conditioning + conditioning_module.text_embedder(pooled_projections)
+
+    batch_size, sequence_length = timestep.shape
+    repeated_pooled = (
+        pooled_projections[:, None, :].expand(-1, sequence_length, -1).reshape(-1, pooled_projections.shape[-1])
+    )
+    flat_timestep = timestep.reshape(-1)
+    flat_delta_timestep = delta_timestep.reshape(-1)
+
+    conditioning = blend_flowmap_embeddings(embed_time(flat_timestep), embed_delta_time(flat_delta_timestep), gate)
+    if guidance is not None:
+        if not torch.is_tensor(guidance):
+            guidance = torch.tensor(guidance, device=timestep.device, dtype=timestep.dtype)
+        else:
+            guidance = guidance.to(device=timestep.device, dtype=timestep.dtype)
+        if guidance.ndim == 0:
+            guidance = guidance.expand(batch_size, sequence_length)
+        elif guidance.ndim == 1:
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(
+                    f"Flux tokenwise guidance expected 1 or {batch_size} batch values, got {guidance.shape[0]}."
+                )
+            guidance = guidance[:, None].expand(-1, sequence_length)
+        elif guidance.ndim == 2:
+            if guidance.shape[1] != sequence_length:
+                raise ValueError(
+                    f"Flux tokenwise guidance expected sequence length {sequence_length}, got {guidance.shape[1]}."
+                )
+            if guidance.shape[0] == 1:
+                guidance = guidance.expand(batch_size, -1)
+            elif guidance.shape[0] != batch_size:
+                raise ValueError(f"Flux tokenwise guidance expected batch size {batch_size}, got {guidance.shape[0]}.")
+        else:
+            raise ValueError(
+                f"Flux guidance expected scalar, 1D batch tensor, or 2D tokenwise tensor, got shape {tuple(guidance.shape)}."
+            )
+
+        guidance_proj = conditioning_module.time_proj(guidance.reshape(-1))
+        conditioning = conditioning + conditioning_module.guidance_embedder(guidance_proj.to(dtype=pooled_projections.dtype))
+
+    conditioning = conditioning + conditioning_module.text_embedder(repeated_pooled)
     return conditioning.view(batch_size, sequence_length, -1)
 
 
@@ -544,6 +642,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
         enable_time_sign_embed: bool = False,
+        gate_value: Optional[float] = None,
+        deltatime_type: Optional[str] = None,
     ):
         super().__init__()
         self.register_to_config(
@@ -560,6 +660,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
             enable_time_sign_embed=enable_time_sign_embed,
+            gate_value=gate_value,
+            deltatime_type=deltatime_type,
         )
         self.out_channels = in_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -572,6 +674,14 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             embedding_dim=self.inner_dim,
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
+        self.delta_timestep_embedder: Optional[nn.Module] = None
+        self.flowmap_deltatime_type: Optional[str] = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         # Signed-time embedding for TwinFlow adversarial branch; row 0 = positive/zero, row 1 = negative.
         self.time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -627,6 +737,13 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
         self._tread_routes = routes
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Flux")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self.time_text_embed.timestep_embedder)
+        set_flowmap_gate(self, gate_value)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     @property
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
@@ -727,6 +844,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
         timestep_sign: Optional[torch.Tensor] = None,
+        r_timestep: Optional[torch.Tensor] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         controlnet_block_samples=None,
         controlnet_single_block_samples=None,
@@ -780,6 +898,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         hidden_states = self.x_embedder(hidden_states)
 
         timestep = timestep.to(device=hidden_states.device, dtype=torch.float32) * 1000
+        if r_timestep is not None:
+            r_timestep = r_timestep.to(device=hidden_states.device, dtype=torch.float32) * 1000
         if guidance is not None:
             guidance = guidance.to(device=hidden_states.device, dtype=torch.float32) * 1000
         else:
@@ -821,7 +941,19 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             sign_idx = (sign_tensor.reshape(-1) < 0).long().to(device=hidden_states.device)
             sign_emb = self.time_sign_embed(sign_idx)
 
-        temb = _flux_tokenwise_conditioning(self.time_text_embed, timestep, pooled_projections, guidance)
+        if r_timestep is None:
+            temb = _flux_tokenwise_conditioning(self.time_text_embed, timestep, pooled_projections, guidance)
+        else:
+            temb = _flux_tokenwise_flowmap_conditioning(
+                self.time_text_embed,
+                self.delta_timestep_embedder,
+                timestep,
+                pooled_projections,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                self.flowmap_delta_emb_gate,
+                guidance,
+            )
         if sign_emb is not None:
             if temb.ndim == 3:
                 sign_emb = sign_emb.view(temb.shape[0], temb.shape[1], -1)

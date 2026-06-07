@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from diffusers import AutoencoderKL, UNet2DConditionModel
+from diffusers import AutoencoderKL
 from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
@@ -18,6 +18,7 @@ from simpletuner.helpers.acceleration import (
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.kolors.pipeline import KolorsImg2ImgPipeline, KolorsPipeline
 from simpletuner.helpers.models.tae.types import ImageTAESpec
+from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel as UNet2DConditionModel
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -218,6 +219,7 @@ class Kolors(ImageModelFoundation):
                     added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                     cross_attention_kwargs=cross_attention_kwargs,
                     return_dict=False,
+                    **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
                 )[0]
                 urepa_hidden = capture.get_captured()
         else:
@@ -238,6 +240,7 @@ class Kolors(ImageModelFoundation):
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                 cross_attention_kwargs=cross_attention_kwargs,
                 return_dict=False,
+                **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
             )[0]
 
         return {
