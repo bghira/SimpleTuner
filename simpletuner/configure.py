@@ -2651,7 +2651,14 @@ class SimpleTunerNCurses:
     def _save_config(self, stdscr, config_data: Dict[str, Any]) -> None:
         """Persist configuration to disk."""
 
-        default_path = self.state.loaded_config_path or "config/config.json"
+        # Default to the same directory the WebUI's config API resolves to
+        # (SIMPLETUNER_CONFIG_DIR -> onboarding configs_dir -> <root>/config) so a
+        # config saved here is visible to the WebUI, including Docker /workspace mounts.
+        # Imported lazily: config_store imports from this module at load time.
+        from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+
+        default_dir = ConfigStore(config_type="model").config_dir
+        default_path = self.state.loaded_config_path or str(default_dir / "config.json")
         path = self.get_input(stdscr, "Enter file path to save config:", default_path)
         if not path:
             self.show_error(stdscr, "Path cannot be empty.")
