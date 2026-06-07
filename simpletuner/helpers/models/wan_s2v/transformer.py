@@ -34,6 +34,7 @@ from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
     clone_flowmap_embedder,
     prepare_flowmap_delta_timestep,
+    register_flowmap_config,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
@@ -1046,7 +1047,7 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.condition_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
-        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):

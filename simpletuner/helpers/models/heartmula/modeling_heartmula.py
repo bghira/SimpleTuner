@@ -248,8 +248,11 @@ class HeartMuLaModel(PreTrainedModel):
         tokens: torch.Tensor,
         tokens_mask: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
+        r_timestep: torch.Tensor | None = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
+        if r_timestep is not None:
+            raise ValueError("HeartMuLa does not expose diffusion timestep conditioning for AnyFlow/FlowMap training.")
         if kwargs:
             logger.warning(
                 "HeartMuLaModel.forward received unexpected keyword arguments: %s",

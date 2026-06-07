@@ -8,12 +8,8 @@ import torch
 from huggingface_hub import hf_hub_download
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
-from simpletuner.helpers.models.ideogram.constants import (
-    IMAGE_POSITION_OFFSET,
-    LLM_TOKEN_INDICATOR,
-    OUTPUT_IMAGE_INDICATOR,
-)
 from simpletuner.helpers.models.ideogram.autoencoder import AutoEncoder
+from simpletuner.helpers.models.ideogram.constants import IMAGE_POSITION_OFFSET, LLM_TOKEN_INDICATOR, OUTPUT_IMAGE_INDICATOR
 from simpletuner.helpers.models.ideogram.pipeline import (
     Ideogram4Config,
     Ideogram4Pipeline,
@@ -113,10 +109,7 @@ class Ideogram4(ImageModelFoundation):
         return text_encoder
 
     def load_prompt_enhancer_head(self, move_to_device: bool = True):
-        repo_id = (
-            getattr(self.config, "ideogram_prompt_enhancer_head_id", None)
-            or self.DEFAULT_PROMPT_ENHANCER_HEAD
-        )
+        repo_id = getattr(self.config, "ideogram_prompt_enhancer_head_id", None) or self.DEFAULT_PROMPT_ENHANCER_HEAD
         self.prompt_enhancer_head = Ideogram4PromptEnhancerHead.from_pretrained(repo_id)
         self.prompt_enhancer_head.to(dtype=self.config.weight_dtype)
         if move_to_device:
@@ -424,6 +417,28 @@ class Ideogram4(ImageModelFoundation):
         image_pos = torch.stack([t_idx, h_idx, w_idx], dim=1) + IMAGE_POSITION_OFFSET
         return image_pos.unsqueeze(0).expand(batch_size, -1, -1)
 
+    def _prepare_model_predict_timesteps(self, raw_timesteps, batch_size: int) -> torch.Tensor:
+        if not torch.is_tensor(raw_timesteps):
+            timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
+        else:
+            timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
+        if timesteps.ndim == 0:
+            timesteps = timesteps.expand(batch_size)
+        if timesteps.max() > 1:
+            timesteps = timesteps / 1000.0
+        return 1.0 - timesteps
+
+    def _prepare_flowmap_model_predict_batch(self, prepared_batch: dict, batch_size: int) -> dict:
+        r_timesteps = prepared_batch.get(self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
+        if r_timesteps is None:
+            return prepared_batch
+        flowmap_batch = dict(prepared_batch)
+        flowmap_batch[self.FLOWMAP_R_TIMESTEP_BATCH_KEY] = self._prepare_model_predict_timesteps(
+            r_timesteps,
+            batch_size=batch_size,
+        )
+        return flowmap_batch
+
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         batch_size, _channels, latent_height, latent_width = noisy_latents.shape
@@ -446,8 +461,8 @@ class Ideogram4(ImageModelFoundation):
         text_tokens = prompt_embeds.shape[1]
 
         text_position = torch.arange(text_tokens, device=self.accelerator.device)
-        text_position_ids = torch.stack([text_position, text_position, text_position], dim=1).unsqueeze(0).expand(
-            batch_size, -1, -1
+        text_position_ids = (
+            torch.stack([text_position, text_position, text_position], dim=1).unsqueeze(0).expand(batch_size, -1, -1)
         )
         image_position_ids = self._image_position_ids(batch_size, latent_height, latent_width)
         position_ids = torch.cat([text_position_ids, image_position_ids], dim=1)
@@ -461,7 +476,9 @@ class Ideogram4(ImageModelFoundation):
         indicator = torch.cat(
             [
                 torch.full((batch_size, text_tokens), LLM_TOKEN_INDICATOR, dtype=torch.long, device=self.accelerator.device),
-                torch.full((batch_size, image_tokens), OUTPUT_IMAGE_INDICATOR, dtype=torch.long, device=self.accelerator.device),
+                torch.full(
+                    (batch_size, image_tokens), OUTPUT_IMAGE_INDICATOR, dtype=torch.long, device=self.accelerator.device
+                ),
             ],
             dim=1,
         )
@@ -486,12 +503,10 @@ class Ideogram4(ImageModelFoundation):
             device=self.accelerator.device,
         )
         model_input = torch.cat([text_z_padding, packed_latents], dim=1)
-        timesteps = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=torch.float32)
-        if timesteps.ndim == 0:
-            timesteps = timesteps.expand(batch_size)
-        if timesteps.max() > 1:
-            timesteps = timesteps / 1000.0
-        timesteps = 1.0 - timesteps
+        timesteps = self._prepare_model_predict_timesteps(prepared_batch["timesteps"], batch_size=batch_size)
+        transformer_kwargs = self._get_flowmap_r_timestep_forward_kwargs(
+            self._prepare_flowmap_model_predict_batch(prepared_batch, batch_size=batch_size)
+        )
 
         model_output = self.model(
             llm_features=llm_features,
@@ -500,6 +515,7 @@ class Ideogram4(ImageModelFoundation):
             position_ids=position_ids,
             segment_ids=segment_ids,
             indicator=indicator,
+            **transformer_kwargs,
         )
         packed_prediction = model_output[:, text_tokens:]
         model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)

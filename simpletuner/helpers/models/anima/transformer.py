@@ -34,6 +34,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
+from simpletuner.helpers.models.flowmap import register_flowmap_config
 
 DEFAULT_ANIMA_TRANSFORMER_FILENAME = "anima-preview.safetensors"
 DIFFUSERS_LLM_ADAPTER_FILENAME = "llm_adapter/diffusion_pytorch_model.safetensors"
@@ -445,7 +446,7 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.core.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
-        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def set_adapters(
         self,

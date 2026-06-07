@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from diffusers import AutoencoderKL, UNet2DConditionModel
+from diffusers import AutoencoderKL
 from diffusers.pipelines import IFPipeline, IFSuperResolutionPipeline
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from peft import set_peft_model_state_dict
@@ -19,6 +19,7 @@ from simpletuner.helpers.acceleration import (
     get_torchao_presets,
 )
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel as UNet2DConditionModel
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log

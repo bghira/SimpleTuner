@@ -118,6 +118,7 @@ Para detalles de despliegue, consulta la [Guía Enterprise](/documentation/exper
 - **Group offloading** - Staging de módulos por grupo a CPU/disco en Diffusers v0.33+ con streams CUDA opcionales
 - **Barridos de adaptadores de validación** - Adjunta temporalmente adaptadores LoRA (individuales o presets JSON) durante la validación para medir renders solo de adaptador o comparativos sin tocar el training loop
 - **Hooks de validación externos** - Sustituye el pipeline de validación integrado o los pasos post-upload por tus scripts, para ejecutar checks en otra GPU o reenviar artefactos a cualquier proveedor cloud que elijas ([detalles](/documentation/OPTIONS.md#validation_method))
+- **Destilación AnyFlow** - Conditioning de intervalos FlowMap para modelos de flow matching con targets online del teacher ([guía](/documentation/experimental/ANYFLOW.es.md))
 - **Regularización CREPA** - Alineación de representación entre frames para video DiTs ([guía](/documentation/experimental/VIDEO_CREPA.md))
 - **Formatos de I/O de LoRA** - Carga/guarda LoRAs PEFT en layout estándar de Diffusers o claves estilo ComfyUI `diffusion_model.*` (Flux/Flux2/Lumina2/Z-Image detectan automáticamente entradas ComfyUI)
 

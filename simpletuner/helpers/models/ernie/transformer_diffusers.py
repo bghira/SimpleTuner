@@ -36,6 +36,7 @@ from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
     clone_flowmap_embedder,
     prepare_flowmap_delta_timestep,
+    register_flowmap_config,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
@@ -373,7 +374,7 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         if self.delta_time_embedding is None:
             self.delta_time_embedding = clone_flowmap_embedder(self.time_embedding)
         set_flowmap_gate(self, gate_value)
-        self.register_to_config(gate_value=float(gate_value), deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def _apply_flowmap_time_conditioning(
         self,

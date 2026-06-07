@@ -412,9 +412,14 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": "dmd", "label": "DMD"},
                 {"value": "perflow", "label": "PerFlow"},
                 {"value": "flow_dpo", "label": "Flow-DPO"},
+                {"value": "anyflow", "label": "AnyFlow"},
             ],
             help_text="Method for model distillation",
-            tooltip="Select the distillation approach to use when converting models (LCM, DCM, DMD, PerFlow, or Flow-DPO). Distillation cannot be combined with text encoder training.",
+            tooltip=(
+                "Select the distillation approach to use when converting models "
+                "(LCM, DCM, DMD, PerFlow, Flow-DPO, or AnyFlow). "
+                "Distillation cannot be combined with text encoder training."
+            ),
             importance=ImportanceLevel.ADVANCED,
             allow_empty=True,
             order=1,

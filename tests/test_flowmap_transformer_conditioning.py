@@ -1,4 +1,5 @@
 import unittest
+import warnings
 
 import torch
 from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings
@@ -7,6 +8,7 @@ from simpletuner.helpers.models.flowmap import clone_flowmap_embedder, prepare_f
 from simpletuner.helpers.models.flux2.transformer import Flux2TimestepGuidanceEmbeddings
 from simpletuner.helpers.models.flux.transformer import _flux_tokenwise_conditioning, _flux_tokenwise_flowmap_conditioning
 from simpletuner.helpers.models.sd3.transformer import _sd3_tokenwise_conditioning, _sd3_tokenwise_flowmap_conditioning
+from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel
 
 
 class TestFlowMapTransformerConditioning(unittest.TestCase):
@@ -124,6 +126,76 @@ class TestFlowMapTransformerConditioning(unittest.TestCase):
         flowmap = embedding(timestep, guidance, r_timestep=torch.zeros_like(timestep))
 
         self.assertFalse(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_unet_flowmap_requires_enable_for_r_timestep(self):
+        model = self._tiny_unet()
+        sample, timestep, encoder_hidden_states = self._tiny_unet_inputs()
+
+        with self.assertRaisesRegex(ValueError, "enable_flowmap_time_conditioning"):
+            model(sample, timestep, encoder_hidden_states, r_timestep=timestep)
+
+    def test_unet_flowmap_equal_r_matches_base_output(self):
+        torch.manual_seed(5)
+        model = self._tiny_unet()
+        model.eval()
+        sample, timestep, encoder_hidden_states = self._tiny_unet_inputs()
+
+        with torch.no_grad():
+            base = model(sample, timestep, encoder_hidden_states).sample
+            model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+            flowmap = model(sample, timestep, encoder_hidden_states, r_timestep=timestep).sample
+
+        self.assertTrue(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_unet_flowmap_different_r_changes_output(self):
+        torch.manual_seed(6)
+        model = self._tiny_unet()
+        model.eval()
+        sample, timestep, encoder_hidden_states = self._tiny_unet_inputs()
+
+        with torch.no_grad():
+            base = model(sample, timestep, encoder_hidden_states).sample
+            model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+            flowmap = model(sample, timestep, encoder_hidden_states, r_timestep=torch.zeros_like(timestep)).sample
+
+        self.assertFalse(torch.allclose(flowmap, base, atol=1e-6))
+
+    def test_unet_flowmap_from_config_restores_delta_embedding(self):
+        model = self._tiny_unet()
+        model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            clone = FlowMapUNet2DConditionModel.from_config(model.config)
+
+        flowmap_config_warnings = [
+            warning for warning in caught if "deltatime_type" in str(warning.message) or "gate_value" in str(warning.message)
+        ]
+        self.assertEqual(flowmap_config_warnings, [])
+        self.assertNotIn("deltatime_type", model.config.get("_use_default_values", []))
+        self.assertEqual(clone.flowmap_deltatime_type, "r")
+        self.assertIsNotNone(clone.delta_time_embedding)
+
+    def _tiny_unet(self):
+        return FlowMapUNet2DConditionModel(
+            sample_size=4,
+            in_channels=4,
+            out_channels=4,
+            down_block_types=("DownBlock2D",),
+            up_block_types=("UpBlock2D",),
+            block_out_channels=(8,),
+            layers_per_block=1,
+            norm_num_groups=4,
+            cross_attention_dim=8,
+            attention_head_dim=1,
+            mid_block_type=None,
+        )
+
+    def _tiny_unet_inputs(self):
+        sample = torch.randn(2, 4, 4, 4)
+        timestep = torch.tensor([10, 20])
+        encoder_hidden_states = torch.randn(2, 1, 8)
+        return sample, timestep, encoder_hidden_states
 
 
 if __name__ == "__main__":

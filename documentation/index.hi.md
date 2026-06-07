@@ -72,9 +72,9 @@
 
     ---
 
-    Self-Flow, Flow-DPO, LayerSync, Diff2Flow और Video CREPA जैसी research features
+    AnyFlow, Self-Flow, Flow-DPO, LayerSync, Diff2Flow और Video CREPA जैसी research features
 
-    [:octicons-arrow-right-24: Flow-DPO](experimental/FLOW_DPO.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md)
 
 </div>
 
