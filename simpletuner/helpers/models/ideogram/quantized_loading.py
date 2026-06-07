@@ -44,6 +44,19 @@ def _scaled_mm_supported(x: torch.Tensor) -> bool:
 
 class _Fp8LinearScaledMm(torch.autograd.Function):
   @staticmethod
+  def _dequantized_forward(
+    x_2d: torch.Tensor,
+    input_shape: torch.Size,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+    out_features: int,
+  ) -> torch.Tensor:
+    w = weight.to(x_2d.dtype) * weight_scale.to(x_2d.dtype).unsqueeze(1)
+    bias_arg = bias.to(x_2d.dtype) if bias is not None else None
+    return F.linear(x_2d, w, bias_arg).reshape(*input_shape[:-1], out_features)
+
+  @staticmethod
   def forward(
     ctx,
     x: torch.Tensor,
@@ -60,20 +73,44 @@ class _Fp8LinearScaledMm(torch.autograd.Function):
     )
     x_fp8 = (x_2d * input_scale).clamp(-input_max, input_max).to(FP8_INPUT_DTYPE)
 
-    bias_arg = bias.to(x.dtype) if bias is not None else None
-    scale_a = input_scale.reciprocal().to(torch.float32).expand(x_2d.shape[0], 1).contiguous()
-    scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
-    out = torch._scaled_mm(
-      x_fp8,
-      weight.T,
-      scale_a=scale_a,
-      scale_b=scale_b,
-      bias=bias_arg,
-      out_dtype=x.dtype,
-      use_fast_accum=True,
+    kernel_out_dtype = x.dtype if x.dtype in {torch.bfloat16, torch.float16} else torch.bfloat16
+    bias_arg = bias.to(kernel_out_dtype) if bias is not None else None
+    scale_a = torch.empty(
+      (x_2d.shape[0], 1),
+      device=x_2d.device,
+      dtype=torch.float32,
     )
+    scale_a.copy_(input_scale.reciprocal().to(torch.float32).expand_as(scale_a))
+    scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
+    try:
+      out = torch._scaled_mm(
+        x_fp8,
+        weight.T,
+        scale_a=scale_a,
+        scale_b=scale_b,
+        bias=bias_arg,
+        out_dtype=kernel_out_dtype,
+        use_fast_accum=True,
+      )
+    except RuntimeError as exc:
+      if "scale_a" not in str(exc) and "Invalid scaling configuration" not in str(exc):
+        raise
+      out = _Fp8LinearScaledMm._dequantized_forward(
+        x_2d,
+        input_shape,
+        weight,
+        weight_scale,
+        bias,
+        out_features,
+      )
+      ctx.save_for_backward(weight, weight_scale)
+      ctx.input_shape = input_shape
+      ctx.out_features = out_features
+      return out
     if isinstance(out, tuple):
       out = out[0]
+    if out.dtype != x.dtype:
+      out = out.to(x.dtype)
 
     ctx.save_for_backward(weight, weight_scale)
     ctx.input_shape = input_shape
@@ -272,7 +309,24 @@ class Fp8Linear(nn.Module):
     else:
       self.bias = None
 
+  def _apply(self, fn, recurse: bool = True):
+    weight = self._buffers.pop("weight")
+    weight_scale = self._buffers.pop("weight_scale")
+    try:
+      super()._apply(fn, recurse=recurse)
+      device_probe = fn(torch.empty(0, device=weight.device, dtype=torch.uint8))
+    finally:
+      self._buffers["weight"] = weight
+      self._buffers["weight_scale"] = weight_scale
+    self._buffers["weight"] = weight.to(device=device_probe.device)
+    self._buffers["weight_scale"] = weight_scale.to(device=device_probe.device)
+    return self
+
   def forward(self, x: torch.Tensor) -> torch.Tensor:
+    if self.weight.dtype != FP8_WEIGHT_DTYPE:
+      raise RuntimeError(f"Fp8Linear weight must be {FP8_WEIGHT_DTYPE}, got {self.weight.dtype}.")
+    if self.weight_scale.dtype != torch.float32:
+      raise RuntimeError(f"Fp8Linear weight_scale must be torch.float32, got {self.weight_scale.dtype}.")
     if _scaled_mm_supported(x):
       return _Fp8LinearScaledMm.apply(
         x,

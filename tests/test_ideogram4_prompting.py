@@ -14,6 +14,7 @@ from simpletuner.helpers.models.ideogram.pipeline import Ideogram4Pipeline
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
+from simpletuner.helpers.training.validation import prepare_validation_prompt_list
 
 
 class Ideogram4PromptingTests(unittest.TestCase):
@@ -331,6 +332,52 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         self.assertIs(loaded, model.prompt_enhancer_head)
         self.assertEqual(DummyHead.loaded_repo, "example/head")
+
+    def test_validation_negative_prompt_uses_ideogram_negative_encoder(self):
+        class DummyEmbedCache:
+            model_type = "ideogram"
+            _requires_path_based_keys = False
+
+            def __init__(self):
+                self.generic_calls = []
+                self.negative_calls = []
+
+            def compute_embeddings_for_prompts(self, prompts, **kwargs):
+                self.generic_calls.append((prompts, kwargs))
+
+            def encode_validation_negative_prompt(self, prompt):
+                self.negative_calls.append(prompt)
+
+        class DummyModel:
+            def requires_conditioning_validation_inputs(self):
+                return False
+
+            def should_precompute_validation_negative_prompt(self):
+                return True
+
+            def log_model_devices(self):
+                pass
+
+        args = types.SimpleNamespace(
+            model_family="ideogram",
+            model_flavour="fp8",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_prompt_library=False,
+            user_prompt_library=None,
+            validation_prompt="a domokun plush",
+            validation_negative_prompt="bad",
+            validation_disable_unconditional=True,
+        )
+        embed_cache = DummyEmbedCache()
+
+        with mock.patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args):
+            prepare_validation_prompt_list(args, embed_cache, DummyModel())
+
+        self.assertEqual(embed_cache.negative_calls, ["bad"])
+        self.assertTrue(any(call[0][0]["prompt"] == "a domokun plush" for call in embed_cache.generic_calls))
+        self.assertFalse(any(call[0] == ["bad"] for call in embed_cache.generic_calls))
 
     def test_pipeline_saves_lora_weights_with_transformer_prefix(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

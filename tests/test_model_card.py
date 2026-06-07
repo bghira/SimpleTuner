@@ -1,6 +1,8 @@
 import json
 import os
+import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from simpletuner.helpers.publishing.metadata import *
@@ -13,6 +15,7 @@ from simpletuner.helpers.publishing.metadata import (
     _torch_device,
     _validation_resolution,
 )
+from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 
 
 class TestMetadataFunctions(unittest.TestCase):
@@ -246,6 +249,41 @@ class TestMetadataFunctions(unittest.TestCase):
                                     "w",
                                     encoding="utf-8",
                                 )
+
+    def test_save_training_config_sanitizes_public_export(self):
+        config = SimpleNamespace(
+            output_dir="output/test",
+            sageattention_usage=AttentionBackendMode.INFERENCE,
+            publishing_config=[
+                {
+                    "provider": "s3",
+                    "bucket": "training",
+                    "access_key": "dummy-access-key",
+                    "secret_key": "dummy-secret-key",
+                }
+            ],
+            webhook_config={"url": "https://example.invalid/webhook", "auth_token": "dummy-token"},
+            nested={
+                "safe": "keep",
+                "tokenizer_max_length": 77,
+                "access_key": "nested-access-key",
+                "aws_secret_access_key": "nested-secret-key",
+                "token": "nested-token",
+            },
+            dtype=torch.bfloat16,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_training_config(repo_folder=temp_dir, config=config)
+            with open(os.path.join(temp_dir, "simpletuner_config.json"), "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(payload["sageattention_usage"], "inference")
+        self.assertNotIsInstance(payload["sageattention_usage"], dict)
+        self.assertNotIn("publishing_config", payload)
+        self.assertNotIn("webhook_config", payload)
+        self.assertEqual(payload["nested"], {"safe": "keep", "tokenizer_max_length": 77})
+        self.assertEqual(payload["dtype"], "torch.bfloat16")
 
     def test_adapter_download_fn(self):
         with patch("huggingface_hub.hf_hub_download", return_value="path/to/adapter"):

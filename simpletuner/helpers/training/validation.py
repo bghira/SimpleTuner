@@ -737,7 +737,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         negative_prompt = StateTracker.get_args().validation_negative_prompt
         logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
         model.log_model_devices()
-        if model.should_precompute_validation_negative_prompt():
+        if getattr(args, "model_family", None) == "ideogram":
+            embed_cache.encode_validation_negative_prompt(negative_prompt)
+        elif model.should_precompute_validation_negative_prompt():
             embed_cache.compute_embeddings_for_prompts(
                 [negative_prompt],
                 is_validation=True,
