@@ -92,9 +92,7 @@ class _Fp8LinearScaledMm(torch.autograd.Function):
         out_dtype=kernel_out_dtype,
         use_fast_accum=True,
       )
-    except RuntimeError as exc:
-      if "scale_a" not in str(exc) and "Invalid scaling configuration" not in str(exc):
-        raise
+    except RuntimeError:
       out = _Fp8LinearScaledMm._dequantized_forward(
         x_2d,
         input_shape,

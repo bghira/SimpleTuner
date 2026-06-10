@@ -69,6 +69,17 @@ class IdeogramFp8LinearTests(unittest.TestCase):
     self.assertEqual(out.shape, (2, 3))
     self.assertEqual(out.dtype, torch.bfloat16)
 
+  def test_scaled_mm_runtime_error_falls_back_to_dequantized_linear(self):
+    x = torch.randn(2, 4, dtype=torch.bfloat16)
+    weight = torch.zeros(3, 4, dtype=FP8_WEIGHT_DTYPE)
+    weight_scale = torch.ones(3, dtype=torch.float32)
+
+    with mock.patch.object(torch, "_scaled_mm", side_effect=RuntimeError("unsupported scaled_mm kernel")):
+      out = quantized_loading._Fp8LinearScaledMm.apply(x, weight, weight_scale, None, 3)
+
+    self.assertEqual(out.shape, (2, 3))
+    self.assertEqual(out.dtype, torch.bfloat16)
+
   @unittest.skipUnless(torch.cuda.is_available() and hasattr(torch, "_scaled_mm"), "CUDA _scaled_mm required")
   def test_scaled_mm_cuda_forward_supports_float32_input_with_bias(self):
     layer = Fp8Linear(16, 16, bias=True, compute_dtype=torch.float32).cuda()
