@@ -93,6 +93,9 @@ class _Fp8LinearScaledMm(torch.autograd.Function):
         use_fast_accum=True,
       )
     except RuntimeError:
+      # torch._scaled_mm is only an optional fast path here; if the active
+      # torch/CUDA stack rejects the FP8 kernel for this device or layout, fall
+      # back to the dequantized Linear path instead of failing Ideogram outright.
       out = _Fp8LinearScaledMm._dequantized_forward(
         x_2d,
         input_shape,
