@@ -197,8 +197,6 @@ class Ideogram4(ImageModelFoundation):
     def _maybe_upsample_prompt(self, prompt: str, encoder_shell: Ideogram4Pipeline) -> str:
         if not getattr(self.config, "ideogram_prompt_upsample", False):
             return prompt
-        if getattr(self, "prompt_enhancer_head", None) is not None and hasattr(self.prompt_enhancer_head, "to"):
-            self.prompt_enhancer_head.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         upsample_prompt = getattr(encoder_shell, "upsample_prompt", None)
         if upsample_prompt is None:
             raise ValueError("--ideogram_prompt_upsample requires an Ideogram pipeline with upsample_prompt().")
@@ -215,33 +213,6 @@ class Ideogram4(ImageModelFoundation):
             self.load_prompt_enhancer_head(move_to_device=True)
 
         tokenizer = self.tokenizers[0]
-        if not getattr(self, "_logged_text_encoder_devices", False):
-            text_encoder = self.text_encoders[0]
-            text_encoder_device = getattr(text_encoder, "device", None)
-            if text_encoder_device is None and hasattr(text_encoder, "parameters"):
-                try:
-                    text_encoder_device = next(text_encoder.parameters()).device
-                except StopIteration:
-                    text_encoder_device = "unknown"
-            if text_encoder_device is None:
-                text_encoder_device = "unknown"
-            logger.info(
-                "Ideogram text encoder device: %s; prompt upsample: %s",
-                text_encoder_device,
-                bool(getattr(self.config, "ideogram_prompt_upsample", False)),
-            )
-            head = getattr(self, "prompt_enhancer_head", None)
-            if head is not None:
-                head_device = getattr(head, "device", None)
-                if head_device is None and hasattr(head, "parameters"):
-                    try:
-                        head_device = next(head.parameters()).device
-                    except StopIteration:
-                        head_device = "unknown"
-                if head_device is None:
-                    head_device = "unknown"
-                logger.info("Ideogram prompt enhancer head device: %s", head_device)
-            self._logged_text_encoder_devices = True
         encoder_shell = Ideogram4Pipeline(
             conditional_transformer=None,
             unconditional_transformer=None,
@@ -552,16 +523,6 @@ class Ideogram4(ImageModelFoundation):
     def check_user_config(self):
         super().check_user_config()
         self.config.prediction_type = "flow_matching"
-
-    def log_model_devices(self):
-        super().log_model_devices()
-        head = getattr(self, "prompt_enhancer_head", None)
-        if head is not None:
-            try:
-                device = next(head.parameters()).device
-            except StopIteration:
-                device = "unknown"
-            logger.debug(f"Prompt enhancer head device: {device}")
 
 
 ModelRegistry.register("ideogram", Ideogram4)

@@ -1051,16 +1051,7 @@ class ModelFoundation(ABC):
             for i, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
                     continue
-                device = getattr(text_encoder, "device", None)
-                if device is None:
-                    try:
-                        device = next(text_encoder.parameters()).device
-                    except StopIteration:
-                        try:
-                            device = next(text_encoder.buffers()).device
-                        except StopIteration:
-                            device = "unknown"
-                logger.debug(f"Text encoder {i} device: {device}")
+                logger.debug(f"Text encoder {i} device: {text_encoder.device}")
 
     def setup_model_flavour(self):
         """
