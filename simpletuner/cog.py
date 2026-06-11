@@ -22,6 +22,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+os.environ.setdefault("SIMPLETUNER_DISABLE_COLORS", "1")
+
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.training.trainer import run_trainer_job
 
