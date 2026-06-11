@@ -953,6 +953,46 @@ class TestTrainer(unittest.TestCase):
         self.assertNotIn("--multi_gpu", captured["cmd"])
         self.assertIn("--use_fsdp", captured["cmd"])
 
+    def test_run_trainer_job_sanitizes_accelerate_launch_log(self):
+        payload = {
+            "accelerate_visible_devices": [0],
+            "accelerate_extra_args": "--api_key dummy-api-key --use_fsdp",
+            "model_type": "lora",
+            "publishing_config": [
+                {
+                    "provider": "s3",
+                    "bucket": "training",
+                    "access_key": "dummy-access-key",
+                    "secret_key": "dummy-secret-key",
+                }
+            ],
+            "webhook_config": {
+                "url": "https://example.invalid/webhook",
+                "auth_token": "dummy-auth-token",
+            },
+        }
+
+        with self.assertLogs("SimpleTuner", level="INFO") as captured_logs:
+            result, captured = self._run_trainer_job_with_captured_popen(payload)
+
+        self.assertEqual(result, 0)
+        actual_command = " ".join(captured["cmd"])
+        self.assertIn("--publishing_config=", actual_command)
+        self.assertIn("dummy-access-key", actual_command)
+        self.assertIn("dummy-secret-key", actual_command)
+        self.assertIn("dummy-api-key", actual_command)
+
+        launch_lines = [line for line in captured_logs.output if "Launching training via accelerate:" in line]
+        self.assertEqual(len(launch_lines), 1)
+        launch_line = launch_lines[0]
+        self.assertIn("--use_fsdp", launch_line)
+        self.assertNotIn("publishing_config", launch_line)
+        self.assertNotIn("webhook_config", launch_line)
+        self.assertNotIn("dummy-access-key", launch_line)
+        self.assertNotIn("dummy-secret-key", launch_line)
+        self.assertNotIn("dummy-auth-token", launch_line)
+        self.assertNotIn("dummy-api-key", launch_line)
+
     def test_accelerate_manual_triggers_are_relayed(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
