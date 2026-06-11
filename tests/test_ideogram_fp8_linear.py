@@ -81,7 +81,7 @@ class IdeogramFp8LinearTests(unittest.TestCase):
     self.assertEqual(out.shape, (2, 3))
     self.assertEqual(out.dtype, torch.bfloat16)
 
-  def test_load_fp8_state_dict_assign_true_materializes_meta_buffers_without_module_to(self):
+  def test_load_fp8_state_dict_with_assign_materializes_meta_buffers(self):
     with torch.device("meta"):
       layer = Fp8Linear(4, 3, bias=True, compute_dtype=torch.bfloat16)
 
