@@ -953,6 +953,54 @@ class TestTrainer(unittest.TestCase):
         self.assertNotIn("--multi_gpu", captured["cmd"])
         self.assertIn("--use_fsdp", captured["cmd"])
 
+    def test_run_trainer_job_sanitizes_accelerate_launch_log(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        payload = {
+            "accelerate_visible_devices": [0],
+            "accelerate_extra_args": "--api_key dummy-api-key --use_fsdp",
+            "model_type": "lora",
+            "publishing_config": [
+                {
+                    "provider": "s3",
+                    "bucket": "training",
+                    "access_key": "dummy-access-key",
+                    "secret_key": "dummy-secret-key",
+                }
+            ],
+            "webhook_config": {
+                "url": "https://example.invalid/webhook",
+                "auth_token": "dummy-auth-token",
+            },
+        }
+
+        launch_logger = trainer_module.logging.getLogger("SimpleTuner")
+        with patch.object(launch_logger, "info") as mock_info:
+            result, captured = self._run_trainer_job_with_captured_popen(payload)
+
+        self.assertEqual(result, 0)
+        actual_command = " ".join(captured["cmd"])
+        self.assertIn("--publishing_config=", actual_command)
+        self.assertIn("dummy-access-key", actual_command)
+        self.assertIn("dummy-secret-key", actual_command)
+        self.assertIn("dummy-api-key", actual_command)
+
+        launch_messages = [
+            call.args[1]
+            for call in mock_info.call_args_list
+            if len(call.args) >= 2 and call.args[0] == "Launching training via accelerate: %s"
+        ]
+        self.assertEqual(len(launch_messages), 1)
+        launch_line = launch_messages[0]
+        self.assertIn("--use_fsdp", launch_line)
+        self.assertNotIn("publishing_config", launch_line)
+        self.assertNotIn("webhook_config", launch_line)
+        self.assertNotIn("api_key", launch_line)
+        self.assertNotIn("dummy-access-key", launch_line)
+        self.assertNotIn("dummy-secret-key", launch_line)
+        self.assertNotIn("dummy-auth-token", launch_line)
+        self.assertNotIn("dummy-api-key", launch_line)
+
     def test_accelerate_manual_triggers_are_relayed(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
