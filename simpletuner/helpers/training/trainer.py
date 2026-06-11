@@ -167,6 +167,7 @@ from accelerate.utils import (
 from torch.distributions import Beta
 
 from simpletuner.configure import model_classes, model_labels
+from simpletuner.helpers.configuration.sanitization import sanitize_cli_args_for_public_logging
 
 try:
     from lycoris import LycorisNetwork
@@ -7174,7 +7175,10 @@ def run_trainer_job(config):
             launch_env.setdefault("CONFIG_BACKEND", "cmd")
             cmd.extend(cli_args)
 
-        launch_logger.info("Launching training via accelerate: %s", " ".join(cmd))
+        launch_logger.info(
+            "Launching training via accelerate: %s",
+            shlex.join(sanitize_cli_args_for_public_logging(cmd)),
+        )
 
         popen_kwargs = {
             "env": launch_env,
