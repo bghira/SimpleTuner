@@ -7,6 +7,7 @@ from simpletuner.helpers.models.ideogram import quantized_loading
 from simpletuner.helpers.models.ideogram.quantized_loading import (
   FP8_WEIGHT_DTYPE,
   Fp8Linear,
+  load_fp8_state_dict,
   quantize_weight_to_fp8,
 )
 
@@ -79,6 +80,27 @@ class IdeogramFp8LinearTests(unittest.TestCase):
 
     self.assertEqual(out.shape, (2, 3))
     self.assertEqual(out.dtype, torch.bfloat16)
+
+  def test_load_fp8_state_dict_assign_true_materializes_meta_buffers_without_module_to(self):
+    with torch.device("meta"):
+      layer = Fp8Linear(4, 3, bias=True, compute_dtype=torch.bfloat16)
+
+    state_dict = {
+      "weight": torch.zeros(3, 4, dtype=FP8_WEIGHT_DTYPE),
+      "weight_scale": torch.ones(3, dtype=torch.float32),
+      "bias": torch.zeros(3, dtype=torch.bfloat16),
+    }
+    load_fp8_state_dict(
+      layer,
+      state_dict,
+      device=torch.device("cpu"),
+      dtype=torch.bfloat16,
+      assign=True,
+    )
+
+    self.assertEqual(layer.weight.device.type, "cpu")
+    self.assertEqual(layer.weight_scale.device.type, "cpu")
+    self.assertEqual(layer.bias.device.type, "cpu")
 
   @unittest.skipUnless(torch.cuda.is_available() and hasattr(torch, "_scaled_mm"), "CUDA _scaled_mm required")
   def test_scaled_mm_cuda_forward_supports_float32_input_with_bias(self):
