@@ -416,5 +416,8 @@ def load_fp8_state_dict(
       raise RuntimeError(f"missing keys after fp8 load: {missing[:10]}")
     warnings.warn(f"missing keys after fp8 load: {missing[:10]}", stacklevel=2)
 
+  # assign=True swaps in already-device-placed tensors from `prepared`; calling
+  # model.to(device) afterwards can fail for meta-created modules that still carry
+  # non-state-dict meta buffers.
   if not assign:
     model.to(device)
