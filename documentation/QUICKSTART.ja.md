@@ -18,6 +18,7 @@
 | Flux.2 | 32B | ✓ | ✓ | ✓* | int8/fp8/nf4 オプション | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [FLUX2.md](quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 オプション | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | [FLUX_KONTEXT.md](quickstart/FLUX_KONTEXT.md) |
 | Z-Image Turbo | 6B | ✓ | ✗ | ✓* | int8 オプション | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [ZIMAGE.md](quickstart/ZIMAGE.md) |
+| zlab i1 | 3B | ✓ | ✓ | ✓ | int8 オプション | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [ZLAB_i1.md](quickstart/ZLAB_i1.ja.md) |
 | Ideogram 4 | 9B | ✓ | ✓ | ✓* | fp8 デフォルト、nf4 オプション | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | [IDEOGRAM4.md](quickstart/IDEOGRAM4.ja.md) |
 | ACE-Step | 3.5B | ✓ | ✓ | ✓* | int8 オプション | bf16 | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | [ACE_STEP.md](quickstart/ACE_STEP.md) |
 | Chroma 1 | 8.9B | ✓ | ✓ | ✓* | int8/fp8/nf4 オプション | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [CHROMA.md](quickstart/CHROMA.md) |

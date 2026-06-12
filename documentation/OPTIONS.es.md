@@ -122,7 +122,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 ### `--musubi_blocks_to_swap`
 
-- **Qué**: Intercambio de bloques Musubi para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, Cosmos2Image y HunyuanVideo: mantiene los últimos N bloques del transformer en CPU y transmite pesos por bloque durante el forward.
+- **Qué**: Intercambio de bloques Musubi para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image y HunyuanVideo: mantiene los últimos N bloques del transformer en CPU y transmite pesos por bloque durante el forward.
 - **Predeterminado**: `0` (desactivado)
 - **Notas**: Offload de pesos estilo Musubi; reduce VRAM con coste en rendimiento y se omite cuando los gradientes están habilitados.
 

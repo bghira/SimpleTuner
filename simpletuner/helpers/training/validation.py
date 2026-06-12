@@ -3881,6 +3881,7 @@ class Validation:
                 if isinstance(self.config.validation_no_cfg_until_timestep, int) and self.config.model_family in (
                     "flux",
                     "flux2",
+                    "zlab_i1",
                 ):
                     pipeline_kwargs["no_cfg_until_timestep"] = self.config.validation_no_cfg_until_timestep
 
