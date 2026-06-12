@@ -122,7 +122,7 @@ simpletuner configure config/foo/config.json
 
 ### `--musubi_blocks_to_swap`
 
-- **What**: LongCat‑Video, Wan, LTXVideo, Kandinsky5‑Video, Qwen‑Image, Flux, Flux.2, Cosmos2Image, और HunyuanVideo के लिए Musubi block swap — आख़िरी N transformer blocks को CPU पर रखें और forward के दौरान प्रति block weights stream करें।
+- **What**: LongCat‑Video, Wan, LTXVideo, Kandinsky5‑Video, Qwen‑Image, Flux, Flux.2, zlab i1, Cosmos2Image, और HunyuanVideo के लिए Musubi block swap — आख़िरी N transformer blocks को CPU पर रखें और forward के दौरान प्रति block weights stream करें।
 - **Default**: `0` (disabled)
 - **Notes**: Musubi‑style weight offload; throughput लागत पर VRAM कम करता है और gradients सक्षम होने पर skip हो जाता है।
 

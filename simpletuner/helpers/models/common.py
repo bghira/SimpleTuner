@@ -97,6 +97,7 @@ flow_matching_model_families = [
     "qwen_image",
     "z_image",
     "z_image_omni",
+    "zlab_i1",
     "ideogram",
 ]
 upstream_config_sources = {
