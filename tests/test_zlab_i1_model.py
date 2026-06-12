@@ -102,6 +102,45 @@ class ZlabI1FeatureTests(unittest.TestCase):
         self.assertTrue(torch.equal(self.transformer.text_encoder_adapter.learnable_null_caption, torch.zeros_like(self.transformer.text_encoder_adapter.learnable_null_caption)))
         self.assertFalse(any(param.requires_grad for param in self.transformer.t_embedder.parameters()))
 
+    def test_transformer_config_exposes_validated_head_dim(self):
+        self.assertEqual(self.transformer.head_dim, 12)
+        self.assertEqual(self.transformer.config.head_dim, 12)
+
+    def test_transformer_rejects_invalid_attention_head_layout(self):
+        kwargs = {
+            "input_size": 4,
+            "image_resolution": 32,
+            "patch_size": 2,
+            "in_channels": 3,
+            "hidden_size": 25,
+            "depth": 3,
+            "num_heads": 2,
+            "mlp_ratio": 1.0,
+            "text_embed_dim": 6,
+            "text_num_tokens": 5,
+        }
+        with self.assertRaisesRegex(ValueError, "hidden_size must be divisible"):
+            ZlabI1Transformer2DModel(**kwargs)
+
+        kwargs["hidden_size"] = 24
+        kwargs["num_heads"] = 0
+        with self.assertRaisesRegex(ValueError, "num_heads must be positive"):
+            ZlabI1Transformer2DModel(**kwargs)
+
+        kwargs["num_heads"] = 2
+        kwargs["head_dim"] = 13
+        with self.assertRaisesRegex(ValueError, "head_dim must equal"):
+            ZlabI1Transformer2DModel(**kwargs)
+
+        kwargs.pop("head_dim")
+        kwargs["patch_size"] = 0
+        with self.assertRaisesRegex(ValueError, "patch_size must be positive"):
+            ZlabI1Transformer2DModel(**kwargs)
+
+        kwargs["patch_size"] = 3
+        with self.assertRaisesRegex(ValueError, "input_size must be divisible"):
+            ZlabI1Transformer2DModel(**kwargs)
+
     def test_prediction_target_matches_upstream_rectified_flow_velocity(self):
         model = ZLabI1.__new__(ZLabI1)
         latents = torch.tensor([[[[1.0, -2.0], [3.0, -4.0]]]])
@@ -183,6 +222,17 @@ class ZlabI1FeatureTests(unittest.TestCase):
         self.assertEqual(output.shape, latents.shape)
         self.assertTrue(torch.isfinite(output).all())
 
+    def test_transformer_supports_rectangular_aspect_bucket_latents(self):
+        latents = torch.randn(2, 3, 4, 6)
+        timesteps = torch.zeros(2)
+        prompt_embeds = torch.randn(2, 5, 6)
+        attention_mask = torch.ones(2, 5, dtype=torch.bool)
+
+        output = self.transformer(latents, timesteps, prompt_embeds, attention_mask)
+
+        self.assertEqual(output.shape, latents.shape)
+        self.assertTrue(torch.isfinite(output).all())
+
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_musubi_streams_i1_blocks_on_cuda_forward(self):
         transformer = ZlabI1Transformer2DModel(
@@ -246,6 +296,63 @@ class ZlabI1FeatureTests(unittest.TestCase):
                 ).images
                 self.assertEqual(output.shape, self.latents.shape)
                 self.assertTrue(torch.isfinite(output).all())
+
+    def test_pipeline_supports_rectangular_resolution_and_negative_cfg(self):
+        self.transformer.eval()
+        pipeline = ZlabI1Pipeline(
+            transformer=self.transformer,
+            vae=DummyVAE(),
+            text_encoder=None,
+            tokenizer=None,
+        )
+        latents = torch.randn(1, 3, 4, 6)
+        negative_prompt_embeds = torch.randn(1, 5, 6)
+        negative_attention_mask = torch.tensor([[1, 1, 1, 0, 0]], dtype=torch.bool)
+
+        baseline = pipeline(
+            prompt_embeds=self.prompt_embeds,
+            attention_mask=self.attention_mask,
+            latents=latents.clone(),
+            height=32,
+            width=48,
+            num_inference_steps=2,
+            output_type="latent",
+            guidance_scale=4.0,
+        ).images
+        negative_guided = pipeline(
+            prompt_embeds=self.prompt_embeds,
+            attention_mask=self.attention_mask,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_attention_mask=negative_attention_mask,
+            latents=latents.clone(),
+            height=32,
+            width=48,
+            num_inference_steps=2,
+            output_type="latent",
+            guidance_scale=4.0,
+        ).images
+
+        self.assertEqual(negative_guided.shape, latents.shape)
+        self.assertTrue(torch.isfinite(negative_guided).all())
+        self.assertFalse(torch.allclose(baseline, negative_guided))
+
+    def test_pipeline_rejects_unsupported_kwargs(self):
+        pipeline = ZlabI1Pipeline(
+            transformer=self.transformer.eval(),
+            vae=DummyVAE(),
+            text_encoder=None,
+            tokenizer=None,
+        )
+
+        with self.assertRaisesRegex(TypeError, "unsupported keyword"):
+            pipeline(
+                prompt_embeds=self.prompt_embeds,
+                attention_mask=self.attention_mask,
+                height=32,
+                width=32,
+                output_type="latent",
+                unsupported_option=True,
+            )
 
     def test_pipeline_does_not_force_transformer_to_device_when_musubi_is_active(self):
         transformer = ZlabI1Transformer2DModel(

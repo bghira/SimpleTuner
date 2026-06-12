@@ -50,6 +50,25 @@ def _get_interpolated_pos_embed(
     return np.concatenate([emb_h, emb_w], axis=1).astype(np.float32)
 
 
+def _get_rectangular_pos_embed(
+    embed_dim: int,
+    grid_height: int,
+    grid_width: int,
+    image_height: int,
+    image_width: int,
+    base_image_resolution: int = 256,
+) -> np.ndarray:
+    scale_h = float(base_image_resolution) / float(image_height)
+    scale_w = float(base_image_resolution) / float(image_width)
+    grid_h = np.arange(grid_height, dtype=np.float32) * scale_h
+    grid_w = np.arange(grid_width, dtype=np.float32) * scale_w
+    grid = np.meshgrid(grid_w, grid_h)
+    grid = np.stack(grid, axis=0).reshape([2, 1, grid_height, grid_width])
+    emb_h = _get_1d_pos_embed(embed_dim // 2, grid[0])
+    emb_w = _get_1d_pos_embed(embed_dim // 2, grid[1])
+    return np.concatenate([emb_h, emb_w], axis=1).astype(np.float32)
+
+
 def _default_rope_axes_dims(head_dim: int) -> tuple[int, int, int]:
     if head_dim % 2 != 0:
         raise ValueError("Head dimension must be even for RoPE.")
@@ -235,22 +254,51 @@ class MultimodalRopeEmbedder(nn.Module):
         theta: float = 10000.0,
     ) -> None:
         super().__init__()
+        self.axes_dims = axes_dims
+        self.theta = theta
         cos_tables = []
         sin_tables = []
         for dim, axis_len, axis_scale in zip(axes_dims, axes_lens, axes_scales):
-            steps = torch.arange(0, dim, 2, dtype=torch.float32)
-            base = 1.0 / (theta ** (steps / dim))
-            positions = torch.arange(axis_len, dtype=torch.float32) * axis_scale
-            angles = positions[:, None] * base[None, :]
-            cos_tables.append(angles.cos())
-            sin_tables.append(angles.sin())
+            cos_table, sin_table = self._build_table(dim, axis_len, axis_scale, device=None)
+            cos_tables.append(cos_table)
+            sin_tables.append(sin_table)
         self.cos_tables = nn.ParameterList([nn.Parameter(t, requires_grad=False) for t in cos_tables])
         self.sin_tables = nn.ParameterList([nn.Parameter(t, requires_grad=False) for t in sin_tables])
 
-    def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _build_table(
+        self,
+        dim: int,
+        axis_len: int,
+        axis_scale: float,
+        device: Optional[torch.device],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        steps = torch.arange(0, dim, 2, dtype=torch.float32, device=device)
+        base = 1.0 / (self.theta ** (steps / dim))
+        positions = torch.arange(axis_len, dtype=torch.float32, device=device) * axis_scale
+        angles = positions[:, None] * base[None, :]
+        return angles.cos(), angles.sin()
+
+    def forward(
+        self,
+        position_ids: torch.Tensor,
+        axes_scales: Optional[tuple[float, ...]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         cos = []
         sin = []
-        for axis_idx, (cos_table, sin_table) in enumerate(zip(self.cos_tables, self.sin_tables)):
+        if axes_scales is None:
+            table_pairs = zip(self.cos_tables, self.sin_tables)
+        else:
+            max_positions = position_ids.amax(dim=(0, 1)).tolist()
+            table_pairs = [
+                self._build_table(
+                    self.axes_dims[axis_idx],
+                    int(max_positions[axis_idx]) + 1,
+                    axes_scales[axis_idx],
+                    position_ids.device,
+                )
+                for axis_idx in range(len(self.axes_dims))
+            ]
+        for axis_idx, (cos_table, sin_table) in enumerate(table_pairs):
             pos = position_ids[:, :, axis_idx].clamp(0, cos_table.shape[0] - 1)
             cos.append(cos_table[pos])
             sin.append(sin_table[pos])
@@ -421,6 +469,7 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_size: int = 2016,
         depth: int = 29,
         num_heads: int = 28,
+        head_dim: Optional[int] = None,
         mlp_ratio: float = 4.0,
         text_embed_dim: int = 2304,
         text_num_tokens: int = 256,
@@ -429,8 +478,22 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
+        if num_heads <= 0:
+            raise ValueError(f"num_heads must be positive, got {num_heads}.")
+        if hidden_size % num_heads != 0:
+            raise ValueError(f"hidden_size must be divisible by num_heads, got hidden_size={hidden_size}, num_heads={num_heads}.")
+        resolved_head_dim = hidden_size // num_heads
+        if head_dim is not None and head_dim != resolved_head_dim:
+            raise ValueError(f"head_dim must equal hidden_size // num_heads ({resolved_head_dim}), got {head_dim}.")
+        if patch_size <= 0:
+            raise ValueError(f"patch_size must be positive, got {patch_size}.")
+        if input_size % patch_size != 0:
+            raise ValueError(f"input_size must be divisible by patch_size, got input_size={input_size}, patch_size={patch_size}.")
+        self.register_to_config(head_dim=resolved_head_dim)
+        self.head_dim = resolved_head_dim
         self.gradient_checkpointing = False
         self.input_size = input_size
+        self.image_resolution = image_resolution
         self.patch_size = patch_size
         self.in_channels = in_channels
         self.out_channels = in_channels
@@ -452,8 +515,7 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             True,
             text_num_tokens,
         )
-        head_dim = hidden_size // num_heads
-        axes_dims = _default_rope_axes_dims(head_dim)
+        axes_dims = _default_rope_axes_dims(resolved_head_dim)
         axes_lens = (text_num_tokens + 1, hw, hw)
         image_scale = 256.0 / image_resolution
         self.rope_embedder = MultimodalRopeEmbedder(
@@ -517,14 +579,62 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self._tread_router = router
         self._tread_routes = routes
 
-    def _build_position_ids(self, text_mask: torch.Tensor, text_lengths: torch.Tensor, num_image_tokens: int) -> torch.Tensor:
+    def _image_position_ids(
+        self,
+        image_token_height: int,
+        image_token_width: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if image_token_height == self.hw and image_token_width == self.hw:
+            return self.image_row_ids, self.image_col_ids
+        row_ids = torch.repeat_interleave(torch.arange(image_token_height, device=device), image_token_width)
+        col_ids = torch.tile(torch.arange(image_token_width, device=device), (image_token_height,))
+        return row_ids, col_ids
+
+    def _position_axes_scales(
+        self,
+        image_token_height: int,
+        image_token_width: int,
+    ) -> Optional[tuple[float, float, float]]:
+        if image_token_height == self.hw and image_token_width == self.hw:
+            return None
+        image_height = image_token_height * self.patch_size * 8
+        image_width = image_token_width * self.patch_size * 8
+        return (1.0, 256.0 / image_height, 256.0 / image_width)
+
+    def _position_embedding(self, token_height: int, token_width: int, x: torch.Tensor) -> torch.Tensor:
+        if token_height == self.hw and token_width == self.hw:
+            return self.pos_embed.to(dtype=x.dtype, device=x.device)
+        image_height = token_height * self.patch_size * 8
+        image_width = token_width * self.patch_size * 8
+        pos = _get_rectangular_pos_embed(
+            self.pos_embed.shape[-1],
+            token_height,
+            token_width,
+            image_height,
+            image_width,
+        )
+        return torch.from_numpy(pos.reshape(1, token_height * token_width, self.pos_embed.shape[-1])).to(
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+    def _build_position_ids(
+        self,
+        text_mask: torch.Tensor,
+        text_lengths: torch.Tensor,
+        image_token_height: int,
+        image_token_width: int,
+    ) -> torch.Tensor:
         bsz, text_len = text_mask.shape
+        num_image_tokens = image_token_height * image_token_width
         caption_positions = torch.arange(text_len, dtype=torch.long, device=text_mask.device)[None].expand(bsz, text_len)
         caption_positions = torch.where(text_mask.bool(), caption_positions, torch.zeros_like(caption_positions))
         zeros = torch.zeros_like(caption_positions)
         caption_ids = torch.stack((caption_positions, zeros, zeros), dim=-1)
-        row_ids = self.image_row_ids[:num_image_tokens][None].expand(bsz, num_image_tokens)
-        col_ids = self.image_col_ids[:num_image_tokens][None].expand(bsz, num_image_tokens)
+        image_row_ids, image_col_ids = self._image_position_ids(image_token_height, image_token_width, text_mask.device)
+        row_ids = image_row_ids[None].expand(bsz, num_image_tokens)
+        col_ids = image_col_ids[None].expand(bsz, num_image_tokens)
         image_time = text_lengths[:, None].expand(bsz, num_image_tokens)
         image_ids = torch.stack((image_time, row_ids, col_ids), dim=-1)
         return torch.cat([caption_ids, image_ids], dim=1)
@@ -533,7 +643,8 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self,
         caption: torch.Tensor,
         mask: Optional[torch.Tensor],
-        num_image_tokens: int,
+        image_token_height: int,
+        image_token_width: int,
     ) -> i1DiTForwardCache:
         text_tokens = self.text_encoder_adapter(caption)
         text_mask = mask.bool() if mask is not None else None
@@ -544,8 +655,9 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             else torch.ones((text_tokens.shape[0], seq_text), dtype=torch.bool, device=text_tokens.device)
         )
         text_lengths = pos_mask.to(torch.int32).sum(dim=1)
-        position_ids = self._build_position_ids(pos_mask, text_lengths, num_image_tokens)
-        cos, sin = self.rope_embedder(position_ids)
+        num_image_tokens = image_token_height * image_token_width
+        position_ids = self._build_position_ids(pos_mask, text_lengths, image_token_height, image_token_width)
+        cos, sin = self.rope_embedder(position_ids, axes_scales=self._position_axes_scales(image_token_height, image_token_width))
         text_freqs = (cos[:, :seq_text], sin[:, :seq_text])
         image_freqs = (cos[:, seq_text : seq_text + num_image_tokens], sin[:, seq_text : seq_text + num_image_tokens])
         return i1DiTForwardCache(text_tokens, text_mask, image_freqs, text_freqs)
@@ -562,8 +674,18 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states_buffer: Optional[dict] = None,
     ) -> torch.Tensor:
         del t
-        tokens = self.x_embedder(x) + self.pos_embed.to(dtype=x.dtype, device=x.device)
-        cache = forward_cache if forward_cache is not None else self.prepare_forward_cache(caption, mask, tokens.shape[1])
+        if x.shape[-2] % self.patch_size != 0 or x.shape[-1] % self.patch_size != 0:
+            raise ValueError(
+                f"i1 latent height and width must be divisible by patch_size={self.patch_size}, got {tuple(x.shape[-2:])}."
+            )
+        token_height = x.shape[-2] // self.patch_size
+        token_width = x.shape[-1] // self.patch_size
+        tokens = self.x_embedder(x) + self._position_embedding(token_height, token_width, x)
+        cache = (
+            forward_cache
+            if forward_cache is not None
+            else self.prepare_forward_cache(caption, mask, token_height, token_width)
+        )
         text_tokens = cache.text_tokens
         text_mask = cache.text_mask
         text_freqs = cache.text_freqs
@@ -701,7 +823,8 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             global_idx += 1
         tokens = self.final_layer(image_tokens)
         bsz = x.shape[0]
-        h = w = self.input_size // self.patch_size
+        h = token_height
+        w = token_width
         p = self.patch_size
         tokens = tokens.reshape(bsz, h, w, p, p, self.out_channels)
         tokens = tokens.permute(0, 1, 3, 2, 4, 5).reshape(bsz, h * p, w * p, self.out_channels)

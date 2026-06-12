@@ -11,27 +11,8 @@ from diffusers.utils.torch_utils import randn_tensor
 from PIL import Image
 from transformers import AutoTokenizer, T5GemmaModel
 
-from simpletuner.helpers.models.zlab_i1.transformer import (
-    FLUX2_LATENTS_MEAN,
-    FLUX2_LATENTS_VAR,
-    ZlabI1Transformer2DModel,
-)
-
-
-def _pixel_unshuffle_2x(latents: torch.Tensor) -> torch.Tensor:
-    batch, channels, height, width = latents.shape
-    if height % 2 != 0 or width % 2 != 0:
-        raise ValueError(f"i1 latents require even spatial dimensions, got {(height, width)}.")
-    latents = latents.reshape(batch, channels, height // 2, 2, width // 2, 2)
-    return latents.permute(0, 1, 3, 5, 2, 4).reshape(batch, channels * 4, height // 2, width // 2)
-
-
-def _pixel_shuffle_2x(latents: torch.Tensor) -> torch.Tensor:
-    batch, channels, height, width = latents.shape
-    if channels % 4 != 0:
-        raise ValueError(f"i1 pixel-shuffle expects channel count divisible by 4, got {channels}.")
-    latents = latents.reshape(batch, channels // 4, 2, 2, height, width)
-    return latents.permute(0, 1, 4, 2, 5, 3).reshape(batch, channels // 4, height * 2, width * 2)
+from simpletuner.helpers.models.zlab_i1.latent_utils import unscale_flux2_latents
+from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
 
 
 def _time_grid(num_steps: int, shift: float, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -156,14 +137,25 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         prompt_embeds: torch.Tensor,
         attention_mask: torch.Tensor,
         dtype: torch.dtype,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        negative_attention_mask: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         batch, cond_len, _ = prompt_embeds.shape
-        uncond = self.transformer.text_encoder_adapter.learnable_null_caption.to(
-            device=prompt_embeds.device,
-            dtype=dtype,
-        )
-        if uncond.shape[0] == 1 and batch > 1:
-            uncond = uncond.repeat(batch, 1, 1)
+        if negative_prompt_embeds is None:
+            uncond = self.transformer.text_encoder_adapter.learnable_null_caption.to(
+                device=prompt_embeds.device,
+                dtype=dtype,
+            )
+            if uncond.shape[0] == 1 and batch > 1:
+                uncond = uncond.repeat(batch, 1, 1)
+            uncond_mask_source = attention_mask
+        else:
+            uncond = negative_prompt_embeds.to(device=prompt_embeds.device, dtype=dtype)
+            if uncond.shape[0] != batch:
+                raise ValueError(
+                    f"negative_prompt_embeds batch size must match prompt_embeds after duplication; got {uncond.shape[0]} and {batch}."
+                )
+            uncond_mask_source = self._prepare_text_mask(negative_attention_mask, uncond)
         uncond_len = uncond.shape[1]
         if uncond_len < cond_len:
             uncond = torch.cat(
@@ -173,10 +165,11 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 ],
                 dim=1,
             )
-            uncond_mask = attention_mask & (torch.arange(cond_len, device=prompt_embeds.device)[None] < uncond_len)
+            uncond_mask = uncond_mask_source.new_zeros((batch, cond_len), dtype=torch.bool)
+            uncond_mask[:, :uncond_len] = uncond_mask_source
         else:
             uncond = uncond[:, :cond_len]
-            uncond_mask = attention_mask
+            uncond_mask = uncond_mask_source[:, :cond_len]
         return torch.cat([prompt_embeds.to(dtype=dtype), uncond], dim=0), torch.cat([attention_mask, uncond_mask], dim=0)
 
     def _predict_velocity(
@@ -190,7 +183,8 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         forward_cache = self.transformer.prepare_forward_cache(
             prompt_embeds,
             attention_mask,
-            self.transformer.hw * self.transformer.hw,
+            latents.shape[-2] // self.transformer.patch_size,
+            latents.shape[-1] // self.transformer.patch_size,
         )
         return self.transformer(
             latents,
@@ -203,10 +197,7 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
     @staticmethod
     def _unscale_flux2_latents(latents: torch.Tensor) -> torch.Tensor:
-        packed = _pixel_unshuffle_2x(latents)
-        mean = torch.tensor(FLUX2_LATENTS_MEAN, device=latents.device, dtype=latents.dtype).view(1, -1, 1, 1)
-        var = torch.tensor(FLUX2_LATENTS_VAR, device=latents.device, dtype=latents.dtype).view(1, -1, 1, 1)
-        return _pixel_shuffle_2x(packed * torch.sqrt(var + 0.0001) + mean)
+        return unscale_flux2_latents(latents)
 
     def _decode_latents(self, latents: torch.Tensor, output_type: str) -> torch.Tensor | np.ndarray | list[Image.Image]:
         latents = self._unscale_flux2_latents(latents)
@@ -255,12 +246,11 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         callback_on_step_end_tensor_inputs: Optional[list[str]] = None,
         **kwargs,
     ):
-        del negative_prompt, negative_prompt_embeds, negative_attention_mask, kwargs
-        if height != width:
-            raise ValueError("zlab i1 currently supports square validation images only.")
-        expected_height = self.transformer.input_size * 8
-        if height != expected_height or width != expected_height:
-            raise ValueError(f"zlab i1 transformer expects {expected_height}x{expected_height}, got {height}x{width}.")
+        if kwargs:
+            unsupported = ", ".join(sorted(kwargs))
+            raise TypeError(f"ZlabI1Pipeline.__call__ got unsupported keyword argument(s): {unsupported}.")
+        if height % 16 != 0 or width % 16 != 0:
+            raise ValueError(f"zlab i1 height and width must be divisible by 16, got {height}x{width}.")
         if num_inference_steps <= 0:
             raise ValueError("num_inference_steps must be positive.")
 
@@ -282,12 +272,23 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             attention_mask=attention_mask,
         )
         batch_size = prompt_embeds.shape[0]
+        if negative_prompt is not None or negative_prompt_embeds is not None:
+            negative_prompt_embeds, negative_attention_mask = self.encode_prompt(
+                prompt=negative_prompt or "",
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                prompt_embeds=negative_prompt_embeds,
+                attention_mask=negative_attention_mask,
+            )
 
         if latents is None:
-            shape = (batch_size, self.transformer.in_channels, self.transformer.input_size, self.transformer.input_size)
+            shape = (batch_size, self.transformer.in_channels, height // 8, width // 8)
             latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device=device, dtype=dtype)
+            expected_shape = (height // 8, width // 8)
+            if tuple(latents.shape[-2:]) != expected_shape:
+                raise ValueError(f"Expected latents with spatial shape {expected_shape}, got {tuple(latents.shape[-2:])}.")
 
         times = _time_grid(num_inference_steps, inference_timestep_shift, device=device, dtype=dtype)
 
@@ -299,7 +300,13 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             )
             apply_cfg = guidance_scale > 1.0 and within_cfg_window
             if apply_cfg:
-                cfg_embeds, cfg_mask = self._prepare_cfg_conditioning(prompt_embeds, attention_mask, dtype=dtype)
+                cfg_embeds, cfg_mask = self._prepare_cfg_conditioning(
+                    prompt_embeds,
+                    attention_mask,
+                    dtype=dtype,
+                    negative_prompt_embeds=negative_prompt_embeds,
+                    negative_attention_mask=negative_attention_mask,
+                )
                 latent_input = torch.cat([latents, latents], dim=0)
                 timestep_input = torch.cat([timestep, timestep], dim=0)
                 velocity = self._predict_velocity(latent_input, timestep_input, cfg_embeds, cfg_mask)

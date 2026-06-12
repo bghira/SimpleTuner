@@ -17,13 +17,15 @@ from simpletuner.helpers.acceleration import (
 )
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.models.zlab_i1.latent_utils import (
+    normalize_flux2_latents,
+    pixel_shuffle_2x,
+    pixel_unshuffle_2x,
+    unscale_flux2_latents,
+)
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.zlab_i1.pipeline import ZlabI1Pipeline
-from simpletuner.helpers.models.zlab_i1.transformer import (
-    FLUX2_LATENTS_MEAN,
-    FLUX2_LATENTS_VAR,
-    ZlabI1Transformer2DModel,
-)
+from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
 
 logger = logging.getLogger(__name__)
 
@@ -150,36 +152,18 @@ class ZLabI1(ImageModelFoundation):
         return apply_musubi_pretrained_defaults(self.config, args)
 
     @staticmethod
-    def _stats_tensors(latents: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        mean = torch.tensor(FLUX2_LATENTS_MEAN, device=latents.device, dtype=latents.dtype).view(1, -1, 1, 1)
-        var = torch.tensor(FLUX2_LATENTS_VAR, device=latents.device, dtype=latents.dtype).view(1, -1, 1, 1)
-        return mean, torch.sqrt(var + 0.0001)
-
-    @staticmethod
     def _pixel_unshuffle_2x(latents: torch.Tensor) -> torch.Tensor:
-        batch, channels, height, width = latents.shape
-        if height % 2 != 0 or width % 2 != 0:
-            raise ValueError(f"i1 latents require even spatial dimensions, got {(height, width)}.")
-        latents = latents.reshape(batch, channels, height // 2, 2, width // 2, 2)
-        return latents.permute(0, 1, 3, 5, 2, 4).reshape(batch, channels * 4, height // 2, width // 2)
+        return pixel_unshuffle_2x(latents)
 
     @staticmethod
     def _pixel_shuffle_2x(latents: torch.Tensor) -> torch.Tensor:
-        batch, channels, height, width = latents.shape
-        if channels % 4 != 0:
-            raise ValueError(f"i1 pixel-shuffle expects channel count divisible by 4, got {channels}.")
-        latents = latents.reshape(batch, channels // 4, 2, 2, height, width)
-        return latents.permute(0, 1, 4, 2, 5, 3).reshape(batch, channels // 4, height * 2, width * 2)
+        return pixel_shuffle_2x(latents)
 
     def _normalize_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        packed = self._pixel_unshuffle_2x(latents)
-        mean, std = self._stats_tensors(packed)
-        return self._pixel_shuffle_2x((packed - mean) / std)
+        return normalize_flux2_latents(latents)
 
     def pre_latent_decode(self, latents: torch.Tensor) -> torch.Tensor:
-        packed = self._pixel_unshuffle_2x(latents)
-        mean, std = self._stats_tensors(packed)
-        return self._pixel_shuffle_2x(packed * std + mean)
+        return unscale_flux2_latents(latents)
 
     def post_vae_encode_transform_sample(self, sample):
         if hasattr(sample, "latent_dist"):
