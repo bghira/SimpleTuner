@@ -265,7 +265,8 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             raise ValueError("num_inference_steps must be positive.")
 
         device = self._execution_device
-        self.transformer.to(device)
+        if getattr(self.transformer, "_musubi_block_swap", None) is None:
+            self.transformer.to(device)
         self.vae.to(device)
         dtype = torch.bfloat16
         if prompt_embeds is not None:

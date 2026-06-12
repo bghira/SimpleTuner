@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import torch
 import torch.nn as nn
+from diffusers.models.modeling_utils import ModelMixin
 
 from simpletuner.helpers.models.zlab_i1.model import ZLabI1
 from simpletuner.helpers.models.zlab_i1.pipeline import ZlabI1Pipeline
@@ -96,6 +97,10 @@ class ZlabI1FeatureTests(unittest.TestCase):
         self.assertEqual(sorted(hidden_states_buffer), ["layer_0", "layer_1", "layer_2"])
         for hidden in hidden_states_buffer.values():
             self.assertEqual(hidden.shape, torch.Size([1, 4, 24]))
+
+    def test_scratch_init_has_deterministic_null_caption_and_no_trainable_timestep_embedder(self):
+        self.assertTrue(torch.equal(self.transformer.text_encoder_adapter.learnable_null_caption, torch.zeros_like(self.transformer.text_encoder_adapter.learnable_null_caption)))
+        self.assertFalse(any(param.requires_grad for param in self.transformer.t_embedder.parameters()))
 
     def test_transformer_skip_layers_and_tread_routes_keep_output_shape(self):
         skipped = self.transformer(
@@ -218,6 +223,42 @@ class ZlabI1FeatureTests(unittest.TestCase):
                 ).images
                 self.assertEqual(output.shape, self.latents.shape)
                 self.assertTrue(torch.isfinite(output).all())
+
+    def test_pipeline_does_not_force_transformer_to_device_when_musubi_is_active(self):
+        transformer = ZlabI1Transformer2DModel(
+            input_size=4,
+            image_resolution=32,
+            patch_size=2,
+            in_channels=3,
+            hidden_size=24,
+            depth=3,
+            num_heads=2,
+            mlp_ratio=1.0,
+            text_embed_dim=6,
+            text_num_tokens=5,
+            musubi_blocks_to_swap=1,
+            musubi_block_swap_device="cpu",
+        ).eval()
+        pipeline = ZlabI1Pipeline(
+            transformer=transformer,
+            vae=DummyVAE(),
+            text_encoder=None,
+            tokenizer=None,
+        )
+
+        with patch.object(transformer, "to", wraps=transformer.to) as to_spy:
+            output = pipeline(
+                prompt_embeds=self.prompt_embeds,
+                attention_mask=self.attention_mask,
+                height=32,
+                width=32,
+                num_inference_steps=1,
+                output_type="latent",
+                guidance_scale=1.0,
+            ).images
+
+        self.assertEqual(output.shape, self.latents.shape)
+        to_spy.assert_not_called()
 
     def test_model_predict_returns_hidden_state_buffer_for_layersync_and_crepa(self):
         model = ZLabI1.__new__(ZLabI1)
@@ -376,6 +417,20 @@ class ZlabI1FeatureTests(unittest.TestCase):
         self.assertIsInstance(loaded, ZlabI1Transformer2DModel)
         self.assertEqual(loaded.config.hidden_size, source.config.hidden_size)
         self.assertEqual(loaded.config.depth, source.config.depth)
+
+    def test_diffusers_loader_preserves_safetensors_and_variant_kwargs(self):
+        sentinel = object()
+        with patch.object(ModelMixin, "from_pretrained", return_value=sentinel) as from_pretrained:
+            loaded = ZlabI1Transformer2DModel.from_pretrained(
+                "not-zlab-upstream",
+                use_safetensors=False,
+                variant="fp16",
+            )
+
+        self.assertIs(loaded, sentinel)
+        kwargs = from_pretrained.call_args.kwargs
+        self.assertFalse(kwargs["use_safetensors"])
+        self.assertEqual(kwargs["variant"], "fp16")
 
     def test_acceleration_presets_include_ramtorch_and_musubi(self):
         presets = ZLabI1.get_acceleration_presets()

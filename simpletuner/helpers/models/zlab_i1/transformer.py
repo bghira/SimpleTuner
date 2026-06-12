@@ -197,7 +197,7 @@ class TextEncoderAdapterTransformer(nn.Module):
     ) -> None:
         super().__init__()
         del drop_text_prob
-        self.learnable_null_caption = nn.Parameter(torch.empty(1, token_len, in_channels))
+        self.learnable_null_caption = nn.Parameter(torch.zeros(1, token_len, in_channels))
         self.connector_in = nn.Linear(in_channels, hidden_size)
         norm = RMSNorm if use_rmsnorm else LayerNorm
         self.connector_norm1 = norm(hidden_size)
@@ -440,6 +440,7 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         pos = _get_interpolated_pos_embed(hidden_size, hw, image_resolution)
         self.pos_embed = nn.Parameter(torch.from_numpy(pos.reshape(1, hw * hw, hidden_size)))
         self.t_embedder = TimestepEmbedder(hidden_size)
+        self.t_embedder.requires_grad_(False)
         self.text_encoder_adapter = TextEncoderAdapterTransformer(
             text_embed_dim,
             hidden_size,
@@ -710,8 +711,8 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, subfolder: Optional[str] = None, **kwargs):
         torch_dtype = kwargs.pop("torch_dtype", None)
-        kwargs.pop("use_safetensors", None)
-        kwargs.pop("variant", None)
+        use_safetensors = kwargs.pop("use_safetensors", None)
+        variant = kwargs.pop("variant", None)
         revision = kwargs.pop("revision", None)
         local_files_only = kwargs.pop("local_files_only", None)
         cache_dir = kwargs.pop("cache_dir", None)
@@ -734,6 +735,8 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 *args,
                 subfolder=subfolder,
                 torch_dtype=torch_dtype,
+                use_safetensors=use_safetensors,
+                variant=variant,
                 revision=revision,
                 local_files_only=local_files_only,
                 cache_dir=cache_dir,
