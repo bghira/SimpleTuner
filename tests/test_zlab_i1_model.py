@@ -102,6 +102,29 @@ class ZlabI1FeatureTests(unittest.TestCase):
         self.assertTrue(torch.equal(self.transformer.text_encoder_adapter.learnable_null_caption, torch.zeros_like(self.transformer.text_encoder_adapter.learnable_null_caption)))
         self.assertFalse(any(param.requires_grad for param in self.transformer.t_embedder.parameters()))
 
+    def test_prediction_target_matches_upstream_rectified_flow_velocity(self):
+        model = ZLabI1.__new__(ZLabI1)
+        latents = torch.tensor([[[[1.0, -2.0], [3.0, -4.0]]]])
+        noise = torch.tensor([[[[-0.5, 1.0], [0.25, -1.5]]]])
+
+        target = model.get_prediction_target({"latents": latents, "noise": noise})
+
+        self.assertTrue(torch.equal(target, latents - noise))
+
+    def test_prediction_target_prefers_explicit_parent_student_target(self):
+        model = ZLabI1.__new__(ZLabI1)
+        explicit_target = torch.randn(1, 3, 4, 4)
+
+        target = model.get_prediction_target(
+            {
+                "latents": torch.randn(1, 3, 4, 4),
+                "noise": torch.randn(1, 3, 4, 4),
+                "target": explicit_target,
+            }
+        )
+
+        self.assertIs(target, explicit_target)
+
     def test_transformer_skip_layers_and_tread_routes_keep_output_shape(self):
         skipped = self.transformer(
             self.latents,

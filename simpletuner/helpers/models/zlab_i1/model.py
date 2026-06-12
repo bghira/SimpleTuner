@@ -360,6 +360,11 @@ class ZLabI1(ImageModelFoundation):
     def get_loss_target(self, noise: torch.Tensor, batch: dict) -> torch.Tensor:
         return (batch["latents"] - noise).detach()
 
+    def get_prediction_target(self, prepared_batch: dict):
+        if prepared_batch.get("target") is not None:
+            return prepared_batch["target"]
+        return (prepared_batch["latents"] - prepared_batch["noise"]).detach()
+
     def setup_training_noise_schedule(self):
         from diffusers import FlowMatchEulerDiscreteScheduler
 
