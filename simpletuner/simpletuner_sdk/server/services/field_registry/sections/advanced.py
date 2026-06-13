@@ -1430,6 +1430,25 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Text Embed Full Cache
+    registry._add_field(
+        ConfigField(
+            name="text_embed_full_cache",
+            arg_name="--text_embed_full_cache",
+            ui_label="Text Embed Full Cache",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=False,
+            help_text="Store full raw text encoder outputs in the text embed cache. This opts out of model-specific cache size optimisations, such as Ideogram 4's frozen text projection cache.",
+            tooltip="Use this only when you need raw, unprojected text encoder features, are debugging cache compatibility, or are adapting a comparable architecture for scratch training.",
+            importance=ImportanceLevel.ADVANCED,
+            order=50.5,
+            documentation="OPTIONS.md#--text_embed_full_cache",
+        )
+    )
+
     # Cache Directory VAE
     registry._add_field(
         ConfigField(

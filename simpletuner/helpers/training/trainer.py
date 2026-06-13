@@ -167,6 +167,7 @@ from accelerate.utils import (
 from torch.distributions import Beta
 
 from simpletuner.configure import model_classes, model_labels
+from simpletuner.helpers.configuration.sanitization import sanitize_cli_args_for_public_logging
 
 try:
     from lycoris import LycorisNetwork
@@ -2949,6 +2950,9 @@ class Trainer:
             if self.model.get_trained_component() is not None:
                 logger.info(f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}.")
                 self.model.model = apply_bitfit_freezing(unwrap_model(self.accelerator, self.model.model), self.config)
+        model_specific_freeze = getattr(self.model, "apply_model_specific_freeze", None)
+        if callable(model_specific_freeze):
+            model_specific_freeze()
         self.enable_gradient_checkpointing()
 
     def _resolve_distiller_profile(self) -> DistillerRequirementProfile:
@@ -7174,7 +7178,10 @@ def run_trainer_job(config):
             launch_env.setdefault("CONFIG_BACKEND", "cmd")
             cmd.extend(cli_args)
 
-        launch_logger.info("Launching training via accelerate: %s", " ".join(cmd))
+        launch_logger.info(
+            "Launching training via accelerate: %s",
+            shlex.join(sanitize_cli_args_for_public_logging(cmd)),
+        )
 
         popen_kwargs = {
             "env": launch_env,

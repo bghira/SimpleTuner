@@ -80,6 +80,13 @@ simpletuner configure config/foo/config.json
   - 多节点环境下，仅每个节点的 local-rank 0 执行删除。为处理共享网络存储中的竞态，删除失败会被静默忽略。
   - 不影响训练检查点，仅影响预训练基础模型缓存。
 
+### `--text_embed_full_cache`
+
+- **内容**：在 text embed cache 中保存完整的 raw text encoder 输出。
+- **默认值**：`False`
+- **原因**：默认值允许按模型定制的紧凑 cache 布局。例如，Ideogram 4 会在写入 cache 文件前，通过 transformer 中冻结的 `llm_cond_norm` 和 `llm_cond_proj` 层投影 13 层 Qwen hidden-state 堆栈；这些层在 LoRA 和 full transformer 训练中都会保持冻结。
+- **何时使用**：用于调试缓存兼容性、确实需要 raw 未投影的 text encoder features，或在改造类似 Ideogram 的架构进行从零训练且 text projection 不是固定预训练组件时启用。
+
 ### `--trust_remote_code`
 
 - **内容**：当 checkpoint 依赖上游自定义类时，允许 Transformers 和 tokenizer 执行模型仓库中的自定义 Python 代码。
@@ -122,7 +129,7 @@ simpletuner configure config/foo/config.json
 
 ### `--musubi_blocks_to_swap`
 
-- **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、Cosmos2Image、HunyuanVideo 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
+- **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
 - **默认**：`0`（禁用）
 - **说明**：Musubi 风格权重卸载，会降低吞吐以换取显存节省，且在启用梯度时会跳过。
 - **说明**：Musubi 风格权重卸载，通过降低吞吐换取显存节省；启用梯度时会跳过。
@@ -2239,6 +2246,11 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
+                        Store full raw text encoder outputs in the text embed
+                        cache. This opts out of model-specific cache size
+                        optimisations, such as Ideogram 4's frozen text
+                        projection cache.
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs

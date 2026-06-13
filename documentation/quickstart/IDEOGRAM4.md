@@ -135,6 +135,26 @@ For lower VRAM systems, NF4 is the next recommendation:
 
 If startup is slow or memory-constrained, keep `quantize_via` on `cpu` so the model is prepared before moving to the GPU.
 
+### Text embed cache
+
+Ideogram 4's text encoder output is a concatenation of 13 Qwen hidden-state layers. By default, SimpleTuner projects those raw features through the transformer's frozen `llm_cond_norm` and `llm_cond_proj` layers before writing text embed cache files. This keeps cache files much smaller while preserving the conditioning tensor the transformer consumes.
+
+The projection layers are frozen for both LoRA and full transformer training. For text encoder training, non-standard LoRA, or LoRA targets that explicitly include `llm_cond_norm` or `llm_cond_proj`, SimpleTuner keeps the raw text encoder output in the cache.
+
+The large cache cost comes from feature width, not saved padding. Text embed precomputation writes one file per prompt at that prompt's actual token length; batch padding happens later in memory. The raw 13-layer tensor is `13 * 4096 = 53,248` float32 values per token, or about 0.203 MiB per token before serialization overhead. A 512-token caption is therefore about 104 MiB raw, while the projected bf16 cache is about 4.5 MiB.
+
+If you adapt this path to train a comparable Ideogram-style model from scratch and the text projection is not a fixed pretrained component, disable the projected cache and budget for the much larger raw text embed storage.
+
+Use the full cache only when you intentionally need raw text encoder features or are debugging cache compatibility:
+
+```json
+{
+  "text_embed_full_cache": true
+}
+```
+
+This disables the Ideogram 4 projected text embed cache optimisation and stores the full 13-layer text encoder output.
+
 ### Validation
 
 Ideogram validation is disabled unless you opt in:

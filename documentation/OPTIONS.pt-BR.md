@@ -80,6 +80,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - Em setups multi-node, apenas local-rank 0 em cada node executa a delecao. Falhas sao ignoradas silenciosamente para lidar com race conditions em storage compartilhado.
   - Isso **nao** afeta checkpoints salvos — apenas o cache do modelo base pre-treinado.
 
+### `--text_embed_full_cache`
+
+- **O que**: Armazena a saída raw completa do text encoder no cache de text embeds.
+- **Padrão**: `False`
+- **Por que**: O padrão permite layouts de cache compactos específicos do modelo. Por exemplo, o Ideogram 4 projeta sua pilha Qwen de 13 camadas pelas camadas congeladas `llm_cond_norm` e `llm_cond_proj` do transformer antes de gravar os arquivos de cache; essas camadas ficam congeladas tanto em LoRA quanto em treinamento full do transformer.
+- **Quando usar**: Ative para depurar compatibilidade de cache, quando precisar explicitamente de features raw e não projetadas do text encoder, ou ao adaptar uma arquitetura estilo Ideogram para treinamento do zero em que a projeção de texto não seja um componente pretreinado fixo.
+
 ### `--trust_remote_code`
 
 - **O que**: Permite que Transformers e tokenizers executem codigo Python personalizado do repositorio do modelo quando o checkpoint depende de classes customizadas upstream.
@@ -122,7 +129,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 ### `--musubi_blocks_to_swap`
 
-- **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, Cosmos2Image e HunyuanVideo — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
+- **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image e HunyuanVideo — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
 - **Padrao**: `0` (desabilitado)
 - **Notas**: Offload de pesos estilo Musubi; reduz VRAM com custo de throughput e e ignorado quando gradientes estao habilitados.
 
@@ -2231,6 +2238,11 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
+                        Store full raw text encoder outputs in the text embed
+                        cache. This opts out of model-specific cache size
+                        optimisations, such as Ideogram 4's frozen text
+                        projection cache.
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs

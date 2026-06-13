@@ -90,6 +90,26 @@ FP8 是默认推荐：
 }
 ```
 
+## Text embed cache
+
+Ideogram 4 的 text encoder 输出会拼接 13 层 Qwen hidden-state。默认情况下，SimpleTuner 会在写入 text embed cache 文件前，先通过 transformer 中冻结的 `llm_cond_norm` 和 `llm_cond_proj` 层投影这些 raw features。这样 cache 文件会小得多，同时保留 transformer 实际消费的 conditioning tensor。
+
+这些 projection 层在 LoRA 和 full transformer 训练中都会被冻结。训练 text encoder、使用非标准 LoRA，或 LoRA target 显式包含 `llm_cond_norm` / `llm_cond_proj` 时，SimpleTuner 会在 cache 中保留 raw text encoder 输出。
+
+cache 的主要成本来自 feature 宽度，而不是保存了大量 padding。Text embed 预计算会按每个 prompt 的真实 token 长度写一个 cache 文件；batch padding 之后只在内存中发生。raw 13 层 tensor 是 `13 * 4096 = 53,248` 个 float32 值/每 token，序列化开销前约 0.203 MiB/token。因此 512-token caption 的 raw cache 约 104 MiB，而 projected bf16 cache 约 4.5 MiB。
+
+如果你基于这一路径从零训练一个类似 Ideogram 的模型，并且 text projection 不是固定的预训练组件，请关闭 projected cache，并为大得多的 raw text embed 存储做好预算。
+
+只有在确实需要 raw text encoder features，或调试 cache 兼容性时，才使用完整 cache：
+
+```json
+{
+  "text_embed_full_cache": true
+}
+```
+
+这会关闭 Ideogram 4 的 projected text embed cache 优化，并保存完整的 13 层 text encoder 输出。
+
 ## 验证
 
 Ideogram 验证默认关闭。要启用：

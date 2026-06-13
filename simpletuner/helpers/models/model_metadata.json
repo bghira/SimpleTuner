@@ -1,4 +1,13 @@
 {
+    "zlab_i1": {
+        "class_name": "ZLabI1",
+        "module_path": "simpletuner.helpers.models.zlab_i1.model",
+        "name": "zlab i1",
+        "prediction_type": "flow_matching",
+        "flavour_choices": [
+            "3b"
+        ]
+    },
     "ideogram": {
         "class_name": "Ideogram4",
         "module_path": "simpletuner.helpers.models.ideogram.model",

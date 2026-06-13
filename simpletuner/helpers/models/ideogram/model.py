@@ -22,6 +22,7 @@ from simpletuner.helpers.models.ideogram.pipeline import (
 from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
+from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
 from simpletuner.helpers.models.registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,11 @@ class Ideogram4(ImageModelFoundation):
     SUPPORTS_LORA = True
     DEFAULT_LORA_TARGET = ["qkv", "o", "w1", "w2", "w3"]
     DEFAULT_PROMPT_ENHANCER_HEAD = "diffusers/qwen3-vl-8b-instruct-lm-head"
+    TEXT_PROJECTION_COMPONENTS = {
+        "fp8": "bghira/ideogram4-component-text-projection-fp8",
+        "nf4": "bghira/ideogram4-component-text-projection-nf4",
+    }
+    TEXT_PROJECTION_MODULE_NAMES = ("llm_cond_norm", "llm_cond_proj")
     PATCH_SIZE = 2
     AE_SCALE_FACTOR = 8
 
@@ -82,6 +88,7 @@ class Ideogram4(ImageModelFoundation):
         )
         if move_to_device:
             self.model.to(self.accelerator.device)
+        self.apply_model_specific_freeze()
         return self.model
 
     def load_vae(self, move_to_device: bool = True):
@@ -288,6 +295,140 @@ class Ideogram4(ImageModelFoundation):
 
     def _format_text_embedding(self, text_embedding: dict):
         return text_embedding
+
+    def _text_projection_transformer(self, transformer=None):
+        transformer = transformer if transformer is not None else getattr(self, "model", None)
+        if transformer is None:
+            return None
+        if (
+            getattr(self, "model", None) is not None
+            and hasattr(self, "accelerator")
+            and hasattr(self, "config")
+            and hasattr(self.config, "controlnet")
+        ):
+            return self.unwrap_model(model=transformer)
+        if hasattr(transformer, "module"):
+            return transformer.module
+        return transformer
+
+    def freeze_text_projection_layers(self, transformer=None) -> list[str]:
+        transformer = self._text_projection_transformer(transformer)
+        if transformer is None:
+            return []
+
+        frozen = []
+        for module_name in self.TEXT_PROJECTION_MODULE_NAMES:
+            module = getattr(transformer, module_name, None)
+            if module is None:
+                continue
+            module.requires_grad_(False)
+            module.eval()
+            frozen.append(module_name)
+        return frozen
+
+    def apply_model_specific_freeze(self):
+        self.freeze_text_projection_layers()
+
+    def freeze_components(self):
+        super().freeze_components()
+        self.apply_model_specific_freeze()
+
+    def add_lora_adapter(self):
+        result = super().add_lora_adapter()
+        self.apply_model_specific_freeze()
+        return result
+
+    def _text_projection_flavour(self) -> str:
+        flavour = getattr(self.config, "model_flavour", None)
+        if flavour not in (None, "", "None"):
+            flavour = str(flavour).lower()
+            if flavour in self.TEXT_PROJECTION_COMPONENTS:
+                return flavour
+        repo_id = self._repo_id()
+        for known_flavour, known_repo in self.HUGGINGFACE_PATHS.items():
+            if repo_id == known_repo:
+                return known_flavour
+        return self.DEFAULT_MODEL_FLAVOUR
+
+    def _text_projection_component_id(self) -> str:
+        override = getattr(self.config, "pretrained_text_projection_model_name_or_path", None) or getattr(
+            self.config, "ideogram_text_projection_component", None
+        )
+        if override not in (None, "", "None"):
+            return str(override)
+        flavour = self._text_projection_flavour()
+        return self.TEXT_PROJECTION_COMPONENTS[flavour]
+
+    def _should_project_text_cache(self) -> bool:
+        if getattr(self.config, "text_embed_full_cache", False):
+            return False
+        if getattr(self.config, "train_text_encoder", False):
+            return False
+        model_type = str(getattr(self.config, "model_type", "full")).lower()
+        if "lora" not in model_type:
+            return True
+        if str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
+            return False
+        targets = self.get_lora_target_layers()
+        return not any("llm_cond_norm" in target or "llm_cond_proj" in target for target in targets)
+
+    def _get_text_projection_component(
+        self,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> Ideogram4TextProjection:
+        component_id = self._text_projection_component_id()
+        cache_key = (component_id, str(device), dtype)
+        if getattr(self, "_text_projection_component_cache_key", None) == cache_key:
+            return self._text_projection_component
+
+        logger.info("Loading Ideogram text projection component for text embed cache: %s", component_id)
+        self._text_projection_component = Ideogram4TextProjection.from_pretrained(
+            component_id,
+            device=device,
+            dtype=dtype,
+            revision=getattr(self.config, "revision", None),
+        )
+        self._text_projection_component_cache_key = cache_key
+        return self._text_projection_component
+
+    @torch.no_grad()
+    def pack_text_embeddings_for_cache(self, embeddings):
+        if not self._should_project_text_cache():
+            return embeddings
+        if not isinstance(embeddings, dict):
+            embeddings = self._format_text_embedding(embeddings)
+
+        prompt_embeds = embeddings.get("prompt_embeds")
+        if not torch.is_tensor(prompt_embeds):
+            return embeddings
+
+        default_projection_config = Ideogram4TextProjectionConfig()
+        if prompt_embeds.shape[-1] == default_projection_config.emb_dim:
+            return embeddings
+
+        attention_mask = embeddings.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = embeddings.get("attention_masks")
+
+        projector = self._get_text_projection_component(
+            device=prompt_embeds.device,
+            dtype=getattr(self.config, "weight_dtype", torch.bfloat16),
+        )
+        if prompt_embeds.shape[-1] == projector.config.emb_dim:
+            return embeddings
+        if prompt_embeds.shape[-1] != projector.config.llm_features_dim:
+            raise ValueError(
+                "Ideogram text embed cache projection expected raw Qwen features with last dimension "
+                f"{projector.config.llm_features_dim} or projected features with last dimension "
+                f"{projector.config.emb_dim}, got {prompt_embeds.shape[-1]}."
+            )
+
+        projected = projector(prompt_embeds, attention_mask=attention_mask)
+        packed = dict(embeddings)
+        packed["prompt_embeds"] = projected
+        return packed
 
     def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
