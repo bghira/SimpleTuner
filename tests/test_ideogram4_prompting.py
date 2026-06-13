@@ -8,12 +8,14 @@ from unittest import mock
 import torch
 import torch.nn as nn
 from accelerate import init_empty_weights
-from safetensors.torch import load_file
+from safetensors.torch import load_file, save_file
 
+from simpletuner.helpers.models.ideogram.constants import LLM_TOKEN_INDICATOR, OUTPUT_IMAGE_INDICATOR
 from simpletuner.helpers.models.ideogram.model import Ideogram4
 from simpletuner.helpers.models.ideogram.pipeline import Ideogram4Pipeline
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
+from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
 from simpletuner.helpers.training.validation import prepare_validation_prompt_list
 
@@ -106,6 +108,147 @@ class Ideogram4PromptingTests(unittest.TestCase):
         negative = model.convert_negative_text_embed_for_pipeline(first)
         self.assertEqual(converted["prompt_embeds"].shape, (1, 2, 4))
         self.assertEqual(negative["negative_prompt_embeds"].shape, (1, 2, 4))
+
+    def test_text_embed_cache_projection_uses_projection_component(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = types.SimpleNamespace(
+            text_embed_full_cache=False,
+            model_type="lora",
+            lora_type="standard",
+            train_text_encoder=False,
+            weight_dtype=torch.float32,
+        )
+        model.get_lora_target_layers = lambda: ["qkv"]
+
+        projector = Ideogram4TextProjection(Ideogram4TextProjectionConfig(llm_features_dim=4, emb_dim=2))
+        with torch.no_grad():
+            projector.llm_cond_norm.weight.fill_(1.0)
+            projector.llm_cond_proj.weight.copy_(torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]))
+            projector.llm_cond_proj.bias.zero_()
+        model._get_text_projection_component = lambda **_: projector
+
+        prompt_embeds = torch.randn(1, 3, 4)
+        attention_mask = torch.tensor([[True, True, False]])
+        packed = model.pack_text_embeddings_for_cache({"prompt_embeds": prompt_embeds, "attention_mask": attention_mask})
+
+        expected = projector(prompt_embeds, attention_mask=attention_mask)
+        self.assertEqual(packed["prompt_embeds"].shape, (1, 3, 2))
+        self.assertTrue(torch.allclose(packed["prompt_embeds"], expected))
+        self.assertTrue(torch.equal(packed["attention_mask"], attention_mask))
+
+    def test_text_embed_cache_projection_applies_to_full_training(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = types.SimpleNamespace(
+            text_embed_full_cache=False,
+            model_type="full",
+            train_text_encoder=False,
+            weight_dtype=torch.float32,
+        )
+        model.get_lora_target_layers = lambda: (_ for _ in ()).throw(AssertionError("should not inspect LoRA targets"))
+
+        projector = Ideogram4TextProjection(Ideogram4TextProjectionConfig(llm_features_dim=4, emb_dim=2))
+        model._get_text_projection_component = lambda **_: projector
+
+        packed = model.pack_text_embeddings_for_cache(
+            {"prompt_embeds": torch.randn(1, 3, 4), "attention_mask": torch.ones(1, 3, dtype=torch.bool)}
+        )
+
+        self.assertEqual(packed["prompt_embeds"].shape, (1, 3, 2))
+
+    def test_text_projection_component_loads_local_layout(self):
+        projector = Ideogram4TextProjection(Ideogram4TextProjectionConfig(llm_features_dim=4, emb_dim=2))
+        with torch.no_grad():
+            projector.llm_cond_norm.weight.fill_(1.0)
+            projector.llm_cond_proj.weight.copy_(torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]))
+            projector.llm_cond_proj.bias.zero_()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            save_file(projector.state_dict(), os.path.join(tmp_dir, "model.safetensors"))
+            with open(os.path.join(tmp_dir, "config.json"), "w", encoding="utf-8") as handle:
+                json.dump(projector.config.to_dict(), handle)
+            loaded = Ideogram4TextProjection.from_pretrained(
+                tmp_dir,
+                device=torch.device("cpu"),
+                dtype=torch.float32,
+            )
+
+        prompt_embeds = torch.randn(1, 3, 4)
+        attention_mask = torch.tensor([[True, False, True]])
+        expected = projector(prompt_embeds, attention_mask=attention_mask)
+        self.assertTrue(torch.allclose(loaded(prompt_embeds, attention_mask=attention_mask), expected))
+        self.assertEqual(loaded.config.llm_features_dim, 4)
+        self.assertEqual(loaded.config.emb_dim, 2)
+
+    def test_text_embed_full_cache_skips_ideogram_projection(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = types.SimpleNamespace(
+            text_embed_full_cache=True,
+            model_type="lora",
+            lora_type="standard",
+            train_text_encoder=False,
+            weight_dtype=torch.float32,
+        )
+        model.get_lora_target_layers = lambda: ["qkv"]
+        model._get_text_projection_component = lambda **_: (_ for _ in ()).throw(AssertionError("should not load"))
+
+        embeddings = {"prompt_embeds": torch.randn(1, 3, 4), "attention_mask": torch.ones(1, 3, dtype=torch.bool)}
+        self.assertIs(model.pack_text_embeddings_for_cache(embeddings), embeddings)
+
+    def test_text_projection_component_follows_explicit_known_repo(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = types.SimpleNamespace(
+            model_flavour=None,
+            pretrained_model_name_or_path=Ideogram4.HUGGINGFACE_PATHS["nf4"],
+            pretrained_transformer_model_name_or_path=None,
+        )
+
+        self.assertEqual(model._text_projection_component_id(), Ideogram4.TEXT_PROJECTION_COMPONENTS["nf4"])
+
+    def test_full_training_freezes_text_projection_layers(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = types.SimpleNamespace(controlnet=False, model_type="full")
+        model.vae = None
+        model.text_encoders = None
+        model.controlnet = None
+        model.model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=16,
+                num_layers=1,
+                num_heads=1,
+                intermediate_size=32,
+                adanln_dim=8,
+                llm_features_dim=4,
+                mrope_section=(1, 1, 1),
+            )
+        )
+
+        model.freeze_components()
+
+        self.assertFalse(any(param.requires_grad for param in model.model.llm_cond_norm.parameters()))
+        self.assertFalse(any(param.requires_grad for param in model.model.llm_cond_proj.parameters()))
+        self.assertTrue(model.model.input_proj.weight.requires_grad)
+
+    def test_model_specific_freeze_reapplies_text_projection_freeze(self):
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = types.SimpleNamespace(controlnet=False)
+        model.model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=16,
+                num_layers=1,
+                num_heads=1,
+                intermediate_size=32,
+                adanln_dim=8,
+                llm_features_dim=4,
+                mrope_section=(1, 1, 1),
+            )
+        )
+        model.model.llm_cond_norm.requires_grad_(True)
+        model.model.llm_cond_proj.requires_grad_(True)
+
+        model.apply_model_specific_freeze()
+
+        self.assertFalse(any(param.requires_grad for param in model.model.llm_cond_norm.parameters()))
+        self.assertFalse(any(param.requires_grad for param in model.model.llm_cond_proj.parameters()))
 
     def test_pipeline_cfg_fallback_uses_negative_prompt_with_conditional_transformer(self):
         class DummyTransformer:
@@ -440,6 +583,42 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
         self.assertEqual(out.shape, (1, 6, 128))
         self.assertIsNotNone(x.grad)
+
+    def test_transformer_accepts_preprojected_text_features(self):
+        torch.manual_seed(789)
+        model = Ideogram4Transformer(
+            Ideogram4Config(
+                emb_dim=16,
+                num_layers=1,
+                num_heads=1,
+                intermediate_size=32,
+                adanln_dim=8,
+                llm_features_dim=4,
+                mrope_section=(1, 1, 1),
+            )
+        )
+        model.eval()
+
+        indicator = torch.tensor(
+            [[LLM_TOKEN_INDICATOR, LLM_TOKEN_INDICATOR, OUTPUT_IMAGE_INDICATOR, OUTPUT_IMAGE_INDICATOR]],
+            dtype=torch.long,
+        )
+        raw_features = torch.randn(1, 4, 4)
+        raw_features[:, 2:] = 0
+        llm_mask = (indicator == LLM_TOKEN_INDICATOR).to(raw_features.dtype).unsqueeze(-1)
+        with torch.no_grad():
+            projected_features = model.llm_cond_proj(model.llm_cond_norm(raw_features * llm_mask)) * llm_mask
+            common = {
+                "x": torch.randn(1, 4, 128),
+                "t": torch.tensor([0.25], dtype=torch.float32),
+                "position_ids": torch.zeros(1, 4, 3, dtype=torch.long),
+                "segment_ids": torch.ones(1, 4, dtype=torch.long),
+                "indicator": indicator,
+            }
+            raw_out = model(llm_features=raw_features, **common)
+            projected_out = model(llm_features=projected_features, **common)
+
+        self.assertTrue(torch.allclose(raw_out, projected_out, atol=1e-6))
 
     def test_transformer_flowmap_requires_enable_for_r_timestep(self):
         model = Ideogram4Transformer(

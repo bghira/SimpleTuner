@@ -371,7 +371,9 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
         """Velocity prediction.
 
         Args:
-          llm_features: (B, L, llm_features_dim) Qwen3-VL conditioning features.
+          llm_features: (B, L, llm_features_dim) Qwen3-VL conditioning features,
+            or (B, L, emb_dim) features already passed through llm_cond_norm
+            and llm_cond_proj.
           x: (B, L, in_channels) noise tokens.
           t: (B,) or (B, L) flow-matching time in [0, 1].
           r_timestep: optional AnyFlow/FlowMap interval endpoint in the same
@@ -398,6 +400,15 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
         llm_token_mask = (indicator == LLM_TOKEN_INDICATOR).to(x.dtype).unsqueeze(-1)
         output_image_mask = (indicator == OUTPUT_IMAGE_INDICATOR).to(x.dtype).unsqueeze(-1)
 
+        llm_features_dim = llm_features.shape[-1]
+        llm_features_projected = llm_features_dim == self.config.emb_dim
+        if not llm_features_projected and llm_features_dim != self.config.llm_features_dim:
+            raise ValueError(
+                "Ideogram llm_features last dimension must be either "
+                f"{self.config.llm_features_dim} (raw Qwen features) or "
+                f"{self.config.emb_dim} (projected features), got {llm_features_dim}."
+            )
+
         llm_features = llm_features * llm_token_mask
         x = x * output_image_mask
 
@@ -423,8 +434,11 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
             t_cond = t_cond.unsqueeze(1)
         adaln_input = F.silu(self.adaln_proj(t_cond))
 
-        llm_features = self.llm_cond_norm(llm_features)
-        llm_features = self.llm_cond_proj(llm_features) * llm_token_mask
+        if llm_features_projected:
+            llm_features = llm_features * llm_token_mask
+        else:
+            llm_features = self.llm_cond_norm(llm_features)
+            llm_features = self.llm_cond_proj(llm_features) * llm_token_mask
 
         h = x + llm_features
 

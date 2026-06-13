@@ -90,6 +90,26 @@ cp simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json config/
 }
 ```
 
+## Text embed cache
+
+Ideogram 4 का text encoder output Qwen की 13 hidden-state layers को concatenate करता है। डिफ़ॉल्ट रूप से SimpleTuner cache files लिखने से पहले इन raw features को transformer की frozen `llm_cond_norm` और `llm_cond_proj` layers से project करता है। इससे cache files काफी छोटी रहती हैं और transformer द्वारा consume किया जाने वाला conditioning tensor preserved रहता है।
+
+ये projection layers LoRA और full transformer training दोनों में frozen रहती हैं। Text encoder training, non-standard LoRA, या ऐसे LoRA targets जिनमें explicitly `llm_cond_norm` या `llm_cond_proj` शामिल हो, उनमें SimpleTuner cache में raw text encoder output रखता है।
+
+Cache का बड़ा cost saved padding से नहीं, feature width से आता है। Text embed precompute हर prompt के actual token length पर एक file लिखता है; batch padding बाद में memory में होती है। Raw 13-layer tensor `13 * 4096 = 53,248` float32 values per token है, यानी serialization overhead से पहले लगभग 0.203 MiB per token। 512-token caption raw में करीब 104 MiB होती है, जबकि projected bf16 cache करीब 4.5 MiB होती है।
+
+अगर आप इस path को Ideogram-जैसे comparable model को scratch से train करने के लिए adapt कर रहे हैं और text projection fixed pretrained component नहीं है, तो projected cache disable करें और raw text embed storage के काफी बड़े cost की planning करें।
+
+Full cache सिर्फ तब use करें जब आपको raw text encoder features चाहिए हों या cache compatibility debug कर रहे हों:
+
+```json
+{
+  "text_embed_full_cache": true
+}
+```
+
+यह Ideogram 4 की projected text embed cache optimisation बंद करता है और text encoder की पूरी 13-layer output save करता है।
+
 ## Validation
 
 Ideogram validation opt-in है:

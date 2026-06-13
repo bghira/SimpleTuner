@@ -80,6 +80,13 @@ simpletuner configure config/foo/config.json
   - マルチノード構成では、各ノードの local-rank 0 のみが削除を実行します。共有ストレージでの競合を避けるため、削除失敗は無視されます。
   - 学習チェックポイントには影響せず、事前学習済みベースモデルのキャッシュのみが対象です。
 
+### `--text_embed_full_cache`
+
+- **内容**: text embed cache に text encoder の完全な raw 出力を保存します。
+- **既定値**: `False`
+- **理由**: 既定ではモデル固有の compact cache layout を使えます。たとえば Ideogram 4 は、cache file に書き込む前に 13 層の Qwen hidden-state stack を transformer の凍結された `llm_cond_norm` と `llm_cond_proj` で投影します。これらの layer は LoRA と full transformer training の両方で凍結されます。
+- **使用タイミング**: cache 互換性のデバッグ、raw で未投影の text encoder features が必要な場合、または text projection が固定済み pretrained component ではない Ideogram 風 architecture を scratch training に適用する場合に有効化します。
+
 ### `--trust_remote_code`
 
 - **内容**: チェックポイントが upstream の独自クラスに依存している場合に、Transformers と tokenizer がモデルリポジトリ内のカスタム Python コードを実行できるようにします。
@@ -2237,6 +2244,11 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
+                        Store full raw text encoder outputs in the text embed
+                        cache. This opts out of model-specific cache size
+                        optimisations, such as Ideogram 4's frozen text
+                        projection cache.
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs

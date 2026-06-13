@@ -80,6 +80,13 @@ simpletuner configure config/foo/config.json
   - Multi‑node setups में, हर node पर केवल local‑rank 0 deletion करता है। Shared network storage पर race conditions संभालने के लिए deletion failures silently ignore की जाती हैं।
   - यह saved training checkpoints पर **प्रभाव नहीं** डालता — केवल pre‑trained base model cache पर लागू होता है।
 
+### `--text_embed_full_cache`
+
+- **What**: text embed cache में पूरा raw text encoder output store करता है।
+- **Default**: `False`
+- **Why**: default setting model-specific compact cache layouts को allow करती है। उदाहरण के लिए, Ideogram 4 cache files लिखने से पहले अपने 13-layer Qwen hidden-state stack को transformer की frozen `llm_cond_norm` और `llm_cond_proj` layers से project करता है; ये layers LoRA और full transformer training दोनों में frozen रहती हैं।
+- **When to use**: cache compatibility debugging के लिए, जब आपको raw unprojected text encoder features चाहिए हों, या जब आप Ideogram-style architecture को scratch training के लिए adapt कर रहे हों और text projection fixed pretrained component न हो।
+
 ### `--trust_remote_code`
 
 - **What**: जब checkpoint upstream custom classes पर निर्भर हो, तब Transformers और tokenizer को model repository से custom Python code चलाने की अनुमति देता है।
@@ -2234,6 +2241,11 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
+                        Store full raw text encoder outputs in the text embed
+                        cache. This opts out of model-specific cache size
+                        optimisations, such as Ideogram 4's frozen text
+                        projection cache.
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs
