@@ -2950,6 +2950,9 @@ class Trainer:
             if self.model.get_trained_component() is not None:
                 logger.info(f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}.")
                 self.model.model = apply_bitfit_freezing(unwrap_model(self.accelerator, self.model.model), self.config)
+        model_specific_freeze = getattr(self.model, "apply_model_specific_freeze", None)
+        if callable(model_specific_freeze):
+            model_specific_freeze()
         self.enable_gradient_checkpointing()
 
     def _resolve_distiller_profile(self) -> DistillerRequirementProfile:

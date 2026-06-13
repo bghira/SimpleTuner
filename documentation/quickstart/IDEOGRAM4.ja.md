@@ -90,6 +90,26 @@ FP8 が最初の推奨です:
 }
 ```
 
+## Text Embed Cache
+
+Ideogram 4 の text encoder 出力は、13 層の Qwen hidden-state を連結したものです。デフォルトでは、SimpleTuner は text embed cache ファイルへ書き込む前に、transformer の凍結された `llm_cond_norm` と `llm_cond_proj` で raw features を投影します。これにより cache file は大幅に小さくなり、transformer が実際に消費する conditioning tensor を保持できます。
+
+この projection layer は LoRA と full transformer training の両方で凍結されます。text encoder training、標準以外の LoRA、または `llm_cond_norm` / `llm_cond_proj` を明示的に含む LoRA target では、SimpleTuner は raw text encoder output を cache に保持します。
+
+cache の大きなコストは保存された padding ではなく feature 幅です。text embed precompute は prompt ごとの実際の token 長で 1 ファイルを書きます。batch padding は後でメモリ上だけで行われます。raw 13-layer tensor は `13 * 4096 = 53,248` 個の float32 値/token、serialization overhead 前で約 0.203 MiB/token です。512-token caption は raw で約 104 MiB、projected bf16 cache では約 4.5 MiB になります。
+
+この経路を使って Ideogram に似たモデルを scratch から学習し、text projection が固定済み pretrained component ではない場合は、projected cache を無効化し、raw text embed storage がかなり大きくなる前提で計画してください。
+
+raw text encoder features が必要な場合、または cache 互換性をデバッグする場合だけ full cache を使ってください:
+
+```json
+{
+  "text_embed_full_cache": true
+}
+```
+
+これは Ideogram 4 の projected text embed cache 最適化を無効化し、13 層すべての text encoder output を保存します。
+
 ## 検証
 
 Ideogram の検証は明示的に有効化するまで無効です:

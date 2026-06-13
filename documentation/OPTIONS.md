@@ -80,6 +80,13 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - On multi-node setups, only local-rank 0 on each node performs the deletion. Deletion failures are silently ignored to handle race conditions on shared network storage.
   - This does **not** affect saved training checkpoints — only the pre-trained base model cache.
 
+### `--text_embed_full_cache`
+
+- **What**: Stores the full raw text encoder output in the text embed cache.
+- **Default**: `False`
+- **Why**: The default allows model-specific compact cache layouts. For example, Ideogram 4 projects its 13-layer Qwen hidden-state stack through the transformer's frozen `llm_cond_norm` and `llm_cond_proj` layers before writing cache files; those layers stay frozen for both LoRA and full transformer training.
+- **When to use**: Enable this for cache compatibility debugging, when you intentionally need raw unprojected text encoder features, or when adapting an Ideogram-style architecture for scratch training where the text projection is not a fixed pretrained component.
+
 ### `--trust_remote_code`
 
 - **What**: Allows Transformers and tokenizers to execute custom Python code from the model repository when a checkpoint depends on upstream custom classes.
@@ -2241,6 +2248,11 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
+                        Store full raw text encoder outputs in the text embed
+                        cache. This opts out of model-specific cache size
+                        optimisations, such as Ideogram 4's frozen text
+                        projection cache.
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs

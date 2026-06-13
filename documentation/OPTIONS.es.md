@@ -80,6 +80,13 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - En configuraciones multinodo, solo el rank local 0 en cada nodo realiza la eliminación. Los fallos de eliminación se ignoran silenciosamente para manejar condiciones de carrera en almacenamiento de red compartido.
   - Esto **no** afecta a los checkpoints de entrenamiento guardados; solo al caché del modelo base preentrenado.
 
+### `--text_embed_full_cache`
+
+- **Qué**: Guarda la salida raw completa del text encoder en el cache de text embeds.
+- **Predeterminado**: `False`
+- **Por qué**: El valor predeterminado permite layouts de cache compactos específicos del modelo. Por ejemplo, Ideogram 4 proyecta su pila Qwen de 13 capas mediante las capas congeladas `llm_cond_norm` y `llm_cond_proj` del transformer antes de escribir los archivos de cache; esas capas permanecen congeladas tanto en LoRA como en entrenamiento full del transformer.
+- **Cuándo usarlo**: Actívalo para depurar compatibilidad de cache, cuando necesites explícitamente features raw y sin proyección del text encoder, o al adaptar una arquitectura estilo Ideogram para entrenamiento desde cero donde la proyección de texto no sea un componente preentrenado fijo.
+
 ### `--trust_remote_code`
 
 - **Qué**: Permite que Transformers y los tokenizers ejecuten código Python personalizado del repositorio del modelo cuando el checkpoint depende de clases personalizadas upstream.
@@ -2236,6 +2243,11 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
+                        Store full raw text encoder outputs in the text embed
+                        cache. This opts out of model-specific cache size
+                        optimisations, such as Ideogram 4's frozen text
+                        projection cache.
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs
