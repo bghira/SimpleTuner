@@ -7,6 +7,7 @@ from unittest import mock
 
 import torch
 import torch.nn as nn
+from accelerate import init_empty_weights
 from safetensors.torch import load_file
 
 from simpletuner.helpers.models.ideogram.model import Ideogram4
@@ -18,6 +19,22 @@ from simpletuner.helpers.training.validation import prepare_validation_prompt_li
 
 
 class Ideogram4PromptingTests(unittest.TestCase):
+    def test_transformer_flowmap_gate_is_materialized_with_meta_buffers(self):
+        with init_empty_weights(include_buffers=True):
+            model = Ideogram4Transformer(
+                Ideogram4Config(
+                    emb_dim=192,
+                    num_layers=1,
+                    num_heads=1,
+                    intermediate_size=384,
+                    adanln_dim=32,
+                    llm_features_dim=64,
+                )
+            )
+
+        self.assertEqual(model.flowmap_delta_emb_gate.device.type, "cpu")
+        self.assertTrue(torch.equal(model.flowmap_delta_emb_gate, torch.tensor([0.25])))
+
     def test_plain_prompt_is_wrapped_as_schema_json(self):
         converted = maybe_convert_prompt_to_ideogram_json("35mm photo of a blue boat at sunset #1b3a5c")
         parsed = json.loads(converted)
