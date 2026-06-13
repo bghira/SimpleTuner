@@ -90,6 +90,26 @@ Para poca VRAM, usa NF4:
 }
 ```
 
+## Cache de text embeds
+
+La salida del text encoder de Ideogram 4 concatena 13 capas hidden-state de Qwen. Por defecto, SimpleTuner proyecta esas features raw con las capas congeladas `llm_cond_norm` y `llm_cond_proj` del transformer antes de escribir los archivos de cache de text embeds. Esto reduce mucho el tamaño del cache y conserva el tensor de conditioning que consume el transformer.
+
+Las capas de proyección están congeladas tanto en LoRA como en entrenamiento full del transformer. Para entrenamiento del text encoder, LoRA no estándar, o targets LoRA que incluyan explícitamente `llm_cond_norm` o `llm_cond_proj`, SimpleTuner mantiene la salida raw del text encoder en el cache.
+
+El coste grande del cache viene del ancho de las features, no de padding guardado. El precompute de text embeds escribe un archivo por prompt con la longitud real de tokens de ese prompt; el padding de batch ocurre después en memoria. El tensor raw de 13 capas tiene `13 * 4096 = 53,248` valores float32 por token, unos 0.203 MiB por token antes del overhead de serialización. Una caption de 512 tokens ocupa alrededor de 104 MiB en raw, mientras que el cache proyectado en bf16 ocupa unos 4.5 MiB.
+
+Si adaptas esta ruta para entrenar desde cero un modelo comparable estilo Ideogram y la proyección de texto no es un componente preentrenado fijo, desactiva el cache proyectado y planifica el almacenamiento mucho mayor de text embeds raw.
+
+Usa el cache completo solo si necesitas explícitamente las features raw del text encoder o estás depurando compatibilidad de cache:
+
+```json
+{
+  "text_embed_full_cache": true
+}
+```
+
+Esto desactiva la optimización de cache proyectado de Ideogram 4 y guarda la salida completa de 13 capas del text encoder.
+
 ## Validación
 
 La validación de Ideogram está desactivada hasta que la habilites:
