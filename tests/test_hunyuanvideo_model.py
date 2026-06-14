@@ -3,11 +3,30 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from accelerate import init_empty_weights
 
 from simpletuner.helpers.models.hunyuanvideo.model import HunyuanVideo
+from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo15TimeEmbedding
 
 
 class HunyuanVideoModelTests(unittest.TestCase):
+    def test_flowmap_gate_is_materialized_when_constructed_with_meta_buffers(self):
+        with init_empty_weights(include_buffers=True):
+            embedding = HunyuanVideo15TimeEmbedding(embedding_dim=8)
+
+        self.assertEqual(embedding.flowmap_delta_emb_gate.device.type, "cpu")
+        self.assertTrue(torch.equal(embedding.flowmap_delta_emb_gate, torch.tensor([0.25])))
+
+    def test_set_flowmap_gate_materializes_meta_gate(self):
+        with init_empty_weights(include_buffers=True):
+            embedding = HunyuanVideo15TimeEmbedding(embedding_dim=8)
+            embedding.flowmap_delta_emb_gate = torch.empty(1, device="meta")
+
+        embedding.enable_flowmap_time_conditioning(gate_value=0.5, deltatime_type="r")
+
+        self.assertEqual(embedding.flowmap_delta_emb_gate.device.type, "cpu")
+        self.assertTrue(torch.equal(embedding.flowmap_delta_emb_gate, torch.tensor([0.5])))
+
     def test_load_text_encoder_registers_both_hunyuan_encoders_for_device_management(self):
         model = HunyuanVideo.__new__(HunyuanVideo)
         model.accelerator = SimpleNamespace(device=torch.device("cuda:0"))

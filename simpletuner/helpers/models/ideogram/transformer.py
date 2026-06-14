@@ -18,6 +18,7 @@ from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
     clone_flowmap_embedder,
     prepare_flowmap_delta_timestep,
+    register_flowmap_gate_buffer,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
@@ -293,7 +294,7 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
         self.t_embedding = Ideogram4EmbedScalar(config.emb_dim, input_range=(0.0, 1.0))
         self.delta_t_embedding: nn.Module | None = None
         self.flowmap_deltatime_type: str | None = None
-        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        register_flowmap_gate_buffer(self)
         self.adaln_proj = nn.Linear(config.emb_dim, config.adanln_dim, bias=True)
 
         self.embed_image_indicator = nn.Embedding(2, config.emb_dim)

@@ -14,8 +14,23 @@ def validate_flowmap_deltatime_type(deltatime_type: str, *, model_name: str) -> 
     return deltatime_type
 
 
+def register_flowmap_gate_buffer(
+    module: torch.nn.Module,
+    gate_value: float = 0.25,
+    *,
+    buffer_name: str = "flowmap_delta_emb_gate",
+) -> None:
+    module.register_buffer(buffer_name, torch.tensor([float(gate_value)], dtype=torch.float32), persistent=False)
+    gate = getattr(module, buffer_name)
+    if gate.device.type == "meta":
+        module._buffers[buffer_name] = torch.tensor([float(gate_value)], device="cpu", dtype=torch.float32)
+
+
 def set_flowmap_gate(module: torch.nn.Module, gate_value: float, *, buffer_name: str = "flowmap_delta_emb_gate") -> None:
     gate = getattr(module, buffer_name)
+    if gate.device.type == "meta":
+        module._buffers[buffer_name] = torch.tensor([float(gate_value)], device="cpu", dtype=gate.dtype)
+        return
     gate.data = torch.tensor([float(gate_value)], device=gate.device, dtype=gate.dtype)
 
 
