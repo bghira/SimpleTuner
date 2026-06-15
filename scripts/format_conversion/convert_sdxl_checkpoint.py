@@ -267,6 +267,17 @@ def convert_openai_text_enc_state_dict(text_enc_dict):
     return text_enc_dict
 
 
+def restore_clip_text_model_prefix(text_enc_dict):
+    # transformers >=5.6 flattened CLIPTextModel: the `text_model.` submodule wrapper was
+    # removed, so on-disk keys are `embeddings.*` / `encoder.*` / `final_layer_norm.*`.
+    # The SDXL single-file format still expects the nested `text_model.` layout, so re-add
+    # the prefix when it's missing. text_encoder_2 (CLIPTextModelWithProjection) was NOT
+    # flattened and already carries `text_model.`, so it passes through unchanged.
+    if any(k.startswith("text_model.") for k in text_enc_dict):
+        return text_enc_dict
+    return {f"text_model.{k}": v for k, v in text_enc_dict.items()}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -327,6 +338,12 @@ if __name__ == "__main__":
     else:
         text_enc_2_path = osp.join(args.model_path, "text_encoder_2", "pytorch_model.bin")
         text_enc_2_dict = torch.load(text_enc_2_path, map_location="cpu")
+
+    # transformers >=5.6 flattened CLIPTextModel; restore the `text_model.` prefix on the
+    # flat text_encoder (TE1). text_encoder_2 is CLIPTextModelWithProjection (still nested)
+    # and is returned unchanged by the guard.
+    text_enc_dict = restore_clip_text_model_prefix(text_enc_dict)
+    text_enc_2_dict = restore_clip_text_model_prefix(text_enc_2_dict)
 
     # Convert the UNet model
     unet_state_dict = convert_unet_state_dict(unet_state_dict)
