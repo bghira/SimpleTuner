@@ -270,12 +270,15 @@ def convert_openai_text_enc_state_dict(text_enc_dict):
 def restore_clip_text_model_prefix(text_enc_dict):
     # transformers >=5.6 flattened CLIPTextModel: the `text_model.` submodule wrapper was
     # removed, so on-disk keys are `embeddings.*` / `encoder.*` / `final_layer_norm.*`.
-    # The SDXL single-file format still expects the nested `text_model.` layout, so re-add
-    # the prefix when it's missing. text_encoder_2 (CLIPTextModelWithProjection) was NOT
-    # flattened and already carries `text_model.`, so it passes through unchanged.
+    # The SDXL single-file format still expects the nested `text_model.` layout.
     if any(k.startswith("text_model.") for k in text_enc_dict):
         return text_enc_dict
-    return {f"text_model.{k}": v for k, v in text_enc_dict.items()}
+
+    flat_prefixes = ("embeddings.", "encoder.", "final_layer_norm.")
+    if not any(k.startswith(flat_prefixes) for k in text_enc_dict):
+        return text_enc_dict
+
+    return {("text_model." + k if k.startswith(flat_prefixes) else k): v for k, v in text_enc_dict.items()}
 
 
 if __name__ == "__main__":
