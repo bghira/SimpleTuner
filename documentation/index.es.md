@@ -72,9 +72,9 @@
 
     ---
 
-    Funciones de investigación como AnyFlow, Self-Flow, Flow-DPO, LayerSync, Diff2Flow y Video CREPA
+    Funciones de investigación como AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow y Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Prompt2Effect](experimental/PROMPT2EFFECT.md)
 
 </div>
 

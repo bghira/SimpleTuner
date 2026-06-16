@@ -72,9 +72,9 @@
 
     ---
 
-    Recursos de pesquisa como AnyFlow, Self-Flow, Flow-DPO, LayerSync, Diff2Flow e Video CREPA
+    Recursos de pesquisa como AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow e Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Prompt2Effect](experimental/PROMPT2EFFECT.md)
 
 </div>
 

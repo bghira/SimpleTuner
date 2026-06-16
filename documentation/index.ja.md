@@ -72,9 +72,9 @@
 
     ---
 
-    AnyFlow、Self-Flow、Flow-DPO、LayerSync、Diff2Flow、Video CREPA などの研究向け機能
+    AnyFlow、Prompt2Effect、Self-Flow、Flow-DPO、LayerSync、Diff2Flow、Video CREPA などの研究向け機能
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Prompt2Effect](experimental/PROMPT2EFFECT.md)
 
 </div>
 
