@@ -344,6 +344,7 @@ nav:
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - LayerSync: experimental/LAYERSYNC.md
+      - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
       - T-LoRA: experimental/T_LORA.md
