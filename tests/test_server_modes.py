@@ -71,8 +71,12 @@ class ServerCreationTestCase(unittest.TestCase):
             static_dir = Path(tmpdir) / "static"
             static_dir.mkdir()
             app = create_app(mode=ServerMode.TRAINER, static_dir=str(static_dir))
-            routes = [route.path for route in app.routes]
-            self.assertTrue(any("/static" in path for path in routes))
+            mounted_static_routes = [
+                route
+                for route in app.routes
+                if getattr(route, "path", None) == "/static" and getattr(route, "name", None) == "static"
+            ]
+            self.assertTrue(mounted_static_routes)
 
 
 class RouteInclusionTestCase(unittest.TestCase):
