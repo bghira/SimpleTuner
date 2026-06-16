@@ -266,6 +266,17 @@ def convert_text_enc_state_dict(text_enc_dict):
     return text_enc_dict
 
 
+def restore_clip_text_model_prefix(text_enc_dict):
+    # transformers >=5.6 flattened CLIPTextModel: the `text_model.` submodule wrapper was
+    # removed, so on-disk keys are `embeddings.*` / `encoder.*` / `final_layer_norm.*`.
+    # The SD single-file format (and everything below) still expects the nested
+    # `text_model.` layout, so re-add the prefix when it's missing. Nested checkpoints
+    # (older transformers, or CLIPTextModelWithProjection) already have it and pass through.
+    if any(k.startswith("text_model.") for k in text_enc_dict):
+        return text_enc_dict
+    return {f"text_model.{k}": v for k, v in text_enc_dict.items()}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -319,6 +330,10 @@ if __name__ == "__main__":
     else:
         text_enc_path = osp.join(args.model_path, "text_encoder", "pytorch_model.bin")
         text_enc_dict = torch.load(text_enc_path, map_location="cpu")
+
+    # transformers >=5.6 flattened CLIPTextModel; restore the `text_model.` prefix so the
+    # v2.0 probe and conversion tables below keep working on both old and new checkpoints.
+    text_enc_dict = restore_clip_text_model_prefix(text_enc_dict)
 
     # Convert the UNet model
     unet_state_dict = convert_unet_state_dict(unet_state_dict)

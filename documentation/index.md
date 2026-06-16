@@ -72,9 +72,9 @@
 
     ---
 
-    Research features such as AnyFlow, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, and Video CREPA
+    Research features such as AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, and Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Prompt2Effect](experimental/PROMPT2EFFECT.md)
 
 </div>
 

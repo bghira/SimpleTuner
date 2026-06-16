@@ -40,6 +40,7 @@ from simpletuner.helpers.models.flowmap import (
     clone_flowmap_embedder,
     prepare_flowmap_delta_timestep,
     register_flowmap_config,
+    register_flowmap_gate_buffer,
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
@@ -268,7 +269,7 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
             self.timestep_embedder_r = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
         self.delta_timestep_embedder: Optional[nn.Module] = None
         self.flowmap_deltatime_type: Optional[str] = None
-        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        register_flowmap_gate_buffer(self)
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="HunyuanVideo")
