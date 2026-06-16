@@ -27,6 +27,7 @@ from simpletuner.helpers.models.longcat_video.pipeline import LongCatVideoPipeli
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 
@@ -375,9 +376,11 @@ class LongCatVideo(VideoModelFoundation):
         return TextEmbedCacheKey.CAPTION
 
     def setup_training_noise_schedule(self):
-        self.noise_schedule = FlowMatchEulerDiscreteScheduler(
-            num_train_timesteps=1000,
-            shift=self.config.flow_schedule_shift,
+        self.noise_schedule = fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=self.config.flow_schedule_shift,
+            )
         )
         return self.config, self.noise_schedule
 

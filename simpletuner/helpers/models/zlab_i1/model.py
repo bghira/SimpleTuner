@@ -26,6 +26,7 @@ from simpletuner.helpers.models.zlab_i1.latent_utils import (
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.zlab_i1.pipeline import ZlabI1Pipeline
 from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +358,7 @@ class ZLabI1(ImageModelFoundation):
             subfolder="scheduler",
             shift=self.config.flow_schedule_shift,
         )
+        fix_flow_match_euler_schedule_bounds(self.noise_schedule)
         self.config.training_scheduler_timestep_spacing = self.noise_schedule.config.get("timestep_spacing")
         self.config.prediction_type = self.PREDICTION_TYPE.value
         self.config.rescale_betas_zero_snr = False

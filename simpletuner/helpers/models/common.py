@@ -48,6 +48,7 @@ from simpletuner.helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
@@ -3875,6 +3876,7 @@ class ModelFoundation(ABC):
                 subfolder="scheduler",
                 shift=self.config.flow_schedule_shift,
             )
+            fix_flow_match_euler_schedule_bounds(self.noise_schedule)
             flow_matching = True
         elif self.PREDICTION_TYPE in [
             PredictionTypes.EPSILON,

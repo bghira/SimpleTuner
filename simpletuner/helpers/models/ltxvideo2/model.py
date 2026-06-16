@@ -36,6 +36,7 @@ from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2I
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
 from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.multi_process import _get_rank, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -454,15 +455,17 @@ class LTXVideo2(VideoModelFoundation):
             shift = 1.0
         flavour_value = str(getattr(self.config, "model_flavour", "") or "").strip().lower()
         is_distilled = "distilled" in flavour_value
-        return FlowMatchEulerDiscreteScheduler(
-            num_train_timesteps=1000,
-            shift=float(shift),
-            use_dynamic_shifting=not is_distilled,
-            base_shift=0.95,
-            max_shift=2.05,
-            base_image_seq_len=1024,
-            max_image_seq_len=4096,
-            shift_terminal=None if is_distilled else 0.1,
+        return fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=float(shift),
+                use_dynamic_shifting=not is_distilled,
+                base_shift=0.95,
+                max_shift=2.05,
+                base_image_seq_len=1024,
+                max_image_seq_len=4096,
+                shift_terminal=None if is_distilled else 0.1,
+            )
         )
 
     def _load_audio_vae(self, move_to_device: bool = True):

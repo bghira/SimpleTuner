@@ -24,6 +24,7 @@ from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_t
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -683,9 +684,11 @@ class Ideogram4(ImageModelFoundation):
     def setup_training_noise_schedule(self):
         from diffusers import FlowMatchEulerDiscreteScheduler
 
-        self.noise_schedule = FlowMatchEulerDiscreteScheduler(
-            num_train_timesteps=1000,
-            shift=getattr(self.config, "flow_schedule_shift", 1.0) or 1.0,
+        self.noise_schedule = fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=getattr(self.config, "flow_schedule_shift", 1.0) or 1.0,
+            )
         )
         self.config.prediction_type = "flow_matching"
         return self.config, self.noise_schedule
