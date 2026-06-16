@@ -12,6 +12,8 @@ from typing import Any
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers import SchedulerMixin as SchedulerMixin  # noqa: F401
 
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
+
 from .constants import FORGE_BETA_ALPHA, FORGE_BETA_BETA
 
 SUPPORTED_ANIMA_SAMPLERS = (
@@ -103,6 +105,7 @@ class AnimaFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             time_shift_type=time_shift_type,
             stochastic_sampling=stochastic_sampling,
         )
+        fix_flow_match_euler_schedule_bounds(self)
         self.set_sampling_config(
             sampler=sampler,
             sigma_schedule=sigma_schedule,

@@ -26,6 +26,7 @@ from simpletuner.helpers.models.common import (
 )
 from simpletuner.helpers.models.sana.pipeline import SanaImg2ImgPipeline
 from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -291,6 +292,7 @@ class Sana(ImageModelFoundation):
             get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
             subfolder="scheduler",
         )
+        fix_flow_match_euler_schedule_bounds(self.noise_schedule)
         # Lock Sana to the scheduler's built-in shift and distributions; ignore user overrides.
         self.config.flow_schedule_shift = None
         self.config.flow_schedule_auto_shift = False

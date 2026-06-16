@@ -35,6 +35,7 @@ from simpletuner.helpers.models.hunyuanvideo.pipeline_i2v import HunyuanVideo15I
 from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo15Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
@@ -268,9 +269,11 @@ class HunyuanVideo(VideoModelFoundation):
         return self._is_i2v_like_flavour() or super().requires_validation_i2v_samples()
 
     def setup_training_noise_schedule(self):
-        self.noise_schedule = FlowMatchEulerDiscreteScheduler(
-            num_train_timesteps=1000,
-            shift=self.config.flow_schedule_shift,
+        self.noise_schedule = fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=self.config.flow_schedule_shift,
+            )
         )
         return self.config, self.noise_schedule
 
@@ -463,7 +466,9 @@ class HunyuanVideo(VideoModelFoundation):
         flow_shift = getattr(self.config, "flow_schedule_shift", 7.0)
         guidance_scale = getattr(self.config, "validation_guidance", 6.0)
 
-        scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=flow_shift)
+        scheduler = fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=flow_shift)
+        )
         guider = ClassifierFreeGuidance(guidance_scale=guidance_scale)
 
         transformer = self.unwrap_model(self.model) if load_base_model and self.model is not None else None
