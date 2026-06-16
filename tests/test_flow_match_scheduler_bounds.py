@@ -10,6 +10,15 @@ from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedul
 
 
 class TestFlowMatchSchedulerBounds(unittest.TestCase):
+    def test_000_diffusers_static_shift_still_has_duplicate_shift_regression(self):
+        scheduler = DiffusersFlowMatchEulerDiscreteScheduler(num_train_timesteps=10, shift=3.0)
+
+        initial_sigmas = scheduler.sigmas.clone()
+        scheduler.set_timesteps(num_inference_steps=10)
+
+        self.assertFalse(torch.allclose(scheduler.sigmas[:-1].cpu(), initial_sigmas, atol=1e-6))
+        self.assertGreater(scheduler.sigmas[-2].item(), initial_sigmas[-1].item())
+
     def test_diffusers_static_shift_bounds_are_unshifted_for_set_timesteps(self):
         scheduler = DiffusersFlowMatchEulerDiscreteScheduler(num_train_timesteps=10, shift=3.0)
         fix_flow_match_euler_schedule_bounds(scheduler)
