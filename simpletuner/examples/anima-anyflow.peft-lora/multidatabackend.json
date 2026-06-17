@@ -1,0 +1,35 @@
+[
+  {
+    "id": "anime-caption-hf",
+    "type": "huggingface",
+    "dataset_name": "Dhiraj45/Anime-Caption",
+    "caption_strategy": "huggingface",
+    "metadata_backend": "huggingface",
+    "image_column": "Image",
+    "caption_column": "Caption",
+    "huggingface": {
+      "dataset_name": "Dhiraj45/Anime-Caption",
+      "image_column": "Image",
+      "caption_column": "Caption",
+      "file_extension": "jpg"
+    },
+    "crop": true,
+    "crop_style": "center",
+    "crop_aspect": "square",
+    "minimum_image_size": 512,
+    "maximum_image_size": 1536,
+    "target_downsample_size": 1024,
+    "resolution": 1024,
+    "resolution_type": "pixel_area",
+    "cache_dir_vae": "cache/vae/anima-anyflow-example",
+    "text_embeds": "anima-anyflow-example-text",
+    "repeats": 1
+  },
+  {
+    "id": "anima-anyflow-example-text",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/anima-anyflow-example"
+  }
+]

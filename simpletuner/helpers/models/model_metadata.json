@@ -1,4 +1,18 @@
 {
+    "boogu_image": {
+        "class_name": "BooguImage",
+        "module_path": "simpletuner.helpers.models.boogu_image.model",
+        "name": "Boogu-Image",
+        "prediction_type": "flow_matching",
+        "flavour_choices": [
+            "v0.1-base",
+            "v0.1-base-fp8",
+            "v0.1-turbo",
+            "v0.1-turbo-fp8",
+            "v0.1-edit",
+            "v0.1-edit-fp8"
+        ]
+    },
     "zlab_i1": {
         "class_name": "ZLabI1",
         "module_path": "simpletuner.helpers.models.zlab_i1.model",

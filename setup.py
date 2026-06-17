@@ -332,6 +332,7 @@ base_deps = [
     "hangul-romanize>=0.1.0",
     "optimum-quanto>=0.2.7",
     "lycoris-lora>=3.4.0",
+    "kernels>=0.12.3,<0.13",
     "torch-optimi>=0.2.1",
     "librosa>=0.10.2",
     "loguru>=0.7.2",
