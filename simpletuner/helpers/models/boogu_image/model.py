@@ -55,11 +55,11 @@ class BooguImage(ImageModelFoundation):
     DEFAULT_MODEL_FLAVOUR = "v0.1-turbo"
     HUGGINGFACE_PATHS = {
         "v0.1-base": "SimpleTuner/Boogu-Image-0.1-Base",
-        "v0.1-base-fp8": "SimpleTuner/Boogu-Image-0.1-Base-fp8",
+        "v0.1-base-fp8": "SimpleTuner/Boogu-Image-0.1-Base",
         "v0.1-turbo": "SimpleTuner/Boogu-Image-0.1-Turbo",
-        "v0.1-turbo-fp8": "SimpleTuner/Boogu-Image-0.1-Turbo-fp8",
+        "v0.1-turbo-fp8": "SimpleTuner/Boogu-Image-0.1-Turbo",
         "v0.1-edit": "SimpleTuner/Boogu-Image-0.1-Edit",
-        "v0.1-edit-fp8": "SimpleTuner/Boogu-Image-0.1-Edit-fp8",
+        "v0.1-edit-fp8": "SimpleTuner/Boogu-Image-0.1-Edit",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -153,6 +153,16 @@ class BooguImage(ImageModelFoundation):
 
     def requires_text_embed_image_context(self) -> bool:
         return self._is_edit_flavour()
+
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        noise_sigmas, _ = super().sample_flow_sigmas(batch=batch, state=state)
+        boogu_timesteps = 1.0 - noise_sigmas
+        return noise_sigmas, boogu_timesteps
+
+    def get_prediction_target(self, prepared_batch: dict):
+        if prepared_batch.get("target") is not None:
+            return prepared_batch["target"]
+        return prepared_batch["latents"] - prepared_batch["noise"]
 
     def text_embed_cache_key(self):
         if self._is_edit_flavour():

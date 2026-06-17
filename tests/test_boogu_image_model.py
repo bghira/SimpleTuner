@@ -9,6 +9,7 @@ from simpletuner.helpers.models.boogu_image.model import BooguImage
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline, retrieve_timesteps
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.training.attention_backend import _DIFFUSERS_BACKEND_ALIASES
+from simpletuner.helpers.training.quantisation import _torchao_filter_fn
 
 
 class BooguImageModelTests(unittest.TestCase):
@@ -25,11 +26,11 @@ class BooguImageModelTests(unittest.TestCase):
 
     def test_flavour_paths_include_requested_variants(self):
         self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-base"], "SimpleTuner/Boogu-Image-0.1-Base")
-        self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-base-fp8"], "SimpleTuner/Boogu-Image-0.1-Base-fp8")
+        self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-base-fp8"], "SimpleTuner/Boogu-Image-0.1-Base")
         self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-turbo"], "SimpleTuner/Boogu-Image-0.1-Turbo")
-        self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-turbo-fp8"], "SimpleTuner/Boogu-Image-0.1-Turbo-fp8")
+        self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-turbo-fp8"], "SimpleTuner/Boogu-Image-0.1-Turbo")
         self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-edit"], "SimpleTuner/Boogu-Image-0.1-Edit")
-        self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-edit-fp8"], "SimpleTuner/Boogu-Image-0.1-Edit-fp8")
+        self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-edit-fp8"], "SimpleTuner/Boogu-Image-0.1-Edit")
 
     def test_model_components_are_local_simpletuner_classes(self):
         self.assertEqual(BooguImage.MODEL_CLASS.__module__, "simpletuner.helpers.models.boogu_image.transformer")
@@ -106,6 +107,36 @@ class BooguImageModelTests(unittest.TestCase):
         self.assertEqual(dispatch_calls, [True])
         self.assertEqual(len(forward_calls), 1)
         self.assertEqual(forward_calls[0][0][3], "freqs")
+
+    def test_boogu_flow_target_points_from_noise_to_latents(self):
+        model = object.__new__(BooguImage)
+        latents = torch.tensor([1.0, 3.0])
+        noise = torch.tensor([4.0, -1.0])
+
+        target = model.get_prediction_target({"latents": latents, "noise": noise})
+
+        self.assertTrue(torch.equal(target, latents - noise))
+
+    def test_boogu_flow_timesteps_are_normalized_clean_progress(self):
+        model = object.__new__(BooguImage)
+
+        def sample_flow_sigmas(self, batch, state):
+            return torch.tensor([0.25, 0.75]), torch.tensor([250.0, 750.0])
+
+        parent = BooguImage.__mro__[1]
+        original = parent.sample_flow_sigmas
+        try:
+            parent.sample_flow_sigmas = sample_flow_sigmas
+            noise_sigmas, timesteps = model.sample_flow_sigmas(batch={}, state={})
+        finally:
+            parent.sample_flow_sigmas = original
+
+        self.assertTrue(torch.equal(noise_sigmas, torch.tensor([0.25, 0.75])))
+        self.assertTrue(torch.equal(timesteps, torch.tensor([0.75, 0.25])))
+
+    def test_torchao_filter_skips_boogu_reference_image_modules(self):
+        self.assertFalse(_torchao_filter_fn(torch.nn.Linear(16, 16), "ref_image_refiner.0.attn.to_q"))
+        self.assertTrue(_torchao_filter_fn(torch.nn.Linear(16, 16), "context_refiner.0.attn.to_q"))
 
     def test_validation_kwargs_are_mapped_to_boogu_pipeline_names(self):
         model = object.__new__(BooguImage)

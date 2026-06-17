@@ -1,7 +1,7 @@
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
 # Hardware Architecture
-ENV TORCH_CUDA_ARCH_LIST=8.9
+ENV TORCH_CUDA_ARCH_LIST=9.0
 ENV CUDA_HOME=/usr/local/cuda-12.8
 ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$CUDA_HOME/targets/x86_64-linux/lib/stubs:$LD_LIBRARY_PATH
 
@@ -47,8 +47,8 @@ RUN python${PYTHON_VERSION} -m venv /opt/venv \
        "torchao>=0.17.0,<0.18.0"
 
 # 3. Install SimpleTuner
-# Using 'release' branch for stability. Change to 'main' for latest features.
-ARG SIMPLETUNER_BRANCH=release
+# Use main for current model integrations such as Boogu-Image.
+ARG SIMPLETUNER_BRANCH=main
 RUN git clone https://github.com/bghira/SimpleTuner --branch $SIMPLETUNER_BRANCH \
     && cd SimpleTuner \
     && pip install --no-cache-dir -e .[jxl] \
