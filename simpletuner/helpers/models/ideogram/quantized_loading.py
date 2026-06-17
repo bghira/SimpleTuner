@@ -7,12 +7,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 _BNB_SIBLING_SUFFIXES = (
-  ".absmax",
-  ".quant_map",
-  ".nested_absmax",
-  ".nested_quant_map",
+    ".absmax",
+    ".quant_map",
+    ".nested_absmax",
+    ".nested_quant_map",
 )
 
 # Largest magnitude representable by the e4m3 float8 format. Per-row weight
@@ -27,219 +26,219 @@ FP8_TEXT_ENCODER_CONFIG_FLAG = "ideogram_fp8_weight_only"
 
 
 def _scaled_mm_supported(x: torch.Tensor) -> bool:
-  if not x.is_cuda or not hasattr(torch, "_scaled_mm"):
-    return False
-  mode = os.environ.get("SIMPLETUNER_IDEOGRAM_FP8_SCALED_MM", "auto").strip().lower()
-  if mode in {"0", "false", "off", "no"}:
-    return False
-  if mode in {"1", "true", "on", "yes"}:
-    return True
-  try:
-    # Ada (L40S/4090) benefits most from scaled FP8 matmul. Hopper's bf16 path is
-    # competitive enough that we leave it on the dequantized fallback by default.
-    return torch.cuda.get_device_capability(x.device) == (8, 9)
-  except Exception:
-    return False
+    if not x.is_cuda or not hasattr(torch, "_scaled_mm"):
+        return False
+    mode = os.environ.get("SIMPLETUNER_IDEOGRAM_FP8_SCALED_MM", "auto").strip().lower()
+    if mode in {"0", "false", "off", "no"}:
+        return False
+    if mode in {"1", "true", "on", "yes"}:
+        return True
+    try:
+        # Ada (L40S/4090) benefits most from scaled FP8 matmul. Hopper's bf16 path is
+        # competitive enough that we leave it on the dequantized fallback by default.
+        return torch.cuda.get_device_capability(x.device) == (8, 9)
+    except Exception:
+        return False
 
 
 class _Fp8LinearScaledMm(torch.autograd.Function):
-  @staticmethod
-  def _dequantized_forward(
-    x_2d: torch.Tensor,
-    input_shape: torch.Size,
-    weight: torch.Tensor,
-    weight_scale: torch.Tensor,
-    bias: torch.Tensor | None,
-    out_features: int,
-  ) -> torch.Tensor:
-    w = weight.to(x_2d.dtype) * weight_scale.to(x_2d.dtype).unsqueeze(1)
-    bias_arg = bias.to(x_2d.dtype) if bias is not None else None
-    return F.linear(x_2d, w, bias_arg).reshape(*input_shape[:-1], out_features)
+    @staticmethod
+    def _dequantized_forward(
+        x_2d: torch.Tensor,
+        input_shape: torch.Size,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        bias: torch.Tensor | None,
+        out_features: int,
+    ) -> torch.Tensor:
+        w = weight.to(x_2d.dtype) * weight_scale.to(x_2d.dtype).unsqueeze(1)
+        bias_arg = bias.to(x_2d.dtype) if bias is not None else None
+        return F.linear(x_2d, w, bias_arg).reshape(*input_shape[:-1], out_features)
 
-  @staticmethod
-  def forward(
-    ctx,
-    x: torch.Tensor,
-    weight: torch.Tensor,
-    weight_scale: torch.Tensor,
-    bias: torch.Tensor | None,
-    out_features: int,
-  ) -> torch.Tensor:
-    input_shape = x.shape
-    x_2d = x.reshape(-1, x.shape[-1])
-    input_max = torch.finfo(FP8_INPUT_DTYPE).max
-    input_scale = (input_max / x_2d.detach().abs().amax().clamp(min=1e-12)).clamp(
-      max=input_max,
-    )
-    x_fp8 = (x_2d * input_scale).clamp(-input_max, input_max).to(FP8_INPUT_DTYPE)
+    @staticmethod
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        bias: torch.Tensor | None,
+        out_features: int,
+    ) -> torch.Tensor:
+        input_shape = x.shape
+        x_2d = x.reshape(-1, x.shape[-1])
+        input_max = torch.finfo(FP8_INPUT_DTYPE).max
+        input_scale = (input_max / x_2d.detach().abs().amax().clamp(min=1e-12)).clamp(
+            max=input_max,
+        )
+        x_fp8 = (x_2d * input_scale).clamp(-input_max, input_max).to(FP8_INPUT_DTYPE)
 
-    kernel_out_dtype = x.dtype if x.dtype in {torch.bfloat16, torch.float16} else torch.bfloat16
-    bias_arg = bias.to(kernel_out_dtype) if bias is not None else None
-    scale_a = torch.empty(
-      (x_2d.shape[0], 1),
-      device=x_2d.device,
-      dtype=torch.float32,
-    )
-    scale_a.copy_(input_scale.reciprocal().to(torch.float32).expand_as(scale_a))
-    scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
-    try:
-      out = torch._scaled_mm(
-        x_fp8,
-        weight.T,
-        scale_a=scale_a,
-        scale_b=scale_b,
-        bias=bias_arg,
-        out_dtype=kernel_out_dtype,
-        use_fast_accum=True,
-      )
-    except RuntimeError as exc:
-      if "scale_a" not in str(exc) and "Invalid scaling configuration" not in str(exc):
-        raise
-      out = _Fp8LinearScaledMm._dequantized_forward(
-        x_2d,
-        input_shape,
-        weight,
-        weight_scale,
-        bias,
-        out_features,
-      )
-      ctx.save_for_backward(weight, weight_scale)
-      ctx.input_shape = input_shape
-      ctx.out_features = out_features
-      return out
-    if isinstance(out, tuple):
-      out = out[0]
-    if out.dtype != x.dtype:
-      out = out.to(x.dtype)
+        kernel_out_dtype = x.dtype if x.dtype in {torch.bfloat16, torch.float16} else torch.bfloat16
+        bias_arg = bias.to(kernel_out_dtype) if bias is not None else None
+        scale_a = torch.empty(
+            (x_2d.shape[0], 1),
+            device=x_2d.device,
+            dtype=torch.float32,
+        )
+        scale_a.copy_(input_scale.reciprocal().to(torch.float32).expand_as(scale_a))
+        scale_b = weight_scale.to(torch.float32).reshape(1, -1).contiguous()
+        try:
+            out = torch._scaled_mm(
+                x_fp8,
+                weight.T,
+                scale_a=scale_a,
+                scale_b=scale_b,
+                bias=bias_arg,
+                out_dtype=kernel_out_dtype,
+                use_fast_accum=True,
+            )
+        except RuntimeError as exc:
+            if "scale_a" not in str(exc) and "Invalid scaling configuration" not in str(exc):
+                raise
+            out = _Fp8LinearScaledMm._dequantized_forward(
+                x_2d,
+                input_shape,
+                weight,
+                weight_scale,
+                bias,
+                out_features,
+            )
+            ctx.save_for_backward(weight, weight_scale)
+            ctx.input_shape = input_shape
+            ctx.out_features = out_features
+            return out
+        if isinstance(out, tuple):
+            out = out[0]
+        if out.dtype != x.dtype:
+            out = out.to(x.dtype)
 
-    ctx.save_for_backward(weight, weight_scale)
-    ctx.input_shape = input_shape
-    ctx.out_features = out_features
-    return out.reshape(*input_shape[:-1], out_features)
+        ctx.save_for_backward(weight, weight_scale)
+        ctx.input_shape = input_shape
+        ctx.out_features = out_features
+        return out.reshape(*input_shape[:-1], out_features)
 
-  @staticmethod
-  def backward(ctx, grad_output: torch.Tensor):
-    weight, weight_scale = ctx.saved_tensors
-    grad_x = None
-    if ctx.needs_input_grad[0]:
-      grad_2d = grad_output.reshape(-1, ctx.out_features)
-      dequant_weight = weight.to(grad_output.dtype) * weight_scale.to(
-        grad_output.dtype,
-      ).unsqueeze(1)
-      grad_x = grad_2d.matmul(dequant_weight).reshape(ctx.input_shape)
-    return grad_x, None, None, None, None
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        weight, weight_scale = ctx.saved_tensors
+        grad_x = None
+        if ctx.needs_input_grad[0]:
+            grad_2d = grad_output.reshape(-1, ctx.out_features)
+            dequant_weight = weight.to(grad_output.dtype) * weight_scale.to(
+                grad_output.dtype,
+            ).unsqueeze(1)
+            grad_x = grad_2d.matmul(dequant_weight).reshape(ctx.input_shape)
+        return grad_x, None, None, None, None
 
 
 def _require_bitsandbytes():
-  try:
-    import bitsandbytes as bnb
-  except ImportError as exc:
-    raise ImportError("Ideogram NF4/bnb 4-bit weights require bitsandbytes to be installed.") from exc
-  return bnb
+    try:
+        import bitsandbytes as bnb
+    except ImportError as exc:
+        raise ImportError("Ideogram NF4/bnb 4-bit weights require bitsandbytes to be installed.") from exc
+    return bnb
 
 
 def is_bnb4bit_state_dict(state_dict: dict[str, torch.Tensor]) -> bool:
-  """True if any key looks like a bnb 4-bit quant_state sibling."""
-  return any(".quant_state.bitsandbytes__" in k for k in state_dict)
+    """True if any key looks like a bnb 4-bit quant_state sibling."""
+    return any(".quant_state.bitsandbytes__" in k for k in state_dict)
 
 
 def swap_linears_to_bnb4bit(
-  module: nn.Module,
-  compute_dtype: torch.dtype,
-  *,
-  quant_type: str = "nf4",
-  compress_statistics: bool = False,
+    module: nn.Module,
+    compute_dtype: torch.dtype,
+    *,
+    quant_type: str = "nf4",
+    compress_statistics: bool = False,
 ) -> None:
-  bnb = _require_bitsandbytes()
-  for name, child in list(module.named_children()):
-    if isinstance(child, nn.Linear):
-      new_linear = bnb.nn.Linear4bit(
-        child.in_features,
-        child.out_features,
-        bias=child.bias is not None,
-        compute_dtype=compute_dtype,
-        compress_statistics=compress_statistics,
-        quant_type=quant_type,
-      )
-      setattr(module, name, new_linear)
-    else:
-      swap_linears_to_bnb4bit(
-        child,
-        compute_dtype,
-        quant_type=quant_type,
-        compress_statistics=compress_statistics,
-      )
+    bnb = _require_bitsandbytes()
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.Linear):
+            new_linear = bnb.nn.Linear4bit(
+                child.in_features,
+                child.out_features,
+                bias=child.bias is not None,
+                compute_dtype=compute_dtype,
+                compress_statistics=compress_statistics,
+                quant_type=quant_type,
+            )
+            setattr(module, name, new_linear)
+        else:
+            swap_linears_to_bnb4bit(
+                child,
+                compute_dtype,
+                quant_type=quant_type,
+                compress_statistics=compress_statistics,
+            )
 
 
 def load_bnb4bit_state_dict(
-  model: nn.Module,
-  state_dict: dict[str, torch.Tensor],
-  device: torch.device,
-  dtype: torch.dtype,
+    model: nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    device: torch.device,
+    dtype: torch.dtype,
 ) -> None:
-  bnb = _require_bitsandbytes()
-  consumed: set[str] = set()
-  for full_name, tensor in state_dict.items():
-    if ".quant_state." in full_name or full_name.endswith(_BNB_SIBLING_SUFFIXES):
-      continue
-    parent_path, _, param_name = full_name.rpartition(".")
-    parent = model.get_submodule(parent_path) if parent_path else model
-    current = parent._parameters.get(param_name)
-    if not isinstance(current, bnb.nn.Params4bit):
-      continue
-    prefix = full_name + "."
-    quantized_stats = {k: v for k, v in state_dict.items() if k.startswith(prefix)}
-    # bnb's from_prequantized pops keys it consumes from the dict, so snapshot
-    # the names first.
-    consumed.add(full_name)
-    consumed.update(quantized_stats.keys())
-    parent._parameters[param_name] = bnb.nn.Params4bit.from_prequantized(
-      data=tensor,
-      quantized_stats=quantized_stats,
-      requires_grad=False,
-      device=device,
-    )
+    bnb = _require_bitsandbytes()
+    consumed: set[str] = set()
+    for full_name, tensor in state_dict.items():
+        if ".quant_state." in full_name or full_name.endswith(_BNB_SIBLING_SUFFIXES):
+            continue
+        parent_path, _, param_name = full_name.rpartition(".")
+        parent = model.get_submodule(parent_path) if parent_path else model
+        current = parent._parameters.get(param_name)
+        if not isinstance(current, bnb.nn.Params4bit):
+            continue
+        prefix = full_name + "."
+        quantized_stats = {k: v for k, v in state_dict.items() if k.startswith(prefix)}
+        # bnb's from_prequantized pops keys it consumes from the dict, so snapshot
+        # the names first.
+        consumed.add(full_name)
+        consumed.update(quantized_stats.keys())
+        parent._parameters[param_name] = bnb.nn.Params4bit.from_prequantized(
+            data=tensor,
+            quantized_stats=quantized_stats,
+            requires_grad=False,
+            device=device,
+        )
 
-  remaining = {k: v for k, v in state_dict.items() if k not in consumed}
-  for k in list(remaining):
-    if remaining[k].is_floating_point():
-      remaining[k] = remaining[k].to(device=device, dtype=dtype)
-    else:
-      remaining[k] = remaining[k].to(device=device)
+    remaining = {k: v for k, v in state_dict.items() if k not in consumed}
+    for k in list(remaining):
+        if remaining[k].is_floating_point():
+            remaining[k] = remaining[k].to(device=device, dtype=dtype)
+        else:
+            remaining[k] = remaining[k].to(device=device)
 
-  missing, unexpected = model.load_state_dict(remaining, strict=False)
-  # Quantized weights are loaded via from_prequantized above, so they appear in
-  # `missing` from load_state_dict's perspective — filter those out.
-  real_missing = [m for m in missing if m not in consumed]
-  if real_missing:
-    raise RuntimeError(f"missing keys after quantized load: {real_missing[:10]}")
-  if unexpected:
-    raise RuntimeError(f"unexpected keys after quantized load: {unexpected[:10]}")
+    missing, unexpected = model.load_state_dict(remaining, strict=False)
+    # Quantized weights are loaded via from_prequantized above, so they appear in
+    # `missing` from load_state_dict's perspective — filter those out.
+    real_missing = [m for m in missing if m not in consumed]
+    if real_missing:
+        raise RuntimeError(f"missing keys after quantized load: {real_missing[:10]}")
+    if unexpected:
+        raise RuntimeError(f"unexpected keys after quantized load: {unexpected[:10]}")
 
-  for p in model.parameters():
-    if isinstance(p, bnb.nn.Params4bit):
-      continue
-    if p.is_floating_point() and p.dtype != dtype:
-      p.data = p.data.to(dtype=dtype)
-    if p.device != device:
-      p.data = p.data.to(device=device)
-  for name, b in list(model.named_buffers()):
-    if b.is_floating_point() and b.dtype != dtype:
-      parent_path, _, leaf = name.rpartition(".")
-      parent = model.get_submodule(parent_path) if parent_path else model
-      parent.register_buffer(
-        leaf,
-        b.to(device=device, dtype=dtype),
-        persistent=leaf not in parent._non_persistent_buffers_set,
-      )
-    elif b.device != device:
-      parent_path, _, leaf = name.rpartition(".")
-      parent = model.get_submodule(parent_path) if parent_path else model
-      parent.register_buffer(
-        leaf,
-        b.to(device=device),
-        persistent=leaf not in parent._non_persistent_buffers_set,
-      )
+    for p in model.parameters():
+        if isinstance(p, bnb.nn.Params4bit):
+            continue
+        if p.is_floating_point() and p.dtype != dtype:
+            p.data = p.data.to(dtype=dtype)
+        if p.device != device:
+            p.data = p.data.to(device=device)
+    for name, b in list(model.named_buffers()):
+        if b.is_floating_point() and b.dtype != dtype:
+            parent_path, _, leaf = name.rpartition(".")
+            parent = model.get_submodule(parent_path) if parent_path else model
+            parent.register_buffer(
+                leaf,
+                b.to(device=device, dtype=dtype),
+                persistent=leaf not in parent._non_persistent_buffers_set,
+            )
+        elif b.device != device:
+            parent_path, _, leaf = name.rpartition(".")
+            parent = model.get_submodule(parent_path) if parent_path else model
+            parent.register_buffer(
+                leaf,
+                b.to(device=device),
+                persistent=leaf not in parent._non_persistent_buffers_set,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -254,165 +253,204 @@ def load_bnb4bit_state_dict(
 
 
 def quantize_weight_to_fp8(
-  weight: torch.Tensor,
+    weight: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-  """Quantize a 2-D Linear weight to e4m3 float8 with per-row scales.
+    """Quantize a 2-D Linear weight to e4m3 float8 with per-row scales.
 
-  Returns ``(weight_fp8, scale)`` where ``weight_fp8`` has shape ``(out, in)``
-  in ``float8_e4m3fn`` and ``scale`` has shape ``(out,)`` in float32 such that
-  ``weight ≈ weight_fp8.to(dtype) * scale[:, None]``.
-  """
-  w = weight.detach().to(torch.float32)
-  amax = w.abs().amax(dim=1, keepdim=True).clamp(min=1e-12)
-  scale = amax / FP8_E4M3_MAX
-  q = (w / scale).clamp(-FP8_E4M3_MAX, FP8_E4M3_MAX).to(FP8_WEIGHT_DTYPE)
-  return q, scale.squeeze(1).to(torch.float32)
+    Returns ``(weight_fp8, scale)`` where ``weight_fp8`` has shape ``(out, in)``
+    in ``float8_e4m3fn`` and ``scale`` has shape ``(out,)`` in float32 such that
+    ``weight ≈ weight_fp8.to(dtype) * scale[:, None]``.
+    """
+    w = weight.detach().to(torch.float32)
+    amax = w.abs().amax(dim=1, keepdim=True).clamp(min=1e-12)
+    scale = amax / FP8_E4M3_MAX
+    q = (w / scale).clamp(-FP8_E4M3_MAX, FP8_E4M3_MAX).to(FP8_WEIGHT_DTYPE)
+    return q, scale.squeeze(1).to(torch.float32)
 
 
 def is_fp8_state_dict(state_dict: dict[str, torch.Tensor]) -> bool:
-  """True if the checkpoint carries weight-only FP8 Linear weights."""
-  return any(k.endswith(FP8_SCALE_SUFFIX) for k in state_dict) or any(
-    v.dtype == FP8_WEIGHT_DTYPE for v in state_dict.values()
-  )
+    """True if the checkpoint carries weight-only FP8 Linear weights."""
+    return any(k.endswith(FP8_SCALE_SUFFIX) for k in state_dict) or any(
+        v.dtype == FP8_WEIGHT_DTYPE for v in state_dict.values()
+    )
+
+
+def device_supports_float8(device: torch.device) -> bool:
+    """True if ``device`` can convert float8 tensors to the compute dtype.
+
+    MPS can allocate float8 storage but cannot cast it to/from other dtypes, so
+    ``Fp8Linear``'s dequantized matmul (``weight.to(compute_dtype)``) raises there.
+    We probe the actual cast rather than storage; CUDA and CPU pass, MPS fails and
+    the checkpoint is dequantized on CPU before being moved to the device.
+    """
+    try:
+        probe = torch.zeros(1, dtype=FP8_WEIGHT_DTYPE).to(device)
+        probe.to(torch.float32)
+    except (RuntimeError, TypeError, NotImplementedError):
+        return False
+    return True
+
+
+def dequantize_fp8_state_dict(
+    state_dict: dict[str, torch.Tensor],
+    dtype: torch.dtype,
+) -> dict[str, torch.Tensor]:
+    """Fold weight-only FP8 scales back into their weights at ``dtype``.
+
+    Each float8 ``<name>.weight`` has a sibling ``<name>.weight_scale`` (per-row
+    float32). This reconstructs ``weight = weight_fp8 * scale[:, None]`` in
+    ``dtype`` and drops the scale entries, producing a plain state dict that a
+    standard ``nn.Linear`` model can load. Used for devices that cannot store
+    float8 (e.g. MPS).
+    """
+    out: dict[str, torch.Tensor] = {}
+    for key, tensor in state_dict.items():
+        if key.endswith(FP8_SCALE_SUFFIX):
+            continue
+        if tensor.dtype == FP8_WEIGHT_DTYPE:
+            scale = state_dict[f"{key}_scale"]
+            dequantized = tensor.to(torch.float32) * scale.to(torch.float32).unsqueeze(1)
+            out[key] = dequantized.to(dtype)
+        else:
+            out[key] = tensor
+    return out
 
 
 class Fp8Linear(nn.Module):
-  """Linear layer holding an e4m3 float8 weight + per-row float32 scale.
+    """Linear layer holding an e4m3 float8 weight + per-row float32 scale.
 
-  The weight and scale are registered as buffers (not parameters) so they load
-  via ``load_state_dict`` and are excluded from optimizer/grad machinery. The
-  dequantized matmul runs in ``compute_dtype``.
-  """
+    The weight and scale are registered as buffers (not parameters) so they load
+    via ``load_state_dict`` and are excluded from optimizer/grad machinery. The
+    dequantized matmul runs in ``compute_dtype``.
+    """
 
-  weight: torch.Tensor
-  weight_scale: torch.Tensor
-  bias: torch.Tensor | None
+    weight: torch.Tensor
+    weight_scale: torch.Tensor
+    bias: torch.Tensor | None
 
-  def __init__(
-    self,
-    in_features: int,
-    out_features: int,
-    bias: bool,
-    compute_dtype: torch.dtype,
-  ) -> None:
-    super().__init__()
-    self.in_features = in_features
-    self.out_features = out_features
-    self.compute_dtype = compute_dtype
-    self.register_buffer(
-      "weight",
-      torch.empty(out_features, in_features, dtype=FP8_WEIGHT_DTYPE),
-    )
-    self.register_buffer("weight_scale", torch.empty(out_features, dtype=torch.float32))
-    if bias:
-      self.register_buffer("bias", torch.empty(out_features, dtype=compute_dtype))
-    else:
-      self.bias = None
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool,
+        compute_dtype: torch.dtype,
+    ) -> None:
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.compute_dtype = compute_dtype
+        self.register_buffer(
+            "weight",
+            torch.empty(out_features, in_features, dtype=FP8_WEIGHT_DTYPE),
+        )
+        self.register_buffer("weight_scale", torch.empty(out_features, dtype=torch.float32))
+        if bias:
+            self.register_buffer("bias", torch.empty(out_features, dtype=compute_dtype))
+        else:
+            self.bias = None
 
-  def _apply(self, fn, recurse: bool = True):
-    weight = self._buffers.pop("weight")
-    weight_scale = self._buffers.pop("weight_scale")
-    try:
-      super()._apply(fn, recurse=recurse)
-      device_probe = fn(torch.empty(0, device=weight.device, dtype=torch.uint8))
-    finally:
-      self._buffers["weight"] = weight
-      self._buffers["weight_scale"] = weight_scale
-    self._buffers["weight"] = weight.to(device=device_probe.device)
-    self._buffers["weight_scale"] = weight_scale.to(device=device_probe.device)
-    return self
+    def _apply(self, fn, recurse: bool = True):
+        weight = self._buffers.pop("weight")
+        weight_scale = self._buffers.pop("weight_scale")
+        try:
+            super()._apply(fn, recurse=recurse)
+            device_probe = fn(torch.empty(0, device=weight.device, dtype=torch.uint8))
+        finally:
+            self._buffers["weight"] = weight
+            self._buffers["weight_scale"] = weight_scale
+        self._buffers["weight"] = weight.to(device=device_probe.device)
+        self._buffers["weight_scale"] = weight_scale.to(device=device_probe.device)
+        return self
 
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    if self.weight.dtype != FP8_WEIGHT_DTYPE:
-      raise RuntimeError(f"Fp8Linear weight must be {FP8_WEIGHT_DTYPE}, got {self.weight.dtype}.")
-    if self.weight_scale.dtype != torch.float32:
-      raise RuntimeError(f"Fp8Linear weight_scale must be torch.float32, got {self.weight_scale.dtype}.")
-    if _scaled_mm_supported(x):
-      return _Fp8LinearScaledMm.apply(
-        x,
-        self.weight,
-        self.weight_scale,
-        self.bias,
-        self.out_features,
-      )
-    w = self.weight.to(x.dtype) * self.weight_scale.to(x.dtype).unsqueeze(1)
-    bias = self.bias.to(x.dtype) if self.bias is not None else None
-    return F.linear(x, w, bias)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.weight.dtype != FP8_WEIGHT_DTYPE:
+            raise RuntimeError(f"Fp8Linear weight must be {FP8_WEIGHT_DTYPE}, got {self.weight.dtype}.")
+        if self.weight_scale.dtype != torch.float32:
+            raise RuntimeError(f"Fp8Linear weight_scale must be torch.float32, got {self.weight_scale.dtype}.")
+        if _scaled_mm_supported(x):
+            return _Fp8LinearScaledMm.apply(
+                x,
+                self.weight,
+                self.weight_scale,
+                self.bias,
+                self.out_features,
+            )
+        w = self.weight.to(x.dtype) * self.weight_scale.to(x.dtype).unsqueeze(1)
+        bias = self.bias.to(x.dtype) if self.bias is not None else None
+        return F.linear(x, w, bias)
 
 
 def swap_linears_to_fp8(
-  module: nn.Module,
-  state_dict: dict[str, torch.Tensor],
-  compute_dtype: torch.dtype,
-  *,
-  prefix: str = "",
+    module: nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    compute_dtype: torch.dtype,
+    *,
+    prefix: str = "",
 ) -> None:
-  """Replace each ``nn.Linear`` that has a saved FP8 scale with an ``Fp8Linear``.
+    """Replace each ``nn.Linear`` that has a saved FP8 scale with an ``Fp8Linear``.
 
-  Gating on the presence of ``<name>.weight_scale`` means only layers that were
-  actually quantized at save time are swapped; everything else loads normally in
-  the compute dtype.
-  """
-  for name, child in list(module.named_children()):
-    child_prefix = f"{prefix}{name}"
-    if (
-      isinstance(child, nn.Linear) and f"{child_prefix}{FP8_SCALE_SUFFIX}" in state_dict
-    ):
-      setattr(
-        module,
-        name,
-        Fp8Linear(
-          child.in_features,
-          child.out_features,
-          bias=child.bias is not None,
-          compute_dtype=compute_dtype,
-        ),
-      )
-    else:
-      swap_linears_to_fp8(child, state_dict, compute_dtype, prefix=f"{child_prefix}.")
+    Gating on the presence of ``<name>.weight_scale`` means only layers that were
+    actually quantized at save time are swapped; everything else loads normally in
+    the compute dtype.
+    """
+    for name, child in list(module.named_children()):
+        child_prefix = f"{prefix}{name}"
+        if isinstance(child, nn.Linear) and f"{child_prefix}{FP8_SCALE_SUFFIX}" in state_dict:
+            setattr(
+                module,
+                name,
+                Fp8Linear(
+                    child.in_features,
+                    child.out_features,
+                    bias=child.bias is not None,
+                    compute_dtype=compute_dtype,
+                ),
+            )
+        else:
+            swap_linears_to_fp8(child, state_dict, compute_dtype, prefix=f"{child_prefix}.")
 
 
 def load_fp8_state_dict(
-  model: nn.Module,
-  state_dict: dict[str, torch.Tensor],
-  device: torch.device,
-  dtype: torch.dtype,
-  *,
-  assign: bool = False,
-  strict: bool = True,
+    model: nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    device: torch.device,
+    dtype: torch.dtype,
+    *,
+    assign: bool = False,
+    strict: bool = True,
 ) -> None:
-  """Load a weight-only FP8 checkpoint into ``model``.
+    """Load a weight-only FP8 checkpoint into ``model``.
 
-  ``model`` must already have its FP8 Linear layers swapped in (see
-  ``swap_linears_to_fp8``). FP8 weights are kept as float8, scales stay float32,
-  and every other floating tensor is cast to ``dtype``.
+    ``model`` must already have its FP8 Linear layers swapped in (see
+    ``swap_linears_to_fp8``). FP8 weights are kept as float8, scales stay float32,
+    and every other floating tensor is cast to ``dtype``.
 
-  ``assign=True`` replaces the module's tensors with the prepared ones rather than
-  copying into them. Use it when the model was built with ``from_config`` so the
-  non-quantized params take the loaded dtype directly and computed non-persistent
-  buffers (e.g. rotary caches) are left untouched. With ``assign=False`` (default),
-  the caller must have already put the unquantized params in ``dtype``.
+    ``assign=True`` replaces the module's tensors with the prepared ones rather than
+    copying into them. Use it when the model was built with ``from_config`` so the
+    non-quantized params take the loaded dtype directly and computed non-persistent
+    buffers (e.g. rotary caches) are left untouched. With ``assign=False`` (default),
+    the caller must have already put the unquantized params in ``dtype``.
 
-  ``strict=False`` downgrades missing keys to a warning (e.g. tied weights that a
-  ``transformers`` model resolves itself); unexpected keys always raise.
-  """
-  prepared: dict[str, torch.Tensor] = {}
-  for k, v in state_dict.items():
-    if v.dtype == FP8_WEIGHT_DTYPE:
-      prepared[k] = v.to(device=device)
-    elif k.endswith(FP8_SCALE_SUFFIX):
-      prepared[k] = v.to(device=device, dtype=torch.float32)
-    elif v.is_floating_point():
-      prepared[k] = v.to(device=device, dtype=dtype)
-    else:
-      prepared[k] = v.to(device=device)
+    ``strict=False`` downgrades missing keys to a warning (e.g. tied weights that a
+    ``transformers`` model resolves itself); unexpected keys always raise.
+    """
+    prepared: dict[str, torch.Tensor] = {}
+    for k, v in state_dict.items():
+        if v.dtype == FP8_WEIGHT_DTYPE:
+            prepared[k] = v.to(device=device)
+        elif k.endswith(FP8_SCALE_SUFFIX):
+            prepared[k] = v.to(device=device, dtype=torch.float32)
+        elif v.is_floating_point():
+            prepared[k] = v.to(device=device, dtype=dtype)
+        else:
+            prepared[k] = v.to(device=device)
 
-  missing, unexpected = model.load_state_dict(prepared, strict=False, assign=assign)
-  if unexpected:
-    raise RuntimeError(f"unexpected keys after fp8 load: {unexpected[:10]}")
-  if missing:
-    if strict:
-      raise RuntimeError(f"missing keys after fp8 load: {missing[:10]}")
-    warnings.warn(f"missing keys after fp8 load: {missing[:10]}", stacklevel=2)
+    missing, unexpected = model.load_state_dict(prepared, strict=False, assign=assign)
+    if unexpected:
+        raise RuntimeError(f"unexpected keys after fp8 load: {unexpected[:10]}")
+    if missing:
+        if strict:
+            raise RuntimeError(f"missing keys after fp8 load: {missing[:10]}")
+        warnings.warn(f"missing keys after fp8 load: {missing[:10]}", stacklevel=2)
 
-  model.to(device)
+    model.to(device)
