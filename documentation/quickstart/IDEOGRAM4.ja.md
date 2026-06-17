@@ -24,7 +24,7 @@ H100 80GB での実測値です。native FP8（`base_model_precision=fp8-torchao
 | 2 | 20,095 MiB / 19.6 GiB |
 | 4 | 28,603 MiB / 27.9 GiB |
 
-Validation には別の生成ピークがあるため、`ideogram_validation=true` を使う場合は余裕を見てください。小さいGPUでは FP8 または NF4、rank 8-16、gradient checkpointing、offload から始めてください。Apple GPU は Ideogram 4 学習には推奨しません。
+Validation には別の生成ピークがあるため、`ideogram_validation=true` を使う場合は余裕を見てください。小さいGPUでは FP8 または NF4、rank 8-16、gradient checkpointing、offload から始めてください。Apple Silicon（MPS）でも Ideogram 4 を学習できます。FP8 チェックポイントは読み込み時に自動で bf16 へ逆量子化されます。メモリ削減には `base_model_precision=int8-sdnq` と `quantize_via=cpu` を指定してください（FP8/NF4 は CUDA 専用です）。
 
 ### Torch compile
 
@@ -86,6 +86,15 @@ FP8 が最初の推奨です:
 {
   "base_model_precision": "nf4-bnb",
   "base_model_default_dtype": "bf16",
+  "quantize_via": "cpu"
+}
+```
+
+Apple Silicon（MPS）では、代わりに SDNQ int8 を使用してください：
+
+```json
+{
+  "base_model_precision": "int8-sdnq",
   "quantize_via": "cpu"
 }
 ```
