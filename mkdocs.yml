@@ -253,6 +253,7 @@ nav:
       - Cosmos2: quickstart/COSMOS2IMAGE.md
       - OmniGen: quickstart/OMNIGEN.md
       - Z-Image: quickstart/ZIMAGE.md
+      - Boogu-Image: quickstart/BOOGU_IMAGE.md
       - zlab i1: quickstart/ZLAB_i1.md
       - Ideogram 4: quickstart/IDEOGRAM4.md
       - ERNIE-Image: quickstart/ERNIE.md

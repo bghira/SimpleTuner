@@ -18,6 +18,7 @@ For the complete and most accurate feature matrix, refer to the [main README](ht
 | Flux.2 | 32B | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [FLUX2.md](/documentation/quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | [FLUX_KONTEXT.md](/documentation/quickstart/FLUX_KONTEXT.md) |
 | Z-Image Turbo | 6B | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [ZIMAGE.md](/documentation/quickstart/ZIMAGE.md) |
+| Boogu-Image 0.1 | - | ✓ | ✓* | fp8 optional | bf16 | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | [BOOGU_IMAGE.md](/documentation/quickstart/BOOGU_IMAGE.md) |
 | zlab i1 | 3B | ✓ | ✓ | int8 optional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [ZLAB_i1.md](/documentation/quickstart/ZLAB_i1.md) |
 | Ideogram 4 | 9B | ✓ | ✓* | fp8 default, nf4 optional | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | [IDEOGRAM4.md](/documentation/quickstart/IDEOGRAM4.md) |
 | ACE-Step | 3.5B | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | [ACE_STEP.md](/documentation/quickstart/ACE_STEP.md) |
