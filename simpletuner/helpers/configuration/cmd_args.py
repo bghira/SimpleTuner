@@ -746,6 +746,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
     manual_only_precisions = manual_quant_precisions - pipeline_quant_precisions
     quantization_precisions = manual_quant_precisions | pipeline_quant_precisions
+    if (
+        getattr(args, "model_family", None) == "boogu_image"
+        and str(getattr(args, "model_flavour", "")).endswith("-fp8")
+        and getattr(args, "base_model_precision", "no_change") == "no_change"
+    ):
+        args.base_model_precision = "fp8-torchao"
+        args.quantize_via = "accelerator"
     base_precision = getattr(args, "base_model_precision", "no_change")
     model_path = str(getattr(args, "pretrained_model_name_or_path", "") or "")
     is_gguf_checkpoint = model_path.endswith(".gguf")
