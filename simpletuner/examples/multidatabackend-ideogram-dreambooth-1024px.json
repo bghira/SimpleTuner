@@ -1,0 +1,26 @@
+[
+  {
+    "id": "dreambooth-1024",
+    "type": "huggingface",
+    "dataset_name": "RareConcepts/Domokun",
+    "crop": true,
+    "crop_style": "random",
+    "crop_aspect": "square",
+    "minimum_image_size": 256,
+    "maximum_image_size": 1024,
+    "target_downsample_size": 1024,
+    "resolution": 1024,
+    "resolution_type": "pixel_area",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "instanceprompt",
+    "instance_prompt": "{\"high_level_description\":\"A detailed studio photograph of a brown Domokun character, represented by the \ud83d\udfeb token, centered as the main subject with a boxy plush body, wide open mouth, triangular teeth, small arms, and short legs.\",\"style_description\":{\"aesthetics\":\"Playful, character-focused, clean product photography, high detail.\",\"lighting\":\"Soft diffused studio lighting with gentle shadows and clear subject separation.\",\"photo\":\"Sharp 35mm product photograph, square framing, natural perspective, crisp texture detail.\",\"medium\":\"Photograph.\",\"color_palette\":[\"#6B3F24\",\"#C9A27E\",\"#F5F0E8\"]},\"compositional_deconstruction\":{\"background\":\"Simple uncluttered studio background with neutral warm tones, keeping attention on the Domokun character.\",\"elements\":[{\"type\":\"obj\",\"bbox\":[300,180,724,860],\"desc\":\"Brown Domokun character centered in frame, plush rectangular body, black oval eyes, red mouth with white triangular teeth, small side arms, and short feet.\"}]}}",
+    "cache_dir_vae": "cache/vae/{model_family}/dreambooth-1024"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]

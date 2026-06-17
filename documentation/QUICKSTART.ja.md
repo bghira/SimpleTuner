@@ -18,6 +18,7 @@
 | Flux.2 | 32B | ✓ | ✓ | ✓* | int8/fp8/nf4 オプション | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [FLUX2.md](quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 オプション | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | [FLUX_KONTEXT.md](quickstart/FLUX_KONTEXT.md) |
 | Z-Image Turbo | 6B | ✓ | ✗ | ✓* | int8 オプション | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [ZIMAGE.md](quickstart/ZIMAGE.md) |
+| Boogu-Image 0.1 | - | ✓ | ✓ | ✓* | fp8 オプション | bf16 | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | [BOOGU_IMAGE.md](quickstart/BOOGU_IMAGE.ja.md) |
 | zlab i1 | 3B | ✓ | ✓ | ✓ | int8 オプション | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | [ZLAB_i1.md](quickstart/ZLAB_i1.ja.md) |
 | Ideogram 4 | 9B | ✓ | ✓ | ✓* | fp8 デフォルト、nf4 オプション | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | [IDEOGRAM4.md](quickstart/IDEOGRAM4.ja.md) |
 | ACE-Step | 3.5B | ✓ | ✓ | ✓* | int8 オプション | bf16 | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | [ACE_STEP.md](quickstart/ACE_STEP.md) |

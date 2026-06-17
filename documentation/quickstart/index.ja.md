@@ -18,6 +18,7 @@
 | **Lumina2** | 2B | [Lumina2 ガイド](LUMINA2.md) |
 | **HiDream** | 17B MoE | [HiDream ガイド](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image ガイド](ZIMAGE.md) |
+| **Boogu-Image** | - | [Boogu-Image ガイド](BOOGU_IMAGE.ja.md) |
 | **zlab i1** | 3B | [zlab i1 ガイド](ZLAB_i1.ja.md) |
 | **Ideogram 4** | 9B | [Ideogram 4 ガイド](IDEOGRAM4.ja.md) |
 | **ERNIE-Image** | - | [ERNIE ガイド](ERNIE.md) |

@@ -33,8 +33,11 @@ def find_referenced_files(config_path: Path) -> List[str]:
                 value = config[field]
                 if isinstance(value, str):
                     if "examples/" in value and value.endswith(".json"):
-                        filename = Path(value).name
-                        referenced_files.append(filename)
+                        try:
+                            relative_path = Path(value).relative_to("config/examples")
+                            referenced_files.append(str(relative_path))
+                        except ValueError:
+                            referenced_files.append(Path(value).name)
 
     except (json.JSONDecodeError, FileNotFoundError) as e:
         print(f"Warning: Could not parse config file {config_path}: {e}")
@@ -57,12 +60,13 @@ def update_config_paths(config_path: Path, referenced_files: List[str]) -> None:
         ]
 
         updated = False
+        referenced_basenames = {Path(ref_file).name for ref_file in referenced_files}
         for field in fields_to_check:
             if field in config:
                 value = config[field]
                 if isinstance(value, str) and "examples/" in value:
                     filename = Path(value).name
-                    if filename in referenced_files:
+                    if value in referenced_files or filename in referenced_basenames:
                         config[field] = filename
                         updated = True
                         print(f"  Updated {field}: {value} -> {filename}")
@@ -108,8 +112,10 @@ def copy_example(example_name: str, dest: str = None) -> bool:
 
                     for ref_file in referenced_files:
                         source_file = examples_dir / ref_file
+                        if not source_file.exists():
+                            source_file = examples_dir / Path(ref_file).name
                         if source_file.exists():
-                            dest_file = dest_example / ref_file
+                            dest_file = dest_example / Path(ref_file).name
                             shutil.copy2(source_file, dest_file)
                             print(f"  Copied referenced file: {ref_file}")
                         else:
