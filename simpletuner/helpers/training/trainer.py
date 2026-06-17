@@ -2123,6 +2123,7 @@ class Trainer:
         base_pipeline_precision = pipeline_only_precision or (quantize_via_pipeline and pipeline_capable_precision)
         self.config.is_quanto = False
         self.config.is_torchao = False
+        self.config.is_sdnq = False
         self.config.is_bnb = False
         self.config.pipeline_quantization = bool(
             quantize_via_pipeline or quantization_config_present or base_pipeline_precision or gguf_requested
@@ -2135,6 +2136,8 @@ class Trainer:
                 self.config.is_quanto = True
             elif "torchao" in base_model_precision:
                 self.config.is_torchao = True
+            elif "sdnq" in base_model_precision:
+                self.config.is_sdnq = True
         # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
         for i in range(1, 5):
             if isinstance(getattr(self.config, f"text_encoder_{i}_precision", None), str) and getattr(
@@ -2152,9 +2155,11 @@ class Trainer:
                             "Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels."
                         )
                     self.config.is_torchao = True
+                elif "sdnq" in getattr(self.config, f"text_encoder_{i}_precision"):
+                    self.config.is_sdnq = True
                 elif "bnb" in getattr(self.config, f"text_encoder_{i}_precision"):
                     self.config.is_bnb = True
-        if self.config.is_quanto or self.config.is_torchao:
+        if self.config.is_quanto or self.config.is_torchao or self.config.is_sdnq:
             from simpletuner.helpers.training.quantisation import quantise_model
 
             self.quantise_model = quantise_model
@@ -2652,6 +2657,45 @@ class Trainer:
                     args=self.config,
                 )
         elif self.config.is_torchao:
+            with self.accelerator.local_main_process_first():
+                if ema_only:
+                    if not pipeline_base_quantization:
+                        self.ema_model = self.quantise_model(ema=self.ema_model, args=self.config, return_dict=True)["ema"]
+
+                    return
+                (
+                    q_model,
+                    self.model.text_encoders,
+                    self.controlnet,
+                    self.ema_model,
+                ) = self.quantise_model(
+                    model=(
+                        None
+                        if preprocessing_models_only or pipeline_base_quantization
+                        else self.model.get_trained_component(base_model=True)
+                    ),
+                    text_encoders=self.model.text_encoders,
+                    controlnet=None,
+                    ema=self.ema_model,
+                    args=self.config,
+                )
+                self.model.set_prepared_model(q_model, base_model=True)
+                if self.config.controlnet:
+                    (
+                        q_model,
+                        _,
+                        _,
+                        _,
+                    ) = self.quantise_model(
+                        model=(
+                            None
+                            if preprocessing_models_only or pipeline_base_quantization
+                            else self.model.get_trained_component(base_model=False)
+                        ),
+                        args=self.config,
+                    )
+                    self.model.set_prepared_model(q_model, base_model=False)
+        elif self.config.is_sdnq:
             with self.accelerator.local_main_process_first():
                 if ema_only:
                     if not pipeline_base_quantization:
