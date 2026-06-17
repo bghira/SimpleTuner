@@ -22,6 +22,9 @@ from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline
 from simpletuner.helpers.models.boogu_image.pipeline_edit import BooguImageEditPipeline
 from simpletuner.helpers.models.boogu_image.pipeline_img2img import BooguImageImg2ImgPipeline
 from simpletuner.helpers.models.boogu_image.pipeline_turbo import BooguImageTurboPipeline
+from simpletuner.helpers.models.boogu_image.schedulers.scheduling_flow_match_euler_discrete_time_shifting import (
+    FlowMatchEulerDiscreteScheduler,
+)
 from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
@@ -156,6 +159,14 @@ class BooguImage(ImageModelFoundation):
 
     def requires_special_scheduler_setup(self) -> bool:
         return True
+
+    def _load_scheduler_for_pipeline(self, pipeline_type: str):
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(
+            self._model_config_path(),
+            subfolder="scheduler",
+            revision=getattr(self.config, "revision", None),
+            local_files_only=getattr(self.config, "local_files_only", False),
+        )
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         noise_sigmas, _ = super().sample_flow_sigmas(batch=batch, state=state)

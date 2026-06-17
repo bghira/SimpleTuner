@@ -3199,6 +3199,12 @@ class ModelFoundation(ABC):
         """
         return getattr(self, "text_processor", None)
 
+    def _load_scheduler_for_pipeline(self, pipeline_type: str):
+        """
+        Hook for subclasses that require a pipeline-specific inference scheduler.
+        """
+        return None
+
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
@@ -3407,6 +3413,11 @@ class ModelFoundation(ABC):
                 )
             else:
                 pipeline_kwargs["image_processor"] = image_processor
+
+        if "scheduler" not in pipeline_kwargs and self.requires_special_scheduler_setup():
+            scheduler = self._load_scheduler_for_pipeline(pipeline_type)
+            if scheduler is not None:
+                pipeline_kwargs["scheduler"] = scheduler
 
         base_scheduler = getattr(self, "noise_schedule", None)
         if (

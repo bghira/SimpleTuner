@@ -1,6 +1,7 @@
 import unittest
 import inspect
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -54,7 +55,7 @@ class BooguImageModelTests(unittest.TestCase):
 
         self.assertTrue(model.requires_special_scheduler_setup())
 
-    def test_special_scheduler_models_do_not_inject_training_scheduler_into_pipeline(self):
+    def test_special_scheduler_models_load_pipeline_scheduler_without_training_scheduler(self):
         class DummyPipeline:
             last_kwargs = None
 
@@ -64,27 +65,35 @@ class BooguImageModelTests(unittest.TestCase):
                 return SimpleNamespace(**kwargs)
 
         class DummyScheduler:
-            config = {"name": "training"}
+            def __init__(self, name):
+                self.name = name
+                self.config = {"name": name}
 
             @classmethod
             def from_config(cls, config):
-                return cls()
+                return cls(config["name"])
 
+        inference_scheduler = DummyScheduler("inference")
         model = object.__new__(BooguImage)
         model.model = object()
         model.vae = object()
         model.text_encoders = None
         model.tokenizers = None
         model.pipelines = {}
-        model.noise_schedule = DummyScheduler()
+        model.noise_schedule = DummyScheduler("training")
         model.PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: DummyPipeline}
-        model.config = SimpleNamespace(controlnet=False)
+        model.config = SimpleNamespace(controlnet=False, revision=None, local_files_only=False)
         model._model_config_path = lambda: "repo/model"
         model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
 
-        model._load_pipeline(PipelineTypes.TEXT2IMG)
+        with patch(
+            "simpletuner.helpers.models.boogu_image.model.FlowMatchEulerDiscreteScheduler.from_pretrained",
+            return_value=inference_scheduler,
+        ):
+            model._load_pipeline(PipelineTypes.TEXT2IMG)
 
-        self.assertNotIn("scheduler", DummyPipeline.last_kwargs)
+        self.assertIs(DummyPipeline.last_kwargs["scheduler"], inference_scheduler)
+        self.assertIsNot(DummyPipeline.last_kwargs["scheduler"], model.noise_schedule)
 
     def test_hub_kernel_attention_aliases_are_available(self):
         self.assertEqual(_DIFFUSERS_BACKEND_ALIASES["flash-attn-hub"].value, "flash_hub")
