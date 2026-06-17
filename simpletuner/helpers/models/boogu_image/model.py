@@ -154,6 +154,9 @@ class BooguImage(ImageModelFoundation):
     def requires_text_embed_image_context(self) -> bool:
         return self._is_edit_flavour()
 
+    def requires_special_scheduler_setup(self) -> bool:
+        return True
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         noise_sigmas, _ = super().sample_flow_sigmas(batch=batch, state=state)
         boogu_timesteps = 1.0 - noise_sigmas

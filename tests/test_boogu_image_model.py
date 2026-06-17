@@ -7,6 +7,7 @@ import torch
 from simpletuner.helpers.models.boogu_image.lora_pipeline import BooguImageLoraLoaderMixin
 from simpletuner.helpers.models.boogu_image.model import BooguImage
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline, retrieve_timesteps
+from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.training.attention_backend import _DIFFUSERS_BACKEND_ALIASES
 from simpletuner.helpers.training.quantisation import _torchao_filter_fn
@@ -47,6 +48,43 @@ class BooguImageModelTests(unittest.TestCase):
     def test_validation_preview_uses_flux_tae_spec(self):
         self.assertIs(BooguImage.VALIDATION_PREVIEW_SPEC, Flux.VALIDATION_PREVIEW_SPEC)
         self.assertEqual(BooguImage.VALIDATION_PREVIEW_SPEC.repo_id, "madebyollin/taef1")
+
+    def test_validation_uses_boogu_inference_scheduler(self):
+        model = object.__new__(BooguImage)
+
+        self.assertTrue(model.requires_special_scheduler_setup())
+
+    def test_special_scheduler_models_do_not_inject_training_scheduler_into_pipeline(self):
+        class DummyPipeline:
+            last_kwargs = None
+
+            @classmethod
+            def from_pretrained(cls, **kwargs):
+                cls.last_kwargs = kwargs
+                return SimpleNamespace(**kwargs)
+
+        class DummyScheduler:
+            config = {"name": "training"}
+
+            @classmethod
+            def from_config(cls, config):
+                return cls()
+
+        model = object.__new__(BooguImage)
+        model.model = object()
+        model.vae = object()
+        model.text_encoders = None
+        model.tokenizers = None
+        model.pipelines = {}
+        model.noise_schedule = DummyScheduler()
+        model.PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: DummyPipeline}
+        model.config = SimpleNamespace(controlnet=False)
+        model._model_config_path = lambda: "repo/model"
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+
+        model._load_pipeline(PipelineTypes.TEXT2IMG)
+
+        self.assertNotIn("scheduler", DummyPipeline.last_kwargs)
 
     def test_hub_kernel_attention_aliases_are_available(self):
         self.assertEqual(_DIFFUSERS_BACKEND_ALIASES["flash-attn-hub"].value, "flash_hub")
