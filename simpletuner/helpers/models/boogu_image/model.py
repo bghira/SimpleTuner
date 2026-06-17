@@ -17,13 +17,13 @@ from simpletuner.helpers.acceleration import (
     get_torchao_presets,
 )
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline
 from simpletuner.helpers.models.boogu_image.pipeline_edit import BooguImageEditPipeline
 from simpletuner.helpers.models.boogu_image.pipeline_img2img import BooguImageImg2ImgPipeline
 from simpletuner.helpers.models.boogu_image.pipeline_turbo import BooguImageTurboPipeline
 from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
 from simpletuner.helpers.models.registry import ModelRegistry
-from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class BooguImage(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     AUTOENCODER_SCALING_FACTOR = 0.3611
     LATENT_CHANNEL_COUNT = 16
-    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
+    VALIDATION_PREVIEW_SPEC = Flux.VALIDATION_PREVIEW_SPEC
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
 

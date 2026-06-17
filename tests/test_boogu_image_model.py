@@ -7,6 +7,7 @@ import torch
 from simpletuner.helpers.models.boogu_image.lora_pipeline import BooguImageLoraLoaderMixin
 from simpletuner.helpers.models.boogu_image.model import BooguImage
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline, retrieve_timesteps
+from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.training.attention_backend import _DIFFUSERS_BACKEND_ALIASES
 
 
@@ -41,6 +42,10 @@ class BooguImageModelTests(unittest.TestCase):
     def test_assistant_lora_enabled_for_turbo_only_with_placeholder_path(self):
         self.assertEqual(BooguImage.ASSISTANT_LORA_FLAVOURS, ["v0.1-turbo", "v0.1-turbo-fp8"])
         self.assertIsNone(BooguImage.ASSISTANT_LORA_PATH)
+
+    def test_validation_preview_uses_flux_tae_spec(self):
+        self.assertIs(BooguImage.VALIDATION_PREVIEW_SPEC, Flux.VALIDATION_PREVIEW_SPEC)
+        self.assertEqual(BooguImage.VALIDATION_PREVIEW_SPEC.repo_id, "madebyollin/taef1")
 
     def test_hub_kernel_attention_aliases_are_available(self):
         self.assertEqual(_DIFFUSERS_BACKEND_ALIASES["flash-attn-hub"].value, "flash_hub")
