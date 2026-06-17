@@ -24,7 +24,7 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 | 2 | 20,095 MiB / 19.6 GiB |
 | 4 | 28,603 MiB / 27.9 GiB |
 
-Validation 会有单独的生成峰值，所以启用 `ideogram_validation=true` 时请预留额外显存。小显存机器建议使用 FP8 或 NF4、rank 8-16、梯度检查点和 offload。Apple GPU 不推荐用于 Ideogram 4 训练。
+Validation 会有单独的生成峰值，所以启用 `ideogram_validation=true` 时请预留额外显存。小显存机器建议使用 FP8 或 NF4、rank 8-16、梯度检查点和 offload。Apple Silicon（MPS）可用于 Ideogram 4 训练：加载时会自动将 FP8 checkpoint 反量化为 bf16。如需降低内存占用，请设置 `base_model_precision=int8-sdnq` 并配合 `quantize_via=cpu`（FP8/NF4 仅支持 CUDA）。
 
 ### Torch compile
 
@@ -86,6 +86,15 @@ FP8 是默认推荐：
 {
   "base_model_precision": "nf4-bnb",
   "base_model_default_dtype": "bf16",
+  "quantize_via": "cpu"
+}
+```
+
+在 Apple Silicon（MPS）上，请改用 SDNQ int8：
+
+```json
+{
+  "base_model_precision": "int8-sdnq",
   "quantize_via": "cpu"
 }
 ```

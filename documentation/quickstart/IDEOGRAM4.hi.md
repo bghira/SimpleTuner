@@ -24,7 +24,7 @@ H100 80GB पर measured values: native FP8 (`base_model_precision=fp8-torchao`
 | 2 | 20,095 MiB / 19.6 GiB |
 | 4 | 28,603 MiB / 27.9 GiB |
 
-Validation का अलग generation peak होता है, इसलिए `ideogram_validation=true` के साथ extra headroom रखें। छोटी GPUs पर FP8 या NF4, rank 8-16, gradient checkpointing और offload से शुरू करें। Apple GPUs Ideogram 4 training के लिए recommended नहीं हैं।
+Validation का अलग generation peak होता है, इसलिए `ideogram_validation=true` के साथ extra headroom रखें। छोटी GPUs पर FP8 या NF4, rank 8-16, gradient checkpointing और offload से शुरू करें। Apple Silicon (MPS) पर Ideogram 4 training समर्थित है: लोड करते समय FP8 checkpoint स्वतः bf16 में dequantize हो जाता है। memory कम करने के लिए `base_model_precision=int8-sdnq` को `quantize_via=cpu` के साथ सेट करें (FP8/NF4 केवल CUDA पर उपलब्ध हैं)।
 
 ### Torch compile
 
@@ -86,6 +86,15 @@ cp simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json config/
 {
   "base_model_precision": "nf4-bnb",
   "base_model_default_dtype": "bf16",
+  "quantize_via": "cpu"
+}
+```
+
+Apple Silicon (MPS) पर इसके बजाय SDNQ int8 का उपयोग करें:
+
+```json
+{
+  "base_model_precision": "int8-sdnq",
   "quantize_via": "cpu"
 }
 ```
