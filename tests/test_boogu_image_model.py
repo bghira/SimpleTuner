@@ -6,8 +6,10 @@ from unittest.mock import patch
 import torch
 
 from simpletuner.helpers.models.boogu_image.lora_pipeline import BooguImageLoraLoaderMixin
+from simpletuner.helpers.models.boogu_image.embeddings import apply_rotary_emb
 from simpletuner.helpers.models.boogu_image.model import BooguImage
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline, retrieve_timesteps
+from simpletuner.helpers.models.boogu_image.rope import BooguImageDoubleStreamRotaryPosEmbed
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.training.attention_backend import _DIFFUSERS_BACKEND_ALIASES
@@ -184,6 +186,46 @@ class BooguImageModelTests(unittest.TestCase):
     def test_torchao_filter_skips_boogu_reference_image_modules(self):
         self.assertFalse(_torchao_filter_fn(torch.nn.Linear(16, 16), "ref_image_refiner.0.attn.to_q"))
         self.assertTrue(_torchao_filter_fn(torch.nn.Linear(16, 16), "context_refiner.0.attn.to_q"))
+
+    def test_boogu_rotary_complex_inputs_use_real_valued_math(self):
+        x = torch.randn(2, 5, 3, 8, dtype=torch.bfloat16)
+        angles = torch.randn(2, 5, 4)
+        freqs_cis = torch.polar(torch.ones_like(angles), angles)
+
+        expected = torch.view_as_real(
+            torch.view_as_complex(x.float().reshape(*x.shape[:-1], x.shape[-1] // 2, 2))
+            * freqs_cis.unsqueeze(2)
+        ).flatten(-2).to(x.dtype)
+
+        with patch("torch.view_as_complex", side_effect=AssertionError("complex path used")):
+            actual = apply_rotary_emb(x, freqs_cis, use_real=False)
+
+        self.assertTrue(torch.allclose(actual.float(), expected.float(), atol=1e-2, rtol=1e-2))
+
+    def test_boogu_double_stream_rope_returns_real_rotary_tuples(self):
+        embedder = BooguImageDoubleStreamRotaryPosEmbed(
+            theta=10000,
+            axes_dim=(4, 4, 4),
+            axes_lens=(8, 8, 8),
+            patch_size=2,
+        )
+        freqs_cis = embedder.get_freqs_cis(embedder.axes_dim, embedder.axes_lens, embedder.theta)
+
+        output = embedder(
+            freqs_cis=freqs_cis,
+            attention_mask=torch.ones(1, 3, dtype=torch.bool),
+            l_effective_ref_img_len=[[4]],
+            l_effective_img_len=[4],
+            ref_img_sizes=[[(4, 4)]],
+            img_sizes=[(4, 4)],
+            device=torch.device("cpu"),
+        )
+
+        for rotary in (output[0], output[1], output[2], output[3], output[6]):
+            self.assertIsInstance(rotary, tuple)
+            self.assertEqual(len(rotary), 2)
+            self.assertFalse(torch.is_complex(rotary[0]))
+            self.assertFalse(torch.is_complex(rotary[1]))
 
     def test_validation_kwargs_are_mapped_to_boogu_pipeline_names(self):
         model = object.__new__(BooguImage)

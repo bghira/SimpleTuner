@@ -39,6 +39,7 @@ from .attention_processor import (
     BooguImageAttnProcessor,
     BooguImageDoubleStreamSelfAttnProcessor,
 )
+from .embeddings import complex_rotary_to_real
 from .block_lumina2 import (
     Lumina2CombinedTimestepCaptionEmbedding,
     LuminaFeedForward,
@@ -64,6 +65,35 @@ from .taylorseer_utils import (
 logger = logging.get_logger(__name__)
 
 # Local runtime utilities.
+
+
+def _new_rotary_batch_like(hidden_states, rotary_emb, num_ref_images, max_ref_img_len):
+    rotary_emb = complex_rotary_to_real(rotary_emb)
+    if isinstance(rotary_emb, tuple):
+        return tuple(
+            hidden_states.new_zeros(
+                num_ref_images,
+                max_ref_img_len,
+                tensor.shape[-1],
+                dtype=tensor.dtype,
+            )
+            for tensor in rotary_emb
+        )
+    return hidden_states.new_zeros(
+        num_ref_images,
+        max_ref_img_len,
+        rotary_emb.shape[-1],
+        dtype=rotary_emb.dtype,
+    )
+
+
+def _copy_rotary_slice(rotary_batch, batch_index, target_slice, rotary_emb, source_slice):
+    rotary_emb = complex_rotary_to_real(rotary_emb)
+    if isinstance(rotary_batch, tuple):
+        for target, source in zip(rotary_batch, rotary_emb):
+            target[batch_index, target_slice] = source[source_slice]
+    else:
+        rotary_batch[batch_index, target_slice] = rotary_emb[source_slice]
 
 
 class PromptEmbedding(
@@ -1000,11 +1030,11 @@ class BooguImageTransformer2DModel(
         batch_ref_image_hidden_states = ref_image_hidden_states.new_zeros(
             num_ref_images, max_ref_img_len, self.config.hidden_size
         )
-        batch_ref_img_rotary_emb = hidden_states.new_zeros(
+        batch_ref_img_rotary_emb = _new_rotary_batch_like(
+            hidden_states,
+            ref_img_rotary_emb,
             num_ref_images,
             max_ref_img_len,
-            ref_img_rotary_emb.shape[-1],
-            dtype=ref_img_rotary_emb.dtype,
         )
         batch_temb = temb.new_zeros(num_ref_images, *temb.shape[1:], dtype=temb.dtype)
 
@@ -1017,9 +1047,13 @@ class BooguImageTransformer2DModel(
                 batch_ref_image_hidden_states[idx, :ref_img_len] = (
                     ref_image_hidden_states[i, shift : shift + ref_img_len]
                 )
-                batch_ref_img_rotary_emb[idx, :ref_img_len] = ref_img_rotary_emb[
-                    i, shift : shift + ref_img_len
-                ]
+                _copy_rotary_slice(
+                    batch_ref_img_rotary_emb,
+                    idx,
+                    slice(None, ref_img_len),
+                    ref_img_rotary_emb,
+                    (i, slice(shift, shift + ref_img_len)),
+                )
                 batch_temb[idx] = temb[i]
                 shift += ref_img_len
                 idx += 1
