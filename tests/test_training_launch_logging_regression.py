@@ -77,7 +77,7 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
                 "accelerate",
                 "launch",
                 "--use_fsdp",
-                "--some_json={\"nested\": {}, \"safe\": true}",
+                "--some_json=" + json.dumps({"safe": True, "nested": {}}, sort_keys=True),
             ],
         )
 
