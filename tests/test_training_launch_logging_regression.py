@@ -11,7 +11,7 @@ SANITIZATION_PATH = REPO_ROOT / "simpletuner" / "helpers" / "configuration" / "s
 TRAINER_PATH = REPO_ROOT / "simpletuner" / "helpers" / "training" / "trainer.py"
 
 
-def _ensure_sanitization_import_stubs() -> None:
+def _stub_sanitization_dependencies() -> None:
     if "torch" not in sys.modules:
         torch_stub = ModuleType("torch")
         torch_stub.dtype = type("dtype", (), {})  # type: ignore[attr-defined]
@@ -25,8 +25,8 @@ def _ensure_sanitization_import_stubs() -> None:
         sys.modules["numpy"] = numpy_stub
 
 
-def _load_sanitization_module():
-    _ensure_sanitization_import_stubs()
+def _load_sanitization_module() -> ModuleType:
+    _stub_sanitization_dependencies()
     spec = importlib.util.spec_from_file_location("_test_sanitization_module", SANITIZATION_PATH)
     if spec is None or spec.loader is None:  # pragma: no cover
         raise AssertionError(f"Unable to load module from {SANITIZATION_PATH}")
