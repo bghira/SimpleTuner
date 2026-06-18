@@ -24,6 +24,8 @@ import torch.nn as nn
 from diffusers.models.embeddings import get_1d_rotary_pos_embed
 from einops import repeat
 
+from .embeddings import complex_rotary_to_real
+
 
 class BooguImageRotaryPosEmbed(nn.Module):
     def __init__(
@@ -211,10 +213,10 @@ class BooguImageRotaryPosEmbed(nn.Module):
             ]
 
         return (
-            cap_freqs_cis,
-            ref_img_freqs_cis,
-            img_freqs_cis,
-            freqs_cis,
+            complex_rotary_to_real(cap_freqs_cis),
+            complex_rotary_to_real(ref_img_freqs_cis),
+            complex_rotary_to_real(img_freqs_cis),
+            complex_rotary_to_real(freqs_cis),
             l_effective_cap_len,
             seq_lengths,
         )
@@ -437,13 +439,13 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
             )
 
         return (
-            cap_freqs_cis,
-            ref_img_freqs_cis,
-            img_freqs_cis,
-            freqs_cis,
+            complex_rotary_to_real(cap_freqs_cis),
+            complex_rotary_to_real(ref_img_freqs_cis),
+            complex_rotary_to_real(img_freqs_cis),
+            complex_rotary_to_real(freqs_cis),
             l_effective_cap_len,
             seq_lengths,
-            combined_img_freqs_cis,
+            complex_rotary_to_real(combined_img_freqs_cis),
             combined_img_seq_lengths,
         )
 
@@ -542,4 +544,4 @@ class BooguImagePromptTuningRotaryPosEmbed(nn.Module):
                 device=device,
             )  # [B, num_tokens]
 
-        return rotary_emb, attention_mask
+        return complex_rotary_to_real(rotary_emb), attention_mask

@@ -21,6 +21,19 @@ from diffusers.models.activations import get_activation
 from torch import nn
 
 
+def complex_rotary_to_real(
+    freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    if isinstance(freqs_cis, tuple):
+        return freqs_cis
+    if not torch.is_complex(freqs_cis):
+        return freqs_cis
+    return (
+        freqs_cis.real.repeat_interleave(2, dim=-1),
+        freqs_cis.imag.repeat_interleave(2, dim=-1),
+    )
+
+
 class TimestepEmbedding(nn.Module):
     def __init__(
         self,
@@ -79,7 +92,7 @@ class TimestepEmbedding(nn.Module):
 
 def apply_rotary_emb(
     x: torch.Tensor,
-    freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]],
+    freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
     use_real: bool = True,
     use_real_unbind_dim: int = -1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -97,21 +110,32 @@ def apply_rotary_emb(
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
     """
-    if use_real:
+    freqs_cis = complex_rotary_to_real(freqs_cis)
+
+    if use_real or isinstance(freqs_cis, tuple):
         cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
-        cos, sin = cos.to(x.device), sin.to(x.device)
+        cos = cos.to(device=x.device, dtype=torch.float32)
+        sin = sin.to(device=x.device, dtype=torch.float32)
+        if cos.dim() == 2:
+            cos = cos[None, None]
+            sin = sin[None, None]
+        elif cos.dim() == 3:
+            cos = cos.unsqueeze(2)
+            sin = sin.unsqueeze(2)
+        else:
+            raise ValueError(
+                f"`freqs_cis` must have rank 2 or 3 after conversion to real tensors, got {cos.dim()}."
+            )
 
         if use_real_unbind_dim == -1:
             # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(
+            x_real, x_imag = x.reshape(*x.shape[:-1], x.shape[-1] // 2, 2).unbind(
                 -1
             )  # [B, S, H, D//2]
-            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(-2)
         elif use_real_unbind_dim == -2:
             # Used for Stable Audio, Boogu and CogView4
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(
+            x_real, x_imag = x.reshape(*x.shape[:-1], 2, x.shape[-1] // 2).unbind(
                 -2
             )  # [B, S, H, D//2]
             x_rotated = torch.cat([-x_imag, x_real], dim=-1)
