@@ -66,8 +66,15 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
                     separators=(",", ":"),
                 ),
                 "--webhook_config",
-                json.dumps({"url": "https://example.invalid/webhook", "auth_token": "dummy-auth-token"}, separators=(",", ":")),
-                "--some_json=" + json.dumps({"safe": True, "nested": {"token": "redacted"}}, separators=(",", ":")),
+                json.dumps(
+                    {"url": "https://example.invalid/webhook", "auth_token": "dummy-auth-token"},
+                    separators=(",", ":"),
+                ),
+                "--some_json="
+                + json.dumps(
+                    {"safe": True, "nested": {"token": "redacted"}},
+                    separators=(",", ":"),
+                ),
             ]
         )
 
