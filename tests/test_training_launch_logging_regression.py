@@ -53,6 +53,24 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
 
         self.assertIn("sanitize_cli_args_for_public_logging", imported_names)
 
+    def test_launch_with_accelerate_imports_sanitizer_locally(self):
+        tree = ast.parse(TRAINER_PATH.read_text())
+
+        launch_function = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_launch_with_accelerate":
+                launch_function = node
+                break
+
+        self.assertIsNotNone(launch_function)
+
+        imported_names = set()
+        for node in ast.walk(launch_function):
+            if isinstance(node, ast.ImportFrom) and node.module == SANITIZATION_MODULE:
+                imported_names.update(alias.name for alias in node.names)
+
+        self.assertIn("sanitize_cli_args_for_public_logging", imported_names)
+
     def test_sanitize_cli_args_for_public_logging_strips_sensitive_payloads(self):
         sanitization = _load_sanitization_module()
 

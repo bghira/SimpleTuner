@@ -6807,6 +6807,7 @@ def run_trainer_job(config):
         from pathlib import Path
 
         import simpletuner.helpers.log_format  # noqa: F401
+        from simpletuner.helpers.configuration.sanitization import sanitize_cli_args_for_public_logging
 
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
