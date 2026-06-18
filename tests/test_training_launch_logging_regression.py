@@ -28,7 +28,7 @@ def _ensure_sanitization_import_stubs() -> None:
 def _load_sanitization_module():
     _ensure_sanitization_import_stubs()
     spec = importlib.util.spec_from_file_location("_test_sanitization_module", SANITIZATION_PATH)
-    if spec is None or spec.loader is None:  # pragma: no cover - defensive loader guard
+    if spec is None or spec.loader is None:  # pragma: no cover
         raise AssertionError(f"Unable to load module from {SANITIZATION_PATH}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
