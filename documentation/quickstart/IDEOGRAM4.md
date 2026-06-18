@@ -28,7 +28,22 @@ Expected memory varies with rank, optimiser, resolution, validation, and offload
 
 Validation has a separate generation peak, so leave extra headroom when `ideogram_validation=true`. On smaller cards, start with FP8 or NF4, rank 8-16, gradient checkpointing, and offload.
 
-Apple GPUs are not recommended for Ideogram 4 training.
+### Apple Silicon (MPS)
+
+Ideogram 4 trains on Apple Silicon (M-series) GPUs through the Metal (MPS) backend. The public checkpoint ships as FP8, which MPS cannot store, so SimpleTuner dequantises it to bf16 automatically on load. A bf16 base is large (the transformer alone is roughly 18 GiB of unified memory), so for memory reduction set `base_model_precision=int8-sdnq`: SDNQ quantises the base transformer to int8 (Apple-compatible) and roughly halves its weight footprint.
+
+```bash
+pip install 'simpletuner[apple]'
+```
+
+```json
+{
+  "base_model_precision": "int8-sdnq",
+  "quantize_via": "cpu"
+}
+```
+
+Keep `quantize_via=cpu` so quantisation runs on the host before the model moves to the GPU. Native FP8 and NF4 are CUDA-only and unavailable on Apple; SDNQ is the supported low-memory path on MPS. Expect slower steps than CUDA: there is no fused FP8 matmul on MPS (weights run as SDNQ int8, or bf16 without quantisation), SDNQ uses its Triton-free eager path, and the `float64` schedule math runs on CPU. Budget a unified-memory machine accordingly.
 
 ### Memory offloading
 
@@ -74,6 +89,9 @@ pip install 'simpletuner[cuda]'
 
 # CUDA 13 / Blackwell users
 pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+
+# Apple Silicon (M-series, MPS) — see Apple Silicon notes above; use base_model_precision=int8-sdnq
+pip install 'simpletuner[apple]'
 ```
 
 For manual installation or development setup, see the [installation documentation](../INSTALL.md).
@@ -129,6 +147,15 @@ For lower VRAM systems, NF4 is the next recommendation:
 {
   "base_model_precision": "nf4-bnb",
   "base_model_default_dtype": "bf16",
+  "quantize_via": "cpu"
+}
+```
+
+On Apple Silicon (MPS), FP8 and NF4 are unavailable; use SDNQ int8 instead (see [Apple Silicon (MPS)](#apple-silicon-mps)):
+
+```json
+{
+  "base_model_precision": "int8-sdnq",
   "quantize_via": "cpu"
 }
 ```

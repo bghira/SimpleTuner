@@ -2161,6 +2161,9 @@ class Validation:
         logger.debug(
             f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
+        if skip_execution:
+            logger.debug("Skipping validation execution because skip_execution=True.")
+            return self
         if (not current_validation_will_execute and not force_evaluation) or not has_validation_prompts:
             return self
         if current_validation_will_execute and validation_type == "final":

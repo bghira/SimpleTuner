@@ -11,6 +11,8 @@ from safetensors.torch import load_file
 
 from simpletuner.helpers.models.ideogram.constants import QWEN3_VL_ACTIVATION_LAYERS
 from simpletuner.helpers.models.ideogram.quantized_loading import (
+    dequantize_fp8_state_dict,
+    device_supports_float8,
     is_bnb4bit_state_dict,
     is_fp8_state_dict,
     load_bnb4bit_state_dict,
@@ -103,7 +105,12 @@ class Ideogram4TextProjection(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
     ) -> None:
-        if is_fp8_state_dict(state_dict):
+        if is_fp8_state_dict(state_dict) and not device_supports_float8(device):
+            # MPS can't cast float8: fold scales into bf16 weights and load plainly.
+            state_dict = dequantize_fp8_state_dict(state_dict, dtype)
+            self.load_state_dict(state_dict)
+            self.to(device=device, dtype=dtype)
+        elif is_fp8_state_dict(state_dict):
             swap_linears_to_fp8(self, state_dict, compute_dtype=dtype)
             load_fp8_state_dict(self, state_dict, device=device, dtype=dtype)
         elif is_bnb4bit_state_dict(state_dict):

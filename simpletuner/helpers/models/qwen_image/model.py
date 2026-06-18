@@ -10,7 +10,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from diffusers import AutoencoderKLQwenImage, QwenImagePipeline
+from diffusers import AutoencoderKLQwenImage
 from diffusers.models.attention_processor import Attention
 from PIL import Image
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
@@ -31,7 +31,7 @@ from simpletuner.helpers.models.common import (
     PredictionTypes,
     TextEmbedCacheKey,
 )
-from simpletuner.helpers.models.qwen_image.pipeline import QwenImageEditPipeline
+from simpletuner.helpers.models.qwen_image.pipeline import QwenImageEditPipeline, QwenImagePipeline
 from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import (
     CONDITION_IMAGE_SIZE,
     VAE_IMAGE_SIZE,

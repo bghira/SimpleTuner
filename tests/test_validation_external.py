@@ -197,6 +197,44 @@ class ValidationExternalScriptTests(unittest.TestCase):
         self.assertIn("skipped", lifecycle_statuses)
         self.assertNotIn("completed", lifecycle_statuses)
 
+    def test_skip_execution_does_not_prepare_or_run_pipeline_even_when_forced(self):
+        validation = Validation.__new__(Validation)
+        validation.config = SimpleNamespace(
+            validation_method="simpletuner-local",
+            validation_multigpu="single-gpu",
+            gradient_accumulation_steps=1,
+            model_family="boogu_image",
+        )
+        validation.accelerator = SimpleNamespace(is_main_process=True, num_processes=1)
+        validation.deepspeed = False
+        validation._pending_epoch_validation = None
+        validation._epoch_validations_completed = set()
+        validation.validation_prompt_metadata = {"validation_prompts": ["prompt-1"]}
+        validation.validation_images = {"existing": ["image"]}
+        validation.global_step = 10
+        validation.global_resume_step = 0
+        validation.current_epoch = 1
+        validation.current_epoch_step = 10
+        validation._use_distributed_validation = MagicMock(return_value=False)
+        validation.should_perform_intermediary_validation = MagicMock(return_value=False)
+        validation._update_state = MagicMock()
+        validation.setup_pipeline = MagicMock()
+        validation.setup_scheduler = MagicMock()
+        validation.process_prompts = MagicMock()
+
+        result = validation.run_validations(
+            step=10,
+            validation_type="final",
+            force_evaluation=True,
+            skip_execution=True,
+        )
+
+        self.assertIs(result, validation)
+        self.assertEqual(validation.validation_images, {"existing": ["image"]})
+        validation.setup_pipeline.assert_not_called()
+        validation.setup_scheduler.assert_not_called()
+        validation.process_prompts.assert_not_called()
+
     @patch("simpletuner.helpers.training.validation.StateTracker.get_webhook_handler", return_value=None)
     @patch("simpletuner.helpers.training.validation.reclaim_memory")
     def test_base_model_benchmark_uses_builtin_validation_when_external_script_configured(

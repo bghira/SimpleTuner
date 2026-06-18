@@ -1,0 +1,2 @@
+"""Boogu-Image model integration."""
+

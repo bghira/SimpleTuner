@@ -415,6 +415,10 @@ def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
     # Skip RamTorch-offloaded modules; TorchAO expects GPU-resident weights.
     if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
         return False
+    # Boogu T2I sends empty tensors through reference-image modules; TorchAO fp8
+    # cannot dynamically scale empty activations.
+    if fqn.startswith("ref_image_"):
+        return False
     # don't convert the output module
     if fqn == "proj_out":
         return False

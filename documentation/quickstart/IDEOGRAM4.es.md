@@ -24,7 +24,7 @@ Medido en H100 80GB con FP8 nativo (`base_model_precision=fp8-torchao`, `quantiz
 | 2 | 20,095 MiB / 19.6 GiB |
 | 4 | 28,603 MiB / 27.9 GiB |
 
-La validación tiene un pico de generación separado, así que deja margen adicional con `ideogram_validation=true`. En GPUs más pequeñas, empieza con FP8 o NF4, rank 8-16, gradient checkpointing y offload. Las GPUs Apple no se recomiendan para entrenar Ideogram 4.
+La validación tiene un pico de generación separado, así que deja margen adicional con `ideogram_validation=true`. En GPUs más pequeñas, empieza con FP8 o NF4, rank 8-16, gradient checkpointing y offload. Apple Silicon (MPS) es compatible con el entrenamiento de Ideogram 4: el checkpoint FP8 se descuantiza a bf16 al cargar. Para reducir memoria, usa `base_model_precision=int8-sdnq` junto con `quantize_via=cpu` (FP8/NF4 son solo para CUDA).
 
 ### Torch compile
 
@@ -86,6 +86,15 @@ Para poca VRAM, usa NF4:
 {
   "base_model_precision": "nf4-bnb",
   "base_model_default_dtype": "bf16",
+  "quantize_via": "cpu"
+}
+```
+
+En Apple Silicon (MPS), usa SDNQ int8 en su lugar:
+
+```json
+{
+  "base_model_precision": "int8-sdnq",
   "quantize_via": "cpu"
 }
 ```
