@@ -86,6 +86,15 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
             {"safe": True, "nested": {}},
         )
 
+    def test_sanitize_cli_args_for_public_logging_leaves_invalid_json_values(self):
+        sanitization = _load_sanitization_module()
+
+        sanitized = sanitization.sanitize_cli_args_for_public_logging(
+            ["accelerate", "launch", "--some_json={not-valid-json}"]
+        )
+
+        self.assertEqual(sanitized, ["accelerate", "launch", "--some_json={not-valid-json}"])
+
 
 if __name__ == "__main__":
     unittest.main()
