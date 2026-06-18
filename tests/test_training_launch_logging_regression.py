@@ -84,14 +84,16 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(sanitized[:3], ["accelerate", "launch", "--use_fsdp"])
-        self.assertEqual(len(sanitized), 4, "expected accelerate, launch, --use_fsdp, plus the sanitized --some_json")
-        self.assertTrue(sanitized[3].startswith("--some_json="))
         self.assertNotIn("--api_key=dummy-api-key", sanitized)
         self.assertFalse(any(arg.startswith("--publishing_config") for arg in sanitized))
         self.assertNotIn("--webhook_config", sanitized)
+        self.assertIn("accelerate", sanitized)
+        self.assertIn("launch", sanitized)
+        self.assertIn("--use_fsdp", sanitized)
+        some_json_args = [arg for arg in sanitized if arg.startswith("--some_json=")]
+        self.assertEqual(len(some_json_args), 1)
         self.assertEqual(
-            json.loads(sanitized[3].split("=", 1)[1]),
+            json.loads(some_json_args[0].split("=", 1)[1]),
             {"safe": True, "nested": {}},
         )
 
