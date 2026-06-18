@@ -13,28 +13,33 @@ TRAINER_PATH = REPO_ROOT / "simpletuner" / "helpers" / "training" / "trainer.py"
 SANITIZATION_MODULE = "simpletuner.helpers.configuration.sanitization"
 
 
-def _stub_sanitization_dependencies() -> None:
-    if "torch" not in sys.modules:
-        torch_stub = ModuleType("torch")
-        setattr(torch_stub, "dtype", type("dtype", (), {}))
-        setattr(torch_stub, "device", type("device", (), {}))
-        sys.modules["torch"] = torch_stub
-
-    if "numpy" not in sys.modules:
-        numpy_stub = ModuleType("numpy")
-        setattr(numpy_stub, "generic", type("generic", (), {}))
-        setattr(numpy_stub, "ndarray", type("ndarray", (), {}))
-        sys.modules["numpy"] = numpy_stub
-
-
 def _load_sanitization_module() -> ModuleType:
-    _stub_sanitization_dependencies()
-    spec = importlib.util.spec_from_file_location("_test_sanitization_module", SANITIZATION_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"Unable to load module from {SANITIZATION_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    original_modules = {name: sys.modules.get(name) for name in ("torch", "numpy")}
+    try:
+        if original_modules["torch"] is None:
+            torch_stub = ModuleType("torch")
+            setattr(torch_stub, "dtype", type("dtype", (), {}))
+            setattr(torch_stub, "device", type("device", (), {}))
+            sys.modules["torch"] = torch_stub
+
+        if original_modules["numpy"] is None:
+            numpy_stub = ModuleType("numpy")
+            setattr(numpy_stub, "generic", type("generic", (), {}))
+            setattr(numpy_stub, "ndarray", type("ndarray", (), {}))
+            sys.modules["numpy"] = numpy_stub
+
+        spec = importlib.util.spec_from_file_location("_test_sanitization_module", SANITIZATION_PATH)
+        if spec is None or spec.loader is None:
+            raise AssertionError(f"Unable to load module from {SANITIZATION_PATH}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
 
 class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
@@ -80,7 +85,7 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(sanitized[:3], ["accelerate", "launch", "--use_fsdp"])
-        self.assertEqual(len(sanitized), 4, "expected 3 base args plus the sanitized --some_json argument")
+        self.assertEqual(len(sanitized), 4, "expected accelerate, launch, --use_fsdp, plus the sanitized --some_json")
         self.assertTrue(sanitized[3].startswith("--some_json="))
         self.assertNotIn("--api_key=dummy-api-key", sanitized)
         self.assertFalse(any(arg.startswith("--publishing_config") for arg in sanitized))
