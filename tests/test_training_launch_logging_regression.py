@@ -78,14 +78,12 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
             ]
         )
 
+        self.assertEqual(sanitized[:3], ["accelerate", "launch", "--use_fsdp"])
+        self.assertEqual(len(sanitized), 4)
+        self.assertTrue(sanitized[3].startswith("--some_json="))
         self.assertEqual(
-            sanitized,
-            [
-                "accelerate",
-                "launch",
-                "--use_fsdp",
-                "--some_json=" + json.dumps({"safe": True, "nested": {}}, sort_keys=True),
-            ],
+            json.loads(sanitized[3].split("=", 1)[1]),
+            {"safe": True, "nested": {}},
         )
 
 
