@@ -308,10 +308,21 @@ def apply_rotary_emb_qwen(
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
     """
+    if not use_real and isinstance(freqs_cis, tuple):
+        cos, sin = freqs_cis  # [S, D]
+        cos = cos[None, :, None, :].to(x.device)
+        sin = sin[None, :, None, :].to(x.device)
+
+        x_real, x_imag = x.float().reshape(*x.shape[:-1], -1, 2).unbind(-1)
+        x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+        out = x.float() * cos + x_rotated.float() * sin
+
+        return out.type_as(x)
+
     if use_real:
         cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
+        cos = cos[None, :, None, :]
+        sin = sin[None, :, None, :]
         cos, sin = cos.to(x.device), sin.to(x.device)
 
         if use_real_unbind_dim == -1:
@@ -334,6 +345,26 @@ def apply_rotary_emb_qwen(
         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
 
         return x_out.type_as(x)
+
+
+def precompute_real_rope_qwen(
+    image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]],
+) -> Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]]:
+    if image_rotary_emb is None:
+        return None
+
+    def _to_cos_sin(freqs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if torch.is_complex(freqs):
+            cos = freqs.real.repeat_interleave(2, dim=-1)
+            sin = freqs.imag.repeat_interleave(2, dim=-1)
+        else:
+            freqs = freqs.repeat_interleave(2, dim=-1)
+            cos = torch.cos(freqs)
+            sin = torch.sin(freqs)
+        return cos.contiguous(), sin.contiguous()
+
+    img_freqs, txt_freqs = image_rotary_emb
+    return _to_cos_sin(img_freqs), _to_cos_sin(txt_freqs)
 
 
 def compute_text_seq_len_from_mask(
@@ -1281,6 +1312,7 @@ class QwenImageTransformer2DModel(
             temb = self.time_text_embed(timestep, guidance, hidden_states, timestep_sign=timestep_sign)
 
         image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens=text_seq_len, device=hidden_states.device)
+        image_rotary_emb = precompute_real_rope_qwen(image_rotary_emb)
 
         # TREAD initialization
         routes = self._tread_routes or []

@@ -75,6 +75,7 @@ from simpletuner.helpers.models.qwen_image.transformer import (
     QwenTimestepProjEmbeddings,
     apply_rotary_emb_qwen,
     get_timestep_embedding,
+    precompute_real_rope_qwen,
 )
 
 
@@ -212,22 +213,41 @@ class TestApplyRotaryEmbQwen(TransformerBaseTest):
     """Test the apply_rotary_emb_qwen function."""
 
     def test_real_mode_default(self):
-        """Qwen implementation relies on complex rotary embeddings; real mode should raise."""
+        """Test real tuple mode operation."""
         batch_size, seq_len, heads, head_dim = 2, 128, 8, 64
         x = torch.randn(batch_size, seq_len, heads, head_dim)
         freqs_cis = (torch.randn(seq_len, head_dim), torch.randn(seq_len, head_dim))
 
-        with self.assertRaises(RuntimeError):
-            apply_rotary_emb_qwen(x, freqs_cis, use_real=True, use_real_unbind_dim=-1)
+        output = apply_rotary_emb_qwen(x, freqs_cis, use_real=True, use_real_unbind_dim=-1)
+
+        self.assert_tensor_shape(output, x.shape)
+        self.assertEqual(output.dtype, x.dtype)
+        self.assert_no_nan_or_inf(output)
 
     def test_real_mode_unbind_dim_minus_2(self):
-        """Real mode with alternate unbind dim should also raise."""
+        """Real mode with alternate unbind dim preserves shape and dtype."""
         batch_size, seq_len, heads, head_dim = 2, 128, 8, 64
         x = torch.randn(batch_size, seq_len, heads, head_dim)
         freqs_cis = (torch.randn(seq_len, head_dim), torch.randn(seq_len, head_dim))
 
-        with self.assertRaises(RuntimeError):
-            apply_rotary_emb_qwen(x, freqs_cis, use_real=True, use_real_unbind_dim=-2)
+        output = apply_rotary_emb_qwen(x, freqs_cis, use_real=True, use_real_unbind_dim=-2)
+
+        self.assert_tensor_shape(output, x.shape)
+        self.assertEqual(output.dtype, x.dtype)
+        self.assert_no_nan_or_inf(output)
+
+    def test_real_tuple_complex_mode_matches_complex_freqs(self):
+        """Precomputed real RoPE tuple should match the legacy complex multiply path."""
+        batch_size, seq_len, heads, head_dim = 2, 32, 4, 16
+        x = torch.randn(batch_size, seq_len, heads, head_dim)
+        angles = torch.randn(seq_len, head_dim // 2)
+        complex_freqs = torch.polar(torch.ones_like(angles), angles)
+        real_freqs = precompute_real_rope_qwen((complex_freqs, complex_freqs))[0]
+
+        real_output = apply_rotary_emb_qwen(x, real_freqs, use_real=False)
+        complex_output = apply_rotary_emb_qwen(x, complex_freqs, use_real=False)
+
+        torch.testing.assert_close(real_output, complex_output, atol=1e-5, rtol=1e-5)
 
     def test_complex_mode(self):
         """Test complex mode operation."""
