@@ -10,6 +10,7 @@ from types import ModuleType
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SANITIZATION_PATH = REPO_ROOT / "simpletuner" / "helpers" / "configuration" / "sanitization.py"
 TRAINER_PATH = REPO_ROOT / "simpletuner" / "helpers" / "training" / "trainer.py"
+SANITIZATION_MODULE = "simpletuner.helpers.configuration.sanitization"
 
 
 def _stub_sanitization_dependencies() -> None:
@@ -42,7 +43,7 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
 
         imported_names = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "simpletuner.helpers.configuration.sanitization":
+            if isinstance(node, ast.ImportFrom) and node.module == SANITIZATION_MODULE:
                 imported_names.update(alias.name for alias in node.names)
 
         self.assertIn("sanitize_cli_args_for_public_logging", imported_names)
@@ -79,7 +80,7 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(sanitized[:3], ["accelerate", "launch", "--use_fsdp"])
-        self.assertEqual(len(sanitized), 4)
+        self.assertEqual(len(sanitized), 4, "expected 3 base args plus the sanitized --some_json argument")
         self.assertTrue(sanitized[3].startswith("--some_json="))
         self.assertNotIn("--api_key=dummy-api-key", sanitized)
         self.assertFalse(any(arg.startswith("--publishing_config") for arg in sanitized))
