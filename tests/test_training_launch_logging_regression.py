@@ -15,14 +15,14 @@ TRAINER_PATH = REPO_ROOT / "simpletuner" / "helpers" / "training" / "trainer.py"
 def _stub_sanitization_dependencies() -> None:
     if "torch" not in sys.modules:
         torch_stub = ModuleType("torch")
-        torch_stub.dtype = type("dtype", (), {})  # type: ignore[attr-defined]
-        torch_stub.device = type("device", (), {})  # type: ignore[attr-defined]
+        setattr(torch_stub, "dtype", type("dtype", (), {}))
+        setattr(torch_stub, "device", type("device", (), {}))
         sys.modules["torch"] = torch_stub
 
     if "numpy" not in sys.modules:
         numpy_stub = ModuleType("numpy")
-        numpy_stub.generic = type("generic", (), {})  # type: ignore[attr-defined]
-        numpy_stub.ndarray = type("ndarray", (), {})  # type: ignore[attr-defined]
+        setattr(numpy_stub, "generic", type("generic", (), {}))
+        setattr(numpy_stub, "ndarray", type("ndarray", (), {}))
         sys.modules["numpy"] = numpy_stub
 
 
