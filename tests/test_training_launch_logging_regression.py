@@ -1,5 +1,6 @@
 import ast
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -28,7 +29,7 @@ def _stub_sanitization_dependencies() -> None:
 def _load_sanitization_module() -> ModuleType:
     _stub_sanitization_dependencies()
     spec = importlib.util.spec_from_file_location("_test_sanitization_module", SANITIZATION_PATH)
-    if spec is None or spec.loader is None:  # pragma: no cover
+    if spec is None or spec.loader is None:
         raise AssertionError(f"Unable to load module from {SANITIZATION_PATH}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -55,10 +56,18 @@ class TrainingLaunchLoggingRegressionTests(unittest.TestCase):
                 "launch",
                 "--api_key=dummy-api-key",
                 "--use_fsdp",
-                "--publishing_config={\"bucket\":\"training\",\"access_key\":\"dummy-access-key\",\"secret_key\":\"dummy-secret-key\"}",
+                "--publishing_config="
+                + json.dumps(
+                    {
+                        "bucket": "training",
+                        "access_key": "dummy-access-key",
+                        "secret_key": "dummy-secret-key",
+                    },
+                    separators=(",", ":"),
+                ),
                 "--webhook_config",
-                "{\"url\":\"https://example.invalid/webhook\",\"auth_token\":\"dummy-auth-token\"}",
-                "--some_json={\"safe\":true,\"nested\":{\"token\":\"redacted\"}}",
+                json.dumps({"url": "https://example.invalid/webhook", "auth_token": "dummy-auth-token"}, separators=(",", ":")),
+                "--some_json=" + json.dumps({"safe": True, "nested": {"token": "redacted"}}, separators=(",", ":")),
             ]
         )
 
