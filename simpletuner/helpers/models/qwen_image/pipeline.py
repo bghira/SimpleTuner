@@ -14,10 +14,12 @@
 
 import inspect
 import math
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+from diffusers import QwenImagePipeline as DiffusersQwenImagePipeline
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import QwenImageLoraLoaderMixin
 from diffusers.models import AutoencoderKLQwenImage, QwenImageTransformer2DModel
@@ -76,6 +78,47 @@ def calculate_shift(
     b = base_shift - m * base_seq_len
     mu = image_seq_len * m + b
     return mu
+
+
+def _pad_qwen_cfg_prompt_tensors(
+    negative_prompt_embeds: torch.Tensor,
+    prompt_embeds: torch.Tensor,
+    negative_prompt_embeds_mask: Optional[torch.Tensor],
+    prompt_embeds_mask: Optional[torch.Tensor],
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    negative_seq_len = negative_prompt_embeds.shape[1]
+    prompt_seq_len = prompt_embeds.shape[1]
+    cfg_seq_len = max(negative_seq_len, prompt_seq_len)
+
+    def pad_embeds(embeds: torch.Tensor) -> torch.Tensor:
+        if embeds.shape[1] == cfg_seq_len:
+            return embeds
+        return F.pad(embeds, (0, 0, 0, cfg_seq_len - embeds.shape[1]))
+
+    negative_prompt_embeds = pad_embeds(negative_prompt_embeds)
+    prompt_embeds = pad_embeds(prompt_embeds)
+    cfg_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+
+    if prompt_embeds_mask is None and negative_prompt_embeds_mask is None:
+        return cfg_prompt_embeds, None
+
+    def valid_mask_like(embeds: torch.Tensor, seq_len: int) -> torch.Tensor:
+        return torch.ones((embeds.shape[0], seq_len), device=embeds.device, dtype=torch.bool)
+
+    if negative_prompt_embeds_mask is None:
+        negative_prompt_embeds_mask = valid_mask_like(negative_prompt_embeds, negative_seq_len)
+    if negative_prompt_embeds_mask.shape[1] != cfg_seq_len:
+        negative_prompt_embeds_mask = F.pad(
+            negative_prompt_embeds_mask, (0, cfg_seq_len - negative_prompt_embeds_mask.shape[1])
+        )
+
+    if prompt_embeds_mask is None:
+        prompt_embeds_mask = valid_mask_like(prompt_embeds, prompt_seq_len)
+    if prompt_embeds_mask.shape[1] != cfg_seq_len:
+        prompt_embeds_mask = F.pad(prompt_embeds_mask, (0, cfg_seq_len - prompt_embeds_mask.shape[1]))
+
+    cfg_prompt_embeds_mask = torch.cat([negative_prompt_embeds_mask, prompt_embeds_mask], dim=0)
+    return cfg_prompt_embeds, cfg_prompt_embeds_mask
 
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
@@ -158,6 +201,235 @@ def calculate_dimensions(target_area, ratio):
     height = round(height / 32) * 32
 
     return width, height, None
+
+
+class QwenImagePipeline(DiffusersQwenImagePipeline):
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: Union[str, List[str]] = None,
+        negative_prompt: Union[str, List[str]] = None,
+        true_cfg_scale: float = 4.0,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        num_inference_steps: int = 50,
+        sigmas: Optional[List[float]] = None,
+        guidance_scale: Optional[float] = None,
+        num_images_per_prompt: int = 1,
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        latents: Optional[torch.Tensor] = None,
+        prompt_embeds: Optional[torch.Tensor] = None,
+        prompt_embeds_mask: Optional[torch.Tensor] = None,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        negative_prompt_embeds_mask: Optional[torch.Tensor] = None,
+        output_type: Optional[str] = "pil",
+        return_dict: bool = True,
+        attention_kwargs: Optional[Dict[str, Any]] = None,
+        callback_on_step_end: Optional[Callable[[int, int], None]] = None,
+        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        max_sequence_length: int = 512,
+    ):
+        height = height or self.default_sample_size * self.vae_scale_factor
+        width = width or self.default_sample_size * self.vae_scale_factor
+
+        self.check_inputs(
+            prompt,
+            height,
+            width,
+            negative_prompt=negative_prompt,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            prompt_embeds_mask=prompt_embeds_mask,
+            negative_prompt_embeds_mask=negative_prompt_embeds_mask,
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+            max_sequence_length=max_sequence_length,
+        )
+
+        self._guidance_scale = guidance_scale
+        self._attention_kwargs = attention_kwargs
+        self._current_timestep = None
+        self._interrupt = False
+
+        if prompt is not None and isinstance(prompt, str):
+            batch_size = 1
+        elif prompt is not None and isinstance(prompt, list):
+            batch_size = len(prompt)
+        else:
+            batch_size = prompt_embeds.shape[0]
+
+        device = self._execution_device
+        has_neg_prompt = negative_prompt is not None or negative_prompt_embeds is not None
+
+        if true_cfg_scale > 1 and not has_neg_prompt:
+            logger.warning(
+                f"true_cfg_scale is passed as {true_cfg_scale}, but classifier-free guidance is not enabled since no negative_prompt is provided."
+            )
+        elif true_cfg_scale <= 1 and has_neg_prompt:
+            logger.warning(
+                " negative_prompt is passed but classifier-free guidance is not enabled since true_cfg_scale <= 1"
+            )
+
+        do_true_cfg = true_cfg_scale > 1 and has_neg_prompt
+        prompt_embeds, prompt_embeds_mask = self.encode_prompt(
+            prompt=prompt,
+            prompt_embeds=prompt_embeds,
+            prompt_embeds_mask=prompt_embeds_mask,
+            device=device,
+            num_images_per_prompt=num_images_per_prompt,
+            max_sequence_length=max_sequence_length,
+        )
+        if do_true_cfg:
+            negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(
+                prompt=negative_prompt,
+                prompt_embeds=negative_prompt_embeds,
+                prompt_embeds_mask=negative_prompt_embeds_mask,
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
+            )
+
+        num_channels_latents = self.transformer.config.in_channels // 4
+        latents = self.prepare_latents(
+            batch_size * num_images_per_prompt,
+            num_channels_latents,
+            height,
+            width,
+            prompt_embeds.dtype,
+            device,
+            generator,
+            latents,
+        )
+        img_shapes = [[(1, height // self.vae_scale_factor // 2, width // self.vae_scale_factor // 2)]] * batch_size
+
+        sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps) if sigmas is None else sigmas
+        image_seq_len = latents.shape[1]
+        mu = calculate_shift(
+            image_seq_len,
+            self.scheduler.config.get("base_image_seq_len", 256),
+            self.scheduler.config.get("max_image_seq_len", 4096),
+            self.scheduler.config.get("base_shift", 0.5),
+            self.scheduler.config.get("max_shift", 1.15),
+        )
+        timesteps, num_inference_steps = retrieve_timesteps(
+            self.scheduler,
+            num_inference_steps,
+            device,
+            sigmas=sigmas,
+            mu=mu,
+        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
+        self._num_timesteps = len(timesteps)
+
+        if self.transformer.config.guidance_embeds and guidance_scale is None:
+            raise ValueError("guidance_scale is required for guidance-distilled model.")
+        elif self.transformer.config.guidance_embeds:
+            guidance = torch.full([1], guidance_scale, device=device, dtype=torch.float32)
+            guidance = guidance.expand(latents.shape[0])
+        elif not self.transformer.config.guidance_embeds and guidance_scale is not None:
+            logger.warning(
+                f"guidance_scale is passed as {guidance_scale}, but ignored since the model is not guidance-distilled."
+            )
+            guidance = None
+        elif not self.transformer.config.guidance_embeds and guidance_scale is None:
+            guidance = None
+
+        if self.attention_kwargs is None:
+            self._attention_kwargs = {}
+
+        self.scheduler.set_begin_index(0)
+        with self.progress_bar(total=num_inference_steps) as progress_bar:
+            for i, t in enumerate(timesteps):
+                if self.interrupt:
+                    continue
+
+                self._current_timestep = t
+                timestep = t.expand(latents.shape[0]).to(latents.dtype)
+
+                if do_true_cfg:
+                    cfg_prompt_embeds, cfg_prompt_embeds_mask = _pad_qwen_cfg_prompt_tensors(
+                        negative_prompt_embeds=negative_prompt_embeds,
+                        prompt_embeds=prompt_embeds,
+                        negative_prompt_embeds_mask=negative_prompt_embeds_mask,
+                        prompt_embeds_mask=prompt_embeds_mask,
+                    )
+                    cfg_latents = torch.cat([latents, latents], dim=0)
+                    cfg_timestep = torch.cat([timestep, timestep], dim=0)
+                    cfg_guidance = None if guidance is None else torch.cat([guidance, guidance], dim=0)
+
+                    with self.transformer.cache_context("cfg"):
+                        neg_noise_pred, noise_pred = self.transformer(
+                            hidden_states=cfg_latents,
+                            timestep=cfg_timestep / 1000,
+                            guidance=cfg_guidance,
+                            encoder_hidden_states_mask=cfg_prompt_embeds_mask,
+                            encoder_hidden_states=cfg_prompt_embeds,
+                            img_shapes=img_shapes + img_shapes,
+                            attention_kwargs=self.attention_kwargs,
+                            return_dict=False,
+                        )[0].chunk(2, dim=0)
+
+                    comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
+                    cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
+                    noise_norm = torch.norm(comb_pred, dim=-1, keepdim=True)
+                    noise_pred = comb_pred * (cond_norm / noise_norm)
+                else:
+                    with self.transformer.cache_context("cond"):
+                        noise_pred = self.transformer(
+                            hidden_states=latents,
+                            timestep=timestep / 1000,
+                            guidance=guidance,
+                            encoder_hidden_states_mask=prompt_embeds_mask,
+                            encoder_hidden_states=prompt_embeds,
+                            img_shapes=img_shapes,
+                            attention_kwargs=self.attention_kwargs,
+                            return_dict=False,
+                        )[0]
+
+                latents_dtype = latents.dtype
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+                if latents.dtype != latents_dtype and torch.backends.mps.is_available():
+                    latents = latents.to(latents_dtype)
+
+                if callback_on_step_end is not None:
+                    callback_kwargs = {}
+                    for k in callback_on_step_end_tensor_inputs:
+                        callback_kwargs[k] = locals()[k]
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                    progress_bar.update()
+
+                if XLA_AVAILABLE:
+                    xm.mark_step()
+
+        self._current_timestep = None
+        if output_type == "latent":
+            image = latents
+        else:
+            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = latents.to(self.vae.dtype)
+            latents_mean = (
+                torch.tensor(self.vae.config.latents_mean)
+                .view(1, self.vae.config.z_dim, 1, 1, 1)
+                .to(latents.device, latents.dtype)
+            )
+            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1).to(
+                latents.device, latents.dtype
+            )
+            latents = latents / latents_std + latents_mean
+            image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+            image = self.image_processor.postprocess(image, output_type=output_type)
+
+        self.maybe_free_model_hooks()
+
+        if not return_dict:
+            return (image,)
+
+        return QwenImagePipelineOutput(images=image)
 
 
 class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
@@ -835,48 +1107,48 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                         alpha=_tlora_cfg["alpha"],
                     )
                 try:
-                    with self.transformer.cache_context("cond"):
-                        noise_pred = self.transformer(
-                            hidden_states=latent_model_input,
-                            timestep=timestep / 1000,
-                            guidance=guidance,
-                            encoder_hidden_states_mask=prompt_embeds_mask,
-                            encoder_hidden_states=prompt_embeds,
-                            img_shapes=img_shapes,
-                            attention_kwargs=self.attention_kwargs,
-                            return_dict=False,
-                        )[0]
+                    if do_true_cfg:
+                        cfg_prompt_embeds, cfg_prompt_embeds_mask = _pad_qwen_cfg_prompt_tensors(
+                            negative_prompt_embeds=negative_prompt_embeds,
+                            prompt_embeds=prompt_embeds,
+                            negative_prompt_embeds_mask=negative_prompt_embeds_mask,
+                            prompt_embeds_mask=prompt_embeds_mask,
+                        )
+                        cfg_latent_model_input = torch.cat([latent_model_input, latent_model_input], dim=0)
+                        cfg_timestep = torch.cat([timestep, timestep], dim=0)
+                        cfg_guidance = None if guidance is None else torch.cat([guidance, guidance], dim=0)
+
+                        with self.transformer.cache_context("cfg"):
+                            neg_noise_pred, noise_pred = self.transformer(
+                                hidden_states=cfg_latent_model_input,
+                                timestep=cfg_timestep / 1000,
+                                guidance=cfg_guidance,
+                                encoder_hidden_states_mask=cfg_prompt_embeds_mask,
+                                encoder_hidden_states=cfg_prompt_embeds,
+                                img_shapes=img_shapes + img_shapes,
+                                attention_kwargs=self.attention_kwargs,
+                                return_dict=False,
+                            )[0].chunk(2, dim=0)
+                        neg_noise_pred = neg_noise_pred[:, : latents.size(1)]
                         noise_pred = noise_pred[:, : latents.size(1)]
+                    else:
+                        with self.transformer.cache_context("cond"):
+                            noise_pred = self.transformer(
+                                hidden_states=latent_model_input,
+                                timestep=timestep / 1000,
+                                guidance=guidance,
+                                encoder_hidden_states_mask=prompt_embeds_mask,
+                                encoder_hidden_states=prompt_embeds,
+                                img_shapes=img_shapes,
+                                attention_kwargs=self.attention_kwargs,
+                                return_dict=False,
+                            )[0]
+                            noise_pred = noise_pred[:, : latents.size(1)]
                 finally:
                     if _tlora_cfg:
                         clear_tlora_mask()
 
                 if do_true_cfg:
-                    _tlora_cfg = getattr(self, "_tlora_config", None)
-                    if _tlora_cfg:
-                        apply_tlora_inference_mask(
-                            timestep=int(t),
-                            max_timestep=self.scheduler.config.num_train_timesteps,
-                            max_rank=_tlora_cfg["max_rank"],
-                            min_rank=_tlora_cfg["min_rank"],
-                            alpha=_tlora_cfg["alpha"],
-                        )
-                    try:
-                        with self.transformer.cache_context("uncond"):
-                            neg_noise_pred = self.transformer(
-                                hidden_states=latent_model_input,
-                                timestep=timestep / 1000,
-                                guidance=guidance,
-                                encoder_hidden_states_mask=negative_prompt_embeds_mask,
-                                encoder_hidden_states=negative_prompt_embeds,
-                                img_shapes=img_shapes,
-                                attention_kwargs=self.attention_kwargs,
-                                return_dict=False,
-                            )[0]
-                    finally:
-                        if _tlora_cfg:
-                            clear_tlora_mask()
-                    neg_noise_pred = neg_noise_pred[:, : latents.size(1)]
                     comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
 
                     cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
