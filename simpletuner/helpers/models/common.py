@@ -2008,7 +2008,7 @@ class ModelFoundation(ABC):
         return self._single_file_component_cache
 
     def unwrap_model(self, model=None, keep_fp32_wrapper: bool = True):
-        if self.config.controlnet and model is None:
+        if getattr(self.config, "controlnet", False) and model is None:
             if self.controlnet is None:
                 return None
             return unwrap_model(self.accelerator, self.controlnet, keep_fp32_wrapper=keep_fp32_wrapper)

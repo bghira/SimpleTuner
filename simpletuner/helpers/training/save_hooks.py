@@ -103,6 +103,15 @@ def _collect_wrapped_component_classes(accelerator, component):
     return classes
 
 
+def _get_trained_component_for_save(model, **kwargs):
+    try:
+        return model.get_trained_component(**kwargs)
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        return model.get_trained_component()
+
+
 def _materialize_tensor_for_save(tensor: torch.Tensor) -> torch.Tensor:
     if type(tensor).__name__ == "DTensor" and hasattr(tensor, "full_tensor"):
         tensor = tensor.full_tensor()
@@ -493,7 +502,7 @@ class SaveHookManager:
         trained_component_classes.update(
             _collect_wrapped_component_classes(
                 self.accelerator,
-                self.model.get_trained_component(base_model=True, unwrap_model=False),
+                _get_trained_component_for_save(self.model, base_model=True, unwrap_model=False),
             )
         )
         text_encoder_0_cls = None
