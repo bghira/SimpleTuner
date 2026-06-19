@@ -35,3 +35,11 @@ def run_with_dynamo_config(config: Any, fn: Callable[..., Any], *args: Any, **kw
     with dynamo_config_context(config):
         context = contextvars.copy_context()
         return context.run(fn, *args, **kwargs)
+
+
+def mark_cudagraph_step_begin(config: Any) -> None:
+    if not getattr(config, "dynamo_backend", None):
+        return
+    mark_step_begin = getattr(torch.compiler, "cudagraph_mark_step_begin", None)
+    if mark_step_begin is not None:
+        mark_step_begin()

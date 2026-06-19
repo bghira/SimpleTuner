@@ -1234,6 +1234,8 @@ def collate_fn(batch):
     return {
         "latent_batch": latent_batch,
         "latent_metadata": latent_metadata,
+        "filepaths": filepaths,
+        "data_backend_id": batch_backend_id,
         "prompts": captions,
         "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),

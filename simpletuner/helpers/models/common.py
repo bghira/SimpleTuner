@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 import numpy as np
 import torch
 import torch.nn.functional as F
+from huggingface_hub import snapshot_download
 from PIL import Image
 from torch.distributions import Beta
 from torchvision import transforms
@@ -79,6 +80,10 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+def _is_hf_repo_id(path: str) -> bool:
+    return isinstance(path, str) and not os.path.exists(path) and "://" not in path
 
 
 flow_matching_model_families = [
@@ -2616,6 +2621,25 @@ class ModelFoundation(ABC):
                     "subfolder": text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
                 }
+                accelerator = getattr(self, "accelerator", None)
+                if accelerator is not None and _is_hf_repo_id(text_encoder_path):
+                    subfolder = text_encoder_kwargs["subfolder"]
+                    if _get_rank() == 0:
+                        snapshot_download(
+                            repo_id=text_encoder_path,
+                            revision=self.config.revision,
+                            allow_patterns=[f"{subfolder}/*"] if subfolder else None,
+                        )
+                    if torch.distributed.is_available() and torch.distributed.is_initialized():
+                        torch.distributed.barrier()
+                    else:
+                        accelerator.wait_for_everyone()
+                    text_encoder_kwargs["pretrained_model_name_or_path"] = snapshot_download(
+                        repo_id=text_encoder_path,
+                        revision=self.config.revision,
+                        allow_patterns=[f"{subfolder}/*"] if subfolder else None,
+                        local_files_only=True,
+                    )
                 logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
                 text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
                 is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)

@@ -579,7 +579,14 @@ class LTX2Attention(torch.nn.Module, AttentionModuleMixin):
                 f"attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
             )
         kwargs = {k: w for k, w in kwargs.items() if k in attn_parameters}
-        hidden_states = self.processor(
+        processor_call = self.processor.__call__
+        if (
+            torch.compiler.is_compiling()
+            and _ltx2_active_attention_backend(getattr(self.processor, "_attention_backend", None))
+            == AttentionBackendName._FLASH_3_VARLEN_HUB
+        ):
+            processor_call = torch.compiler.disable(processor_call)
+        hidden_states = processor_call(
             self, hidden_states, encoder_hidden_states, attention_mask, query_rotary_emb, key_rotary_emb, **kwargs
         )
         return hidden_states
