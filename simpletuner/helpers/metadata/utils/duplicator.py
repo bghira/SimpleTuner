@@ -45,6 +45,8 @@ class DatasetDuplicator:
 
         if needs_path_update:
             logger.info(f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'")
+            source_dir_abs = os.path.abspath(source_dir)
+            target_dir_abs = os.path.abspath(target_dir)
 
             # Copy and update bucket indices
             target_meta.aspect_ratio_bucket_indices = {}
@@ -55,8 +57,8 @@ class DatasetDuplicator:
                     # Handle both absolute and relative paths
                     if os.path.isabs(path):
                         # For absolute paths, replace the directory
-                        rel_path = os.path.relpath(path, source_dir)
-                        new_path = os.path.join(target_dir, rel_path)
+                        rel_path = os.path.relpath(path, source_dir_abs)
+                        new_path = os.path.join(target_dir_abs, rel_path)
                     else:
                         # For relative paths, just prepend the new directory
                         new_path = os.path.join(target_dir, os.path.basename(path))
@@ -69,8 +71,8 @@ class DatasetDuplicator:
                 for path, metadata in source_meta.image_metadata.items():
                     # Update paths in image metadata too
                     if os.path.isabs(path):
-                        rel_path = os.path.relpath(path, source_dir)
-                        new_path = os.path.join(target_dir, rel_path)
+                        rel_path = os.path.relpath(path, source_dir_abs)
+                        new_path = os.path.join(target_dir_abs, rel_path)
                     else:
                         new_path = os.path.join(target_dir, os.path.basename(path))
                     target_meta.image_metadata[new_path] = metadata

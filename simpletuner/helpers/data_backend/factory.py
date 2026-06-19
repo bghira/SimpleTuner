@@ -729,7 +729,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                     f"using '{default_lyrics_format}'. Set audio.lyrics_filename_format to match your naming scheme."
                 )
             output["config"]["audio"] = audio_settings
-    if backend.get("dataset_type", None) == "video":
+    has_video_config = backend.get("dataset_type", None) == "video" or (
+        dataset_type is DatasetType.CONDITIONING and isinstance(backend.get("video"), dict)
+    )
+    if has_video_config:
         output["config"]["video"] = {}
         if "video" in backend:
             output["config"]["video"].update(backend["video"])

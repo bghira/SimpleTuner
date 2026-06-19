@@ -844,6 +844,10 @@ class VAECache(WebhookMixin):
                 extension_pool = video_file_extensions
             else:
                 extension_pool = audio_file_extensions
+        elif self.dataset_type_enum is DatasetType.VIDEO or (
+            self.dataset_type_enum is DatasetType.CONDITIONING and self.num_video_frames is not None
+        ):
+            extension_pool = video_file_extensions
         else:
             extension_pool = image_file_extensions
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id) or StateTracker.set_image_files(

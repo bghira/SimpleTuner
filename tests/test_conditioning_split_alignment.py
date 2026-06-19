@@ -308,6 +308,29 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                     msg="Double splitting should alter conditioning buckets — guard against this.",
                 )
 
+    def test_absolute_source_paths_stay_absolute_with_relative_dataset_dirs(self):
+        accelerator = self._init_state(num_processes=1, process_index=0)
+        source_dir = "data/train"
+        conditioning_dir = "data/reference"
+        source_path = os.path.join(os.getcwd(), source_dir, "sample.mp4")
+
+        def add_source_metadata(training_metadata, *_args):
+            training_metadata.image_metadata[source_path] = {"aspect_ratio": 1.0}
+
+        _train_meta, cond_meta = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets={"1.0": [source_path]},
+            source_id="relative_train",
+            source_dir=source_dir,
+            conditioning_id="relative_reference",
+            conditioning_dir=conditioning_dir,
+            before_copy_callback=add_source_metadata,
+        )
+
+        expected_path = os.path.join(os.getcwd(), conditioning_dir, "sample.mp4")
+        self.assertEqual(cond_meta.aspect_ratio_bucket_indices["1.0"], [expected_path])
+        self.assertIn(expected_path, cond_meta.image_metadata)
+
     def test_reference_strict_conditioning_inherits_sampling_parameters(self):
         base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(26)]}
         accelerator = self._init_state(num_processes=4, process_index=0, train_batch_size=8)

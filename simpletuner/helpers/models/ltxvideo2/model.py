@@ -910,6 +910,9 @@ class LTXVideo2(VideoModelFoundation):
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)
         pipeline_kwargs["frame_rate"] = self.config.framerate or 25
+        video_conditioning = self._ltx2_validation_video_conditioning()
+        if video_conditioning:
+            pipeline_kwargs["video_conditioning"] = video_conditioning
         if getattr(self.config, "validation_audio_only", False):
             pipeline_kwargs["audio_only"] = True
         conditioning = pipeline_kwargs.pop("_s2v_conditioning", None)
@@ -920,6 +923,41 @@ class LTXVideo2(VideoModelFoundation):
                 if audio_latents is not None:
                     pipeline_kwargs["audio_latents"] = audio_latents
         return pipeline_kwargs
+
+    def _ltx2_validation_video_conditioning(self) -> Optional[list[tuple[str, float]]]:
+        conditioning = getattr(self.config, "validation_ltx2_video_conditioning", None)
+        if conditioning in (None, "", [], ()):
+            return None
+        if isinstance(conditioning, str):
+            conditioning = json.loads(conditioning)
+        if isinstance(conditioning, dict):
+            conditioning = [conditioning]
+        if not isinstance(conditioning, (list, tuple)):
+            raise ValueError(
+                "validation_ltx2_video_conditioning must be a JSON list of paths, [path, strength] pairs, "
+                "or objects with path/video_path and optional strength."
+            )
+
+        resolved = []
+        for entry in conditioning:
+            strength = 1.0
+            if isinstance(entry, str):
+                path = entry
+            elif isinstance(entry, dict):
+                path = entry.get("path", entry.get("video_path"))
+                strength = float(entry.get("strength", 1.0))
+            elif isinstance(entry, (list, tuple)) and len(entry) == 2:
+                path, strength = entry
+                strength = float(strength)
+            else:
+                raise ValueError(
+                    "Each validation_ltx2_video_conditioning entry must be a path, [path, strength] pair, "
+                    "or object with path/video_path and optional strength."
+                )
+            if not path:
+                raise ValueError("validation_ltx2_video_conditioning entry is missing path/video_path.")
+            resolved.append((os.path.expanduser(str(path)), strength))
+        return resolved
 
     def validation_audio_sample_rate(self) -> Optional[int]:
         vocoder = self.vocoder

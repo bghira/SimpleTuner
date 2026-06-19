@@ -670,6 +670,16 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         return latents
 
     @staticmethod
+    def _normalize_latents(
+        latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor, scaling_factor: float = 1.0
+    ) -> torch.Tensor:
+        # Normalize latents across the channel dimension [B, C, F, H, W]
+        latents_mean = latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents_std = latents_std.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents = (latents - latents_mean) * scaling_factor / latents_std
+        return latents
+
+    @staticmethod
     def _denormalize_latents(
         latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor, scaling_factor: float = 1.0
     ) -> torch.Tensor:
@@ -1269,7 +1279,9 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                             encoder_hidden_states=connector_prompt_embeds,
                             audio_encoder_hidden_states=connector_audio_prompt_embeds,
                             timestep=video_timestep,
+                            audio_timestep=timestep,
                             sigma=video_timestep,
+                            audio_sigma=timestep,
                             encoder_attention_mask=connector_attention_mask,
                             audio_encoder_attention_mask=connector_attention_mask,
                             num_frames=latent_num_frames,
