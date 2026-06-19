@@ -260,7 +260,10 @@ class LTX2ConnectorTransformer1d(nn.Module):
             num_register_repeats = seq_len // self.num_learnable_registers
             registers = torch.tile(self.learnable_registers, (num_register_repeats, 1))
 
-            binary_attn_mask = (attention_mask >= attn_mask_binarize_threshold).int()
+            if attention_mask.dtype == torch.bool:
+                binary_attn_mask = attention_mask.int()
+            else:
+                binary_attn_mask = (attention_mask >= attn_mask_binarize_threshold).int()
             if binary_attn_mask.ndim == 4:
                 binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(1)
 
@@ -274,7 +277,10 @@ class LTX2ConnectorTransformer1d(nn.Module):
 
             flipped_mask = torch.flip(binary_attn_mask, dims=[1]).unsqueeze(-1)
             hidden_states = flipped_mask * padded_hidden_states + (1 - flipped_mask) * registers
-            attention_mask = torch.zeros_like(attention_mask)
+            if attention_mask.dtype == torch.bool:
+                attention_mask = torch.ones_like(attention_mask)
+            else:
+                attention_mask = torch.zeros_like(attention_mask)
 
         rotary_emb = self.rope(batch_size, seq_len, device=hidden_states.device)
 
@@ -384,16 +390,14 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
             video_text_emb_proj = text_emb_proj
             audio_text_emb_proj = text_emb_proj
 
-        text_dtype = video_text_emb_proj.dtype
-        add_attn_mask = (binary_attention_mask.to(text_dtype) - 1).reshape(
+        attention_mask = binary_attention_mask.bool().reshape(
             binary_attention_mask.shape[0], 1, -1, binary_attention_mask.shape[-1]
         )
-        add_attn_mask = add_attn_mask * torch.finfo(text_dtype).max
 
-        video_text_embedding, video_attn_mask = self.video_connector(video_text_emb_proj, add_attn_mask)
-        binary_attn_mask = (video_attn_mask >= 0).to(torch.int64)
+        video_text_embedding, video_attn_mask = self.video_connector(video_text_emb_proj, attention_mask)
+        binary_attn_mask = normalize_attention_mask(video_attn_mask)
         binary_attn_mask = binary_attn_mask.reshape(video_text_embedding.shape[0], video_text_embedding.shape[1], 1)
         video_text_embedding = video_text_embedding * binary_attn_mask
 
-        audio_text_embedding, _ = self.audio_connector(audio_text_emb_proj, add_attn_mask)
+        audio_text_embedding, _ = self.audio_connector(audio_text_emb_proj, attention_mask)
         return video_text_embedding, audio_text_embedding, binary_attn_mask.squeeze(-1)

@@ -176,6 +176,16 @@ class LTX2AudioVideoAttnProcessor:
                 "LTX attention processors require a minimum PyTorch version of 2.0. Please upgrade your PyTorch installation."
             )
 
+    @staticmethod
+    def _flatten_attention_output(hidden_states: torch.Tensor, batch_size: int, attn: "LTX2Attention") -> torch.Tensor:
+        if hidden_states.ndim == 4:
+            return hidden_states.flatten(2, 3)
+        if hidden_states.ndim == 3 and hidden_states.shape[-2:] == (attn.heads, attn.head_dim):
+            return hidden_states.unflatten(0, (batch_size, -1)).flatten(2, 3)
+        if hidden_states.ndim == 3 and hidden_states.shape[-1] == attn.inner_dim:
+            return hidden_states
+        raise ValueError(f"Expected attention output compatible with {attn.inner_dim=}, got {tuple(hidden_states.shape)}")
+
     def __call__(
         self,
         attn: "LTX2Attention",
@@ -228,7 +238,7 @@ class LTX2AudioVideoAttnProcessor:
             backend=self._attention_backend,
             parallel_config=self._parallel_config,
         )
-        hidden_states = hidden_states.flatten(2, 3)
+        hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
         hidden_states = hidden_states.to(query.dtype)
 
         if attn.to_gate_logits is not None:
@@ -314,7 +324,7 @@ class LTX2PerturbedAttnProcessor:
                 backend=self._attention_backend,
                 parallel_config=self._parallel_config,
             )
-            hidden_states = hidden_states.flatten(2, 3)
+            hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
             hidden_states = hidden_states.to(query.dtype)
 
             if perturbation_mask is not None:

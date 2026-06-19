@@ -2599,6 +2599,10 @@ class Validation:
                 logger.info(
                     "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
                 )
+            elif "quanto" in base_precision:
+                logger.info(
+                    "Skipping pipeline.to for Quanto-quantized base model to avoid QLinear weight swap errors during validation."
+                )
             elif musubi_active:
                 logger.info(
                     "Skipping pipeline.to for musubi block-swap model; block placement is managed by the forward pass."

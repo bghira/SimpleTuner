@@ -2047,6 +2047,7 @@ class ModelFoundation(ABC):
         accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
         base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
         torchao_quantized = "torchao" in base_precision
+        quanto_quantized = "quanto" in base_precision
         should_configure_offload = (
             self.group_offload_requested()
             and accelerator_device is not None
@@ -2060,6 +2061,7 @@ class ModelFoundation(ABC):
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
                 torchao_quantized,
+                quanto_quantized,
             ]
         )
 
@@ -2070,6 +2072,11 @@ class ModelFoundation(ABC):
         elif self.model is not None and torchao_quantized:
             logger.info(
                 "Skipping model.to(%s) for TorchAO-quantized base model to avoid weight swap errors.",
+                target_device,
+            )
+        elif self.model is not None and quanto_quantized:
+            logger.info(
+                "Skipping model.to(%s) for Quanto-quantized base model to avoid QLinear weight swap errors.",
                 target_device,
             )
         if self.controlnet is not None and not skip_moving_trained_component:
