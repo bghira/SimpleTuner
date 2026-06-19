@@ -3128,6 +3128,9 @@ class ModelFoundation(ABC):
         else:
             self.model = model
 
+    def before_accelerator_prepare(self):
+        pass
+
     def freeze_components(self):
         if self.vae is not None:
             self.vae.requires_grad_(False)

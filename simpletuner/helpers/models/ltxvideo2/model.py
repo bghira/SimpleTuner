@@ -587,6 +587,11 @@ class LTXVideo2(VideoModelFoundation):
         super().post_model_load_setup()
         self._load_connectors(move_to_device=True)
 
+    def before_accelerator_prepare(self):
+        super().before_accelerator_prepare()
+        if self.model is not None and getattr(self.model, "connectors", None) is self.connectors:
+            self.model.connectors = None
+
     def _load_video_vae_from_combined(self):
         if self.vae is not None:
             return

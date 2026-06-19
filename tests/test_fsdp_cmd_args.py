@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from importlib.machinery import ModuleSpec
 
 
 def _ensure_torchao_stub():
@@ -10,17 +11,46 @@ def _ensure_torchao_stub():
         return
     torchao_module = types.ModuleType("torchao")
     optim_module = types.ModuleType("torchao.optim")
+    quantization_module = types.ModuleType("torchao.quantization")
+    prototype_module = types.ModuleType("torchao.prototype")
+    safetensors_module = types.ModuleType("torchao.prototype.safetensors")
+    safetensors_support_module = types.ModuleType("torchao.prototype.safetensors.safetensors_support")
+    torchao_module.__spec__ = ModuleSpec("torchao", loader=None)
+    optim_module.__spec__ = ModuleSpec("torchao.optim", loader=None)
+    quantization_module.__spec__ = ModuleSpec("torchao.quantization", loader=None)
+    prototype_module.__spec__ = ModuleSpec("torchao.prototype", loader=None)
+    safetensors_module.__spec__ = ModuleSpec("torchao.prototype.safetensors", loader=None)
+    safetensors_support_module.__spec__ = ModuleSpec("torchao.prototype.safetensors.safetensors_support", loader=None)
+    torchao_module.__path__ = []
+    prototype_module.__path__ = []
+    safetensors_module.__path__ = []
     dummy_class = type("DummyOptimizer", (), {})
+
+    def _flatten_tensor_state_dict(state_dict):
+        return state_dict
+
+    def _quantize_(*_args, **_kwargs):
+        return None
 
     optim_module.AdamFp8 = dummy_class
     optim_module.AdamW4bit = dummy_class
     optim_module.AdamW8bit = dummy_class
     optim_module.AdamWFp8 = dummy_class
     optim_module.CPUOffloadOptimizer = dummy_class
+    quantization_module.quantize_ = _quantize_
+    safetensors_support_module.flatten_tensor_state_dict = _flatten_tensor_state_dict
 
     torchao_module.optim = optim_module
+    torchao_module.quantization = quantization_module
+    torchao_module.prototype = prototype_module
+    prototype_module.safetensors = safetensors_module
+    safetensors_module.safetensors_support = safetensors_support_module
     sys.modules["torchao"] = torchao_module
     sys.modules["torchao.optim"] = optim_module
+    sys.modules["torchao.quantization"] = quantization_module
+    sys.modules["torchao.prototype"] = prototype_module
+    sys.modules["torchao.prototype.safetensors"] = safetensors_module
+    sys.modules["torchao.prototype.safetensors.safetensors_support"] = safetensors_support_module
 
 
 _ensure_torchao_stub()
@@ -30,6 +60,7 @@ def _ensure_optimi_stub():
     if "optimi" in sys.modules:
         return
     optimi_module = types.ModuleType("optimi")
+    optimi_module.__spec__ = ModuleSpec("optimi", loader=None)
     for cls_name in [
         "StableAdamW",
         "AdamW",
@@ -159,6 +190,27 @@ class TestFSDPCmdArgs(unittest.TestCase):
                 + [
                     "--fsdp_enable",
                     '--deepspeed_config={"zero_optimization": {"stage": 2}}',
+                ],
+                exit_on_error=False,
+            )
+
+    def test_fsdp2_rejects_quanto_precision(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+        base_args = [
+            "--model_family=sdxl",
+            "--model_type=lora",
+            f"--output_dir={tmp_dir}",
+            "--optimizer=adamw_bf16",
+            "--data_backend_config=dummy",
+        ]
+        with self.assertRaisesRegex(ValueError, "Quanto kernels do not register DTensor"):
+            parse_cmdline_args(
+                input_args=base_args
+                + [
+                    "--fsdp_enable",
+                    "--fsdp_version=2",
+                    "--base_model_precision=int8-quanto",
                 ],
                 exit_on_error=False,
             )

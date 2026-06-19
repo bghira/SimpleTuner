@@ -604,11 +604,51 @@ class Trainer:
                 "Torch Dynamo config lacks capture_dynamic_output_shape_ops; skipping dynamic output capture configuration."
             )
             return
-        if getattr(config_obj, "capture_dynamic_output_shape_ops", False):
+        if not getattr(config_obj, "capture_dynamic_output_shape_ops", False):
+            config_obj.capture_dynamic_output_shape_ops = True
+            logger.info("Torch Dynamo capture_dynamic_output_shape_ops enabled for dynamic output shape support.")
+
+        if hasattr(config_obj, "force_parameter_static_shapes") and getattr(
+            config_obj, "force_parameter_static_shapes", True
+        ):
+            config_obj.force_parameter_static_shapes = False
+            logger.info("Torch Dynamo force_parameter_static_shapes disabled for dynamic parameter shape support.")
+
+    def _disable_dynamo_lru_cache_for_checkpointing(self) -> None:
+        eval_frame = getattr(getattr(torch._C, "_dynamo", None), "eval_frame", None)
+        set_lru_cache = getattr(eval_frame, "_set_lru_cache", None)
+        if set_lru_cache is None:
+            logger.debug("Torch Dynamo eval_frame._set_lru_cache unavailable; skipping LRU cache configuration.")
             return
 
-        config_obj.capture_dynamic_output_shape_ops = True
-        logger.info("Torch Dynamo capture_dynamic_output_shape_ops enabled for bitsandbytes models.")
+        set_lru_cache(False)
+        logger.info("Torch Dynamo LRU cache disabled for compiled gradient checkpointing.")
+
+    def _configure_inductor_dynamic_training_passes(self, dynamo_backend: str) -> None:
+        if dynamo_backend != "inductor":
+            return
+
+        disabled_passes = [
+            candidate.strip()
+            for candidate in os.environ.get("TORCHINDUCTOR_DISABLED_PASSES", "").split(",")
+            if candidate.strip()
+        ]
+        if not any(candidate.upper() == "PASS_PATTERN_1" for candidate in disabled_passes):
+            disabled_passes.append("PASS_PATTERN_1")
+            os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = ",".join(disabled_passes)
+
+        try:
+            import torch._inductor.config as inductor_config
+        except Exception as exc:
+            logger.warning("Unable to configure TorchInductor pass disables: %s", exc)
+            return
+
+        if getattr(inductor_config, "disabled_passes", "") != os.environ["TORCHINDUCTOR_DISABLED_PASSES"]:
+            inductor_config.disabled_passes = os.environ["TORCHINDUCTOR_DISABLED_PASSES"]
+        logger.info(
+            "TorchInductor disabled passes for compiled training: %s",
+            os.environ["TORCHINDUCTOR_DISABLED_PASSES"],
+        )
 
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
         skip_config_fallback = False
@@ -728,6 +768,7 @@ class Trainer:
         elif isinstance(dynamo_backend_value, str) and dynamo_backend_value.strip():
             dynamo_backend_env = dynamo_backend_value.strip().lower()
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
+        self._configure_inductor_dynamic_training_passes(dynamo_backend_env)
 
         report_to_value = getattr(self.config, "report_to", None)
         if isinstance(report_to_value, unittest_mock.Mock):
@@ -860,8 +901,12 @@ class Trainer:
 
             dynamo_plugin = None
             if will_create_dynamo_plugin:
-                if is_bitsandbytes_available and self._config_uses_bitsandbytes():
+                if (is_bitsandbytes_available and self._config_uses_bitsandbytes()) or _coerce_flag(
+                    getattr(self.config, "dynamo_dynamic", None)
+                ):
                     self._enable_dynamo_dynamic_output_capture()
+                if _coerce_flag(getattr(self.config, "gradient_checkpointing", None)):
+                    self._disable_dynamo_lru_cache_for_checkpointing()
 
                 plugin_kwargs: Dict[str, object] = {"backend": resolved_dynamo_backend}
 
@@ -3784,6 +3829,8 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        if hasattr(self.model, "before_accelerator_prepare"):
+            self.model.before_accelerator_prepare()
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
@@ -6494,22 +6541,26 @@ class Trainer:
             if self.model.get_trained_component() is not None:
                 self.model.model = unwrap_model(self.accelerator, self.model.model)
             if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
+                from simpletuner.helpers.training.save_hooks import _materialize_state_dict_for_save
+
                 trained_component = unwrap_model(self.accelerator, self.model.get_trained_component(unwrap_model=False))
                 lora_save_kwargs = {
                     "save_directory": self.config.output_dir,
-                    f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(trained_component),
+                    f"{self.model.MODEL_TYPE.value}_lora_layers": _materialize_state_dict_for_save(
+                        get_peft_model_state_dict(trained_component)
+                    ),
                 }
 
                 if self.config.train_text_encoder:
                     if self.model.get_text_encoder(0) is not None:
                         self.text_encoder_1 = self.accelerator.unwrap_model(self.model.get_text_encoder(0))
-                        lora_save_kwargs["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(self.text_encoder_1)
+                        lora_save_kwargs["text_encoder_lora_layers"] = _materialize_state_dict_for_save(
+                            convert_state_dict_to_diffusers(get_peft_model_state_dict(self.text_encoder_1))
                         )
                     if self.model.get_text_encoder(1) is not None:
                         self.text_encoder_2 = self.accelerator.unwrap_model(self.model.get_text_encoder(1))
-                        lora_save_kwargs["text_encoder_2_lora_layers"] = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(self.text_encoder_2)
+                        lora_save_kwargs["text_encoder_2_lora_layers"] = _materialize_state_dict_for_save(
+                            convert_state_dict_to_diffusers(get_peft_model_state_dict(self.text_encoder_2))
                         )
                         if self.model.get_text_encoder(2) is not None:
                             self.text_encoder_3 = self.accelerator.unwrap_model(self.model.get_text_encoder(2))
@@ -6517,9 +6568,12 @@ class Trainer:
                     text_encoder_lora_layers = None
                     text_encoder_2_lora_layers = None
 
-                self.model.save_lora_weights(
-                    **lora_save_kwargs,
-                )
+                if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+                    self.model.save_lora_weights(
+                        **lora_save_kwargs,
+                    )
+                if self.config.fsdp_enable:
+                    self.accelerator.wait_for_everyone()
                 del text_encoder_lora_layers
                 del text_encoder_2_lora_layers
                 reclaim_memory()
