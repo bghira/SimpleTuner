@@ -25,28 +25,20 @@ from diffusers.loaders.single_file_model import FromOriginalModelMixin
 from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
+from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from einops import rearrange
 
-from .utils.import_utils import is_triton_available
-from .utils.teacache_util import TeaCacheParams
-from .attention_processor import (
-    BooguImageAttnProcessor,
-    BooguImageDoubleStreamSelfAttnProcessor,
-)
-from .embeddings import complex_rotary_to_real
+from .attention_processor import BooguImageAttnProcessor, BooguImageDoubleStreamSelfAttnProcessor
 from .block_lumina2 import (
     Lumina2CombinedTimestepCaptionEmbedding,
     LuminaFeedForward,
     LuminaLayerNormContinuous,
     LuminaRMSNormZero,
 )
+from .embeddings import complex_rotary_to_real
 from .rope import BooguImageDoubleStreamRotaryPosEmbed, BooguImagePromptTuningRotaryPosEmbed
+from .utils.import_utils import is_triton_available
+from .utils.teacache_util import TeaCacheParams
 
 if is_triton_available() and ("cuda" in os.getenv("device", "cpu")):
     from .ops.triton.layer_norm import RMSNorm
@@ -96,9 +88,7 @@ def _copy_rotary_slice(rotary_batch, batch_index, target_slice, rotary_emb, sour
         rotary_batch[batch_index, target_slice] = rotary_emb[source_slice]
 
 
-class PromptEmbedding(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class PromptEmbedding(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["BooguImageTransformerBlock"]
     _skip_layerwise_casting_patterns = ["prompt_token_embedding", "norm"]
@@ -106,9 +96,7 @@ class PromptEmbedding(
     def __init__(self, prompt_tuning_configs):
         super().__init__()
 
-        num_trainable_prompt_tokens = prompt_tuning_configs.get(
-            "num_trainable_prompt_tokens", 32
-        )
+        num_trainable_prompt_tokens = prompt_tuning_configs.get("num_trainable_prompt_tokens", 32)
         hidden_size = prompt_tuning_configs.get("hidden_size", 2048)
         num_attention_heads = prompt_tuning_configs.get("num_attention_heads", 32)
         num_kv_heads = prompt_tuning_configs.get("num_kv_heads", 8)
@@ -178,9 +166,7 @@ class PromptEmbedding(
         # Expand to [B, num_tokens, hidden_dim].
         hidden_states = prompt_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
 
-        rotary_emb, attention_mask = self.prompt_rope_embedder(
-            batch_size, device, use_causal_mask
-        )
+        rotary_emb, attention_mask = self.prompt_rope_embedder(batch_size, device, use_causal_mask)
 
         for i, layer in enumerate(self.prompt_tuning_layers):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
@@ -257,9 +243,7 @@ class BooguImageTransformerBlock(nn.Module):
 
         # Initialize normalization layers
         if modulation:
-            self.norm1 = LuminaRMSNormZero(
-                embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True
-            )
+            self.norm1 = LuminaRMSNormZero(embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True)
         else:
             self.norm1 = RMSNorm(dim, eps=norm_eps)
 
@@ -315,24 +299,16 @@ class BooguImageTransformerBlock(nn.Module):
                     self.current["module"] = "total"
                     taylor_cache_init(cache_dic=self.cache_dic, current=self.current)
 
-                    norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self.norm1(
-                        hidden_states, temb
-                    )
+                    norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self.norm1(hidden_states, temb)
                     attn_output = self.attn(
                         hidden_states=norm_hidden_states,
                         encoder_hidden_states=norm_hidden_states,
                         attention_mask=attention_mask,
                         image_rotary_emb=image_rotary_emb,
                     )
-                    hidden_states = hidden_states + gate_msa.unsqueeze(
-                        1
-                    ).tanh() * self.norm2(attn_output)
-                    mlp_output = self.feed_forward(
-                        self.ffn_norm1(hidden_states) * (1 + scale_mlp.unsqueeze(1))
-                    )
-                    hidden_states = hidden_states + gate_mlp.unsqueeze(
-                        1
-                    ).tanh() * self.ffn_norm2(mlp_output)
+                    hidden_states = hidden_states + gate_msa.unsqueeze(1).tanh() * self.norm2(attn_output)
+                    mlp_output = self.feed_forward(self.ffn_norm1(hidden_states) * (1 + scale_mlp.unsqueeze(1)))
+                    hidden_states = hidden_states + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(mlp_output)
 
                     derivative_approximation(
                         cache_dic=self.cache_dic,
@@ -342,9 +318,7 @@ class BooguImageTransformerBlock(nn.Module):
 
                 elif self.current["type"] == "Taylor":
                     self.current["module"] = "total"
-                    hidden_states = taylor_formula(
-                        cache_dic=self.cache_dic, current=self.current
-                    )
+                    hidden_states = taylor_formula(cache_dic=self.cache_dic, current=self.current)
             else:
                 norm_hidden_states = self.norm1(hidden_states)
                 attn_output = self.attn(
@@ -360,9 +334,7 @@ class BooguImageTransformerBlock(nn.Module):
             if self.modulation:
                 if temb is None:
                     raise ValueError("temb must be provided when modulation is enabled")
-                norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self.norm1(
-                    hidden_states, temb
-                )
+                norm_hidden_states, gate_msa, scale_mlp, gate_mlp = self.norm1(hidden_states, temb)
 
                 attn_output = self.attn(
                     hidden_states=norm_hidden_states,
@@ -370,15 +342,9 @@ class BooguImageTransformerBlock(nn.Module):
                     attention_mask=attention_mask,
                     image_rotary_emb=image_rotary_emb,
                 )
-                hidden_states = hidden_states + gate_msa.unsqueeze(
-                    1
-                ).tanh() * self.norm2(attn_output)
-                mlp_output = self.feed_forward(
-                    self.ffn_norm1(hidden_states) * (1 + scale_mlp.unsqueeze(1))
-                )
-                hidden_states = hidden_states + gate_mlp.unsqueeze(
-                    1
-                ).tanh() * self.ffn_norm2(mlp_output)
+                hidden_states = hidden_states + gate_msa.unsqueeze(1).tanh() * self.norm2(attn_output)
+                mlp_output = self.feed_forward(self.ffn_norm1(hidden_states) * (1 + scale_mlp.unsqueeze(1)))
+                hidden_states = hidden_states + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(mlp_output)
             else:
                 norm_hidden_states = self.norm1(hidden_states)
                 attn_output = self.attn(
@@ -462,15 +428,9 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
 
         if modulation:
             # Image modulation terms: cross-attn, MLP, self-attn.
-            self.img_norm1 = LuminaRMSNormZero(
-                embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True
-            )
-            self.img_norm2 = LuminaRMSNormZero(
-                embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True
-            )
-            self.img_norm3 = LuminaRMSNormZero(
-                embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True
-            )
+            self.img_norm1 = LuminaRMSNormZero(embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True)
+            self.img_norm2 = LuminaRMSNormZero(embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True)
+            self.img_norm3 = LuminaRMSNormZero(embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True)
         else:
             self.img_norm1 = RMSNorm(dim, eps=norm_eps)
             self.img_norm2 = RMSNorm(dim, eps=norm_eps)
@@ -491,12 +451,8 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
 
         if modulation:
             # Instruction modulation terms: cross-attn, MLP.
-            self.instruct_norm1 = LuminaRMSNormZero(
-                embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True
-            )
-            self.instruct_norm2 = LuminaRMSNormZero(
-                embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True
-            )
+            self.instruct_norm1 = LuminaRMSNormZero(embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True)
+            self.instruct_norm2 = LuminaRMSNormZero(embedding_dim=dim, norm_eps=norm_eps, norm_elementwise_affine=True)
         else:
             self.instruct_norm1 = RMSNorm(dim, eps=norm_eps)
             self.instruct_norm2 = RMSNorm(dim, eps=norm_eps)
@@ -560,9 +516,7 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
         image_rotary_emb: torch.Tensor,  # [B, L_img, head_dim] - Rotary embeddings for [ref_img + noise_img]
         rotary_emb: torch.Tensor,  # [B, L_total, head_dim] - Rotary embeddings for [instruct + img]
         temb: Optional[torch.Tensor] = None,  # [B, 1024] - Timestep embeddings
-        encoder_seq_lengths: List[
-            int
-        ] = None,  # [B] - Instruction sequence lengths for each sample
+        encoder_seq_lengths: List[int] = None,  # [B] - Instruction sequence lengths for each sample
         seq_lengths: List[int] = None,  # [B] - Total sequence lengths for each sample
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -576,24 +530,18 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
         if enable_taylorseer:
             self.current["module"] = "total"
             if self.current["type"] == "Taylor":
-                return taylor_formula_4_double_stream(
-                    cache_dic=self.cache_dic, current=self.current
-                )
+                return taylor_formula_4_double_stream(cache_dic=self.cache_dic, current=self.current)
             if self.current["type"] == "full":
                 taylor_cache_init(cache_dic=self.cache_dic, current=self.current)
 
         # Extract dimensions
         batch_size = img_hidden_states.shape[0]
         L_instruct = instruct_hidden_states.shape[1]  # Instruction sequence length
-        L_img = img_hidden_states.shape[
-            1
-        ]  # Image sequence length (ref_img + noise_img)
+        L_img = img_hidden_states.shape[1]  # Image sequence length (ref_img + noise_img)
 
         if self.modulation:
             # Step 1: modulation for both streams.
-            img_norm1_out, img_gate_msa, img_scale_mlp, img_gate_mlp = self.img_norm1(
-                img_hidden_states, temb
-            )
+            img_norm1_out, img_gate_msa, img_scale_mlp, img_gate_mlp = self.img_norm1(img_hidden_states, temb)
             img_norm2_out, img_shift_mlp, _, _ = self.img_norm2(img_hidden_states, temb)
             img_norm3_out, img_gate_self, _, _ = self.img_norm3(img_hidden_states, temb)
 
@@ -603,9 +551,7 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
                 instruct_scale_mlp,
                 instruct_gate_mlp,
             ) = self.instruct_norm1(instruct_hidden_states, temb)
-            instruct_norm2_out, instruct_shift_mlp, _, _ = self.instruct_norm2(
-                instruct_hidden_states, temb
-            )
+            instruct_norm2_out, instruct_shift_mlp, _, _ = self.instruct_norm2(instruct_hidden_states, temb)
 
             # Step 2: joint attention on [instruct + img].
             # Call processor directly because Attention.forward does not expose these dual-stream args.
@@ -620,21 +566,11 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
             )
 
             # Split back into instruction/image segments.
-            instruct_attn_out = instruct_hidden_states.new_zeros(
-                batch_size, L_instruct, self.hidden_size
-            )
-            img_attn_out = img_hidden_states.new_zeros(
-                batch_size, L_img, self.hidden_size
-            )
-            for i, (encoder_seq_len, seq_len) in enumerate(
-                zip(encoder_seq_lengths, seq_lengths)
-            ):
-                instruct_attn_out[i, :encoder_seq_len] = joint_attn_out[
-                    i, :encoder_seq_len
-                ]
-                img_attn_out[i, : seq_len - encoder_seq_len] = joint_attn_out[
-                    i, encoder_seq_len:seq_len
-                ]
+            instruct_attn_out = instruct_hidden_states.new_zeros(batch_size, L_instruct, self.hidden_size)
+            img_attn_out = img_hidden_states.new_zeros(batch_size, L_img, self.hidden_size)
+            for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
+                instruct_attn_out[i, :encoder_seq_len] = joint_attn_out[i, :encoder_seq_len]
+                img_attn_out[i, : seq_len - encoder_seq_len] = joint_attn_out[i, encoder_seq_len:seq_len]
 
             # Step 3: image self-attention.
             img_self_attn_out = self.img_self_attn(
@@ -645,38 +581,24 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
             )
 
             # Step 4: residual updates.
-            img_hidden_states = img_hidden_states + img_gate_msa.unsqueeze(
-                1
-            ).tanh() * self.img_attn_norm(img_attn_out)
-            img_hidden_states = img_hidden_states + img_gate_self.unsqueeze(
-                1
-            ).tanh() * self.img_self_attn_norm(img_self_attn_out)
+            img_hidden_states = img_hidden_states + img_gate_msa.unsqueeze(1).tanh() * self.img_attn_norm(img_attn_out)
+            img_hidden_states = img_hidden_states + img_gate_self.unsqueeze(1).tanh() * self.img_self_attn_norm(
+                img_self_attn_out
+            )
 
-            img_mlp_input = (
-                1 + img_scale_mlp.unsqueeze(1)
-            ) * img_norm2_out + img_shift_mlp.unsqueeze(1)
+            img_mlp_input = (1 + img_scale_mlp.unsqueeze(1)) * img_norm2_out + img_shift_mlp.unsqueeze(1)
             img_mlp_out = self.img_feed_forward(self.img_ffn_norm1(img_mlp_input))
-            img_hidden_states = img_hidden_states + img_gate_mlp.unsqueeze(
+            img_hidden_states = img_hidden_states + img_gate_mlp.unsqueeze(1).tanh() * self.img_ffn_norm2(img_mlp_out)
+
+            instruct_hidden_states = instruct_hidden_states + instruct_gate_msa.unsqueeze(
                 1
-            ).tanh() * self.img_ffn_norm2(img_mlp_out)
+            ).tanh() * self.instruct_attn_norm(instruct_attn_out)
 
-            instruct_hidden_states = (
-                instruct_hidden_states
-                + instruct_gate_msa.unsqueeze(1).tanh()
-                * self.instruct_attn_norm(instruct_attn_out)
-            )
-
-            instruct_mlp_input = (
-                1 + instruct_scale_mlp.unsqueeze(1)
-            ) * instruct_norm2_out + instruct_shift_mlp.unsqueeze(1)
-            instruct_mlp_out = self.instruct_feed_forward(
-                self.instruct_ffn_norm1(instruct_mlp_input)
-            )
-            instruct_hidden_states = (
-                instruct_hidden_states
-                + instruct_gate_mlp.unsqueeze(1).tanh()
-                * self.instruct_ffn_norm2(instruct_mlp_out)
-            )
+            instruct_mlp_input = (1 + instruct_scale_mlp.unsqueeze(1)) * instruct_norm2_out + instruct_shift_mlp.unsqueeze(1)
+            instruct_mlp_out = self.instruct_feed_forward(self.instruct_ffn_norm1(instruct_mlp_input))
+            instruct_hidden_states = instruct_hidden_states + instruct_gate_mlp.unsqueeze(
+                1
+            ).tanh() * self.instruct_ffn_norm2(instruct_mlp_out)
 
         else:
             # Non-modulated branch used by context-style blocks.
@@ -695,21 +617,11 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
                 seq_lengths=seq_lengths,
             )
 
-            instruct_attn_out = instruct_hidden_states.new_zeros(
-                batch_size, L_instruct, self.hidden_size
-            )
-            img_attn_out = img_hidden_states.new_zeros(
-                batch_size, L_img, self.hidden_size
-            )
-            for i, (encoder_seq_len, seq_len) in enumerate(
-                zip(encoder_seq_lengths, seq_lengths)
-            ):
-                instruct_attn_out[i, :encoder_seq_len] = joint_attn_out[
-                    i, :encoder_seq_len
-                ]
-                img_attn_out[i, : seq_len - encoder_seq_len] = joint_attn_out[
-                    i, encoder_seq_len:seq_len
-                ]
+            instruct_attn_out = instruct_hidden_states.new_zeros(batch_size, L_instruct, self.hidden_size)
+            img_attn_out = img_hidden_states.new_zeros(batch_size, L_img, self.hidden_size)
+            for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
+                instruct_attn_out[i, :encoder_seq_len] = joint_attn_out[i, :encoder_seq_len]
+                img_attn_out[i, : seq_len - encoder_seq_len] = joint_attn_out[i, encoder_seq_len:seq_len]
 
             img_self_attn_out = self.img_self_attn(
                 hidden_states=img_norm3_out,
@@ -719,23 +631,15 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
             )
 
             img_hidden_states = img_hidden_states + self.img_attn_norm(img_attn_out)
-            img_hidden_states = img_hidden_states + self.img_self_attn_norm(
-                img_self_attn_out
-            )
+            img_hidden_states = img_hidden_states + self.img_self_attn_norm(img_self_attn_out)
             img_norm2_out = self.img_norm2(img_hidden_states)
             img_mlp_out = self.img_feed_forward(self.img_ffn_norm1(img_norm2_out))
             img_hidden_states = img_hidden_states + self.img_ffn_norm2(img_mlp_out)
 
-            instruct_hidden_states = instruct_hidden_states + self.instruct_attn_norm(
-                instruct_attn_out
-            )
+            instruct_hidden_states = instruct_hidden_states + self.instruct_attn_norm(instruct_attn_out)
             instruct_norm2_out = self.instruct_norm2(instruct_hidden_states)
-            instruct_mlp_out = self.instruct_feed_forward(
-                self.instruct_ffn_norm1(instruct_norm2_out)
-            )
-            instruct_hidden_states = instruct_hidden_states + self.instruct_ffn_norm2(
-                instruct_mlp_out
-            )
+            instruct_mlp_out = self.instruct_feed_forward(self.instruct_ffn_norm1(instruct_norm2_out))
+            instruct_hidden_states = instruct_hidden_states + self.instruct_ffn_norm2(instruct_mlp_out)
 
         if enable_taylorseer and self.current["type"] == "full":
             derivative_approximation_4_double_stream(
@@ -750,9 +654,7 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
 BooguImageSingleStreamTransformerBlock = BooguImageTransformerBlock
 
 
-class BooguImageTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     Boogu-Image transformer with mixed stream topology.
     Early layers use double-stream (aka dual-stream) processing, then switch
@@ -812,8 +714,7 @@ class BooguImageTransformer2DModel(
 
         if num_double_stream_layers > num_layers:
             raise ValueError(
-                f"num_double_stream_layers ({num_double_stream_layers}) cannot be greater than "
-                f"num_layers ({num_layers})"
+                f"num_double_stream_layers ({num_double_stream_layers}) cannot be greater than " f"num_layers ({num_layers})"
             )
 
         self.out_channels = out_channels or in_channels
@@ -821,9 +722,7 @@ class BooguImageTransformer2DModel(
         self.num_single_stream_layers = num_layers - num_double_stream_layers
         self.instruction_feature_configs = instruction_feature_configs
         self.prompt_tuning_configs = prompt_tuning_configs
-        self.preprocessed_instruction_feat_dim = (
-            self.cal_preprocessed_instruction_feat_dim(instruction_feature_configs)
-        )
+        self.preprocessed_instruction_feat_dim = self.cal_preprocessed_instruction_feat_dim(instruction_feature_configs)
 
         # Initialize embeddings
         self.rope_embedder = BooguImageDoubleStreamRotaryPosEmbed(
@@ -940,9 +839,7 @@ class BooguImageTransformer2DModel(
         )
 
         # Distinguish multiple reference images.
-        self.image_index_embedding = nn.Parameter(
-            torch.randn(5, hidden_size)
-        )  # support max 5 ref images
+        self.image_index_embedding = nn.Parameter(torch.randn(5, hidden_size))  # support max 5 ref images
 
         self.gradient_checkpointing = False
 
@@ -995,12 +892,7 @@ class BooguImageTransformer2DModel(
         """Embed image patches and run the refiner blocks."""
         batch_size = len(hidden_states)
         max_combined_img_len = max(
-            [
-                img_len + sum(ref_img_len)
-                for img_len, ref_img_len in zip(
-                    l_effective_img_len, l_effective_ref_img_len
-                )
-            ]
+            [img_len + sum(ref_img_len) for img_len, ref_img_len in zip(l_effective_img_len, l_effective_ref_img_len)]
         )
 
         hidden_states = self.x_embedder(hidden_states)
@@ -1010,23 +902,18 @@ class BooguImageTransformer2DModel(
             shift = 0
             for j, ref_img_len in enumerate(l_effective_ref_img_len[i]):
                 ref_image_hidden_states[i, shift : shift + ref_img_len, :] = (
-                    ref_image_hidden_states[i, shift : shift + ref_img_len, :]
-                    + self.image_index_embedding[j]
+                    ref_image_hidden_states[i, shift : shift + ref_img_len, :] + self.image_index_embedding[j]
                 )
                 shift += ref_img_len
 
         for layer in self.noise_refiner:
-            hidden_states = layer(
-                hidden_states, padded_img_mask, noise_rotary_emb, temb
-            )
+            hidden_states = layer(hidden_states, padded_img_mask, noise_rotary_emb, temb)
 
         flat_l_effective_ref_img_len = list(itertools.chain(*l_effective_ref_img_len))
         num_ref_images = len(flat_l_effective_ref_img_len)
         max_ref_img_len = max(flat_l_effective_ref_img_len)
 
-        batch_ref_img_mask = ref_image_hidden_states.new_zeros(
-            num_ref_images, max_ref_img_len, dtype=torch.bool
-        )
+        batch_ref_img_mask = ref_image_hidden_states.new_zeros(num_ref_images, max_ref_img_len, dtype=torch.bool)
         batch_ref_image_hidden_states = ref_image_hidden_states.new_zeros(
             num_ref_images, max_ref_img_len, self.config.hidden_size
         )
@@ -1044,9 +931,7 @@ class BooguImageTransformer2DModel(
             shift = 0
             for ref_img_len in l_effective_ref_img_len[i]:
                 batch_ref_img_mask[idx, :ref_img_len] = True
-                batch_ref_image_hidden_states[idx, :ref_img_len] = (
-                    ref_image_hidden_states[i, shift : shift + ref_img_len]
-                )
+                batch_ref_image_hidden_states[idx, :ref_img_len] = ref_image_hidden_states[i, shift : shift + ref_img_len]
                 _copy_rotary_slice(
                     batch_ref_img_rotary_emb,
                     idx,
@@ -1072,24 +957,14 @@ class BooguImageTransformer2DModel(
         for i in range(batch_size):
             shift = 0
             for ref_img_len in l_effective_ref_img_len[i]:
-                ref_image_hidden_states[i, shift : shift + ref_img_len] = (
-                    batch_ref_image_hidden_states[idx, :ref_img_len]
-                )
+                ref_image_hidden_states[i, shift : shift + ref_img_len] = batch_ref_image_hidden_states[idx, :ref_img_len]
                 shift += ref_img_len
                 idx += 1
 
-        combined_img_hidden_states = hidden_states.new_zeros(
-            batch_size, max_combined_img_len, self.config.hidden_size
-        )
-        for i, (ref_img_len, img_len) in enumerate(
-            zip(l_effective_ref_img_len, l_effective_img_len)
-        ):
-            combined_img_hidden_states[i, : sum(ref_img_len)] = ref_image_hidden_states[
-                i, : sum(ref_img_len)
-            ]
-            combined_img_hidden_states[
-                i, sum(ref_img_len) : sum(ref_img_len) + img_len
-            ] = hidden_states[i, :img_len]
+        combined_img_hidden_states = hidden_states.new_zeros(batch_size, max_combined_img_len, self.config.hidden_size)
+        for i, (ref_img_len, img_len) in enumerate(zip(l_effective_ref_img_len, l_effective_img_len)):
+            combined_img_hidden_states[i, : sum(ref_img_len)] = ref_image_hidden_states[i, : sum(ref_img_len)]
+            combined_img_hidden_states[i, sum(ref_img_len) : sum(ref_img_len) + img_len] = hidden_states[i, :img_len]
 
         return combined_img_hidden_states
 
@@ -1104,27 +979,22 @@ class BooguImageTransformer2DModel(
 
         if ref_image_hidden_states is not None:
             ref_img_sizes = [
-                [(img.size(1), img.size(2)) for img in imgs]
-                if imgs is not None
-                else None
+                [(img.size(1), img.size(2)) for img in imgs] if imgs is not None else None
                 for imgs in ref_image_hidden_states
             ]
             l_effective_ref_img_len = [
-                [
-                    (ref_img_size[0] // p) * (ref_img_size[1] // p)
-                    for ref_img_size in _ref_img_sizes
-                ]
-                if _ref_img_sizes is not None
-                else [0]
+                (
+                    [(ref_img_size[0] // p) * (ref_img_size[1] // p) for ref_img_size in _ref_img_sizes]
+                    if _ref_img_sizes is not None
+                    else [0]
+                )
                 for _ref_img_sizes in ref_img_sizes
             ]
         else:
             ref_img_sizes = [None for _ in range(batch_size)]
             l_effective_ref_img_len = [[0] for _ in range(batch_size)]
 
-        max_ref_img_len = max(
-            [sum(ref_img_len) for ref_img_len in l_effective_ref_img_len]
-        )
+        max_ref_img_len = max([sum(ref_img_len) for ref_img_len in l_effective_ref_img_len])
         max_img_len = max(l_effective_img_len)
 
         # Reference-image patch embeddings.
@@ -1134,9 +1004,7 @@ class BooguImageTransformer2DModel(
                 imgs = []
                 for ref_img in ref_image_hidden_states[i]:
                     C, H, W = ref_img.size()
-                    ref_img = rearrange(
-                        ref_img, "c (h p1) (w p2) -> (h w) (p1 p2 c)", p1=p, p2=p
-                    )
+                    ref_img = rearrange(ref_img, "c (h p1) (w p2) -> (h w) (p1 p2 c)", p1=p, p2=p)
                     imgs.append(ref_img)
 
                 img = torch.cat(imgs, dim=0)
@@ -1160,14 +1028,10 @@ class BooguImageTransformer2DModel(
             device=device,
             dtype=flat_hidden_states[0].dtype,
         )
-        padded_ref_img_mask = torch.zeros(
-            batch_size, max_ref_img_len, dtype=torch.bool, device=device
-        )
+        padded_ref_img_mask = torch.zeros(batch_size, max_ref_img_len, dtype=torch.bool, device=device)
         for i in range(batch_size):
             if ref_img_sizes[i] is not None:
-                padded_ref_img_hidden_states[i, : sum(l_effective_ref_img_len[i])] = (
-                    flat_ref_img_hidden_states[i]
-                )
+                padded_ref_img_hidden_states[i, : sum(l_effective_ref_img_len[i])] = flat_ref_img_hidden_states[i]
                 padded_ref_img_mask[i, : sum(l_effective_ref_img_len[i])] = True
 
         padded_hidden_states = torch.zeros(
@@ -1177,9 +1041,7 @@ class BooguImageTransformer2DModel(
             device=device,
             dtype=flat_hidden_states[0].dtype,
         )
-        padded_img_mask = torch.zeros(
-            batch_size, max_img_len, dtype=torch.bool, device=device
-        )
+        padded_img_mask = torch.zeros(batch_size, max_img_len, dtype=torch.bool, device=device)
         for i in range(batch_size):
             padded_hidden_states[i, : l_effective_img_len[i]] = flat_hidden_states[i]
             padded_img_mask[i, : l_effective_img_len[i]] = True
@@ -1195,15 +1057,9 @@ class BooguImageTransformer2DModel(
             img_sizes,
         )
 
-    def cal_preprocessed_instruction_feat_dim(
-        self, instruction_feature_configs: Dict[str, Any]
-    ):
-        num_instruction_feat_layers = max(
-            instruction_feature_configs.get("num_instruction_feat_layers", 1), 1
-        )
-        instruction_feat_dim = instruction_feature_configs.get(
-            "instruction_feat_dim", 4096
-        )
+    def cal_preprocessed_instruction_feat_dim(self, instruction_feature_configs: Dict[str, Any]):
+        num_instruction_feat_layers = max(instruction_feature_configs.get("num_instruction_feat_layers", 1), 1)
+        instruction_feat_dim = instruction_feature_configs.get("instruction_feat_dim", 4096)
         reduce_type = instruction_feature_configs.get("reduce_type", "concat")
         if "cat" in reduce_type.lower():
             return num_instruction_feat_layers * instruction_feat_dim
@@ -1215,12 +1071,8 @@ class BooguImageTransformer2DModel(
     def preprocess_instruction_hidden_states(
         self, raw_instruction_hidden_states, instruction_feature_configs: Dict[str, Any]
     ):
-        num_instruction_feat_layers = max(
-            instruction_feature_configs.get("num_instruction_feat_layers", 1), 1
-        )
-        instruction_feat_dim = instruction_feature_configs.get(
-            "instruction_feat_dim", 4096
-        )
+        num_instruction_feat_layers = max(instruction_feature_configs.get("num_instruction_feat_layers", 1), 1)
+        instruction_feat_dim = instruction_feature_configs.get("instruction_feat_dim", 4096)
         reduce_type = instruction_feature_configs.get("reduce_type", "concat")
 
         instruction_hidden_states = None
@@ -1229,13 +1081,9 @@ class BooguImageTransformer2DModel(
         elif isinstance(raw_instruction_hidden_states, (list, tuple)):
             assert len(raw_instruction_hidden_states) == num_instruction_feat_layers
             if "cat" in reduce_type.lower():
-                instruction_hidden_states = torch.cat(
-                    raw_instruction_hidden_states, dim=-1
-                )
+                instruction_hidden_states = torch.cat(raw_instruction_hidden_states, dim=-1)
             elif "mean" in reduce_type.lower():
-                instruction_hidden_states = torch.mean(
-                    torch.stack(raw_instruction_hidden_states), dim=0
-                )
+                instruction_hidden_states = torch.mean(torch.stack(raw_instruction_hidden_states), dim=0)
             else:
                 raise ValueError(f"Invalid reduce_type: {reduce_type}")
         else:
@@ -1243,10 +1091,7 @@ class BooguImageTransformer2DModel(
                 f"Invalid type of raw_instruction_hidden_states, expected torch.Tensor or list, but got {type(raw_instruction_hidden_states)}"
             )
 
-        assert (
-            self.preprocessed_instruction_feat_dim
-            == instruction_hidden_states.shape[-1]
-        )
+        assert self.preprocessed_instruction_feat_dim == instruction_hidden_states.shape[-1]
 
         return instruction_hidden_states
 
@@ -1283,13 +1128,8 @@ class BooguImageTransformer2DModel(
             # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                attention_kwargs is not None
-                and attention_kwargs.get("scale", None) is not None
-            ):
-                logger.warning(
-                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-                )
+            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
 
         # === 1. Initial processing (same as original Boogu-Image) ===
         batch_size = len(hidden_states)
@@ -1365,9 +1205,7 @@ class BooguImageTransformer2DModel(
 
         # Joint mask for [instruct + image].
         max_seq_len = max(seq_lengths)
-        joint_attention_mask = hidden_states.new_zeros(
-            batch_size, max_seq_len, dtype=torch.bool
-        )
+        joint_attention_mask = hidden_states.new_zeros(batch_size, max_seq_len, dtype=torch.bool)
         for i, seq_len in enumerate(seq_lengths):
             joint_attention_mask[i, :seq_len] = True
 
@@ -1375,36 +1213,21 @@ class BooguImageTransformer2DModel(
         if self.num_double_stream_layers > 0:
             # Image-only mask for [ref + noise].
             max_img_len = max(combined_img_seq_lengths)
-            img_attention_mask = hidden_states.new_zeros(
-                batch_size, max_img_len, dtype=torch.bool
-            )
+            img_attention_mask = hidden_states.new_zeros(batch_size, max_img_len, dtype=torch.bool)
             for i, img_seq_len in enumerate(combined_img_seq_lengths):
                 img_attention_mask[i, :img_seq_len] = True
 
-            enable_double_stream_taylorseer = (
-                enable_taylorseer and self.enable_taylorseer_for_all_layers
-            )
-            enable_double_stream_teacache = (
-                self.enable_teacache and self.enable_teacache_for_all_layers
-            )
+            enable_double_stream_taylorseer = enable_taylorseer and self.enable_taylorseer_for_all_layers
+            enable_double_stream_teacache = self.enable_teacache and self.enable_teacache_for_all_layers
 
             if enable_double_stream_teacache:
                 first_double_stream_layer = self.double_stream_layers[0]
-                img_modulated_inp, _, _, _ = first_double_stream_layer.img_norm1(
-                    img_hidden_states.clone(), temb
+                img_modulated_inp, _, _, _ = first_double_stream_layer.img_norm1(img_hidden_states.clone(), temb)
+                instruct_modulated_inp, _, _, _ = first_double_stream_layer.instruct_norm1(
+                    instruct_hidden_states.clone(), temb
                 )
-                instruct_modulated_inp, _, _, _ = (
-                    first_double_stream_layer.instruct_norm1(
-                        instruct_hidden_states.clone(), temb
-                    )
-                )
-                previous_double_modulated_inp = getattr(
-                    self.teacache_params, "previous_double_modulated_inp", None
-                )
-                if (
-                    self.teacache_params.is_first_or_last_step
-                    or previous_double_modulated_inp is None
-                ):
+                previous_double_modulated_inp = getattr(self.teacache_params, "previous_double_modulated_inp", None)
+                if self.teacache_params.is_first_or_last_step or previous_double_modulated_inp is None:
                     should_calc_double_stream = True
                     self.teacache_params.double_accumulated_rel_l1_distance = 0
                 else:
@@ -1415,13 +1238,8 @@ class BooguImageTransformer2DModel(
                         instruct_modulated_inp - previous_double_modulated_inp[1]
                     ).abs().mean() / previous_double_modulated_inp[1].abs().mean()
                     rel_l1 = (img_rel_l1 + instruct_rel_l1) * 0.5
-                    self.teacache_params.double_accumulated_rel_l1_distance += (
-                        self.rescale_func(rel_l1.cpu().item())
-                    )
-                    if (
-                        self.teacache_params.double_accumulated_rel_l1_distance
-                        < self.teacache_rel_l1_thresh
-                    ):
+                    self.teacache_params.double_accumulated_rel_l1_distance += self.rescale_func(rel_l1.cpu().item())
+                    if self.teacache_params.double_accumulated_rel_l1_distance < self.teacache_rel_l1_thresh:
                         should_calc_double_stream = False
                     else:
                         should_calc_double_stream = True
@@ -1434,9 +1252,7 @@ class BooguImageTransformer2DModel(
                 should_calc_double_stream = True
 
             if enable_double_stream_teacache and not should_calc_double_stream:
-                img_residual, instruct_residual = (
-                    self.teacache_params.previous_double_residual
-                )
+                img_residual, instruct_residual = self.teacache_params.previous_double_residual
                 img_hidden_states = img_hidden_states + img_residual
                 instruct_hidden_states = instruct_hidden_states + instruct_residual
             else:
@@ -1457,19 +1273,17 @@ class BooguImageTransformer2DModel(
                         layer.enable_taylorseer = False
 
                     if torch.is_grad_enabled() and self.gradient_checkpointing:
-                        img_hidden_states, instruct_hidden_states = (
-                            self._gradient_checkpointing_func(
-                                layer,
-                                img_hidden_states,
-                                instruct_hidden_states,
-                                img_attention_mask,
-                                joint_attention_mask,
-                                combined_img_rotary_emb,
-                                rotary_emb,
-                                temb,
-                                encoder_seq_lengths,
-                                seq_lengths,
-                            )
+                        img_hidden_states, instruct_hidden_states = self._gradient_checkpointing_func(
+                            layer,
+                            img_hidden_states,
+                            instruct_hidden_states,
+                            img_attention_mask,
+                            joint_attention_mask,
+                            combined_img_rotary_emb,
+                            rotary_emb,
+                            temb,
+                            encoder_seq_lengths,
+                            seq_lengths,
                         )
                     else:
                         img_hidden_states, instruct_hidden_states = layer(
@@ -1491,18 +1305,10 @@ class BooguImageTransformer2DModel(
                     )
 
         # Fuse streams to joint sequence.
-        joint_hidden_states = hidden_states.new_zeros(
-            batch_size, max(seq_lengths), self.config.hidden_size
-        )
-        for i, (encoder_seq_len, seq_len) in enumerate(
-            zip(encoder_seq_lengths, seq_lengths)
-        ):
-            joint_hidden_states[i, :encoder_seq_len] = instruct_hidden_states[
-                i, :encoder_seq_len
-            ]
-            joint_hidden_states[i, encoder_seq_len:seq_len] = img_hidden_states[
-                i, : seq_len - encoder_seq_len
-            ]
+        joint_hidden_states = hidden_states.new_zeros(batch_size, max(seq_lengths), self.config.hidden_size)
+        for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
+            joint_hidden_states[i, :encoder_seq_len] = instruct_hidden_states[i, :encoder_seq_len]
+            joint_hidden_states[i, encoder_seq_len:seq_len] = img_hidden_states[i, : seq_len - encoder_seq_len]
 
         # Single-stream stage.
         hidden_states = joint_hidden_states
@@ -1511,27 +1317,20 @@ class BooguImageTransformer2DModel(
         if self.enable_teacache and len(self.single_stream_layers) > 0:
             teacache_hidden_states = hidden_states.clone()
             teacache_temb = temb.clone()
-            modulated_inp, _, _, _ = self.single_stream_layers[0].norm1(
-                teacache_hidden_states, teacache_temb
-            )
+            modulated_inp, _, _, _ = self.single_stream_layers[0].norm1(teacache_hidden_states, teacache_temb)
             if self.teacache_params.is_first_or_last_step:
                 should_calc = True
                 self.teacache_params.accumulated_rel_l1_distance = 0
             else:
                 self.teacache_params.accumulated_rel_l1_distance += self.rescale_func(
                     (
-                        (modulated_inp - self.teacache_params.previous_modulated_inp)
-                        .abs()
-                        .mean()
+                        (modulated_inp - self.teacache_params.previous_modulated_inp).abs().mean()
                         / self.teacache_params.previous_modulated_inp.abs().mean()
                     )
                     .cpu()
                     .item()
                 )
-                if (
-                    self.teacache_params.accumulated_rel_l1_distance
-                    < self.teacache_rel_l1_thresh
-                ):
+                if self.teacache_params.accumulated_rel_l1_distance < self.teacache_rel_l1_thresh:
                     should_calc = False
                 else:
                     should_calc = True
@@ -1561,14 +1360,10 @@ class BooguImageTransformer2DModel(
                         layer, hidden_states, joint_attention_mask, rotary_emb, temb
                     )
                 else:
-                    hidden_states = layer(
-                        hidden_states, joint_attention_mask, rotary_emb, temb
-                    )
+                    hidden_states = layer(hidden_states, joint_attention_mask, rotary_emb, temb)
 
             if self.enable_teacache:
-                self.teacache_params.previous_residual = (
-                    hidden_states - ori_hidden_states
-                )
+                self.teacache_params.previous_residual = hidden_states - ori_hidden_states
 
         # Output projection.
         hidden_states = self.norm_out(hidden_states, temb)
@@ -1576,9 +1371,7 @@ class BooguImageTransformer2DModel(
         # Reshape back to image format.
         p = self.config.patch_size
         output = []
-        for i, (img_size, img_len, seq_len) in enumerate(
-            zip(img_sizes, l_effective_img_len, seq_lengths)
-        ):
+        for i, (img_size, img_len, seq_len) in enumerate(zip(img_sizes, l_effective_img_len, seq_lengths)):
             height, width = img_size
             img_tokens = hidden_states[i][seq_len - img_len : seq_len]
             img_output = rearrange(

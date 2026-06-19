@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import threading
@@ -5,6 +6,7 @@ from typing import Optional, Sequence
 
 import safetensors.torch
 import torch
+import torch.nn.functional as F
 from accelerate import init_empty_weights
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
@@ -1402,6 +1404,275 @@ class LTXVideo2(VideoModelFoundation):
             f"LTX-2 expected a scalar, 1D batch tensor, or 2D tokenwise {name} tensor, got shape {tuple(raw_timesteps.shape)}."
         )
 
+    @staticmethod
+    def _ltx2_temporal_condition_mask(
+        *,
+        batch_size: int,
+        sequence_length: int,
+        post_patch_height: int,
+        post_patch_width: int,
+        num_frames: int,
+        from_end: bool,
+        device: torch.device,
+    ) -> torch.Tensor:
+        tokens_per_frame = post_patch_height * post_patch_width
+        num_tokens = num_frames * tokens_per_frame
+        if num_tokens > sequence_length:
+            raise ValueError(
+                f"LTX-2 temporal conditioning requested {num_tokens} tokens, but target has {sequence_length} tokens."
+            )
+        mask = torch.zeros(batch_size, sequence_length, device=device, dtype=torch.float32)
+        if num_tokens == 0:
+            return mask
+        if from_end:
+            mask[:, -num_tokens:] = 1.0
+        else:
+            mask[:, :num_tokens] = 1.0
+        return mask
+
+    @staticmethod
+    def _ltx2_spatial_condition_mask(
+        *,
+        batch_size: int,
+        sequence_length: int,
+        post_patch_frames: int,
+        post_patch_height: int,
+        post_patch_width: int,
+        region: Sequence[int | float],
+        device: torch.device,
+    ) -> torch.Tensor:
+        if len(region) != 4:
+            raise ValueError(f"LTX-2 spatial_crop conditioning requires [y1, x1, y2, x2], got {region}.")
+        y1, x1, y2, x2 = (int(v) for v in region)
+        y1 = max(0, min(y1, post_patch_height))
+        y2 = max(0, min(y2, post_patch_height))
+        x1 = max(0, min(x1, post_patch_width))
+        x2 = max(0, min(x2, post_patch_width))
+        if y2 < y1 or x2 < x1:
+            raise ValueError(f"LTX-2 spatial_crop region must be ordered [y1, x1, y2, x2], got {region}.")
+        spatial = torch.zeros(post_patch_height, post_patch_width, device=device, dtype=torch.float32)
+        spatial[y1:y2, x1:x2] = 1.0
+        mask = spatial.flatten().repeat(post_patch_frames).unsqueeze(0).expand(batch_size, -1)
+        if mask.shape[1] != sequence_length:
+            raise ValueError(f"LTX-2 spatial conditioning produced {mask.shape[1]} tokens, expected {sequence_length}.")
+        return mask
+
+    @staticmethod
+    def _ltx2_mask_condition_mask(
+        mask: torch.Tensor,
+        *,
+        batch_size: int,
+        post_patch_frames: int,
+        post_patch_height: int,
+        post_patch_width: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        mask = mask.to(device=device, dtype=torch.float32)
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.ndim == 4:
+            if mask.shape[1] != 1:
+                mask = mask[:, :1]
+            mask = mask / 2 + 0.5 if mask.min() < 0 else mask
+            mask = F.interpolate(mask, size=(post_patch_height, post_patch_width), mode="area")
+            mask = mask.unsqueeze(2).expand(-1, -1, post_patch_frames, -1, -1)
+        elif mask.ndim == 5:
+            if mask.shape[1] != 1:
+                mask = mask[:, :1]
+            mask = mask / 2 + 0.5 if mask.min() < 0 else mask
+            mask = F.interpolate(mask, size=(post_patch_frames, post_patch_height, post_patch_width), mode="nearest")
+        else:
+            raise ValueError(
+                f"LTX-2 mask conditioning expects mask tensor [B,H,W], [B,C,H,W], or [B,C,F,H,W], got {tuple(mask.shape)}."
+            )
+        if mask.shape[0] == 1 and batch_size != 1:
+            mask = mask.expand(batch_size, -1, -1, -1, -1)
+        if mask.shape[0] != batch_size:
+            raise ValueError(f"LTX-2 mask conditioning batch {mask.shape[0]} does not match target batch {batch_size}.")
+        return (mask[:, 0] > 0.5).flatten(1).to(torch.float32)
+
+    def _ltx2_intrinsic_condition_specs(self) -> list[dict]:
+        specs = getattr(self.config, "ltx2_intrinsic_conditioning", None)
+        if specs is None:
+            specs = []
+        elif isinstance(specs, str):
+            specs = json.loads(specs)
+        elif isinstance(specs, dict):
+            specs = [specs]
+        else:
+            specs = list(specs)
+
+        aliases = (
+            ("first_frame", "ltx2_first_frame_conditioning_probability", {}),
+            ("prefix", "ltx2_prefix_conditioning_probability", {"temporal_boundary": "ltx2_prefix_conditioning_frames"}),
+            ("suffix", "ltx2_suffix_conditioning_probability", {"temporal_boundary": "ltx2_suffix_conditioning_frames"}),
+            ("mask", "ltx2_mask_conditioning_probability", {}),
+        )
+        for cond_type, probability_attr, extra_attrs in aliases:
+            probability = float(getattr(self.config, probability_attr, 0.0) or 0.0)
+            if probability <= 0:
+                continue
+            spec = {"type": cond_type, "probability": probability}
+            for key, attr in extra_attrs.items():
+                value = getattr(self.config, attr, None)
+                if value is not None:
+                    spec[key] = value
+            specs.append(spec)
+        return specs
+
+    def _apply_ltx2_intrinsic_conditioning(
+        self,
+        *,
+        packed_noisy: torch.Tensor,
+        packed_clean: torch.Tensor,
+        target_timesteps: torch.Tensor,
+        prepared_batch: dict,
+        num_frames: int,
+        height: int,
+        width: int,
+        patch_size: int,
+        patch_size_t: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        specs = self._ltx2_intrinsic_condition_specs()
+        if not specs:
+            return packed_noisy, target_timesteps, None
+
+        batch_size, sequence_length, _ = packed_noisy.shape
+        post_patch_frames = num_frames // patch_size_t
+        post_patch_height = height // patch_size
+        post_patch_width = width // patch_size
+        loss_mask = torch.ones(batch_size, sequence_length, device=packed_noisy.device, dtype=torch.bool)
+
+        for spec in specs:
+            cond_type = spec.get("type")
+            probability = float(spec.get("probability", 1.0))
+            if probability <= 0:
+                continue
+            apply_per_sample = torch.rand(batch_size, device=packed_noisy.device) < probability
+            if not apply_per_sample.any():
+                continue
+
+            if cond_type == "first_frame":
+                mask = self._ltx2_temporal_condition_mask(
+                    batch_size=batch_size,
+                    sequence_length=sequence_length,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                    num_frames=1,
+                    from_end=False,
+                    device=packed_noisy.device,
+                )
+            elif cond_type == "prefix":
+                boundary = int(spec.get("temporal_boundary", spec.get("num_frames", 1)))
+                mask = self._ltx2_temporal_condition_mask(
+                    batch_size=batch_size,
+                    sequence_length=sequence_length,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                    num_frames=boundary,
+                    from_end=False,
+                    device=packed_noisy.device,
+                )
+            elif cond_type == "suffix":
+                boundary = int(spec.get("temporal_boundary", spec.get("num_frames", 1)))
+                mask = self._ltx2_temporal_condition_mask(
+                    batch_size=batch_size,
+                    sequence_length=sequence_length,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                    num_frames=boundary,
+                    from_end=True,
+                    device=packed_noisy.device,
+                )
+            elif cond_type == "spatial_crop":
+                mask = self._ltx2_spatial_condition_mask(
+                    batch_size=batch_size,
+                    sequence_length=sequence_length,
+                    post_patch_frames=post_patch_frames,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                    region=spec.get("spatial_region", spec.get("region", (0, 0, 0, 0))),
+                    device=packed_noisy.device,
+                )
+            elif cond_type == "mask":
+                mask_key = spec.get("mask_key", "conditioning_pixel_values")
+                raw_mask = prepared_batch.get(mask_key)
+                if raw_mask is None:
+                    raise ValueError(f"LTX-2 mask conditioning requested but prepared_batch['{mask_key}'] is missing.")
+                mask = self._ltx2_mask_condition_mask(
+                    raw_mask,
+                    batch_size=batch_size,
+                    post_patch_frames=post_patch_frames,
+                    post_patch_height=post_patch_height,
+                    post_patch_width=post_patch_width,
+                    device=packed_noisy.device,
+                )
+            else:
+                raise ValueError(f"Unsupported LTX-2 intrinsic conditioning type: {cond_type}.")
+
+            mask = mask * apply_per_sample.view(-1, 1).to(mask.dtype)
+            packed_noisy = mask.unsqueeze(-1) * packed_clean + (1.0 - mask.unsqueeze(-1)) * packed_noisy
+            target_timesteps = (1.0 - mask) * target_timesteps
+            loss_mask = loss_mask & (mask == 0)
+
+        return packed_noisy, target_timesteps, loss_mask
+
+    @staticmethod
+    def _infer_ltx2_reference_spatial_scale(
+        *,
+        ref_height: int,
+        ref_width: int,
+        target_height: int,
+        target_width: int,
+    ) -> int:
+        if ref_height == target_height and ref_width == target_width:
+            return 1
+        if ref_height <= 0 or ref_width <= 0 or target_height % ref_height != 0 or target_width % ref_width != 0:
+            raise ValueError(
+                f"LTX-2 reference dimensions {ref_height}x{ref_width} must evenly divide target {target_height}x{target_width}."
+            )
+        scale_h = target_height // ref_height
+        scale_w = target_width // ref_width
+        if scale_h != scale_w:
+            raise ValueError(f"LTX-2 reference scale must be uniform, got height scale {scale_h} and width scale {scale_w}.")
+        if scale_h < 1:
+            raise ValueError(f"LTX-2 reference scale must be >= 1, got {scale_h}.")
+        return scale_h
+
+    def _scale_ltx2_reference_coords(
+        self,
+        *,
+        ref_coords: torch.Tensor,
+        target_coords: torch.Tensor,
+        ref_height: int,
+        ref_width: int,
+        target_height: int,
+        target_width: int,
+    ) -> torch.Tensor:
+        spatial_scale = getattr(self.config, "ltx2_reference_spatial_scale_factor", None)
+        if spatial_scale is None:
+            spatial_scale = self._infer_ltx2_reference_spatial_scale(
+                ref_height=ref_height,
+                ref_width=ref_width,
+                target_height=target_height,
+                target_width=target_width,
+            )
+        spatial_scale = int(spatial_scale)
+        temporal_scale = int(getattr(self.config, "ltx2_reference_temporal_scale_factor", 1) or 1)
+        if spatial_scale == 1 and temporal_scale == 1:
+            return ref_coords
+        ref_coords = ref_coords.clone()
+        if temporal_scale != 1:
+            target_first_patch_end = target_coords[:, 0, 0:1, 1:2]
+            ref_coords[:, 0, ...] = torch.clamp(
+                ref_coords[:, 0, ...] - (temporal_scale - 1) * target_first_patch_end,
+                min=0,
+            )
+        if spatial_scale != 1:
+            ref_coords[:, 1, ...] *= spatial_scale
+            ref_coords[:, 2, ...] *= spatial_scale
+        return ref_coords
+
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"]
         if noisy_latents.shape[1] != self.LATENT_CHANNEL_COUNT:
@@ -1452,8 +1723,35 @@ class LTXVideo2(VideoModelFoundation):
         patch_size_t = getattr(self.model.config, "patch_size_t", 1)
 
         packed_target_noisy = pack_ltx2_latents(noisy_latents, patch_size, patch_size_t).to(self.config.weight_dtype)
+        packed_target_clean = pack_ltx2_latents(
+            prepared_batch["latents"].to(device=noisy_latents.device, dtype=noisy_latents.dtype),
+            patch_size,
+            patch_size_t,
+        ).to(self.config.weight_dtype)
+        target_timesteps = self._normalize_audio_visual_timesteps(
+            prepared_batch["timesteps"],
+            batch_size=packed_target_noisy.shape[0],
+            sequence_length=packed_target_noisy.shape[1],
+            device=packed_target_noisy.device,
+            dtype=packed_target_noisy.dtype,
+            name="video",
+        )
+        if target_timesteps.ndim == 1:
+            target_timesteps = target_timesteps[:, None].expand(target_timesteps.shape[0], packed_target_noisy.shape[1])
+        packed_target_noisy, target_timesteps, video_loss_mask = self._apply_ltx2_intrinsic_conditioning(
+            packed_noisy=packed_target_noisy,
+            packed_clean=packed_target_clean,
+            target_timesteps=target_timesteps,
+            prepared_batch=prepared_batch,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            patch_size=patch_size,
+            patch_size_t=patch_size_t,
+        )
+        prepared_batch["video_loss_mask"] = video_loss_mask
         packed_noisy = packed_target_noisy
-        combined_timesteps = None
+        combined_timesteps = target_timesteps
         combined_video_coords = None
         ref_seq_len = 0
         if conditioning_latents is not None:
@@ -1474,16 +1772,6 @@ class LTXVideo2(VideoModelFoundation):
             ref_seq_len = packed_ref.shape[1]
             packed_noisy = torch.cat([packed_ref, packed_target_noisy], dim=1)
 
-            target_timesteps = self._normalize_audio_visual_timesteps(
-                prepared_batch["timesteps"],
-                batch_size=packed_target_noisy.shape[0],
-                sequence_length=packed_target_noisy.shape[1],
-                device=packed_noisy.device,
-                dtype=packed_noisy.dtype,
-                name="video",
-            )
-            if target_timesteps.ndim == 1:
-                target_timesteps = target_timesteps[:, None].expand(target_timesteps.shape[0], packed_target_noisy.shape[1])
             ref_timesteps = torch.zeros(
                 target_timesteps.shape[0],
                 ref_seq_len,
@@ -1509,6 +1797,14 @@ class LTXVideo2(VideoModelFoundation):
                     width,
                     packed_noisy.device,
                     fps=fps,
+                )
+                ref_coords = self._scale_ltx2_reference_coords(
+                    ref_coords=ref_coords,
+                    target_coords=target_coords,
+                    ref_height=ref_height,
+                    ref_width=ref_width,
+                    target_height=height,
+                    target_width=width,
                 )
                 combined_video_coords = torch.cat([ref_coords, target_coords], dim=2)
 
@@ -1572,7 +1868,7 @@ class LTXVideo2(VideoModelFoundation):
             "audio_hidden_states": packed_audio_noisy,
             "encoder_hidden_states": connector_video_embeds,
             "audio_encoder_hidden_states": connector_audio_embeds,
-            "timestep": combined_timesteps if combined_timesteps is not None else prepared_batch["timesteps"],
+            "timestep": combined_timesteps,
             "audio_timestep": audio_timestep,
             "timestep_sign": (
                 prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
@@ -1711,6 +2007,30 @@ class LTXVideo2(VideoModelFoundation):
                 logs["audio_loss_weighted"] = (audio_loss * audio_weight).detach().item()
         return total_loss, logs
 
+    def _compute_ltx2_masked_video_loss(self, prepared_batch: dict, model_output) -> torch.Tensor:
+        target = self.get_prediction_target(prepared_batch)
+        if target is None:
+            raise ValueError("Target is None. Cannot compute LTX-2 video loss.")
+        model_pred = model_output["model_prediction"]
+        patch_size = getattr(self.model.config, "patch_size", 1)
+        patch_size_t = getattr(self.model.config, "patch_size_t", 1)
+        pred_tokens = pack_ltx2_latents(model_pred, patch_size, patch_size_t)
+        target_tokens = pack_ltx2_latents(target, patch_size, patch_size_t).to(device=pred_tokens.device)
+        loss_type = getattr(self.config, "loss_type", "l2")
+        loss = self.conditional_loss(
+            pred_tokens.float(),
+            target_tokens.float(),
+            reduction="none",
+            loss_type=loss_type,
+            huber_c=getattr(self.config, "huber_c", 0.1),
+        )
+
+        mask = prepared_batch["video_loss_mask"].to(device=loss.device, dtype=loss.dtype)
+        if mask.shape != loss.shape[:2]:
+            raise ValueError(f"LTX-2 video_loss_mask shape {mask.shape} does not match token loss shape {loss.shape[:2]}.")
+        mask = mask.unsqueeze(-1)
+        return (loss * mask).mean(dim=[-2, -1]).div(mask.mean(dim=[-2, -1]).clamp(min=1e-8)).mean()
+
     def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         # Check for video masking (audio-only mode)
         video_mask = prepared_batch.get("video_latent_mask")
@@ -1719,6 +2039,8 @@ class LTXVideo2(VideoModelFoundation):
         if is_audio_only:
             # Audio-only mode: skip video loss entirely
             video_loss = torch.tensor(0.0, device=self.accelerator.device, dtype=torch.float32)
+        elif prepared_batch.get("video_loss_mask") is not None:
+            video_loss = self._compute_ltx2_masked_video_loss(prepared_batch, model_output)
         else:
             video_loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
 

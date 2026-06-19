@@ -11,9 +11,9 @@ from diffusers.models.modeling_utils import ModelMixin
 from simpletuner.helpers.models.zlab_i1.model import ZLabI1
 from simpletuner.helpers.models.zlab_i1.pipeline import ZlabI1Pipeline
 from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
-from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 
 
 class DummyVAE(torch.nn.Module):
@@ -99,7 +99,12 @@ class ZlabI1FeatureTests(unittest.TestCase):
             self.assertEqual(hidden.shape, torch.Size([1, 4, 24]))
 
     def test_scratch_init_has_deterministic_null_caption_and_no_trainable_timestep_embedder(self):
-        self.assertTrue(torch.equal(self.transformer.text_encoder_adapter.learnable_null_caption, torch.zeros_like(self.transformer.text_encoder_adapter.learnable_null_caption)))
+        self.assertTrue(
+            torch.equal(
+                self.transformer.text_encoder_adapter.learnable_null_caption,
+                torch.zeros_like(self.transformer.text_encoder_adapter.learnable_null_caption),
+            )
+        )
         self.assertFalse(any(param.requires_grad for param in self.transformer.t_embedder.parameters()))
 
     def test_transformer_config_exposes_validated_head_dim(self):
@@ -425,7 +430,9 @@ class ZlabI1FeatureTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["crepa_hidden_states"], result["hidden_states_buffer"]["layer_2"]))
 
         regularizer = LayerSyncRegularizer(
-            SimpleNamespace(layersync_enabled=True, layersync_student_block=1, layersync_teacher_block=2, layersync_lambda=0.1)
+            SimpleNamespace(
+                layersync_enabled=True, layersync_student_block=1, layersync_teacher_block=2, layersync_lambda=0.1
+            )
         )
         loss, logs = regularizer.compute_loss(result["hidden_states_buffer"])
         self.assertIsNotNone(loss)

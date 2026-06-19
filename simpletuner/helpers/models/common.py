@@ -3420,11 +3420,7 @@ class ModelFoundation(ABC):
                 pipeline_kwargs["scheduler"] = scheduler
 
         base_scheduler = getattr(self, "noise_schedule", None)
-        if (
-            "scheduler" not in pipeline_kwargs
-            and base_scheduler is not None
-            and not self.requires_special_scheduler_setup()
-        ):
+        if "scheduler" not in pipeline_kwargs and base_scheduler is not None and not self.requires_special_scheduler_setup():
             try:
                 pipeline_kwargs["scheduler"] = base_scheduler.__class__.from_config(base_scheduler.config)
             except Exception:

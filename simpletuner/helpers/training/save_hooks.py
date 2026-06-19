@@ -875,7 +875,7 @@ class SaveHookManager:
                     load_model = self.denoiser_class.from_pretrained(input_dir, subfolder=self.denoiser_subdir)
                     if self.args.model_family == "sd3" and not self.args.train_text_encoder:
                         logger.info("Unloading text encoders for full SD3 training without --train_text_encoder")
-                        (self.text_encoder_0, self.text_encoder_1) = (None, None)
+                        self.text_encoder_0, self.text_encoder_1 = (None, None)
 
                     model.register_to_config(**load_model.config)
                     model.load_state_dict(load_model.state_dict())

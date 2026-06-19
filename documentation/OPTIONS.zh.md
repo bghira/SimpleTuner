@@ -871,6 +871,16 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **说明**：使用 `combined` 时不能在条件数据集中定义单独的 `captions`，会使用源数据集的字幕。
 - **另见**：[DATALOADER.md](DATALOADER.md#conditioning_data) 获取多条件数据集配置说明。
 
+### LTX-2 内在与参考条件
+
+- **内容**：LTX-2 模型封装层选项，用于 upstream 风格的 clean-token conditioning。
+- **配置键**：
+  - `ltx2_intrinsic_conditioning`：条件对象数组。支持的 `type` 值为 `first_frame`、`prefix`、`suffix`、`spatial_crop`、`mask`；每个对象接受 `probability`。
+  - `ltx2_prefix_conditioning_probability`、`ltx2_prefix_conditioning_frames`、`ltx2_suffix_conditioning_probability`、`ltx2_suffix_conditioning_frames`、`ltx2_first_frame_conditioning_probability`、`ltx2_mask_conditioning_probability`：添加内在条件的简写键。
+  - `ltx2_reference_spatial_scale_factor`、`ltx2_reference_temporal_scale_factor`：IC-LoRA 参考坐标缩放的可选覆盖。未设置时会从 reference/target latent 尺寸推断空间缩放。
+- **原因**：LTX-2 内在条件会用 clean latent 替换选中的目标 token，将这些 token 的 timestep 设为 0，并从 video loss 中移除。对于 `mask`，值 `1` 表示 clean conditioning/no loss。
+- **说明**：这些是 JSON/TOML 配置字段，不是 CLI flag。这些 LTX-2 模式的数据集模板和 WebUI 控件与此模型层支持是独立工作。
+
 ---
 
 ## 🎛 训练参数

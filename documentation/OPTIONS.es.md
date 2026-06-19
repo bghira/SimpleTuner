@@ -869,6 +869,16 @@ Diferentes modelos esperan diferentes datos de conditioning:
 - **Nota**: Al usar `combined`, no puedes definir `captions` separados en datasets de condicionamiento; se usan las captions del dataset fuente.
 - **Ver también**: [DATALOADER.md](DATALOADER.md#conditioning_data) para configurar múltiples datasets de condicionamiento.
 
+### Condicionamiento intrínseco y de referencia de LTX-2
+
+- **Qué**: Opciones del wrapper del modelo LTX-2 para condicionamiento con tokens limpios al estilo upstream.
+- **Claves de configuración**:
+  - `ltx2_intrinsic_conditioning`: array de objetos de condición. Los valores `type` admitidos son `first_frame`, `prefix`, `suffix`, `spatial_crop` y `mask`; cada objeto acepta `probability`.
+  - `ltx2_prefix_conditioning_probability`, `ltx2_prefix_conditioning_frames`, `ltx2_suffix_conditioning_probability`, `ltx2_suffix_conditioning_frames`, `ltx2_first_frame_conditioning_probability`, `ltx2_mask_conditioning_probability`: claves abreviadas que añaden condiciones intrínsecas.
+  - `ltx2_reference_spatial_scale_factor`, `ltx2_reference_temporal_scale_factor`: overrides opcionales para escalar coordenadas de referencia IC-LoRA. La escala espacial se infiere desde los tamaños latentes de referencia/objetivo cuando no se define.
+- **Por qué**: Las condiciones intrínsecas de LTX-2 reemplazan tokens objetivo seleccionados por latentes limpios, ponen sus timesteps por token en 0 y los eliminan de la pérdida de video. Para `mask`, el valor `1` significa condicionamiento limpio/sin pérdida.
+- **Nota**: Son campos JSON/TOML de configuración, no flags CLI. Las plantillas de dataset y controles WebUI para estos modos de LTX-2 son independientes de este soporte de modelo.
+
 ---
 
 ## 🎛 Parámetros de entrenamiento

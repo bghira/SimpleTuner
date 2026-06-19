@@ -50,17 +50,13 @@ class BooguImageTurboPipeline(BooguImagePipeline):
         if timesteps is not None:
             sigmas = torch.as_tensor(timesteps, device=device, dtype=dtype)
             if sigmas.ndim != 1 or sigmas.numel() == 0:
-                raise ValueError(
-                    "DMD inference timesteps must be a non-empty 1D sequence."
-                )
+                raise ValueError("DMD inference timesteps must be a non-empty 1D sequence.")
             if sigmas.max().item() > 1.0:
                 sigmas = sigmas / 1000.0
             return sigmas
 
         if num_inference_steps < 1:
-            raise ValueError(
-                "num_inference_steps must be >= 1 for DMD student inference."
-            )
+            raise ValueError("num_inference_steps must be >= 1 for DMD student inference.")
 
         return torch.linspace(
             conditioning_sigma,
@@ -133,9 +129,9 @@ class BooguImageTurboPipeline(BooguImagePipeline):
         # `generator` is needed by the DMD renoise step but is not forwarded
         # into `processing` by the parent; capture it here.
         self._dmd_generator = kwargs.get("generator", None)
-        
+
         return super().__call__(*args, **kwargs)
-        
+
     # ------------------------------------------------------------------ #
     # Denoising: take the DMD branch when requested, else delegate         #
     # ------------------------------------------------------------------ #
@@ -159,10 +155,7 @@ class BooguImageTurboPipeline(BooguImagePipeline):
         # --- DMD constraints (mirror the standalone turbo pipeline) ---
         task_type = self._get_task_type_by_ref_latents(ref_latents)
         if task_type != "t2i":
-            raise ValueError(
-                "DMD student inference only supports pure T2I inputs "
-                f"(got task_type={task_type!r})."
-            )
+            raise ValueError("DMD student inference only supports pure T2I inputs " f"(got task_type={task_type!r}).")
         if (
             self.text_guidance_scale != 1.0
             or self.image_guidance_scale != 1.0
