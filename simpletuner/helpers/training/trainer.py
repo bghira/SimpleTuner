@@ -5681,10 +5681,7 @@ class Trainer:
             if isinstance(error, ValidationAbortedException):
                 raise
             root_logger = logging.getLogger()
-            root_logger.error(f"Validation run failed at step {step}: {error}")
-            import traceback
-
-            root_logger.debug(traceback.format_exc())
+            root_logger.exception(f"Validation run failed at step {step}: {error}")
 
         if should_validate:
             AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
@@ -6497,11 +6494,10 @@ class Trainer:
             if self.model.get_trained_component() is not None:
                 self.model.model = unwrap_model(self.accelerator, self.model.model)
             if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
+                trained_component = unwrap_model(self.accelerator, self.model.get_trained_component(unwrap_model=False))
                 lora_save_kwargs = {
                     "save_directory": self.config.output_dir,
-                    f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(
-                        self.model.get_trained_component()
-                    ),
+                    f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(trained_component),
                 }
 
                 if self.config.train_text_encoder:

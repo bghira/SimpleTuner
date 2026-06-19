@@ -2563,9 +2563,15 @@ class Validation:
         # Ensure the pipeline has an attached base model; some model-specific get_pipeline
         # implementations skip binding the transformer/unet when load_base_model=False.
         pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
-        if pipeline_model is None and getattr(self.model, "model", None) is not None:
-            # Prefer unwrapped module so pipeline APIs that expect .dtype work even with DDP/FSDP/compile.
-            setattr(self.model.pipeline, self.model.MODEL_TYPE.value, self.model.unwrap_model())
+        if getattr(self.model, "model", None) is not None:
+            try:
+                is_pipeline_fsdp = FSDP_AVAILABLE and pipeline_model is not None and isinstance(pipeline_model, FSDP)
+                if pipeline_model is None or not is_pipeline_fsdp:
+                    # Prefer unwrapped module so pipeline APIs that expect .config/.dtype work with DDP/compile.
+                    setattr(self.model.pipeline, self.model.MODEL_TYPE.value, self.model.unwrap_model())
+            except Exception:
+                if pipeline_model is None:
+                    raise
 
         # Remove text encoders on 'meta' device to avoid move errors
         for attr in [

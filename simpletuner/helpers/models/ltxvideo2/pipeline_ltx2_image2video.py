@@ -97,6 +97,18 @@ EXAMPLE_DOC_STRING = """
 """
 
 
+def _unwrap_pipeline_transformer(transformer):
+    while transformer is not None and transformer.__class__.__name__ != "FullyShardedDataParallel":
+        if hasattr(transformer, "_orig_mod"):
+            transformer = transformer._orig_mod
+            continue
+        if hasattr(transformer, "module"):
+            transformer = transformer.module
+            continue
+        break
+    return transformer
+
+
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
 def retrieve_latents(encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"):
     if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
@@ -236,6 +248,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
         vocoder: LTX2Vocoder,
     ):
         super().__init__()
+        transformer = _unwrap_pipeline_transformer(transformer)
 
         self.register_modules(
             vae=vae,
