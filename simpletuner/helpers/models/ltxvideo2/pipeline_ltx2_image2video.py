@@ -109,6 +109,15 @@ def _unwrap_pipeline_transformer(transformer):
     return transformer
 
 
+def _set_pipeline_transformer(pipeline, transformer):
+    transformer = _unwrap_pipeline_transformer(transformer)
+    pipeline.transformer = transformer
+    if transformer is not None:
+        pipeline.transformer_spatial_patch_size = transformer.config.patch_size
+        pipeline.transformer_temporal_patch_size = transformer.config.patch_size_t
+    return transformer
+
+
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
 def retrieve_latents(encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"):
     if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
@@ -1098,6 +1107,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
 
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
             callback_on_step_end_tensor_inputs = callback_on_step_end.tensor_inputs
+        _set_pipeline_transformer(self, self.transformer)
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
