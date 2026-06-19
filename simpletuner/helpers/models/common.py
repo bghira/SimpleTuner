@@ -1679,6 +1679,25 @@ class ModelFoundation(ABC):
                 except Exception:
                     continue
 
+    def _collect_wrapped_component_classes(self, component):
+        classes = set()
+        seen = set()
+
+        def visit(module):
+            if module is None or id(module) in seen:
+                return
+            seen.add(id(module))
+            module = self.unwrap_model(module)
+            classes.add(type(module))
+
+            for attr_name in ("module", "_orig_mod", "base_model", "model"):
+                child = getattr(module, attr_name, None)
+                if child is not module:
+                    visit(child)
+
+        visit(component)
+        return classes
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -1690,14 +1709,15 @@ class ModelFoundation(ABC):
         denoiser = None
         text_encoder_one_ = None
         text_encoder_two_ = None
+        denoiser_classes = self._collect_wrapped_component_classes(self.model)
+        if self.controlnet is not None:
+            denoiser_classes.update(self._collect_wrapped_component_classes(self.controlnet))
 
         while len(models) > 0:
             model = models.pop()
             unwrapped_model = self.unwrap_model(model)
 
-            if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
-                denoiser = model
-            elif isinstance(unwrapped_model, type(self.unwrap_model(self.controlnet))):
+            if isinstance(unwrapped_model, tuple(denoiser_classes)):
                 denoiser = model
             # If your text_encoders exist:
             elif (

@@ -83,6 +83,26 @@ def merge_safetensors_files(directory, metadata=None):
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
 
+def _collect_wrapped_component_classes(accelerator, component):
+    classes = set()
+    seen = set()
+
+    def visit(module):
+        if module is None or id(module) in seen:
+            return
+        seen.add(id(module))
+        module = unwrap_model(accelerator, module)
+        classes.add(type(module))
+
+        for attr_name in ("module", "_orig_mod", "base_model", "model"):
+            child = getattr(module, attr_name, None)
+            if child is not module:
+                visit(child)
+
+    visit(component)
+    return classes
+
+
 class SaveHookManager:
     def __init__(
         self,
@@ -452,7 +472,16 @@ class SaveHookManager:
             self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters, **ema_metadata)
             self.ema_model.restore(trainable_parameters)
 
-        trained_component_cls = type(unwrap_model(self.accelerator, self.model.get_trained_component()))
+        trained_component_classes = _collect_wrapped_component_classes(
+            self.accelerator,
+            self.model.get_trained_component(unwrap_model=False),
+        )
+        trained_component_classes.update(
+            _collect_wrapped_component_classes(
+                self.accelerator,
+                self.model.get_trained_component(base_model=True, unwrap_model=False),
+            )
+        )
         text_encoder_0_cls = None
         text_encoder_1_cls = None
 
@@ -471,13 +500,13 @@ class SaveHookManager:
             unwrapped_model = unwrap_model(self.accelerator, model)
             if self.args.controlnet and isinstance(
                 unwrapped_model,
-                trained_component_cls,
+                tuple(trained_component_classes),
             ):
                 # controlnet_lora_layers
                 controlnet_layers = get_peft_model_state_dict(unwrapped_model)
                 lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
                 modules_to_save["controlnet"] = unwrapped_model
-            elif isinstance(unwrapped_model, trained_component_cls):
+            elif isinstance(unwrapped_model, tuple(trained_component_classes)):
                 # unet_lora_layers or transformer_lora_layers
                 lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(unwrapped_model),

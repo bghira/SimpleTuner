@@ -780,16 +780,16 @@ class LTXVideo2(VideoModelFoundation):
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
             pipeline_instance = active_pipelines[pipeline_type]
-            if self.model is not None and getattr(pipeline_instance, self.MODEL_TYPE.value, None) is None:
-                model_for_pipeline = self.model
-                if model_for_pipeline is not None:
-                    try:
-                        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+            if self.model is not None:
+                pipeline_model = getattr(pipeline_instance, self.MODEL_TYPE.value, None)
+                model_for_pipeline = pipeline_model or self.model
+                try:
+                    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-                        if not isinstance(model_for_pipeline, FSDP):
-                            model_for_pipeline = self.unwrap_model(model=self.model)
-                    except Exception:
+                    if not isinstance(model_for_pipeline, FSDP):
                         model_for_pipeline = self.unwrap_model(model=self.model)
+                except Exception:
+                    model_for_pipeline = self.unwrap_model(model=self.model)
                 setattr(pipeline_instance, self.MODEL_TYPE.value, model_for_pipeline)
             return pipeline_instance
 
@@ -1713,6 +1713,16 @@ class LTXVideo2(VideoModelFoundation):
             ref_coords[:, 2, ...] *= spatial_scale
         return ref_coords
 
+    def _ltx2_transformer_module(self):
+        transformer = self.model
+        if hasattr(self, "accelerator"):
+            transformer = self.unwrap_model(model=self.model)
+        modules = getattr(transformer, "_modules", None)
+        while isinstance(modules, dict) and "module" in modules:
+            transformer = modules["module"]
+            modules = getattr(transformer, "_modules", None)
+        return transformer
+
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"]
         if noisy_latents.shape[1] != self.LATENT_CHANNEL_COUNT:
@@ -1759,8 +1769,9 @@ class LTXVideo2(VideoModelFoundation):
         num_frames = noisy_latents.shape[2]
         height = noisy_latents.shape[3]
         width = noisy_latents.shape[4]
-        patch_size = getattr(self.model.config, "patch_size", 1)
-        patch_size_t = getattr(self.model.config, "patch_size_t", 1)
+        transformer = self._ltx2_transformer_module()
+        patch_size = getattr(transformer.config, "patch_size", 1)
+        patch_size_t = getattr(transformer.config, "patch_size_t", 1)
 
         packed_target_noisy = pack_ltx2_latents(noisy_latents, patch_size, patch_size_t).to(self.config.weight_dtype)
         target_timesteps = self._normalize_audio_visual_timesteps(
@@ -1826,9 +1837,9 @@ class LTXVideo2(VideoModelFoundation):
             )
             combined_timesteps = torch.cat([ref_timesteps, target_timesteps], dim=1)
 
-            if getattr(self.model, "rope", None) is not None:
+            if getattr(transformer, "rope", None) is not None:
                 fps = self.config.framerate or 25
-                ref_coords = self.model.rope.prepare_video_coords(
+                ref_coords = transformer.rope.prepare_video_coords(
                     packed_noisy.shape[0],
                     ref_frames,
                     ref_height,
@@ -1836,7 +1847,7 @@ class LTXVideo2(VideoModelFoundation):
                     packed_noisy.device,
                     fps=fps,
                 )
-                target_coords = self.model.rope.prepare_video_coords(
+                target_coords = transformer.rope.prepare_video_coords(
                     packed_noisy.shape[0],
                     num_frames,
                     height,
@@ -2058,8 +2069,9 @@ class LTXVideo2(VideoModelFoundation):
         if target is None:
             raise ValueError("Target is None. Cannot compute LTX-2 video loss.")
         model_pred = model_output["model_prediction"]
-        patch_size = getattr(self.model.config, "patch_size", 1)
-        patch_size_t = getattr(self.model.config, "patch_size_t", 1)
+        transformer = self._ltx2_transformer_module()
+        patch_size = getattr(transformer.config, "patch_size", 1)
+        patch_size_t = getattr(transformer.config, "patch_size_t", 1)
         pred_tokens = pack_ltx2_latents(model_pred, patch_size, patch_size_t)
         target_tokens = pack_ltx2_latents(target, patch_size, patch_size_t).to(device=pred_tokens.device)
         loss_type = getattr(self.config, "loss_type", "l2")

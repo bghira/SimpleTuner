@@ -838,7 +838,7 @@ class Trainer:
             find_unused_cfg = getattr(self.config, "find_unused_parameters", None)
             if find_unused_cfg is not None:
                 accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=bool(find_unused_cfg)))
-            elif str(getattr(self.config, "model_family", "")).lower() == "hunyuanvideo":
+            elif str(getattr(self.config, "model_family", "")).lower() in {"hunyuanvideo", "ltxvideo2"}:
                 accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=True))
 
             if not will_create_dynamo_plugin and dynamo_backend_env:

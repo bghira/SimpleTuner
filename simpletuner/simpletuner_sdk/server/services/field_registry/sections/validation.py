@@ -950,7 +950,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Source device used to generate validation seeds",
             tooltip="Use CPU-based or GPU-based RNG when deriving validation seeds.",
             importance=ImportanceLevel.ADVANCED,
-            order=19,
+            order=20,
             subsection="advanced",
         )
     )

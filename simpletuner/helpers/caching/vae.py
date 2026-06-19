@@ -1937,6 +1937,20 @@ class VAECache(WebhookMixin):
         processed_images = self._list_cached_images()
         self.debug_log("Reading the cache and copying")
         aspect_bucket_cache = self.metadata_backend.read_cache().copy()
+        if self.local_unprocessed_files:
+            bucket_files = {filepath for files in aspect_bucket_cache.values() for filepath in files}
+            for filepath in self.local_unprocessed_files:
+                if filepath in bucket_files:
+                    continue
+                aspect_bucket = self.metadata_backend.get_metadata_attribute_by_filepath(
+                    filepath=filepath, attribute="aspect_bucket"
+                )
+                if aspect_bucket is None:
+                    aspect_bucket = self.metadata_backend.get_metadata_attribute_by_filepath(
+                        filepath=filepath, attribute="aspect_ratio"
+                    )
+                if aspect_bucket is not None:
+                    aspect_bucket_cache.setdefault(aspect_bucket, []).append(filepath)
 
         # Extract and shuffle the keys of the dictionary
         shuffled_keys = list(aspect_bucket_cache.keys())

@@ -23,7 +23,13 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import AttentionMixin, AttentionModuleMixin, FeedForward
-from diffusers.models.attention_dispatch import dispatch_attention_fn
+from diffusers.models.attention_dispatch import (
+    _HUB_KERNELS_REGISTRY,
+    AttentionBackendName,
+    _AttentionBackendRegistry,
+    _maybe_download_kernel_for_backend,
+    dispatch_attention_fn,
+)
 from diffusers.models.cache_utils import CacheMixin
 from diffusers.models.embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings, PixArtAlphaTextProjection
 from diffusers.models.modeling_utils import ModelMixin
@@ -43,6 +49,157 @@ from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+_LTX2_FLASH_ATTENTION_DTYPES = {torch.float16, torch.bfloat16}
+for _float8_name in ("float8_e4m3fn", "float8_e4m3fnuz"):
+    _float8_dtype = getattr(torch, _float8_name, None)
+    if _float8_dtype is not None:
+        _LTX2_FLASH_ATTENTION_DTYPES.add(_float8_dtype)
+
+
+def _ltx2_attention_dispatch_dtype(
+    query: torch.Tensor,
+    hidden_states: torch.Tensor,
+    attn: "LTX2Attention",
+) -> Optional[torch.dtype]:
+    if query.dtype in _LTX2_FLASH_ATTENTION_DTYPES:
+        return None
+
+    candidates = [hidden_states, getattr(getattr(attn, "to_q", None), "weight", None)]
+    for candidate in candidates:
+        dtype = getattr(candidate, "dtype", None)
+        if dtype in _LTX2_FLASH_ATTENTION_DTYPES:
+            return dtype
+    return None
+
+
+def _ltx2_cast_attention_inputs(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    hidden_states: torch.Tensor,
+    attn: "LTX2Attention",
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    dispatch_dtype = _ltx2_attention_dispatch_dtype(query, hidden_states, attn)
+    if dispatch_dtype is None:
+        return query, key, value
+    return query.to(dispatch_dtype), key.to(dispatch_dtype), value.to(dispatch_dtype)
+
+
+def _ltx2_active_attention_backend(backend: Optional[AttentionBackendName]) -> AttentionBackendName:
+    if backend is not None:
+        return AttentionBackendName(backend)
+    backend_name, _ = _AttentionBackendRegistry.get_active_backend()
+    return backend_name
+
+
+def _ltx2_normalize_varlen_mask(
+    attention_mask: Optional[torch.Tensor],
+    batch_size: int,
+    seq_len_kv: int,
+) -> Optional[torch.Tensor]:
+    if attention_mask is None:
+        return None
+    if attention_mask.dtype == torch.bool:
+        keep_mask = attention_mask
+    else:
+        keep_mask = attention_mask >= -9000.0
+
+    if keep_mask.ndim == 1:
+        keep_mask = keep_mask.unsqueeze(0).expand(batch_size, seq_len_kv)
+    elif keep_mask.ndim == 2:
+        keep_mask = keep_mask.expand(batch_size, seq_len_kv)
+    elif keep_mask.ndim == 3:
+        keep_mask = keep_mask.any(dim=1).expand(batch_size, seq_len_kv)
+    elif keep_mask.ndim == 4:
+        keep_mask = keep_mask.expand(batch_size, -1, -1, seq_len_kv).any(dim=(1, 2))
+    else:
+        raise ValueError(f"Unsupported LTX-2 varlen attention mask shape: {tuple(attention_mask.shape)}")
+
+    if keep_mask.shape != (batch_size, seq_len_kv):
+        raise ValueError(
+            f"LTX-2 varlen attention mask shape mismatch: got {tuple(keep_mask.shape)}, "
+            f"expected ({batch_size}, {seq_len_kv})"
+        )
+    return keep_mask
+
+
+def _ltx2_flash3_varlen_hub_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scale: Optional[float],
+    is_causal: bool,
+) -> torch.Tensor:
+    batch_size, seq_len_q, _, _ = query.shape
+    _, seq_len_kv, _, _ = key.shape
+    keep_mask = _ltx2_normalize_varlen_mask(attention_mask, batch_size, seq_len_kv)
+
+    seqlens_q = torch.full((batch_size,), seq_len_q, dtype=torch.int32, device=query.device)
+    if keep_mask is None:
+        seqlens_k = torch.full((batch_size,), seq_len_kv, dtype=torch.int32, device=query.device)
+        key_packed = key.flatten(0, 1)
+        value_packed = value.flatten(0, 1)
+    else:
+        seqlens_k = keep_mask.sum(dim=1, dtype=torch.int32)
+        if torch.any(seqlens_k == 0):
+            raise ValueError("LTX-2 varlen attention received a mask with no valid key/value tokens.")
+        key_packed = torch.cat([key[idx, keep_mask[idx]] for idx in range(batch_size)], dim=0)
+        value_packed = torch.cat([value[idx, keep_mask[idx]] for idx in range(batch_size)], dim=0)
+
+    cu_seqlens_q = torch.zeros(batch_size + 1, dtype=torch.int32, device=query.device)
+    cu_seqlens_k = torch.zeros(batch_size + 1, dtype=torch.int32, device=query.device)
+    cu_seqlens_q[1:] = torch.cumsum(seqlens_q, dim=0)
+    cu_seqlens_k[1:] = torch.cumsum(seqlens_k, dim=0)
+
+    _maybe_download_kernel_for_backend(AttentionBackendName._FLASH_3_VARLEN_HUB)
+    func = _HUB_KERNELS_REGISTRY[AttentionBackendName._FLASH_3_VARLEN_HUB].kernel_fn
+    output = func(
+        q=query.flatten(0, 1),
+        k=key_packed,
+        v=value_packed,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=int(seqlens_q.max().item()),
+        max_seqlen_k=int(seqlens_k.max().item()),
+        softmax_scale=scale,
+        causal=is_causal,
+    )
+    if isinstance(output, tuple):
+        output = output[0]
+    return output.unflatten(0, (batch_size, seq_len_q))
+
+
+def _ltx2_dispatch_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    backend: Optional[AttentionBackendName],
+    parallel_config,
+) -> torch.Tensor:
+    backend_name = _ltx2_active_attention_backend(backend)
+    if backend_name == AttentionBackendName._FLASH_3_VARLEN_HUB:
+        return _ltx2_flash3_varlen_hub_attention(
+            query=query,
+            key=key,
+            value=value,
+            attention_mask=attention_mask,
+            scale=None,
+            is_causal=False,
+        )
+    return dispatch_attention_fn(
+        query,
+        key,
+        value,
+        attn_mask=attention_mask,
+        dropout_p=0.0,
+        is_causal=False,
+        backend=backend,
+        parallel_config=parallel_config,
+    )
 
 
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
@@ -227,14 +384,13 @@ class LTX2AudioVideoAttnProcessor:
         query = query.unflatten(2, (attn.heads, -1))
         key = key.unflatten(2, (attn.heads, -1))
         value = value.unflatten(2, (attn.heads, -1))
+        query, key, value = _ltx2_cast_attention_inputs(query, key, value, hidden_states, attn)
 
-        hidden_states = dispatch_attention_fn(
+        hidden_states = _ltx2_dispatch_attention(
             query,
             key,
             value,
-            attn_mask=attention_mask,
-            dropout_p=0.0,
-            is_causal=False,
+            attention_mask=attention_mask,
             backend=self._attention_backend,
             parallel_config=self._parallel_config,
         )
@@ -313,14 +469,13 @@ class LTX2PerturbedAttnProcessor:
             query = query.unflatten(2, (attn.heads, -1))
             key = key.unflatten(2, (attn.heads, -1))
             value = value.unflatten(2, (attn.heads, -1))
+            query, key, value = _ltx2_cast_attention_inputs(query, key, value, hidden_states, attn)
 
-            hidden_states = dispatch_attention_fn(
+            hidden_states = _ltx2_dispatch_attention(
                 query,
                 key,
                 value,
-                attn_mask=attention_mask,
-                dropout_p=0.0,
-                is_causal=False,
+                attention_mask=attention_mask,
                 backend=self._attention_backend,
                 parallel_config=self._parallel_config,
             )
