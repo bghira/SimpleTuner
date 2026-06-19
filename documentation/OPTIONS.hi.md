@@ -875,7 +875,7 @@ Different models different conditioning data expect करते हैं:
   - `ltx2_prefix_conditioning_probability`, `ltx2_prefix_conditioning_frames`, `ltx2_suffix_conditioning_probability`, `ltx2_suffix_conditioning_frames`, `ltx2_first_frame_conditioning_probability`, `ltx2_mask_conditioning_probability`: intrinsic conditions जोड़ने वाली shorthand keys।
   - `ltx2_reference_spatial_scale_factor`, `ltx2_reference_temporal_scale_factor`: IC-LoRA reference coordinate scaling के optional overrides। unset होने पर spatial scale reference/target latent sizes से infer होता है।
 - **Why**: LTX-2 intrinsic conditions selected target tokens को clean latents से replace करते हैं, उनके token timesteps को 0 करते हैं, और उन्हें video loss से हटाते हैं। `mask` में value `1` का अर्थ clean conditioning/no loss है।
-- **Note**: ये JSON/TOML config fields हैं, CLI flags नहीं। इन LTX-2 modes के dataset template और WebUI controls इस model-level support से अलग हैं।
+- **Note**: ये settings JSON/TOML config fields या matching `--ltx2_*` CLI flags के जरिए दी जा सकती हैं। इन LTX-2 modes के dataset template और WebUI controls इस model-level support से अलग हैं।
 
 ---
 

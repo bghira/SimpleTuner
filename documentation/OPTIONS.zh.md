@@ -879,7 +879,7 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
   - `ltx2_prefix_conditioning_probability`、`ltx2_prefix_conditioning_frames`、`ltx2_suffix_conditioning_probability`、`ltx2_suffix_conditioning_frames`、`ltx2_first_frame_conditioning_probability`、`ltx2_mask_conditioning_probability`：添加内在条件的简写键。
   - `ltx2_reference_spatial_scale_factor`、`ltx2_reference_temporal_scale_factor`：IC-LoRA 参考坐标缩放的可选覆盖。未设置时会从 reference/target latent 尺寸推断空间缩放。
 - **原因**：LTX-2 内在条件会用 clean latent 替换选中的目标 token，将这些 token 的 timestep 设为 0，并从 video loss 中移除。对于 `mask`，值 `1` 表示 clean conditioning/no loss。
-- **说明**：这些是 JSON/TOML 配置字段，不是 CLI flag。这些 LTX-2 模式的数据集模板和 WebUI 控件与此模型层支持是独立工作。
+- **说明**：这些设置可以作为 JSON/TOML 配置字段提供，也可以通过对应的 `--ltx2_*` CLI flag 提供。这些 LTX-2 模式的数据集模板和 WebUI 控件与此模型层支持是独立工作。
 
 ---
 

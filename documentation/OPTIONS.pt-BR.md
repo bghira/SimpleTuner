@@ -873,7 +873,7 @@ Diferentes modelos esperam diferentes dados de conditioning:
   - `ltx2_prefix_conditioning_probability`, `ltx2_prefix_conditioning_frames`, `ltx2_suffix_conditioning_probability`, `ltx2_suffix_conditioning_frames`, `ltx2_first_frame_conditioning_probability`, `ltx2_mask_conditioning_probability`: chaves curtas que adicionam condicoes intrinsecas.
   - `ltx2_reference_spatial_scale_factor`, `ltx2_reference_temporal_scale_factor`: overrides opcionais para escala de coordenadas de referencia IC-LoRA. A escala espacial e inferida pelos tamanhos latentes de referencia/alvo quando omitida.
 - **Por que**: Condicoes intrinsecas do LTX-2 substituem tokens alvo selecionados por latentes limpos, definem seus timesteps por token como 0 e os removem da perda de video. Para `mask`, valor `1` significa condicionamento limpo/sem perda.
-- **Nota**: Sao campos JSON/TOML de configuracao, nao flags CLI. Templates de dataset e controles WebUI para esses modos LTX-2 sao separados deste suporte no nivel do modelo.
+- **Nota**: Essas configuracoes podem ser fornecidas como campos JSON/TOML ou pelos flags CLI `--ltx2_*` correspondentes. Templates de dataset e controles WebUI para esses modos LTX-2 sao separados deste suporte no nivel do modelo.
 
 ---
 
