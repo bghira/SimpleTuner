@@ -1679,6 +1679,25 @@ class ModelFoundation(ABC):
                 except Exception:
                     continue
 
+    def _collect_wrapped_component_classes(self, component):
+        classes = set()
+        seen = set()
+
+        def visit(module):
+            if module is None or id(module) in seen:
+                return
+            seen.add(id(module))
+            module = self.unwrap_model(module)
+            classes.add(type(module))
+
+            for attr_name in ("module", "_orig_mod", "base_model", "model"):
+                child = getattr(module, attr_name, None)
+                if child is not module:
+                    visit(child)
+
+        visit(component)
+        return classes
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -1690,14 +1709,15 @@ class ModelFoundation(ABC):
         denoiser = None
         text_encoder_one_ = None
         text_encoder_two_ = None
+        denoiser_classes = self._collect_wrapped_component_classes(self.model)
+        if self.controlnet is not None:
+            denoiser_classes.update(self._collect_wrapped_component_classes(self.controlnet))
 
         while len(models) > 0:
             model = models.pop()
             unwrapped_model = self.unwrap_model(model)
 
-            if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
-                denoiser = model
-            elif isinstance(unwrapped_model, type(self.unwrap_model(self.controlnet))):
+            if isinstance(unwrapped_model, tuple(denoiser_classes)):
                 denoiser = model
             # If your text_encoders exist:
             elif (
@@ -2047,6 +2067,7 @@ class ModelFoundation(ABC):
         accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
         base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
         torchao_quantized = "torchao" in base_precision
+        quanto_quantized = "quanto" in base_precision
         should_configure_offload = (
             self.group_offload_requested()
             and accelerator_device is not None
@@ -2060,6 +2081,7 @@ class ModelFoundation(ABC):
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
                 torchao_quantized,
+                quanto_quantized,
             ]
         )
 
@@ -2070,6 +2092,11 @@ class ModelFoundation(ABC):
         elif self.model is not None and torchao_quantized:
             logger.info(
                 "Skipping model.to(%s) for TorchAO-quantized base model to avoid weight swap errors.",
+                target_device,
+            )
+        elif self.model is not None and quanto_quantized:
+            logger.info(
+                "Skipping model.to(%s) for Quanto-quantized base model to avoid QLinear weight swap errors.",
                 target_device,
             )
         if self.controlnet is not None and not skip_moving_trained_component:
@@ -3420,11 +3447,7 @@ class ModelFoundation(ABC):
                 pipeline_kwargs["scheduler"] = scheduler
 
         base_scheduler = getattr(self, "noise_schedule", None)
-        if (
-            "scheduler" not in pipeline_kwargs
-            and base_scheduler is not None
-            and not self.requires_special_scheduler_setup()
-        ):
+        if "scheduler" not in pipeline_kwargs and base_scheduler is not None and not self.requires_special_scheduler_setup():
             try:
                 pipeline_kwargs["scheduler"] = base_scheduler.__class__.from_config(base_scheduler.config)
             except Exception:

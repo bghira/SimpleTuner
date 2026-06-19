@@ -14,10 +14,21 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 logger = logging.getLogger(__name__)
 
 
+def _resolve_ffmpeg_path():
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path is not None:
+        return ffmpeg_path
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return None
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
 def _mux_audio_into_video(video_path, audio, sample_rate):
     if sample_rate is None:
         raise ValueError("audio_sample_rate is required to mux validation audio into video.")
-    ffmpeg_path = shutil.which("ffmpeg")
+    ffmpeg_path = _resolve_ffmpeg_path()
     if ffmpeg_path is None:
         raise RuntimeError("ffmpeg is required to mux validation audio into video.")
 

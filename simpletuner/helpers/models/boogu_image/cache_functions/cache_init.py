@@ -4,6 +4,7 @@
 # Original work: TaylorSeer (Shenyi-Z), taylorseer_flux/cache_functions/cache_init.py
 # Source: https://github.com/Shenyi-Z/TaylorSeer/blob/main/TaylorSeers-xDiT/taylorseer_flux/cache_functions/cache_init.py
 
+
 # Type hinting would cause circular import, self should be `BooguImagePipeline`
 def cache_init(self, num_steps: int):
     """

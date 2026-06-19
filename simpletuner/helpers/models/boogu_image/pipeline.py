@@ -11,29 +11,20 @@ import torch
 import torch.nn.functional as F
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.utils import (
-    BaseOutput,
-    is_torch_xla_available,
-    logging,
-)
+from diffusers.utils import BaseOutput, is_torch_xla_available, logging
 from diffusers.utils.torch_utils import randn_tensor
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
-from .instruct_reasoner_static_skills import (
-    InstructionReasonerStaticRewriteSkills,
-)
 from .image_processor import BooguImageProcessor
+from .instruct_reasoner_static_skills import InstructionReasonerStaticRewriteSkills
+from .lora_pipeline import BooguImageLoraLoaderMixin
+from .rope import BooguImageRotaryPosEmbed
 
 # from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from .schedulers.scheduling_flow_match_euler_discrete_time_shifting import (
-    FlowMatchEulerDiscreteScheduler,
-)
+from .schedulers.scheduling_flow_match_euler_discrete_time_shifting import FlowMatchEulerDiscreteScheduler
 from .utils.teacache_util import TeaCacheParams
 from .utils.validator_utils import get_device_validator
-
-from .rope import BooguImageRotaryPosEmbed
-from .lora_pipeline import BooguImageLoraLoaderMixin
 
 if is_torch_xla_available():
     XLA_AVAILABLE = True
@@ -121,15 +112,11 @@ class MomentumRollingSum:
         self.rolling_sum = 0
 
     def update(self, current_step: torch.Tensor):
-        self.rolling_sum = (
-            self.current_weight * current_step + self.momentum_weight * self.rolling_sum
-        )
+        self.rolling_sum = self.current_weight * current_step + self.momentum_weight * self.rolling_sum
         return self.rolling_sum
 
     @staticmethod
-    def _append_and_save(
-        path: str, buffer: List[torch.Tensor], value: torch.Tensor
-    ) -> None:
+    def _append_and_save(path: str, buffer: List[torch.Tensor], value: torch.Tensor) -> None:
         """Append a tensor to list and persist it to disk."""
         save_path = Path(path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,17 +194,11 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         # Now it is safe to set additional attributes
         self.text_instruction_rewriter = _text_rewriter_model
-        self.instruction_rewriter_processor = (
-            _rewriter_processor if _rewriter_processor is not None else None
-        )
+        self.instruction_rewriter_processor = _rewriter_processor if _rewriter_processor is not None else None
         self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if hasattr(self, "vae") and self.vae is not None
-            else 8
+            2 ** (len(self.vae.config.block_out_channels) - 1) if hasattr(self, "vae") and self.vae is not None else 8
         )
-        self.image_processor = BooguImageProcessor(
-            vae_scale_factor=self.vae_scale_factor * 2, do_resize=True
-        )
+        self.image_processor = BooguImageProcessor(vae_scale_factor=self.vae_scale_factor * 2, do_resize=True)
         self.default_sample_size = 128
 
         self.MASK_VISION_TOKENS_FEATURE: bool = False
@@ -229,30 +210,24 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         self.SYSTEM_PROMPT_4_T2I_UNIFIED = "You are a helpful assistant that generates high-quality images based on user instructions. The instructions are as follows."
 
         self.SYSTEM_PROMPT_4_T2I = self.SYSTEM_PROMPT_4_T2I_UNIFIED
-        self.SYSTEM_PROMPT_DROP = self.SYSTEM_PROMPT_4_TI2I_UNIFIED  # This is for empty negative instruction for image guidance in double guidance.
+        self.SYSTEM_PROMPT_DROP = (
+            self.SYSTEM_PROMPT_4_TI2I_UNIFIED
+        )  # This is for empty negative instruction for image guidance in double guidance.
         self.SYSTEM_PROMPT_4_TI2I = self.SYSTEM_PROMPT_4_TI2I_UNIFIED
         self.SYSTEM_PROMPT_4_I2I = self.SYSTEM_PROMPT_4_TI2I_UNIFIED
 
         self.static_rewrite_skills = InstructionReasonerStaticRewriteSkills()
-        self.REWRITE_SYSTEM_PROMPT_ZH = (
-            self.static_rewrite_skills.get_default_rewrite_system_prompt(
-                task_type="image-generation", language="zh"
-            )
+        self.REWRITE_SYSTEM_PROMPT_ZH = self.static_rewrite_skills.get_default_rewrite_system_prompt(
+            task_type="image-generation", language="zh"
         )
-        self.REWRITE_SYSTEM_PROMPT_EN = (
-            self.static_rewrite_skills.get_default_rewrite_system_prompt(
-                task_type="image-generation", language="en"
-            )
+        self.REWRITE_SYSTEM_PROMPT_EN = self.static_rewrite_skills.get_default_rewrite_system_prompt(
+            task_type="image-generation", language="en"
         )
-        self.REWRITE_SYSTEM_PROMPT_4_EDIT_ZH = (
-            self.static_rewrite_skills.get_default_rewrite_system_prompt(
-                task_type="image-editing", language="zh"
-            )
+        self.REWRITE_SYSTEM_PROMPT_4_EDIT_ZH = self.static_rewrite_skills.get_default_rewrite_system_prompt(
+            task_type="image-editing", language="zh"
         )
-        self.REWRITE_SYSTEM_PROMPT_4_EDIT_EN = (
-            self.static_rewrite_skills.get_default_rewrite_system_prompt(
-                task_type="image-editing", language="en"
-            )
+        self.REWRITE_SYSTEM_PROMPT_4_EDIT_EN = self.static_rewrite_skills.get_default_rewrite_system_prompt(
+            task_type="image-editing", language="en"
         )
 
         self.user_set_pipe_device = None
@@ -272,11 +247,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         rewriter_device: Literal[None, "cpu", "cuda", "cuda:x", "auto"] = "cpu",
     ):
         device = device.lower() if isinstance(device, str) else device
-        rewriter_device = (
-            rewriter_device.lower()
-            if isinstance(rewriter_device, str)
-            else rewriter_device
-        )
+        rewriter_device = rewriter_device.lower() if isinstance(rewriter_device, str) else rewriter_device
 
         device_validator = get_device_validator()
         rewriter_device_validator = get_device_validator(["auto"])
@@ -317,10 +288,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         )
 
         if use_dashscope_remote_rewriting:
-            assert (
-                dashscope_api_key is not None
-                and "xxxxxxxxxxxxxxxxxxxxxxxxxx" not in str(dashscope_api_key)
-            ), (
+            assert dashscope_api_key is not None and "xxxxxxxxxxxxxxxxxxxxxxxxxx" not in str(dashscope_api_key), (
                 "When use_dashscope_remote_rewriting=True, dashscope_api_key must be a valid key and must not be "
                 "the placeholder value. "
                 f"Got dashscope_api_key={dashscope_api_key!r}."
@@ -429,13 +397,8 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         if instant_rewriter_device is not None:
             if self.text_instruction_rewriter is not None:
-                current_rewriter_device = str(
-                    self.text_instruction_rewriter.device
-                ).lower()
-                if (
-                    current_rewriter_device in {"meta", "auto"}
-                    and instant_rewriter_device == "auto"
-                ):
+                current_rewriter_device = str(self.text_instruction_rewriter.device).lower()
+                if current_rewriter_device in {"meta", "auto"} and instant_rewriter_device == "auto":
                     print(
                         "[Device Manager Info]: The instruction rewriter is already managed by an auto/meta "
                         f"device strategy, so no rewriter device move is needed. "
@@ -444,10 +407,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     )
                     instant_rewriter_device = None
 
-                elif (
-                    current_rewriter_device in {"meta", "auto"}
-                    and instant_rewriter_device != "auto"
-                ):
+                elif current_rewriter_device in {"meta", "auto"} and instant_rewriter_device != "auto":
                     warnings.warn(
                         "[Device Manager Warning]: The instruction rewriter is currently managed by an auto/meta "
                         "device strategy and cannot be moved to a specific device with `.to(...)`. "
@@ -458,10 +418,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     )
                     instant_rewriter_device = None
 
-                elif (
-                    current_rewriter_device not in {"meta", "auto"}
-                    and instant_rewriter_device == "auto"
-                ):
+                elif current_rewriter_device not in {"meta", "auto"} and instant_rewriter_device == "auto":
                     warnings.warn(
                         "[Device Manager Warning]: The instruction rewriter is currently on a concrete device and "
                         "cannot be moved to `auto` after initialization. If multi-GPU auto placement is needed, "
@@ -489,7 +446,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         else:
             my_new_mllm = mllm
 
-        ########################default###########################
+        # ########################default###########################
         # # 1. Replace the instance attribute so inference and `.to("cuda")` work correctly.
         # self.mllm = my_new_mllm
 
@@ -572,9 +529,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         """processor's setter"""
         assert processor is not None, "`processor` must not be None."
 
-        share_rewriter_and_base_processor = getattr(
-            self, "instruction_rewriter_processor", None
-        ) is getattr(self, "processor", None)
+        share_rewriter_and_base_processor = getattr(self, "instruction_rewriter_processor", None) is getattr(
+            self, "processor", None
+        )
 
         # Re-register the processor so both the instance attribute and pipeline config stay in sync.
         self.register_modules(processor=processor)
@@ -627,14 +584,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         if device is not None:
             self.transformer.to(device)
-            print(
-                "[Setter Info]: `self.transformer` has been moved to the requested device. "
-                f"device={device!r}."
-            )
+            print("[Setter Info]: `self.transformer` has been moved to the requested device. " f"device={device!r}.")
 
-    def set_custom_local_instruction_rewriter_model(
-        self, custom_local_instruction_rewriter_model, device=None
-    ):
+    def set_custom_local_instruction_rewriter_model(self, custom_local_instruction_rewriter_model, device=None):
         assert (
             hasattr(custom_local_instruction_rewriter_model, "lm_head")
             and hasattr(custom_local_instruction_rewriter_model, "generate")
@@ -657,9 +609,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
     def set_instruction_rewriter_processor(self, instruction_rewriter_processor):
         """Set the processor used by the local instruction rewriter."""
-        assert instruction_rewriter_processor is not None, (
-            "`instruction_rewriter_processor` must not be None."
-        )
+        assert instruction_rewriter_processor is not None, "`instruction_rewriter_processor` must not be None."
 
         # Processors are CPU-side tokenization/template/image-preprocessing objects, not device modules.
         self.instruction_rewriter_processor = instruction_rewriter_processor
@@ -699,34 +649,20 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         if device is not None:
             self.prompt_embedding.to(device)
-            print(
-                "[Setter Info]: `self.prompt_embedding` has been moved to the requested device. "
-                f"device={device!r}."
-            )
+            print("[Setter Info]: `self.prompt_embedding` has been moved to the requested device. " f"device={device!r}.")
 
-    def set_rewrite_system_prompts_for_step(
-        self, step: int, rewrite_system_prompts_list: List[Dict[Tuple[str, str], str]]
-    ):
+    def set_rewrite_system_prompts_for_step(self, step: int, rewrite_system_prompts_list: List[Dict[Tuple[str, str], str]]):
         assert (
-            isinstance(rewrite_system_prompts_list, list)
-            and len(rewrite_system_prompts_list) > 0
+            isinstance(rewrite_system_prompts_list, list) and len(rewrite_system_prompts_list) > 0
         ), "`rewrite_system_prompts_list` should be a list and not empty."
-        assert step >= 0 and step < len(rewrite_system_prompts_list), (
-            f"`step` should be an integer between 0 and {len(rewrite_system_prompts_list) - 1}."
-        )
+        assert step >= 0 and step < len(
+            rewrite_system_prompts_list
+        ), f"`step` should be an integer between 0 and {len(rewrite_system_prompts_list) - 1}."
 
-        self.REWRITE_SYSTEM_PROMPT_ZH = rewrite_system_prompts_list[step][
-            ("zh", "image-generation")
-        ]
-        self.REWRITE_SYSTEM_PROMPT_EN = rewrite_system_prompts_list[step][
-            ("en", "image-generation")
-        ]
-        self.REWRITE_SYSTEM_PROMPT_4_EDIT_ZH = rewrite_system_prompts_list[step][
-            ("zh", "image-editing")
-        ]
-        self.REWRITE_SYSTEM_PROMPT_4_EDIT_EN = rewrite_system_prompts_list[step][
-            ("en", "image-editing")
-        ]
+        self.REWRITE_SYSTEM_PROMPT_ZH = rewrite_system_prompts_list[step][("zh", "image-generation")]
+        self.REWRITE_SYSTEM_PROMPT_EN = rewrite_system_prompts_list[step][("en", "image-generation")]
+        self.REWRITE_SYSTEM_PROMPT_4_EDIT_ZH = rewrite_system_prompts_list[step][("zh", "image-editing")]
+        self.REWRITE_SYSTEM_PROMPT_4_EDIT_EN = rewrite_system_prompts_list[step][("en", "image-editing")]
 
     def _is_encoder_equals_reasoner(self):
         def _collect_candidates(obj):
@@ -738,16 +674,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     candidates.append(model_obj)
             return candidates
 
-        rewriter_candidates = _collect_candidates(
-            getattr(self, "text_instruction_rewriter", None)
-        )
+        rewriter_candidates = _collect_candidates(getattr(self, "text_instruction_rewriter", None))
         mllm_candidates = _collect_candidates(getattr(self, "mllm", None))
 
-        return any(
-            rw_obj is mm_obj
-            for rw_obj in rewriter_candidates
-            for mm_obj in mllm_candidates
-        )
+        return any(rw_obj is mm_obj for rw_obj in rewriter_candidates for mm_obj in mllm_candidates)
 
     def unload_instruction_rewriter_resources(self):
         """
@@ -777,9 +707,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     try:
                         from accelerate.hooks import remove_hook_from_module
 
-                        remove_hook_from_module(
-                            self.text_instruction_rewriter, recurse=True
-                        )
+                        remove_hook_from_module(self.text_instruction_rewriter, recurse=True)
                     except Exception:
                         pass
 
@@ -863,9 +791,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
         return latents
@@ -907,25 +833,17 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if input_pil_images is None or len(input_pil_images) <= 0:
             return input_pil_images
 
-        assert isinstance(input_pil_images, list), (
-            "`input_pil_images` should be a list."
-        )
-        assert all(isinstance(x, PIL.Image.Image) for x in input_pil_images), (
-            "`input_pil_images` should be a list of PIL.Image.Image."
-        )
+        assert isinstance(input_pil_images, list), "`input_pil_images` should be a list."
+        assert all(
+            isinstance(x, PIL.Image.Image) for x in input_pil_images
+        ), "`input_pil_images` should be a list of PIL.Image.Image."
 
         processed_input_pil_images = []
         for image in input_pil_images:
             if crops_coords is not None:
                 image = [i.crop(crops_coords) for i in image]
-            height, width = self.image_processor.get_new_height_width(
-                image, height, width, max_pixels, max_side_length
-            )
-            processed_input_pil_images.append(
-                self.image_processor.resize(
-                    image, height, width, resize_mode=resize_mode
-                )
-            )
+            height, width = self.image_processor.get_new_height_width(image, height, width, max_pixels, max_side_length)
+            processed_input_pil_images.append(self.image_processor.resize(image, height, width, resize_mode=resize_mode))
         return processed_input_pil_images
 
     def prepare_image(
@@ -952,14 +870,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             List[Optional[torch.FloatTensor]]: List of encoded latent representations for each image.
         """
 
-        success, max_images_per_sample, wrapped_input_images = (
-            self._check_and_wrap_input_images(images)
-        )
+        success, max_images_per_sample, wrapped_input_images = self._check_and_wrap_input_images(images)
 
         if wrapped_input_images is not None:
-            assert len(wrapped_input_images) == batch_size, (
-                "`wrapped_input_images` should be List[List[PIL.Image.Image]] and the `len(wrapped_input_images)` should be equal to `batch_size`."
-            )
+            assert (
+                len(wrapped_input_images) == batch_size
+            ), "`wrapped_input_images` should be List[List[PIL.Image.Image]] and the `len(wrapped_input_images)` should be equal to `batch_size`."
         else:
             wrapped_input_images = [None] * batch_size
 
@@ -973,12 +889,8 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         num_images=len(img),
                         max_input_image_pixels=max_input_image_pixels,
                     )
-                    img_j = self.image_processor.preprocess(
-                        img_j, max_pixels=max_pixels, max_side_length=max_side_length
-                    )
-                    ref_latents.append(
-                        self.encode_vae(img_j.to(device=device)).squeeze(0)
-                    )
+                    img_j = self.image_processor.preprocess(img_j, max_pixels=max_pixels, max_side_length=max_side_length)
+                    ref_latents.append(self.encode_vae(img_j.to(device=device)).squeeze(0))
             else:
                 ref_latents = None
 
@@ -991,9 +903,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         self,
         input_images: Any,
         treat_empty_list_as_none: bool = False,
-    ) -> Tuple[
-        bool, int, Optional[Union[List[List[PIL.Image.Image]], List[List[str]]]]
-    ]:
+    ) -> Tuple[bool, int, Optional[Union[List[List[PIL.Image.Image]], List[List[str]]]]]:
         """
         Normalize input_images into a two-level batch structure with per-sample lists:
             - List[List[PIL.Image.Image]]  or
@@ -1044,18 +954,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             return isinstance(x, list) and all(is_path(i) for i in x)
 
         def is_list_of_list_of_pil_images(x: Any) -> bool:
-            return (
-                isinstance(x, list)
-                and len(x) > 0
-                and all(is_list_of_pil_images(i) for i in x)
-            )
+            return isinstance(x, list) and len(x) > 0 and all(is_list_of_pil_images(i) for i in x)
 
         def is_list_of_list_of_paths(x: Any) -> bool:
-            return (
-                isinstance(x, list)
-                and len(x) > 0
-                and all(is_list_of_paths(i) for i in x)
-            )
+            return isinstance(x, list) and len(x) > 0 and all(is_list_of_paths(i) for i in x)
 
         def is_batch_two_level_with_none(x: Any) -> bool:
             """
@@ -1110,8 +1012,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         # Case 2c: Flat batch where elements can be PIL/str/None
         if isinstance(input_images, list) and all(
-            (is_pil_image(x) or is_path(x) or x is None or (isinstance(x, list)))
-            for x in input_images
+            (is_pil_image(x) or is_path(x) or x is None or (isinstance(x, list))) for x in input_images
         ):
             wrapped: List[Optional[List[Any]]] = []
             max_len = 0
@@ -1226,9 +1127,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             if hook_device is not None:
                 return torch.device(hook_device)
 
-            for tensor in list(module.parameters(recurse=True)) + list(
-                module.buffers(recurse=True)
-            ):
+            for tensor in list(module.parameters(recurse=True)) + list(module.buffers(recurse=True)):
                 if tensor.device.type != "meta":
                     return tensor.device
 
@@ -1246,11 +1145,8 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         else:
             # Validate shape: outer length must match batch_size
             assert (
-                isinstance(input_pil_images, list)
-                and len(input_pil_images) == batch_size
-            ), (
-                "When provided, `input_pil_images` must be a List[List[PIL.Image.Image]] with len == batch size."
-            )
+                isinstance(input_pil_images, list) and len(input_pil_images) == batch_size
+            ), "When provided, `input_pil_images` must be a List[List[PIL.Image.Image]] with len == batch size."
             for imgs in input_pil_images:
                 if imgs and len(imgs) > 0:
                     # Determine per-sample max_pixels as in dataset logic:
@@ -1259,9 +1155,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     # - If None, do not constrain by pixels
                     max_pixels_i: Optional[int] = None
                     if isinstance(max_vlm_input_pil_pixels, (list, tuple)):
-                        assert len(max_vlm_input_pil_pixels) >= len(imgs), (
-                            "`max_vlm_input_pil_pixels` length must be >= number of images in each sample"
-                        )
+                        assert len(max_vlm_input_pil_pixels) >= len(
+                            imgs
+                        ), "`max_vlm_input_pil_pixels` length must be >= number of images in each sample"
                         max_pixels_i = int(max_vlm_input_pil_pixels[len(imgs) - 1])
                     elif isinstance(max_vlm_input_pil_pixels, int):
                         max_pixels_i = max_vlm_input_pil_pixels
@@ -1303,9 +1199,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             tokenize=True,
             return_dict=True,
         )
-        move_vlm_inputs_to_device = not (
-            use_prompt_tuning_embedding and has_offload_strategy
-        )
+        move_vlm_inputs_to_device = not (use_prompt_tuning_embedding and has_offload_strategy)
         for k in vlm_inputs.keys():
             if isinstance(vlm_inputs[k], torch.Tensor) and move_vlm_inputs_to_device:
                 vlm_inputs[k] = vlm_inputs[k].to(device)
@@ -1314,19 +1208,15 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         instruction_mask = vlm_inputs["attention_mask"]
 
         if use_prompt_tuning_embedding:
-            num_instruction_feature_layers = (
-                self.transformer.instruction_feature_configs.get(
-                    "num_instruction_feature_layers", 1
-                )
+            num_instruction_feature_layers = self.transformer.instruction_feature_configs.get(
+                "num_instruction_feature_layers", 1
             )
-            num_trainable_prompt_tokens = self.prompt_embedding.config.get(
-                "num_trainable_prompt_tokens", 32
-            )
+            num_trainable_prompt_tokens = self.prompt_embedding.config.get("num_trainable_prompt_tokens", 32)
             use_causal_mask = self.prompt_embedding.config.get("use_causal_mask", True)
 
-            assert self.prompt_embedding is not None, (
-                "When `use_prompt_tuning_embedding=True`, `self.prompt_embedding` must be well set and should not be None."
-            )
+            assert (
+                self.prompt_embedding is not None
+            ), "When `use_prompt_tuning_embedding=True`, `self.prompt_embedding` must be well set and should not be None."
             print("Using prompt tuning enhanced text feature extraction")
 
             # Step 1: Get input embeddings from the text encoder.
@@ -1339,9 +1229,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 "cpu" if has_offload_strategy else device,
             )
             with torch.no_grad():
-                input_embeds = input_embedding_layer(
-                    input_ids.to(input_embedding_device)
-                )  # [B, seq_len, text_hidden_dim]
+                input_embeds = input_embedding_layer(input_ids.to(input_embedding_device))  # [B, seq_len, text_hidden_dim]
 
             # Step 2: Get trainable prompt embeddings
             prompt_embedding_device = _module_execution_device(
@@ -1368,9 +1256,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
             # Step 3: Concatenate prompt embeddings to the front of input embeddings
             # [B, num_prompt_tokens + seq_len, text_hidden_dim]
-            trainable_prompt_embeds = trainable_prompt_embeds.to(
-                device=input_embeds.device, dtype=input_embeds.dtype
-            )
+            trainable_prompt_embeds = trainable_prompt_embeds.to(device=input_embeds.device, dtype=input_embeds.dtype)
             combined_embeds = torch.cat([trainable_prompt_embeds, input_embeds], dim=1)
 
             # Step 4: Create extended attention mask for prompt tokens
@@ -1393,37 +1279,25 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 vlm_inputs["attention_mask"] = final_instruction_mask
                 if "input_ids" in vlm_inputs:
                     del vlm_inputs["input_ids"]
-                text_encoder_outputs = self.mllm(
-                    **vlm_inputs, output_hidden_states=True, return_dict=True
-                )
+                text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
 
                 # Get all hidden states from all layers
-                all_hidden_states = (
-                    text_encoder_outputs.hidden_states
-                )  # Tuple of [B, extended_seq_len, text_hidden_dim]
+                all_hidden_states = text_encoder_outputs.hidden_states  # Tuple of [B, extended_seq_len, text_hidden_dim]
 
                 # Convert to list for model processing
-                instruction_feats = list(all_hidden_states)[
-                    -num_instruction_feature_layers:
-                ]
+                instruction_feats = list(all_hidden_states)[-num_instruction_feature_layers:]
             else:
                 try:
                     vlm_inputs["inputs_embeds"] = combined_embeds
                     vlm_inputs["attention_mask"] = final_instruction_mask
                     if "input_ids" in vlm_inputs:
                         del vlm_inputs["input_ids"]
-                    instruction_feats = self.mllm(
-                        **vlm_inputs, output_hidden_states=False
-                    ).last_hidden_state
+                    instruction_feats = self.mllm(**vlm_inputs, output_hidden_states=False).last_hidden_state
                 except Exception as e:
-                    text_encoder_outputs = self.mllm(
-                        **vlm_inputs, output_hidden_states=True, return_dict=True
-                    )
+                    text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
 
                     # Get all hidden states from all layers
-                    all_hidden_states = (
-                        text_encoder_outputs.hidden_states
-                    )  # Tuple of [B, extended_seq_len, text_hidden_dim]
+                    all_hidden_states = text_encoder_outputs.hidden_states  # Tuple of [B, extended_seq_len, text_hidden_dim]
 
                     # Get last layer's feature for model processing
                     instruction_feats = all_hidden_states[-1]
@@ -1435,41 +1309,29 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     warnings.warn(f"{type(e).__name__}: {e}", UserWarning)
 
             print(f"✅ Prompt tuning: {num_prompt_tokens} trainable tokens added")
-            print(
-                f"✅ Extracted {num_instruction_feature_layers} layers of instruction features"
-            )
+            print(f"✅ Extracted {num_instruction_feature_layers} layers of instruction features")
             print(
                 f"✅ Each layer shape: {instruction_feats[0].shape if isinstance(instruction_feats, list) else instruction_feats.shape}"
             )
 
         else:
-            num_instruction_feature_layers = (
-                self.transformer.instruction_feature_configs.get(
-                    "num_instruction_feature_layers", 1
-                )
+            num_instruction_feature_layers = self.transformer.instruction_feature_configs.get(
+                "num_instruction_feature_layers", 1
             )
             final_instruction_mask = instruction_mask
 
             with torch.no_grad():
                 if num_instruction_feature_layers > 1:
-                    text_encoder_outputs = self.mllm(
-                        **vlm_inputs, output_hidden_states=True, return_dict=True
-                    )
-                    all_hidden_states = (
-                        text_encoder_outputs.hidden_states
-                    )  # Tuple of [B, extended_seq_len, text_hidden_dim]
+                    text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
+                    all_hidden_states = text_encoder_outputs.hidden_states  # Tuple of [B, extended_seq_len, text_hidden_dim]
                     instruction_feats = list(all_hidden_states)[
                         -num_instruction_feature_layers:
                     ]  # Convert to list for model processing
                 else:
                     try:
-                        instruction_feats = self.mllm(
-                            **vlm_inputs, output_hidden_states=False
-                        ).last_hidden_state
+                        instruction_feats = self.mllm(**vlm_inputs, output_hidden_states=False).last_hidden_state
                     except Exception as e:
-                        text_encoder_outputs = self.mllm(
-                            **vlm_inputs, output_hidden_states=True, return_dict=True
-                        )
+                        text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
 
                         # Get all hidden states from all layers
                         all_hidden_states = (
@@ -1487,42 +1349,26 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         warnings.warn(f"{type(e).__name__}: {e}", UserWarning)
 
             print("✅ No prompt tuning: use the original instruction features")
-            print(
-                f"✅ Extracted {num_instruction_feature_layers} layers of instruction features"
-            )
+            print(f"✅ Extracted {num_instruction_feature_layers} layers of instruction features")
             print(
                 f"✅ Each layer shape: {instruction_feats[0].shape if isinstance(instruction_feats, list) else instruction_feats.shape}"
             )
 
         # Optionally remove vision-token features by truncation
-        if (
-            self.MASK_VISION_TOKENS_FEATURE
-            and (self.VISION_TOKEN_IDs is not None)
-            and len(self.VISION_TOKEN_IDs) > 0
-        ):
+        if self.MASK_VISION_TOKENS_FEATURE and (self.VISION_TOKEN_IDs is not None) and len(self.VISION_TOKEN_IDs) > 0:
             mask_device = input_ids.device
-            vision_ids = torch.as_tensor(
-                self.VISION_TOKEN_IDs, device=mask_device, dtype=input_ids.dtype
-            )
+            vision_ids = torch.as_tensor(self.VISION_TOKEN_IDs, device=mask_device, dtype=input_ids.dtype)
             vision_mask_core = torch.isin(input_ids, vision_ids)  # [B, L_core]
-            keep_core_mask = instruction_mask.to(dtype=torch.bool) & (
-                ~vision_mask_core
-            )  # [B, L_core]
+            keep_core_mask = instruction_mask.to(dtype=torch.bool) & (~vision_mask_core)  # [B, L_core]
             if use_prompt_tuning_embedding:
-                prefix_keep = torch.ones(
-                    batch_size, num_prompt_tokens, dtype=torch.bool, device=mask_device
-                )
+                prefix_keep = torch.ones(batch_size, num_prompt_tokens, dtype=torch.bool, device=mask_device)
                 keep_mask = torch.cat([prefix_keep, keep_core_mask], dim=1)
             else:
                 keep_mask = keep_core_mask
             kept_lengths = keep_mask.sum(dim=1)
-            max_kept_len = (
-                int(kept_lengths.max().item()) if kept_lengths.numel() > 0 else 0
-            )
+            max_kept_len = int(kept_lengths.max().item()) if kept_lengths.numel() > 0 else 0
 
-            def compress_features(
-                feats: torch.Tensor, keep_m: torch.Tensor, max_len: int
-            ) -> torch.Tensor:
+            def compress_features(feats: torch.Tensor, keep_m: torch.Tensor, max_len: int) -> torch.Tensor:
                 keep_m = keep_m.to(feats.device)
                 B, L, D = feats.shape
                 out = feats.new_zeros((B, max_len, D))
@@ -1539,14 +1385,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 if kept_len_b > 0:
                     new_mask[b, :kept_len_b] = 1
             if isinstance(instruction_feats, list):
-                instruction_feats = [
-                    compress_features(feat, keep_mask, max_kept_len)
-                    for feat in instruction_feats
-                ]
+                instruction_feats = [compress_features(feat, keep_mask, max_kept_len) for feat in instruction_feats]
             else:
-                instruction_feats = compress_features(
-                    instruction_feats, keep_mask, max_kept_len
-                )
+                instruction_feats = compress_features(instruction_feats, keep_mask, max_kept_len)
             final_instruction_mask = new_mask
 
         if self.mllm is not None:
@@ -1557,9 +1398,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             dtype = None
 
         if isinstance(instruction_feats, (list, tuple)):
-            final_instruction_feats = [
-                feat.to(dtype=dtype, device=device) for feat in instruction_feats
-            ]
+            final_instruction_feats = [feat.to(dtype=dtype, device=device) for feat in instruction_feats]
         else:
             final_instruction_feats = instruction_feats.to(dtype=dtype, device=device)
         # Keep the attention mask on the same execution device as the features
@@ -1608,9 +1447,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if input_pil_images is None or len(input_pil_images) == 0:
             prompt = [system_role, {"role": "user", "content": user_text_content}]
         else:
-            images_content = [
-                {"type": "image", "image": pil_img} for pil_img in input_pil_images
-            ]
+            images_content = [{"type": "image", "image": pil_img} for pil_img in input_pil_images]
             prompt = [
                 system_role,
                 {"role": "user", "content": images_content + user_text_content},
@@ -1630,9 +1467,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         """
 
         if language.lower() == "en":
-            user_text_content = [
-                {"type": "text", "text": f"{instruction}\n\nRewritten Prompt:"}
-            ]
+            user_text_content = [{"type": "text", "text": f"{instruction}\n\nRewritten Prompt:"}]
             system_role = {
                 "role": "system",
                 "content": [{"type": "text", "text": system_prompt}],
@@ -1643,9 +1478,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 {"role": "user", "content": images_content + user_text_content},
             ]
         else:
-            user_text_content = [
-                {"type": "text", "text": f"{instruction}\n\n重写的图片编辑提示指令："}
-            ]
+            user_text_content = [{"type": "text", "text": f"{instruction}\n\n重写的图片编辑提示指令："}]
             system_role = {
                 "role": "system",
                 "content": [{"type": "text", "text": system_prompt}],
@@ -1685,9 +1518,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             }
             prompt = [system_role, {"role": "user", "content": user_text_content}]
         else:
-            user_text_content = [
-                {"type": "text", "text": f"{instruction}\n\n请直接给出改写后的内容："}
-            ]
+            user_text_content = [{"type": "text", "text": f"{instruction}\n\n请直接给出改写后的内容："}]
             system_role = {
                 "role": "system",
                 "content": [{"type": "text", "text": system_prompt}],
@@ -1711,15 +1542,11 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             reshaped_embeds = []
             for embed in embeds:
                 embed = embed.repeat(1, num_images_per_instruction, 1)
-                reshaped_embeds.append(
-                    embed.view(batch_size * num_images_per_instruction, seq_len, -1)
-                )
+                reshaped_embeds.append(embed.view(batch_size * num_images_per_instruction, seq_len, -1))
         else:
             batch_size, seq_len, _ = embeds.shape
             embeds = embeds.repeat(1, num_images_per_instruction, 1)
-            reshaped_embeds = embeds.view(
-                batch_size * num_images_per_instruction, seq_len, -1
-            )
+            reshaped_embeds = embeds.view(batch_size * num_images_per_instruction, seq_len, -1)
 
         mask = mask.repeat(num_images_per_instruction, 1)
         reshaped_mask = mask.view(batch_size * num_images_per_instruction, -1)
@@ -1736,9 +1563,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             return 1024 * 1024
 
         if isinstance(max_input_image_pixels, (list, tuple)):
-            assert len(max_input_image_pixels) >= num_images, (
-                f"`len(max_input_image_pixels)` should be >= number of input images per sample, i.e., {num_images}"
-            )
+            assert (
+                len(max_input_image_pixels) >= num_images
+            ), f"`len(max_input_image_pixels)` should be >= number of input images per sample, i.e., {num_images}"
             max_pixels = max_input_image_pixels[num_images - 1]
         else:
             max_pixels = max_input_image_pixels
@@ -1807,9 +1634,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
     def _get_polish_text_image_system_prompts(
         self,
         ori_text: Union[str, List[str]],
-        input_images: Union[
-            List[Union[PIL.Image.Image, str]], List[List[Union[PIL.Image.Image, str]]]
-        ] = None,
+        input_images: Union[List[Union[PIL.Image.Image, str]], List[List[Union[PIL.Image.Image, str]]]] = None,
         use_magic_prompt: bool = False,
     ) -> List[List[str]]:
 
@@ -1819,21 +1644,21 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if not isinstance(ori_text, (list, tuple)):
             ori_text = [ori_text]
 
-        assert isinstance(input_images, (list, tuple)) and len(input_images) > 0, (
-            f"For image-editing tasks, input images must be provided but got `input_images={input_images}`."
-        )
+        assert (
+            isinstance(input_images, (list, tuple)) and len(input_images) > 0
+        ), f"For image-editing tasks, input images must be provided but got `input_images={input_images}`."
         if not all(isinstance(x, (list, tuple, type(None))) for x in input_images):
             # If the contents of `input_images` are not lists or tuples (normally they are PIL.Image.Image or str), it means batch_size=1,
             # and we use a list to wrap it.
             # assert isinstance(input_images[0], (PIL.Image.Image, str)), f"For image-editing tasks, input images must be a list or tuple of PIL.Image.Image or str (paths to the images) but got `input_images={input_images}`."
-            assert all(isinstance(x, (PIL.Image.Image, str)) for x in input_images), (
-                f"For image-editing tasks, input images must be a list or tuple of lists or tuples of PIL.Image.Image or str (paths to the images) but got `input_images={input_images}`."
-            )
+            assert all(
+                isinstance(x, (PIL.Image.Image, str)) for x in input_images
+            ), f"For image-editing tasks, input images must be a list or tuple of lists or tuples of PIL.Image.Image or str (paths to the images) but got `input_images={input_images}`."
             input_images = [input_images]
 
-        assert len(input_images) == len(ori_text), (
-            f"The length of `input_images` must be the same as that of `ori_text` (i.e., the batch size) but got `input_images={input_images}` and `ori_text={ori_text}`."
-        )
+        assert len(input_images) == len(
+            ori_text
+        ), f"The length of `input_images` must be the same as that of `ori_text` (i.e., the batch size) but got `input_images={input_images}` and `ori_text={ori_text}`."
         for i, text in enumerate(ori_text):
             txt_lang = self._get_txt_language(text)
             if input_images[i]:
@@ -1843,9 +1668,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     system_prompt = self.REWRITE_SYSTEM_PROMPT_4_EDIT_EN
 
                 rewrite_prompts.append(
-                    self._apply_edit_instruct_rewrite_template(
-                        system_prompt, text, input_images[i], language=txt_lang
-                    )
+                    self._apply_edit_instruct_rewrite_template(system_prompt, text, input_images[i], language=txt_lang)
                 )
                 magic_prompts.append("")
             else:
@@ -1888,9 +1711,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if self.text_instruction_rewriter is None:
             texts = ori_text if isinstance(ori_text, (list, tuple)) else [ori_text]
             # Build magic prompts aligned with helper (language-aware)
-            _, magic_prompts = self._get_polish_text_system_prompts(
-                texts, return_template_as_str=True
-            )
+            _, magic_prompts = self._get_polish_text_system_prompts(texts, return_template_as_str=True)
             results = []
             for i, t in enumerate(texts):
                 magic = magic_prompts[i] if i < len(magic_prompts) else ""
@@ -1899,9 +1720,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             return results if len(results) > 0 else [""]
 
         # Build rewrite prompts and magic prompts
-        rewrite_text_prompts, magic_prompts = self._get_polish_text_system_prompts(
-            ori_text, return_template_as_str=True
-        )
+        rewrite_text_prompts, magic_prompts = self._get_polish_text_system_prompts(ori_text, return_template_as_str=True)
         device = next(self.text_instruction_rewriter.parameters()).device
 
         # Tokenize prompts
@@ -1927,16 +1746,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             hasattr(self.instruction_rewriter_processor.tokenizer, "eos_token_id")
             and self.instruction_rewriter_processor.tokenizer.eos_token_id is not None
         ):
-            gen_kwargs["eos_token_id"] = (
-                self.instruction_rewriter_processor.tokenizer.eos_token_id
-            )
+            gen_kwargs["eos_token_id"] = self.instruction_rewriter_processor.tokenizer.eos_token_id
         if (
             hasattr(self.instruction_rewriter_processor.tokenizer, "pad_token_id")
             and self.instruction_rewriter_processor.tokenizer.pad_token_id is not None
         ):
-            gen_kwargs["pad_token_id"] = (
-                self.instruction_rewriter_processor.tokenizer.pad_token_id
-            )
+            gen_kwargs["pad_token_id"] = self.instruction_rewriter_processor.tokenizer.pad_token_id
 
         generated = self.text_instruction_rewriter.generate(**text_inputs, **gen_kwargs)
 
@@ -1955,16 +1770,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         for i in range(sequences.size(0)):
             start = int(input_lengths[i].item())
             new_tokens = sequences[i, start:]
-            text = self.instruction_rewriter_processor.tokenizer.decode(
-                new_tokens, skip_special_tokens=True
-            )
+            text = self.instruction_rewriter_processor.tokenizer.decode(new_tokens, skip_special_tokens=True)
             text = text.strip()
             # Fallback if empty
             if not text:
                 # If generation failed to add content, decode full and strip prompt
-                full = self.instruction_rewriter_processor.tokenizer.decode(
-                    sequences[i], skip_special_tokens=True
-                ).strip()
+                full = self.instruction_rewriter_processor.tokenizer.decode(sequences[i], skip_special_tokens=True).strip()
                 text = full if full else ""
             magic = magic_prompts[i] if i < len(magic_prompts) else ""
             combined = f"{text} {magic}".strip() if text or magic else text
@@ -1991,9 +1802,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             return [t if isinstance(t, str) else "" for t in texts]
 
         # Build rewrite prompts with images
-        rewrite_prompts, magic_prompts = self._get_polish_text_image_system_prompts(
-            ori_text, input_images
-        )
+        rewrite_prompts, magic_prompts = self._get_polish_text_image_system_prompts(ori_text, input_images)
 
         # Tokenize prompts for VLM (includes images)
         vlm_inputs = self.instruction_rewriter_processor.apply_chat_template(
@@ -2024,16 +1833,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             hasattr(self.instruction_rewriter_processor.tokenizer, "eos_token_id")
             and self.instruction_rewriter_processor.tokenizer.eos_token_id is not None
         ):
-            gen_kwargs["eos_token_id"] = (
-                self.instruction_rewriter_processor.tokenizer.eos_token_id
-            )
+            gen_kwargs["eos_token_id"] = self.instruction_rewriter_processor.tokenizer.eos_token_id
         if (
             hasattr(self.instruction_rewriter_processor.tokenizer, "pad_token_id")
             and self.instruction_rewriter_processor.tokenizer.pad_token_id is not None
         ):
-            gen_kwargs["pad_token_id"] = (
-                self.instruction_rewriter_processor.tokenizer.pad_token_id
-            )
+            gen_kwargs["pad_token_id"] = self.instruction_rewriter_processor.tokenizer.pad_token_id
 
         generated = self.text_instruction_rewriter.generate(**vlm_inputs, **gen_kwargs)
 
@@ -2046,21 +1851,15 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             else 0
         )
 
-        input_lengths = torch.tensor(
-            [input_ids.shape[-1]] * input_ids.shape[0]
-        ).int()  # [B]
+        input_lengths = torch.tensor([input_ids.shape[-1]] * input_ids.shape[0]).int()  # [B]
 
         rewritten_list: List[str] = []
         for i in range(sequences.size(0)):
             start = int(input_lengths[i].item())
             new_tokens = sequences[i, start:]
-            text = self.instruction_rewriter_processor.tokenizer.decode(
-                new_tokens, skip_special_tokens=True
-            ).strip()
+            text = self.instruction_rewriter_processor.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
             if not text:
-                full = self.instruction_rewriter_processor.tokenizer.decode(
-                    sequences[i], skip_special_tokens=True
-                ).strip()
+                full = self.instruction_rewriter_processor.tokenizer.decode(sequences[i], skip_special_tokens=True).strip()
                 text = full if full else ""
 
             if magic_prompts[i]:
@@ -2090,17 +1889,13 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             ori_text = [ori_text]
 
         if input_image_paths is None or len(input_image_paths) == 0:
-            messages, magic_prompts = self._get_polish_text_system_prompts(
-                ori_text, return_template_as_str=False
-            )
+            messages, magic_prompts = self._get_polish_text_system_prompts(ori_text, return_template_as_str=False)
         else:
-            messages, magic_prompts = self._get_polish_text_image_system_prompts(
-                ori_text, input_image_paths
-            )
+            messages, magic_prompts = self._get_polish_text_image_system_prompts(ori_text, input_image_paths)
 
-        assert len(messages) == len(ori_text), (
-            "The length of `messages` to be passed to dashscope should be the same as that of `ori_text`."
-        )
+        assert len(messages) == len(
+            ori_text
+        ), "The length of `messages` to be passed to dashscope should be the same as that of `ori_text`."
 
         rewritten_texts = []
         for i, msg in enumerate(messages):
@@ -2111,13 +1906,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         model=remote_model,
                         messages=msg,
                     )
-                    rewritten_texts.append(
-                        response.output.choices[0].message.content[0]["text"]
-                    )
+                    rewritten_texts.append(response.output.choices[0].message.content[0]["text"])
                 except Exception as e:
-                    print(
-                        f"Error: {e}, Retrying... (Try {try_idx + 1} of {MAX_TRIES}) for message {i}"
-                    )
+                    print(f"Error: {e}, Retrying... (Try {try_idx + 1} of {MAX_TRIES}) for message {i}")
                     if try_idx == MAX_TRIES - 1:
                         print(
                             f"Failed to rewrite the text instruction after {MAX_TRIES} tries for message {i}. Use the original text instruction."
@@ -2154,14 +1945,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         max_images_per_sample = 0
         if input_images:
-            success, max_images_per_sample, input_images = (
-                self._check_and_wrap_input_images(input_images)
-            )
+            success, max_images_per_sample, input_images = self._check_and_wrap_input_images(input_images)
 
         if input_image_paths:
-            success, max_image_paths_per_sample, input_image_paths = (
-                self._check_and_wrap_input_images(input_image_paths)
-            )
+            success, max_image_paths_per_sample, input_image_paths = self._check_and_wrap_input_images(input_image_paths)
             assert (
                 max_image_paths_per_sample == max_images_per_sample
             ), """The size of `input_image_paths` must be equal to that of `input_images`.
@@ -2205,21 +1992,17 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             )
         else:
             if self.text_instruction_rewriter is None:
-                print(
-                    "⚠️ Please set the text instruction rewriter model if you want to polish the text instruction !"
-                )
+                print("⚠️ Please set the text instruction rewriter model if you want to polish the text instruction !")
                 print("⚠️ Use the user instruction by default.")
                 return instruction
             else:
                 if not isinstance(instruction, (list, tuple)):
                     instruction = [instruction]
                 if self.text_instruction_rewriter.model == self.mllm:
-                    print(
-                        "Reuse the instruction encoder model as text instruction rewriter"
-                    )
-                    assert self.instruction_rewriter_processor == self.processor, (
-                        "The instruction_rewriter_processor must be the same as the processor when using the same model as the text instruction rewriter."
-                    )
+                    print("Reuse the instruction encoder model as text instruction rewriter")
+                    assert (
+                        self.instruction_rewriter_processor == self.processor
+                    ), "The instruction_rewriter_processor must be the same as the processor when using the same model as the text instruction rewriter."
 
                 if input_images is None or len(input_images) == 0:
                     instruction = self._polish_text_instructions(
@@ -2248,9 +2031,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         instruction: Union[str, List[str]],
         do_classifier_free_guidance: bool = True,
         negative_instruction: Optional[Union[str, List[str]]] = None,
-        input_images: Optional[
-            Union[List[List[PIL.Image.Image]], List[PIL.Image.Image]]
-        ] = None,
+        input_images: Optional[Union[List[List[PIL.Image.Image]], List[PIL.Image.Image]]] = None,
         use_input_images_4_neg_instruct: bool = False,
         use_input_images_4_empty_instruct: bool = False,
         max_vlm_input_pil_pixels: Optional[Union[int, List[int]]] = 384 * 384,
@@ -2332,12 +2113,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 )
 
             if save_rewritten_instruction:
-                assert save_rewritten_instruction_path is not None, (
-                    "Please provide the path to save the rewritten instruction."
-                )
-                ori_and_rewritten_instructions = dict(
-                    ori_instruction=instruction, rewritten_instruction=None
-                )
+                assert (
+                    save_rewritten_instruction_path is not None
+                ), "Please provide the path to save the rewritten instruction."
+                ori_and_rewritten_instructions = dict(ori_instruction=instruction, rewritten_instruction=None)
 
             print(
                 "**************************************The user text instruction is:   ******************************************\n\n"
@@ -2349,26 +2128,17 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
             if rewriter_system_prompt_type.lower() == "custom":
                 assert (
-                    custom_rewriter_system_prompts_list is not None
-                    and len(custom_rewriter_system_prompts_list) > 0
-                ), (
-                    "`custom_rewriter_system_prompts_list` should be a list and not empty."
-                )
-                self.static_rewrite_skills.set_custom_rewrite_system_prompts(
-                    custom_rewriter_system_prompts_list
-                )
+                    custom_rewriter_system_prompts_list is not None and len(custom_rewriter_system_prompts_list) > 0
+                ), "`custom_rewriter_system_prompts_list` should be a list and not empty."
+                self.static_rewrite_skills.set_custom_rewrite_system_prompts(custom_rewriter_system_prompts_list)
 
-            rewrite_system_prompts_list = (
-                self.static_rewrite_skills.get_rewrite_system_prompts_list(
-                    rewriter_system_prompt_type
-                )
+            rewrite_system_prompts_list = self.static_rewrite_skills.get_rewrite_system_prompts_list(
+                rewriter_system_prompt_type
             )
             merge_instructs_list = [instruction]
             instructs_history = [instruction]
             for step in range(len(rewrite_system_prompts_list)):
-                self.set_rewrite_system_prompts_for_step(
-                    step, rewrite_system_prompts_list
-                )
+                self.set_rewrite_system_prompts_for_step(step, rewrite_system_prompts_list)
 
                 instruction = self._rewrite_text_instruction(
                     instruction,
@@ -2392,9 +2162,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 instructs_history.append(instruction)
 
                 if merge_original_and_rewritten_instructions:
-                    instruction = self._merge_instructions(
-                        merge_instructs_list, batch_size
-                    )
+                    instruction = self._merge_instructions(merge_instructs_list, batch_size)
                 merge_instructs_list = [instruction]
 
                 # print(f"{step}-th rewritten text instruction after merging: {instruction}\n\n")
@@ -2403,9 +2171,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 "*************************************The final rewritten text instruction is: *************************************\n\n"
             )
             if merge_original_and_rewritten_instructions:
-                instruction = self._merge_instructions(
-                    [instructs_history[0], instructs_history[-1]], batch_size
-                )
+                instruction = self._merge_instructions([instructs_history[0], instructs_history[-1]], batch_size)
 
             print(f"{instruction}\n\n")
             print(
@@ -2415,31 +2181,21 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             share_rewriter_and_mllm = self._is_encoder_equals_reasoner()
             unload_flags = self.unload_instruction_rewriter_resources()
             if unload_flags[0] == "cpu":
-                print(
-                    "[Instruction Reasoner] Offloaded the text instruction rewriter model to cpu."
-                )
+                print("[Instruction Reasoner] Offloaded the text instruction rewriter model to cpu.")
             elif unload_flags[0] == "destroy":
                 print(
                     "[Instruction Reasoner] Destroyed the text instruction rewriter model after usage to release resources."
                 )
             else:
-                kept_device = (
-                    self.user_set_pipe_device
-                    if share_rewriter_and_mllm
-                    else self.user_set_rewriter_device
-                )
-                print(
-                    f"[Instruction Reasoner] Keep the text instruction rewriter model in {kept_device}."
-                )
+                kept_device = self.user_set_pipe_device if share_rewriter_and_mllm else self.user_set_rewriter_device
+                print(f"[Instruction Reasoner] Keep the text instruction rewriter model in {kept_device}.")
 
             if unload_flags[1] == "destroy":
                 print(
                     "[Instruction Reasoner] Destroyed the text instruction rewriter processor after usage to release resources."
                 )
             else:
-                print(
-                    "[Instruction Reasoner] Keep the text instruction rewriter processor."
-                )
+                print("[Instruction Reasoner] Keep the text instruction rewriter processor.")
 
             if save_rewritten_instruction:
                 ori_and_rewritten_instructions["rewritten_instruction"] = instruction
@@ -2450,9 +2206,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     with path.open("w", encoding="utf-8") as f:
                         json.dump(ori_and_rewritten_instructions, f)
                 else:
-                    print(
-                        "⚠️ Please provide the path to save the rewritten instruction."
-                    )
+                    print("⚠️ Please provide the path to save the rewritten instruction.")
 
         if self.enable_inner_devices_manager:
             # Bring the pipeline back to the requested execution device after
@@ -2463,48 +2217,38 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             )
 
         if instruction_embeds is None:
-            instruction_embeds, instruction_attention_mask = (
-                self._get_instruction_feature_embeds(
-                    instruction=instruction,
-                    input_pil_images=input_images,
-                    device=device,
-                    max_sequence_length=max_sequence_length,
-                    truncate_instruction_sequence=truncate_instruction_sequence,
-                    use_prompt_tuning_embedding=self.prompt_embedding is not None,
-                    max_vlm_input_pil_pixels=max_vlm_input_pil_pixels,
-                    max_vlm_input_pil_side_length=max_vlm_input_pil_side_length,
-                    system_prompt_follows_task_type=system_prompt_follows_task_type,
-                    task_type=task_type,
-                )
+            instruction_embeds, instruction_attention_mask = self._get_instruction_feature_embeds(
+                instruction=instruction,
+                input_pil_images=input_images,
+                device=device,
+                max_sequence_length=max_sequence_length,
+                truncate_instruction_sequence=truncate_instruction_sequence,
+                use_prompt_tuning_embedding=self.prompt_embedding is not None,
+                max_vlm_input_pil_pixels=max_vlm_input_pil_pixels,
+                max_vlm_input_pil_side_length=max_vlm_input_pil_side_length,
+                system_prompt_follows_task_type=system_prompt_follows_task_type,
+                task_type=task_type,
             )
 
         batch_size, seq_len, _ = instruction_embeds.shape
         # # duplicate text embeddings and attention mask for each generation per instruction, using mps friendly method
 
-        batch_size, seq_len, instruction_embeds, instruction_attention_mask = (
-            self._reshape_embeds_and_mask(
-                instruction_embeds,
-                instruction_attention_mask,
-                num_images_per_instruction,
-            )
+        batch_size, seq_len, instruction_embeds, instruction_attention_mask = self._reshape_embeds_and_mask(
+            instruction_embeds,
+            instruction_attention_mask,
+            num_images_per_instruction,
         )
 
         # Get negative embeddings for classifier free guidance
         if do_classifier_free_guidance and negative_instruction_embeds is None:
-            negative_instruction = (
-                negative_instruction if negative_instruction is not None else ""
-            )
+            negative_instruction = negative_instruction if negative_instruction is not None else ""
 
             # Normalize str to list
             negative_instruction = (
-                batch_size * [negative_instruction]
-                if isinstance(negative_instruction, str)
-                else negative_instruction
+                batch_size * [negative_instruction] if isinstance(negative_instruction, str) else negative_instruction
             )
 
-            if instruction is not None and type(instruction) is not type(
-                negative_instruction
-            ):
+            if instruction is not None and type(instruction) is not type(negative_instruction):
                 raise TypeError(
                     f"`negative_instruction` should be the same type to `instruction`, but got {type(negative_instruction)} !="
                     f" {type(instruction)}."
@@ -2517,25 +2261,17 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     f" {instruction} has batch size {batch_size}. Please make sure that passed `negative_instruction` matches"
                     " the batch size of `instruction`."
                 )
-            negative_instruction_embeds, negative_instruction_attention_mask = (
-                self._get_instruction_feature_embeds(
-                    instruction=negative_instruction,
-                    input_pil_images=input_images
-                    if use_input_images_4_neg_instruct
-                    else None,
-                    device=device,
-                    max_sequence_length=max_sequence_length,
-                    truncate_instruction_sequence=truncate_instruction_sequence,
-                    use_prompt_tuning_embedding=self.prompt_embedding is not None,
-                    max_vlm_input_pil_pixels=max_vlm_input_pil_pixels
-                    if use_input_images_4_neg_instruct
-                    else None,
-                    max_vlm_input_pil_side_length=max_vlm_input_pil_side_length
-                    if use_input_images_4_neg_instruct
-                    else None,
-                    system_prompt_follows_task_type=system_prompt_follows_task_type,
-                    task_type=task_type,
-                )
+            negative_instruction_embeds, negative_instruction_attention_mask = self._get_instruction_feature_embeds(
+                instruction=negative_instruction,
+                input_pil_images=input_images if use_input_images_4_neg_instruct else None,
+                device=device,
+                max_sequence_length=max_sequence_length,
+                truncate_instruction_sequence=truncate_instruction_sequence,
+                use_prompt_tuning_embedding=self.prompt_embedding is not None,
+                max_vlm_input_pil_pixels=max_vlm_input_pil_pixels if use_input_images_4_neg_instruct else None,
+                max_vlm_input_pil_side_length=max_vlm_input_pil_side_length if use_input_images_4_neg_instruct else None,
+                system_prompt_follows_task_type=system_prompt_follows_task_type,
+                task_type=task_type,
             )
 
             # batch_size, seq_len, _ = negative_instruction_embeds.shape
@@ -2559,21 +2295,13 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             or use_empty_neg_instruct_4_ref_img_pred_at_text_guide_in_double_guide
         ):
             if do_classifier_free_guidance and (empty_instruction_embeds is None):
-                empty_instruction = (
-                    empty_instruction
-                    if empty_instruction is not None
-                    else [" "] * batch_size
-                )
+                empty_instruction = empty_instruction if empty_instruction is not None else [" "] * batch_size
 
                 empty_instruction = (
-                    batch_size * [empty_instruction]
-                    if isinstance(empty_instruction, str)
-                    else empty_instruction
+                    batch_size * [empty_instruction] if isinstance(empty_instruction, str) else empty_instruction
                 )
 
-                if instruction is not None and type(instruction) is not type(
-                    empty_instruction
-                ):
+                if instruction is not None and type(instruction) is not type(empty_instruction):
                     raise TypeError(
                         f"`empty_instruction` should be the same type as `instruction`, but got {type(empty_instruction)} !="
                         f" {type(instruction)}."
@@ -2586,25 +2314,19 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         " the batch size of `instruction`."
                     )
 
-                empty_instruction_embeds, empty_instruction_attention_mask = (
-                    self._get_instruction_feature_embeds(
-                        instruction=empty_instruction,
-                        input_pil_images=input_images
-                        if use_input_images_4_empty_instruct
-                        else None,
-                        device=device,
-                        max_sequence_length=max_sequence_length,
-                        truncate_instruction_sequence=truncate_instruction_sequence,
-                        use_prompt_tuning_embedding=self.prompt_embedding is not None,
-                        max_vlm_input_pil_pixels=max_vlm_input_pil_pixels
-                        if use_input_images_4_empty_instruct
-                        else None,
-                        max_vlm_input_pil_side_length=max_vlm_input_pil_side_length
-                        if use_input_images_4_empty_instruct
-                        else None,
-                        system_prompt_follows_task_type=system_prompt_follows_task_type,
-                        task_type=task_type,
-                    )
+                empty_instruction_embeds, empty_instruction_attention_mask = self._get_instruction_feature_embeds(
+                    instruction=empty_instruction,
+                    input_pil_images=input_images if use_input_images_4_empty_instruct else None,
+                    device=device,
+                    max_sequence_length=max_sequence_length,
+                    truncate_instruction_sequence=truncate_instruction_sequence,
+                    use_prompt_tuning_embedding=self.prompt_embedding is not None,
+                    max_vlm_input_pil_pixels=max_vlm_input_pil_pixels if use_input_images_4_empty_instruct else None,
+                    max_vlm_input_pil_side_length=(
+                        max_vlm_input_pil_side_length if use_input_images_4_empty_instruct else None
+                    ),
+                    system_prompt_follows_task_type=system_prompt_follows_task_type,
+                    task_type=task_type,
                 )
                 (
                     batch_size,
@@ -2664,9 +2386,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         max_sequence_length: int = 1280,
         truncate_instruction_sequence: bool = False,
         callback_on_step_end_tensor_inputs: Optional[List[str]] = None,
-        input_images: Optional[
-            Union[List[List[PIL.Image.Image]], List[PIL.Image.Image]]
-        ] = None,
+        input_images: Optional[Union[List[List[PIL.Image.Image]], List[PIL.Image.Image]]] = None,
         use_input_images_4_neg_instruct: bool = False,
         use_input_images_4_empty_instruct: bool = False,
         max_vlm_input_pil_pixels: Optional[Union[int, List[int]]] = 384 * 384,
@@ -2777,14 +2497,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         max_images_per_sample = 0
         if input_images:
-            success, max_images_per_sample, input_images = (
-                self._check_and_wrap_input_images(input_images)
-            )
+            success, max_images_per_sample, input_images = self._check_and_wrap_input_images(input_images)
 
         if input_image_paths:
-            success, max_image_paths_per_sample, input_image_paths = (
-                self._check_and_wrap_input_images(input_image_paths)
-            )
+            success, max_image_paths_per_sample, input_image_paths = self._check_and_wrap_input_images(input_image_paths)
             assert (
                 max_image_paths_per_sample == max_images_per_sample
             ), """The size of `input_image_paths` must be equal to that of `input_images`.
@@ -2866,17 +2582,15 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             dtype=dtype,
         )
 
-        input_images, width, height, ori_width, ori_height = (
-            self._resolve_output_and_original_size(
-                input_images=input_images,
-                ref_latents=ref_latents,
-                align_res=align_res,
-                width=width,
-                height=height,
-                max_input_image_pixels=max_input_image_pixels,
-                max_images_per_sample=max_images_per_sample,
-                img_scale_num=self.vae_scale_factor * 2,
-            )
+        input_images, width, height, ori_width, ori_height = self._resolve_output_and_original_size(
+            input_images=input_images,
+            ref_latents=ref_latents,
+            align_res=align_res,
+            width=width,
+            height=height,
+            max_input_image_pixels=max_input_image_pixels,
+            max_images_per_sample=max_images_per_sample,
+            img_scale_num=self.vae_scale_factor * 2,
         )
 
         if len(input_images) == 0:
@@ -2976,14 +2690,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             cur_pixels = height * width
 
             if isinstance(max_input_image_pixels, (list, tuple)):
-                if (
-                    (input_images is not None)
-                    and (len(input_images) > 0)
-                    and max_images_per_sample > 0
-                ):
-                    assert len(max_input_image_pixels) >= max_images_per_sample, (
-                        f"When `max_input_image_pixels` is a list or tuple, the length of it (here is {len(max_input_image_pixels)}) should be >= max number of input images in all the samples (here is {max_images_per_sample})."
-                    )
+                if (input_images is not None) and (len(input_images) > 0) and max_images_per_sample > 0:
+                    assert (
+                        len(max_input_image_pixels) >= max_images_per_sample
+                    ), f"When `max_input_image_pixels` is a list or tuple, the length of it (here is {len(max_input_image_pixels)}) should be >= max number of input images in all the samples (here is {max_images_per_sample})."
                     max_pixels = max_input_image_pixels[max_images_per_sample - 1]
                 else:
                     max_pixels = max_input_image_pixels[0]
@@ -3000,9 +2710,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         return input_images, width, height, ori_width, ori_height
 
-    def _get_task_type_by_ref_latents(
-        self, ref_latents: List[Union[List[torch.FloatTensor], None]]
-    ):
+    def _get_task_type_by_ref_latents(self, ref_latents: List[Union[List[torch.FloatTensor], None]]):
         if not ref_latents:
             return "t2i"
 
@@ -3012,9 +2720,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     return "ti2i"
         return "t2i"
 
-    def _get_task_type_by_input_images(
-        self, input_images: Union[List[List[PIL.Image.Image]], List[PIL.Image.Image]]
-    ):
+    def _get_task_type_by_input_images(self, input_images: Union[List[List[PIL.Image.Image]], List[PIL.Image.Image]]):
         if not input_images:
             return "t2i"
 
@@ -3093,13 +2799,9 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         # Project each row/column vector of m0 onto the corresponding vector of m1.
         m0_parallel = (m0_mat * m1_unit).sum(dim=dim, keepdim=True) * m1_unit
         m0_orthogonal = m0_mat - m0_parallel
-        return m0_parallel.reshape(b, c, h, w).to(dtype), m0_orthogonal.reshape(
-            b, c, h, w
-        ).to(dtype)
+        return m0_parallel.reshape(b, c, h, w).to(dtype), m0_orthogonal.reshape(b, c, h, w).to(dtype)
 
-    def _newtonschulz5_batched(
-        self, G: torch.Tensor, steps: int = 5, eps: float = 1e-7
-    ):
+    def _newtonschulz5_batched(self, G: torch.Tensor, steps: int = 5, eps: float = 1e-7):
         """
         Batched Newton-Schulz iteration.
 
@@ -3170,9 +2872,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         return: normalized tensor with same shape
         """
         if G.dim() < 2:
-            raise ValueError(
-                "G must have at least 2 dims, got shape {}".format(tuple(G.shape))
-            )
+            raise ValueError("G must have at least 2 dims, got shape {}".format(tuple(G.shape)))
 
         if kernel_method == "newton-schulz":
             return self._newtonschulz5_batched(G)
@@ -3229,12 +2929,8 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         r_wei = r / (r + c + 1.0)
         c_wei = c / (r + c + 1.0)
 
-        delta_parallel_col, delta_orthogonal_col = self._project_matrix(
-            delta, model_pred, dim=-2
-        )
-        delta_parallel_row, delta_orthogonal_row = self._project_matrix(
-            delta, model_pred, dim=-1
-        )
+        delta_parallel_col, delta_orthogonal_col = self._project_matrix(delta, model_pred, dim=-2)
+        delta_parallel_row, delta_orthogonal_row = self._project_matrix(delta, model_pred, dim=-1)
 
         delta_bog = r_wei * (delta_orthogonal_row + mu * delta_parallel_row) + c_wei * (
             delta_orthogonal_col + mu * delta_parallel_col
@@ -3284,9 +2980,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             num_tokens=latents.shape[-2] * latents.shape[-1],
         )
 
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         # NOTE: Declare optional per-condition caches upfront for static analyzers.
@@ -3306,20 +3000,13 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             self.transformer, "enable_taylorseer_for_all_layers", False
         )
         enable_teacache = (
-            self.transformer.enable_teacache
-            or getattr(self.transformer, "enable_teacache_for_all_layers", False)
+            self.transformer.enable_teacache or getattr(self.transformer, "enable_teacache_for_all_layers", False)
         ) and not enable_taylorseer
         self.transformer.enable_teacache = enable_teacache
         if enable_taylorseer:
-            model_pred_cache_dic, model_pred_current = cache_init(
-                self, num_inference_steps
-            )
-            model_pred_drop_text_cache_dic, model_pred_drop_text_current = cache_init(
-                self, num_inference_steps
-            )
-            model_pred_drop_all_cache_dic, model_pred_drop_all_current = cache_init(
-                self, num_inference_steps
-            )
+            model_pred_cache_dic, model_pred_current = cache_init(self, num_inference_steps)
+            model_pred_drop_text_cache_dic, model_pred_drop_text_current = cache_init(self, num_inference_steps)
+            model_pred_drop_all_cache_dic, model_pred_drop_all_current = cache_init(self, num_inference_steps)
             if use_ref_empty_instruct_pred:
                 # For double-guidance variants that use an "empty" instruction embedding when predicting ref-image condition.
                 # Keep a dedicated TaylorSeer cache/state for this condition to avoid mixing trajectories.
@@ -3329,9 +3016,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 ) = cache_init(self, num_inference_steps)
             # For TI2I image-only guidance branch (drop reference image, keep text condition).
             # Keep a dedicated TaylorSeer cache/state for this condition to avoid mixing trajectories.
-            model_pred_drop_image_cache_dic, model_pred_drop_image_current = cache_init(
-                self, num_inference_steps
-            )
+            model_pred_drop_image_cache_dic, model_pred_drop_image_current = cache_init(self, num_inference_steps)
             self.transformer.enable_taylorseer = True
         elif enable_teacache:
             # Use different TeaCacheParams for different conditions
@@ -3352,9 +3037,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     self.transformer.cache_dic = model_pred_cache_dic
                     self.transformer.current = model_pred_current
                 elif enable_teacache:
-                    teacache_params.is_first_or_last_step = (
-                        i == 0 or i == len(timesteps) - 1
-                    )
+                    teacache_params.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
                     self.transformer.teacache_params = teacache_params
 
                 model_pred = self.predict(
@@ -3367,14 +3050,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 )
 
                 text_guidance_scale = (
-                    self.text_guidance_scale
-                    if self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1]
-                    else 1.0
+                    self.text_guidance_scale if self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1] else 1.0
                 )
                 image_guidance_scale = (
-                    self.image_guidance_scale
-                    if self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1]
-                    else 1.0
+                    self.image_guidance_scale if self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1] else 1.0
                 )
                 empty_instruction_guidance_scale = (
                     self.empty_instruction_guidance_scale
@@ -3382,18 +3061,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     else 0.0
                 )
 
-                if (
-                    (task_type == "ti2i")
-                    and (text_guidance_scale > 1.0)
-                    and (image_guidance_scale > 1.0)
-                ):  # Checked
+                if (task_type == "ti2i") and (text_guidance_scale > 1.0) and (image_guidance_scale > 1.0):  # Checked
                     if enable_taylorseer:
                         self.transformer.cache_dic = model_pred_drop_text_cache_dic
                         self.transformer.current = model_pred_drop_text_current
                     elif enable_teacache:
-                        teacache_params_ref.is_first_or_last_step = (
-                            i == 0 or i == len(timesteps) - 1
-                        )
+                        teacache_params_ref.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
                         self.transformer.teacache_params = teacache_params_ref
 
                     model_pred_drop_text = self.predict(
@@ -3409,9 +3082,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         self.transformer.cache_dic = model_pred_drop_all_cache_dic
                         self.transformer.current = model_pred_drop_all_current
                     elif enable_teacache:
-                        teacache_params_uncond.is_first_or_last_step = (
-                            i == 0 or i == len(timesteps) - 1
-                        )
+                        teacache_params_uncond.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
                         self.transformer.teacache_params = teacache_params_uncond
 
                     model_pred_drop_all = self.predict(
@@ -3432,25 +3103,15 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         # so we must keep TaylorSeer / TeaCache states isolated to avoid cache pollution.
                         if enable_taylorseer:
                             assert (
-                                model_pred_drop_text_empty_instruct_cache_dic
-                                is not None
-                                and model_pred_drop_text_empty_instruct_current
-                                is not None
+                                model_pred_drop_text_empty_instruct_cache_dic is not None
+                                and model_pred_drop_text_empty_instruct_current is not None
                             )
-                            self.transformer.cache_dic = (
-                                model_pred_drop_text_empty_instruct_cache_dic
-                            )
-                            self.transformer.current = (
-                                model_pred_drop_text_empty_instruct_current
-                            )
+                            self.transformer.cache_dic = model_pred_drop_text_empty_instruct_cache_dic
+                            self.transformer.current = model_pred_drop_text_empty_instruct_current
                         elif enable_teacache:
                             assert teacache_params_ref_empty_instruct is not None
-                            teacache_params_ref_empty_instruct.is_first_or_last_step = (
-                                i == 0 or i == len(timesteps) - 1
-                            )
-                            self.transformer.teacache_params = (
-                                teacache_params_ref_empty_instruct
-                            )
+                            teacache_params_ref_empty_instruct.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
+                            self.transformer.teacache_params = teacache_params_ref_empty_instruct
 
                         model_pred_drop_text_empty_instruct = self.predict(
                             t=t,
@@ -3469,11 +3130,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     if use_empty_neg_instruct_4_ref_img_pred_at_text_guide_in_double_guide:
                         model_pred_drop_text_neg = model_pred_drop_text_empty_instruct
 
-                    if (
-                        use_boosted_orthogonal_guidance
-                        and (bog_range[0] <= t <= bog_range[1])
-                        and (i % bog_interval == 0)
-                    ):
+                    if use_boosted_orthogonal_guidance and (bog_range[0] <= t <= bog_range[1]) and (i % bog_interval == 0):
                         delta_text = self.calculate_boosted_orthogonal_guidance(
                             model_pred=model_pred,
                             model_pred_uncond=model_pred_drop_text,
@@ -3499,18 +3156,14 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                             and (bog_range[0] <= t <= bog_range[1])
                             and (i % bog_interval == 0)
                         ):
-                            delta_empty_instruct = (
-                                self.calculate_boosted_orthogonal_guidance(
-                                    model_pred=model_pred_drop_text_pos,
-                                    model_pred_uncond=model_pred_drop_text_neg,
-                                    momentum_state=eg_momentum_state,
-                                    mu=bog_mu,
-                                )
+                            delta_empty_instruct = self.calculate_boosted_orthogonal_guidance(
+                                model_pred=model_pred_drop_text_pos,
+                                model_pred_uncond=model_pred_drop_text_neg,
+                                momentum_state=eg_momentum_state,
+                                mu=bog_mu,
                             )
                         else:
-                            delta_empty_instruct = (
-                                model_pred_drop_text_pos - model_pred_drop_text_neg
-                            )
+                            delta_empty_instruct = model_pred_drop_text_pos - model_pred_drop_text_neg
 
                         #                         + (image_guidance_scale - 1) * delta_image   + \
                         #                         empty_instruction_guidance_scale * (model_pred_drop_text_pos - model_pred_drop_text_neg)
@@ -3524,9 +3177,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
                     else:
                         model_pred = (
-                            model_pred
-                            + (text_guidance_scale - 1) * delta_text
-                            + +(image_guidance_scale - 1) * delta_image
+                            model_pred + (text_guidance_scale - 1) * delta_text + +(image_guidance_scale - 1) * delta_image
                         )
 
                 elif (task_type == "ti2i") and (text_guidance_scale > 1.0):  # checked
@@ -3538,9 +3189,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         self.transformer.current = model_pred_drop_text_current
                     elif enable_teacache:
                         # Keep TeaCache state isolated per condition (ref-only here).
-                        teacache_params_ref.is_first_or_last_step = (
-                            i == 0 or i == len(timesteps) - 1
-                        )
+                        teacache_params_ref.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
                         self.transformer.teacache_params = teacache_params_ref
 
                     model_pred_drop_text = self.predict(
@@ -3551,11 +3200,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         instruction_attention_mask=negative_instruction_attention_mask,
                         ref_image_hidden_states=ref_latents,
                     )
-                    if (
-                        use_boosted_orthogonal_guidance
-                        and (bog_range[0] <= t <= bog_range[1])
-                        and (i % bog_interval == 0)
-                    ):
+                    if use_boosted_orthogonal_guidance and (bog_range[0] <= t <= bog_range[1]) and (i % bog_interval == 0):
                         delta_text = self.calculate_boosted_orthogonal_guidance(
                             model_pred=model_pred,
                             model_pred_uncond=model_pred_drop_text,
@@ -3576,17 +3221,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     # - TaylorSeer also maintains per-condition cache/state; we must not reuse the drop_all/drop_text cache for drop_image.
 
                     if enable_taylorseer:
-                        assert (
-                            model_pred_drop_image_cache_dic is not None
-                            and model_pred_drop_image_current is not None
-                        )
+                        assert model_pred_drop_image_cache_dic is not None and model_pred_drop_image_current is not None
                         self.transformer.cache_dic = model_pred_drop_image_cache_dic
                         self.transformer.current = model_pred_drop_image_current
                     elif enable_teacache:
                         assert teacache_params_drop_ref is not None
-                        teacache_params_drop_ref.is_first_or_last_step = (
-                            i == 0 or i == len(timesteps) - 1
-                        )
+                        teacache_params_drop_ref.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
                         self.transformer.teacache_params = teacache_params_drop_ref
 
                     model_pred_drop_image = self.predict(
@@ -3597,11 +3237,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         instruction_attention_mask=instruction_attention_mask,
                         ref_image_hidden_states=None,
                     )
-                    if (
-                        use_boosted_orthogonal_guidance
-                        and (bog_range[0] <= t <= bog_range[1])
-                        and (i % bog_interval == 0)
-                    ):
+                    if use_boosted_orthogonal_guidance and (bog_range[0] <= t <= bog_range[1]) and (i % bog_interval == 0):
                         delta_image = self.calculate_boosted_orthogonal_guidance(
                             model_pred=model_pred,
                             model_pred_uncond=model_pred_drop_image,
@@ -3619,9 +3255,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         self.transformer.cache_dic = model_pred_drop_all_cache_dic
                         self.transformer.current = model_pred_drop_all_current
                     elif enable_teacache:
-                        teacache_params_uncond.is_first_or_last_step = (
-                            i == 0 or i == len(timesteps) - 1
-                        )
+                        teacache_params_uncond.is_first_or_last_step = i == 0 or i == len(timesteps) - 1
                         self.transformer.teacache_params = teacache_params_uncond
 
                     model_pred_drop_all = self.predict(
@@ -3633,11 +3267,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                         ref_image_hidden_states=None,
                     )
 
-                    if (
-                        use_boosted_orthogonal_guidance
-                        and (bog_range[0] <= t <= bog_range[1])
-                        and (i % bog_interval == 0)
-                    ):
+                    if use_boosted_orthogonal_guidance and (bog_range[0] <= t <= bog_range[1]) and (i % bog_interval == 0):
                         delta_text = self.calculate_boosted_orthogonal_guidance(
                             model_pred=model_pred,
                             model_pred_uncond=model_pred_drop_all,
@@ -3650,15 +3280,11 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                     # Equivalent:  model_pred = model_pred_drop_all + text_guidance_scale * (model_pred - model_pred_drop_all)
                     model_pred = model_pred + (text_guidance_scale - 1) * delta_text
 
-                latents = self.scheduler.step(
-                    model_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(model_pred, t, latents, return_dict=False)[0]
 
                 latents = latents.to(dtype=dtype)
 
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if step_func is not None:
@@ -3704,9 +3330,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         batch_size, num_channels_latents, height, width = latents.shape
 
         optional_kwargs = {}
-        if "ref_image_hidden_states" in set(
-            inspect.signature(self.transformer.forward).parameters.keys()
-        ):
+        if "ref_image_hidden_states" in set(inspect.signature(self.transformer.forward).parameters.keys()):
             optional_kwargs["ref_image_hidden_states"] = ref_image_hidden_states
 
         model_pred = self.transformer(
@@ -3815,9 +3439,7 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
             if hook_device is not None:
                 return torch.device(hook_device)
 
-            for tensor in list(module.parameters(recurse=True)) + list(
-                module.buffers(recurse=True)
-            ):
+            for tensor in list(module.parameters(recurse=True)) + list(module.buffers(recurse=True)):
                 if tensor.device.type != "meta":
                     return tensor.device
 
@@ -3835,11 +3457,8 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
         else:
             # Validate shape: outer length must match batch_size
             assert (
-                isinstance(input_pil_images, list)
-                and len(input_pil_images) == batch_size
-            ), (
-                "When provided, `input_pil_images` must be a List[List[PIL.Image.Image]] with len == batch size."
-            )
+                isinstance(input_pil_images, list) and len(input_pil_images) == batch_size
+            ), "When provided, `input_pil_images` must be a List[List[PIL.Image.Image]] with len == batch size."
             for imgs in input_pil_images:
                 if imgs and len(imgs) > 0:
                     # Determine per-sample max_pixels as in dataset logic:
@@ -3848,9 +3467,9 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
                     # - If None, do not constrain by pixels
                     max_pixels_i: Optional[int] = None
                     if isinstance(max_vlm_input_pil_pixels, (list, tuple)):
-                        assert len(max_vlm_input_pil_pixels) >= len(imgs), (
-                            "`max_vlm_input_pil_pixels` length must be >= number of images in each sample"
-                        )
+                        assert len(max_vlm_input_pil_pixels) >= len(
+                            imgs
+                        ), "`max_vlm_input_pil_pixels` length must be >= number of images in each sample"
                         max_pixels_i = int(max_vlm_input_pil_pixels[len(imgs) - 1])
                     elif isinstance(max_vlm_input_pil_pixels, int):
                         max_pixels_i = max_vlm_input_pil_pixels
@@ -3892,9 +3511,7 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
             tokenize=True,
             return_dict=True,
         )
-        move_vlm_inputs_to_device = not (
-            use_prompt_tuning_embedding and has_offload_strategy
-        )
+        move_vlm_inputs_to_device = not (use_prompt_tuning_embedding and has_offload_strategy)
         for k in vlm_inputs.keys():
             if isinstance(vlm_inputs[k], torch.Tensor) and move_vlm_inputs_to_device:
                 vlm_inputs[k] = vlm_inputs[k].to(device)
@@ -3903,19 +3520,15 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
         instruction_mask = vlm_inputs["attention_mask"]
 
         if use_prompt_tuning_embedding:
-            num_instruction_feature_layers = (
-                self.transformer.instruction_feature_configs.get(
-                    "num_instruction_feature_layers", 1
-                )
+            num_instruction_feature_layers = self.transformer.instruction_feature_configs.get(
+                "num_instruction_feature_layers", 1
             )
-            num_trainable_prompt_tokens = self.prompt_embedding.config.get(
-                "num_trainable_prompt_tokens", 32
-            )
+            num_trainable_prompt_tokens = self.prompt_embedding.config.get("num_trainable_prompt_tokens", 32)
             use_causal_mask = self.prompt_embedding.config.get("use_causal_mask", True)
 
-            assert self.prompt_embedding is not None, (
-                "When `use_prompt_tuning_embedding=True`, `self.prompt_embedding` must be well set and should not be None."
-            )
+            assert (
+                self.prompt_embedding is not None
+            ), "When `use_prompt_tuning_embedding=True`, `self.prompt_embedding` must be well set and should not be None."
             print("Using prompt tuning enhanced text feature extraction")
 
             # Step 1: Get input embeddings from the text encoder.
@@ -3928,9 +3541,7 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
                 "cpu" if has_offload_strategy else device,
             )
             with torch.no_grad():
-                input_embeds = input_embedding_layer(
-                    input_ids.to(input_embedding_device)
-                )  # [B, seq_len, text_hidden_dim]
+                input_embeds = input_embedding_layer(input_ids.to(input_embedding_device))  # [B, seq_len, text_hidden_dim]
 
             # Step 2: Get trainable prompt embeddings
             prompt_embedding_device = _module_execution_device(
@@ -3957,9 +3568,7 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
 
             # Step 3: Concatenate prompt embeddings to the front of input embeddings
             # [B, num_prompt_tokens + seq_len, text_hidden_dim]
-            trainable_prompt_embeds = trainable_prompt_embeds.to(
-                device=input_embeds.device, dtype=input_embeds.dtype
-            )
+            trainable_prompt_embeds = trainable_prompt_embeds.to(device=input_embeds.device, dtype=input_embeds.dtype)
             combined_embeds = torch.cat([trainable_prompt_embeds, input_embeds], dim=1)
 
             # Step 4: Create extended attention mask for prompt tokens
@@ -3982,37 +3591,25 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
                 vlm_inputs["attention_mask"] = final_instruction_mask
                 if "input_ids" in vlm_inputs:
                     del vlm_inputs["input_ids"]
-                text_encoder_outputs = self.mllm(
-                    **vlm_inputs, output_hidden_states=True, return_dict=True
-                )
+                text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
 
                 # Get all hidden states from all layers
-                all_hidden_states = (
-                    text_encoder_outputs.hidden_states
-                )  # Tuple of [B, extended_seq_len, text_hidden_dim]
+                all_hidden_states = text_encoder_outputs.hidden_states  # Tuple of [B, extended_seq_len, text_hidden_dim]
 
                 # Convert to list for model processing
-                instruction_feats = list(all_hidden_states)[
-                    -num_instruction_feature_layers:
-                ]
+                instruction_feats = list(all_hidden_states)[-num_instruction_feature_layers:]
             else:
                 try:
                     vlm_inputs["inputs_embeds"] = combined_embeds
                     vlm_inputs["attention_mask"] = final_instruction_mask
                     if "input_ids" in vlm_inputs:
                         del vlm_inputs["input_ids"]
-                    instruction_feats = self.mllm(
-                        **vlm_inputs, output_hidden_states=False
-                    ).last_hidden_state
+                    instruction_feats = self.mllm(**vlm_inputs, output_hidden_states=False).last_hidden_state
                 except Exception as e:
-                    text_encoder_outputs = self.mllm(
-                        **vlm_inputs, output_hidden_states=True, return_dict=True
-                    )
+                    text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
 
                     # Get all hidden states from all layers
-                    all_hidden_states = (
-                        text_encoder_outputs.hidden_states
-                    )  # Tuple of [B, extended_seq_len, text_hidden_dim]
+                    all_hidden_states = text_encoder_outputs.hidden_states  # Tuple of [B, extended_seq_len, text_hidden_dim]
 
                     # Get last layer's feature for model processing
                     instruction_feats = all_hidden_states[-1]
@@ -4025,41 +3622,29 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
                     warnings.warn(f"{type(e).__name__}: {e}", UserWarning)
 
             print(f"✅ Prompt tuning: {num_prompt_tokens} trainable tokens added")
-            print(
-                f"✅ Extracted {num_instruction_feature_layers} layers of instruction features"
-            )
+            print(f"✅ Extracted {num_instruction_feature_layers} layers of instruction features")
             print(
                 f"✅ Each layer shape: {instruction_feats[0].shape if isinstance(instruction_feats, list) else instruction_feats.shape}"
             )
 
         else:
-            num_instruction_feature_layers = (
-                self.transformer.instruction_feature_configs.get(
-                    "num_instruction_feature_layers", 1
-                )
+            num_instruction_feature_layers = self.transformer.instruction_feature_configs.get(
+                "num_instruction_feature_layers", 1
             )
             final_instruction_mask = instruction_mask
 
             with torch.no_grad():
                 if num_instruction_feature_layers > 1:
-                    text_encoder_outputs = self.mllm(
-                        **vlm_inputs, output_hidden_states=True, return_dict=True
-                    )
-                    all_hidden_states = (
-                        text_encoder_outputs.hidden_states
-                    )  # Tuple of [B, extended_seq_len, text_hidden_dim]
+                    text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
+                    all_hidden_states = text_encoder_outputs.hidden_states  # Tuple of [B, extended_seq_len, text_hidden_dim]
                     instruction_feats = list(all_hidden_states)[
                         -num_instruction_feature_layers:
                     ]  # Convert to list for model processing
                 else:
                     try:
-                        instruction_feats = self.mllm(
-                            **vlm_inputs, output_hidden_states=False
-                        ).last_hidden_state
+                        instruction_feats = self.mllm(**vlm_inputs, output_hidden_states=False).last_hidden_state
                     except Exception as e:
-                        text_encoder_outputs = self.mllm(
-                            **vlm_inputs, output_hidden_states=True, return_dict=True
-                        )
+                        text_encoder_outputs = self.mllm(**vlm_inputs, output_hidden_states=True, return_dict=True)
 
                         # Get all hidden states from all layers
                         all_hidden_states = (
@@ -4077,42 +3662,26 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
                         warnings.warn(f"{type(e).__name__}: {e}", UserWarning)
 
             print("✅ No prompt tuning: use the original instruction features")
-            print(
-                f"✅ Extracted {num_instruction_feature_layers} layers of instruction features"
-            )
+            print(f"✅ Extracted {num_instruction_feature_layers} layers of instruction features")
             print(
                 f"✅ Each layer shape: {instruction_feats[0].shape if isinstance(instruction_feats, list) else instruction_feats.shape}"
             )
 
         # Optionally remove vision-token features by truncation
-        if (
-            self.MASK_VISION_TOKENS_FEATURE
-            and (self.VISION_TOKEN_IDs is not None)
-            and len(self.VISION_TOKEN_IDs) > 0
-        ):
+        if self.MASK_VISION_TOKENS_FEATURE and (self.VISION_TOKEN_IDs is not None) and len(self.VISION_TOKEN_IDs) > 0:
             mask_device = input_ids.device
-            vision_ids = torch.as_tensor(
-                self.VISION_TOKEN_IDs, device=mask_device, dtype=input_ids.dtype
-            )
+            vision_ids = torch.as_tensor(self.VISION_TOKEN_IDs, device=mask_device, dtype=input_ids.dtype)
             vision_mask_core = torch.isin(input_ids, vision_ids)  # [B, L_core]
-            keep_core_mask = instruction_mask.to(dtype=torch.bool) & (
-                ~vision_mask_core
-            )  # [B, L_core]
+            keep_core_mask = instruction_mask.to(dtype=torch.bool) & (~vision_mask_core)  # [B, L_core]
             if use_prompt_tuning_embedding:
-                prefix_keep = torch.ones(
-                    batch_size, num_prompt_tokens, dtype=torch.bool, device=mask_device
-                )
+                prefix_keep = torch.ones(batch_size, num_prompt_tokens, dtype=torch.bool, device=mask_device)
                 keep_mask = torch.cat([prefix_keep, keep_core_mask], dim=1)
             else:
                 keep_mask = keep_core_mask
             kept_lengths = keep_mask.sum(dim=1)
-            max_kept_len = (
-                int(kept_lengths.max().item()) if kept_lengths.numel() > 0 else 0
-            )
+            max_kept_len = int(kept_lengths.max().item()) if kept_lengths.numel() > 0 else 0
 
-            def compress_features(
-                feats: torch.Tensor, keep_m: torch.Tensor, max_len: int
-            ) -> torch.Tensor:
+            def compress_features(feats: torch.Tensor, keep_m: torch.Tensor, max_len: int) -> torch.Tensor:
                 keep_m = keep_m.to(feats.device)
                 B, L, D = feats.shape
                 out = feats.new_zeros((B, max_len, D))
@@ -4129,14 +3698,9 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
                 if kept_len_b > 0:
                     new_mask[b, :kept_len_b] = 1
             if isinstance(instruction_feats, list):
-                instruction_feats = [
-                    compress_features(feat, keep_mask, max_kept_len)
-                    for feat in instruction_feats
-                ]
+                instruction_feats = [compress_features(feat, keep_mask, max_kept_len) for feat in instruction_feats]
             else:
-                instruction_feats = compress_features(
-                    instruction_feats, keep_mask, max_kept_len
-                )
+                instruction_feats = compress_features(instruction_feats, keep_mask, max_kept_len)
             final_instruction_mask = new_mask
 
         if self.mllm is not None:
@@ -4147,9 +3711,7 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
             dtype = None
 
         if isinstance(instruction_feats, (list, tuple)):
-            final_instruction_feats = [
-                feat.to(dtype=dtype, device=device) for feat in instruction_feats
-            ]
+            final_instruction_feats = [feat.to(dtype=dtype, device=device) for feat in instruction_feats]
         else:
             final_instruction_feats = instruction_feats.to(dtype=dtype, device=device)
         # Keep the attention mask on the same execution device as the features

@@ -865,6 +865,18 @@ Diferentes modelos esperam diferentes dados de conditioning:
 - **Nota**: Ao usar `combined`, voce nao pode definir `captions` separadas nos datasets de condicionamento; as captions do dataset de origem sao usadas.
 - **Veja tambem**: [DATALOADER.md](DATALOADER.md#conditioning_data) para configurar multiplos datasets de condicionamento.
 
+### Opcoes de condicionamento do LTX-2
+
+Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON/TOML com os nomes abaixo, ou passe os flags CLI correspondentes, como `--ltx2_first_frame_conditioning_probability`.
+
+- **Condicionamento intrinseco de tokens alvo**: tokens de video alvo selecionados sao copiados dos latentes limpos, seus timesteps viram `0`, e eles sao excluidos da perda de video.
+  - `ltx2_intrinsic_conditioning`: array JSON de objetos de condicao, por exemplo `[{"type":"first_frame","probability":1.0}]`. Valores `type` suportados: `first_frame`, `prefix`, `suffix`, `spatial_crop` e `mask`.
+  - Chaves curtas: `ltx2_first_frame_conditioning_probability`, `ltx2_prefix_conditioning_probability`, `ltx2_prefix_conditioning_frames`, `ltx2_suffix_conditioning_probability`, `ltx2_suffix_conditioning_frames` e `ltx2_mask_conditioning_probability`.
+  - Para `mask`, valor `1` significa condicionamento limpo/sem perda; valor `0` significa treino ruidoso normal.
+- **Escala de referencia IC-LoRA**: `ltx2_reference_spatial_scale_factor` e `ltx2_reference_temporal_scale_factor` ajustam coordenadas dos tokens de referencia. A escala espacial e inferida pelos tamanhos latentes de referencia/alvo quando omitida.
+- **Referencia IC-LoRA de validacao**: `validation_ltx2_video_conditioning` e uma lista JSON de videos de referencia locais para validacao, por exemplo `[{"path":"data/reference.mp4","strength":1.0}]`.
+- **Escopo**: Essas configuracoes controlam apenas o comportamento de condicionamento LTX-2 no modelo. Pareamento de datasets, arquivos de mascara, datasets de referencia, controles WebUI e templates de dataset sao configurados separadamente.
+
 ---
 
 ## 🎛 Parametros de treinamento

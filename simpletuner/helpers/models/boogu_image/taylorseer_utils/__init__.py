@@ -4,20 +4,14 @@ from typing import Dict
 import torch
 
 
-def _get_taylor_cache_entry(
-    cache_dic: Dict, current: Dict, create: bool = False
-) -> Dict:
+def _get_taylor_cache_entry(cache_dic: Dict, current: Dict, create: bool = False) -> Dict:
     cache_root = cache_dic["cache"][-1]
     stream = current["stream"]
     layer = current["layer"]
     module = current["module"]
 
     if create:
-        return (
-            cache_root.setdefault(stream, {})
-            .setdefault(layer, {})
-            .setdefault(module, {})
-        )
+        return cache_root.setdefault(stream, {}).setdefault(layer, {}).setdefault(module, {})
     return cache_root[stream][layer][module]
 
 
@@ -57,47 +51,33 @@ def derivative_approximation(cache_dic: Dict, current: Dict, feature: torch.Tens
             `module`, and `step`.
         feature: Current feature tensor to use as 0-th order term.
     """
-    difference_distance = (
-        current["activated_steps"][-1] - current["activated_steps"][-2]
-    )
+    difference_distance = current["activated_steps"][-1] - current["activated_steps"][-2]
 
     cache_entry = _get_taylor_cache_entry(cache_dic, current, create=True)
     updated_taylor_factors = {}
     updated_taylor_factors[0] = feature
 
     for i in range(cache_dic["max_order"]):
-        if (cache_entry.get(i, None) is not None) and (
-            current["step"] > cache_dic["first_enhance"] - 2
-        ):
-            updated_taylor_factors[i + 1] = (
-                updated_taylor_factors[i] - cache_entry[i]
-            ) / difference_distance
+        if (cache_entry.get(i, None) is not None) and (current["step"] > cache_dic["first_enhance"] - 2):
+            updated_taylor_factors[i + 1] = (updated_taylor_factors[i] - cache_entry[i]) / difference_distance
         else:
             break
 
-    cache_dic["cache"][-1][current["stream"]][current["layer"]][current["module"]] = (
-        updated_taylor_factors
-    )
+    cache_dic["cache"][-1][current["stream"]][current["layer"]][current["module"]] = updated_taylor_factors
 
 
-def derivative_approximation_4_double_stream(
-    cache_dic: Dict, current: Dict, feature: tuple
-):
+def derivative_approximation_4_double_stream(cache_dic: Dict, current: Dict, feature: tuple):
     """
     Build/update Taylor coefficients for double-stream outputs.
     """
-    difference_distance = (
-        current["activated_steps"][-1] - current["activated_steps"][-2]
-    )
+    difference_distance = current["activated_steps"][-1] - current["activated_steps"][-2]
 
     cache_entry = _get_taylor_cache_entry(cache_dic, current, create=True)
     updated_taylor_factors = {}
     updated_taylor_factors[0] = feature
 
     for i in range(cache_dic["max_order"]):
-        if (cache_entry.get(i, None) is not None) and (
-            current["step"] > cache_dic["first_enhance"] - 2
-        ):
+        if (cache_entry.get(i, None) is not None) and (current["step"] > cache_dic["first_enhance"] - 2):
             updated_taylor_factors[i + 1] = _tree_div(
                 _tree_sub(updated_taylor_factors[i], cache_entry[i]),
                 difference_distance,
@@ -105,9 +85,7 @@ def derivative_approximation_4_double_stream(
         else:
             break
 
-    cache_dic["cache"][-1][current["stream"]][current["layer"]][current["module"]] = (
-        updated_taylor_factors
-    )
+    cache_dic["cache"][-1][current["stream"]][current["layer"]][current["module"]] = updated_taylor_factors
 
 
 def taylor_formula(cache_dic: Dict, current: Dict) -> torch.Tensor:
@@ -154,6 +132,4 @@ def taylor_cache_init(cache_dic: Dict, current: Dict):
     """
     if (current["step"] == 0) and (cache_dic["taylor_cache"]):
         cache_root = cache_dic["cache"][-1]
-        cache_root.setdefault(current["stream"], {}).setdefault(current["layer"], {})[
-            current["module"]
-        ] = {}
+        cache_root.setdefault(current["stream"], {}).setdefault(current["layer"], {})[current["module"]] = {}

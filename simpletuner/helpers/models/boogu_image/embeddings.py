@@ -123,35 +123,25 @@ def apply_rotary_emb(
             cos = cos.unsqueeze(2)
             sin = sin.unsqueeze(2)
         else:
-            raise ValueError(
-                f"`freqs_cis` must have rank 2 or 3 after conversion to real tensors, got {cos.dim()}."
-            )
+            raise ValueError(f"`freqs_cis` must have rank 2 or 3 after conversion to real tensors, got {cos.dim()}.")
 
         if use_real_unbind_dim == -1:
             # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], x.shape[-1] // 2, 2).unbind(
-                -1
-            )  # [B, S, H, D//2]
+            x_real, x_imag = x.reshape(*x.shape[:-1], x.shape[-1] // 2, 2).unbind(-1)  # [B, S, H, D//2]
             x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(-2)
         elif use_real_unbind_dim == -2:
             # Used for Stable Audio, Boogu and CogView4
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, x.shape[-1] // 2).unbind(
-                -2
-            )  # [B, S, H, D//2]
+            x_real, x_imag = x.reshape(*x.shape[:-1], 2, x.shape[-1] // 2).unbind(-2)  # [B, S, H, D//2]
             x_rotated = torch.cat([-x_imag, x_real], dim=-1)
         else:
-            raise ValueError(
-                f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2."
-            )
+            raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
 
         out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
 
         return out
     else:
         # used for lumina
-        x_rotated = torch.view_as_complex(
-            x.float().reshape(*x.shape[:-1], x.shape[-1] // 2, 2)
-        )
+        x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], x.shape[-1] // 2, 2))
         freqs_cis = freqs_cis.unsqueeze(2)
         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
 

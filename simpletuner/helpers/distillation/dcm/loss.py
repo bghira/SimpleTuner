@@ -15,7 +15,7 @@ def gan_d_loss(
     loss = 0.0
     # collate sample_fake and sample_real
     with torch.no_grad():
-        (_, fake_features, fake_features_ori) = teacher_transformer(
+        _, fake_features, fake_features_ori = teacher_transformer(
             sample_fake,
             timestep,
             encoder_hidden_states,
@@ -26,7 +26,7 @@ def gan_d_loss(
             unpachify_layer=True,
             student=False,
         )
-        (_, real_features, real_features_ori) = teacher_transformer(
+        _, real_features, real_features_ori = teacher_transformer(
             sample_real,
             timestep,
             encoder_hidden_states,
@@ -60,7 +60,7 @@ def gan_g_loss(
     discriminator_head_stride,
 ):
     loss = 0.0
-    (_, features, features_ori) = teacher_transformer(
+    _, features, features_ori = teacher_transformer(
         sample_fake,
         timestep,
         encoder_hidden_states,
@@ -73,7 +73,7 @@ def gan_g_loss(
     )
 
     with torch.no_grad():
-        (_, features_real, features_real_ori) = teacher_transformer(
+        _, features_real, features_real_ori = teacher_transformer(
             sample_real,
             timestep,
             encoder_hidden_states,

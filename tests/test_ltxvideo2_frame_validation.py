@@ -71,6 +71,28 @@ class TestLTXVideo2FrameValidation(unittest.TestCase):
             ]
             self.assertEqual(len(frame_adjustment_warnings), 0)
 
+    def test_conditioning_video_config_is_preserved(self):
+        backend = {
+            "id": "ltx2-reference",
+            "dataset_type": "conditioning",
+            "conditioning_type": "reference_strict",
+            "video": {
+                "num_frames": 17,
+                "min_frames": 17,
+            },
+        }
+        args = {
+            "model_family": "ltxvideo2",
+            "model_flavour": "dev",
+            "framerate": 25,
+        }
+
+        result = init_backend_config(backend, args, accelerator=None)
+
+        self.assertEqual(result["dataset_type"], "conditioning")
+        self.assertEqual(result["config"]["video"]["num_frames"], 17)
+        self.assertEqual(result["config"]["video"]["min_frames"], 17)
+
 
 if __name__ == "__main__":
     unittest.main()

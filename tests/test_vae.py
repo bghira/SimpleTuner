@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+
 if "trainingsample" not in sys.modules:
     trainingsample_stub = types.ModuleType("trainingsample")
     trainingsample_stub.batch_resize_images = lambda *args, **kwargs: []
@@ -40,7 +42,7 @@ if "imageio" not in sys.modules:
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.models.common import AudioModelFoundation
-from simpletuner.helpers.training import audio_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, video_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -132,6 +134,35 @@ class TestVaeCache(unittest.TestCase):
 
         expected = torch.tensor([[[[[1.0]]], [[[2.0]]]]], dtype=torch.float32)
         torch.testing.assert_close(latents, expected)
+
+    def test_video_conditioning_discovers_video_files(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = "reference"
+        vae_cache.dataset_type_enum = DatasetType.CONDITIONING
+        vae_cache.instance_data_dir = "/data/reference"
+        vae_cache.cache_dir = "/cache/reference"
+        vae_cache.image_data_backend = MagicMock()
+        vae_cache.cache_data_backend = MagicMock()
+        vae_cache.num_video_frames = 17
+        vae_cache.debug_log = MagicMock()
+        vae_cache.image_data_backend.list_files.return_value = ["/data/reference/sample.mp4"]
+        vae_cache.cache_data_backend.list_files.return_value = []
+
+        with (
+            patch("simpletuner.helpers.caching.vae.StateTracker.get_image_files", return_value=None),
+            patch(
+                "simpletuner.helpers.caching.vae.StateTracker.set_image_files", return_value=["/data/reference/sample.mp4"]
+            ),
+            patch("simpletuner.helpers.caching.vae.StateTracker.get_vae_cache_files", return_value=None),
+            patch("simpletuner.helpers.caching.vae.StateTracker.set_vae_cache_files", return_value=[]),
+        ):
+            files = vae_cache.discover_all_files()
+
+        self.assertEqual(files, ["/data/reference/sample.mp4"])
+        vae_cache.image_data_backend.list_files.assert_called_once_with(
+            instance_data_dir="/data/reference",
+            file_extensions=video_file_extensions,
+        )
 
 
 class DummyAccelerator:

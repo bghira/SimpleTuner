@@ -150,6 +150,9 @@ class TrainingSample:
             raise ValueError(f"No training dataset registered for backend “{training_dataset_id}”.")
         training_data_dir = training_backend["config"]["instance_data_dir"]
         cond_data_dir = cond_backend["config"]["instance_data_dir"]
+        if os.path.isabs(self._image_path):
+            cond_data_dir = os.path.abspath(cond_data_dir)
+            training_data_dir = os.path.abspath(training_data_dir)
         cond_relpath = self._image_path.replace(cond_data_dir, training_data_dir, 1)
         if not cond_relpath:
             raise ValueError("Cannot determine training sample path: no image path provided.")

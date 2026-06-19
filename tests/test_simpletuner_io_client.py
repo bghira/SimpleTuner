@@ -29,9 +29,7 @@ class TestSimpleTunerIOClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_job_uses_provider_config_runtime(self) -> None:
         await self.client._config_store.update("simpletuner_io", {"max_runtime_minutes": 120})
-        self.client._request = AsyncMock(
-            return_value={"id": "job-1", "status": "pending", "attempt_id": "attempt-1"}
-        )
+        self.client._request = AsyncMock(return_value={"id": "job-1", "status": "pending", "attempt_id": "attempt-1"})
 
         job = await self.client.run_job(config={}, dataloader=[])
 

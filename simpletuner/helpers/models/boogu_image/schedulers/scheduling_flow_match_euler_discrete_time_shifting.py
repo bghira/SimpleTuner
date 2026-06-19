@@ -82,9 +82,7 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
         max_shift: float = 1.15,
         time_shift_v2_half_scaling_factor: float = 60.0,
     ):
-        timesteps = torch.linspace(0, 1, num_train_timesteps + 1, dtype=torch.float32)[
-            :-1
-        ]
+        timesteps = torch.linspace(0, 1, num_train_timesteps + 1, dtype=torch.float32)[:-1]
 
         self.timesteps = timesteps
 
@@ -133,9 +131,7 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
     # --- Helpers to mirror training-side shift logic ---
     @staticmethod
-    def _get_lin_function(
-        x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
-    ):
+    def _get_lin_function(x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15):
         m = (y2 - y1) / (x2 - x1)
         b = y1 - m * x1
         return lambda x: m * x + b
@@ -176,9 +172,7 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
         if timesteps is None:
             self.num_inference_steps = num_inference_steps
-            t_arr = np.linspace(0, 1, num_inference_steps + 1, dtype=np.float32)[
-                :-1
-            ]  # Default
+            t_arr = np.linspace(0, 1, num_inference_steps + 1, dtype=np.float32)[:-1]  # Default
             # t_arr = np.linspace(0, 1, num_inference_steps, dtype=np.float32)[:-1]  # my
 
             # Apply training-consistent time shift only when requested
@@ -191,10 +185,8 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                         # tokens are approximately (H_lat//2)*(W_lat//2). We approximate this with num_tokens//4.
                         if num_tokens is not None and num_tokens > 0:
                             tokens_reduced = max(1, int(num_tokens) // 4)
-                            lin = self._get_lin_function(
-                                y1=self.config.base_shift, y2=self.config.max_shift
-                            )
-                            mu = lin(tokens_reduced)  ## 4096 for 1024x1024 resolution
+                            lin = self._get_lin_function(y1=self.config.base_shift, y2=self.config.max_shift)
+                            mu = lin(tokens_reduced)  # 4096 for 1024x1024 resolution
 
                             t_arr = self._time_shift_v1(t_arr, mu, sigma=1.0)
                         # else: no-op if we lack num_tokens
@@ -203,19 +195,14 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                         # m = sqrt(num_tokens) / 40; t' = t / (m - m t + t)
                         # When input resolution is 320 * 320, m = 1, when input resolution is 512 * 512, m = 1.6, when input resolution is 1024 * 1024, m = 3.2
                         if num_tokens is not None and num_tokens > 0:
-                            m = (
-                                float(np.sqrt(num_tokens))
-                                / self.time_shift_v2_scaling_factor
-                            )
+                            m = float(np.sqrt(num_tokens)) / self.time_shift_v2_scaling_factor
                             t_arr = self._time_shift_v2(t_arr, m)
                         # else: no-op
                 else:
                     # static: depend on seq_len configured at scheduler init
                     if self.config.time_shift_version == "v1":
                         if self.config.seq_len is not None and self.config.seq_len > 0:
-                            lin = self._get_lin_function(
-                                y1=self.config.base_shift, y2=self.config.max_shift
-                            )
+                            lin = self._get_lin_function(y1=self.config.base_shift, y2=self.config.max_shift)
                             mu = lin(int(self.config.seq_len))
                             t_arr = self._time_shift_v1(t_arr, mu, sigma=1.0)
                             # ###################No dyn#######################
@@ -226,10 +213,7 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                     elif self.config.time_shift_version == "v2":
                         if self.config.seq_len is not None and self.config.seq_len > 0:
                             # training static v2 uses m = sqrt(seq_len) / 40
-                            m = (
-                                float(np.sqrt(self.config.seq_len))
-                                / self.time_shift_v2_scaling_factor
-                            )
+                            m = float(np.sqrt(self.config.seq_len)) / self.time_shift_v2_scaling_factor
                             t_arr = self._time_shift_v2(t_arr, m)
 
             timesteps = t_arr
@@ -297,11 +281,7 @@ class FlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                 returned, otherwise a tuple is returned where the first element is the sample tensor.
         """
 
-        if (
-            isinstance(timestep, int)
-            or isinstance(timestep, torch.IntTensor)
-            or isinstance(timestep, torch.LongTensor)
-        ):
+        if isinstance(timestep, int) or isinstance(timestep, torch.IntTensor) or isinstance(timestep, torch.LongTensor):
             raise ValueError(
                 (
                     "Passing integer indices (e.g. from `enumerate(timesteps)`) as timesteps to"

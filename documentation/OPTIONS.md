@@ -874,6 +874,18 @@ Different models expect different conditioning data:
 - **Note**: When using `combined`, you cannot define separate `captions` on conditioning datasets; the source dataset's captions are used instead.
 - **See also**: [DATALOADER.md](DATALOADER.md#conditioning_data) for configuring multiple conditioning datasets.
 
+### LTX-2 conditioning options
+
+These are optional advanced settings for LTX-2 training. Set them in JSON/TOML config files with the names below, or pass the matching CLI flags such as `--ltx2_first_frame_conditioning_probability`.
+
+- **Intrinsic target-token conditioning**: selected target video tokens are copied from the clean latents, their timesteps are set to `0`, and they are excluded from video loss.
+  - `ltx2_intrinsic_conditioning`: JSON array of condition objects, for example `[{"type":"first_frame","probability":1.0}]`. Supported `type` values are `first_frame`, `prefix`, `suffix`, `spatial_crop`, and `mask`.
+  - Shorthand keys: `ltx2_first_frame_conditioning_probability`, `ltx2_prefix_conditioning_probability`, `ltx2_prefix_conditioning_frames`, `ltx2_suffix_conditioning_probability`, `ltx2_suffix_conditioning_frames`, and `ltx2_mask_conditioning_probability`.
+  - For `mask`, value `1` means clean conditioning/no loss; value `0` means normal noisy training.
+- **IC-LoRA reference scaling**: `ltx2_reference_spatial_scale_factor` and `ltx2_reference_temporal_scale_factor` adjust reference-token coordinates. Spatial scale is inferred from reference/target latent sizes when unset.
+- **IC-LoRA validation reference**: `validation_ltx2_video_conditioning` is a JSON list of local reference videos for validation, for example `[{"path":"data/reference.mp4","strength":1.0}]`.
+- **Scope**: These settings only control model-side LTX-2 conditioning behavior. Dataset pairing, mask files, reference datasets, WebUI controls, and dataset templates are configured separately.
+
 ---
 
 ## 🎛 Training Parameters

@@ -43,6 +43,16 @@ class TestLTX2LoraFormat(unittest.TestCase):
     def test_image2video_pipeline_loads_comfyui_lora(self):
         self._run_pipeline_test(pipeline_ltx2_image2video, "LTX2ImageToVideoPipeline")
 
+    def test_text2video_pipeline_normalizes_latents(self):
+        latents = torch.randn(1, 3, 2, 4, 4)
+        latents_mean = torch.tensor([0.1, -0.2, 0.3])
+        latents_std = torch.tensor([0.5, 1.5, 2.0])
+
+        normalized = pipeline_ltx2.LTX2Pipeline._normalize_latents(latents, latents_mean, latents_std)
+        restored = pipeline_ltx2.LTX2Pipeline._denormalize_latents(normalized, latents_mean, latents_std)
+
+        self.assertTrue(torch.allclose(restored, latents))
+
 
 if __name__ == "__main__":
     unittest.main()

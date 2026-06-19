@@ -22,11 +22,7 @@ import numpy as np
 import PIL.Image
 import torch
 from diffusers.configuration_utils import register_to_config
-from diffusers.image_processor import (
-    PipelineImageInput,
-    VaeImageProcessor,
-    is_valid_image_imagelist,
-)
+from diffusers.image_processor import PipelineImageInput, VaeImageProcessor, is_valid_image_imagelist
 
 
 class BooguImageProcessor(VaeImageProcessor):
@@ -142,12 +138,8 @@ class BooguImageProcessor(VaeImageProcessor):
         ratio = min(max_pixels_ratio, max_side_length_ratio, 1.0)
 
         new_height, new_width = (
-            int(height * ratio)
-            // self.config.vae_scale_factor
-            * self.config.vae_scale_factor,
-            int(width * ratio)
-            // self.config.vae_scale_factor
-            * self.config.vae_scale_factor,
+            int(height * ratio) // self.config.vae_scale_factor * self.config.vae_scale_factor,
+            int(width * ratio) // self.config.vae_scale_factor * self.config.vae_scale_factor,
         )
         return new_height, new_width
 
@@ -192,11 +184,7 @@ class BooguImageProcessor(VaeImageProcessor):
         supported_formats = (PIL.Image.Image, np.ndarray, torch.Tensor)
 
         # Expand the missing dimension for 3-dimensional pytorch tensor or numpy array that represents grayscale image
-        if (
-            self.config.do_convert_grayscale
-            and isinstance(image, (torch.Tensor, np.ndarray))
-            and image.ndim == 3
-        ):
+        if self.config.do_convert_grayscale and isinstance(image, (torch.Tensor, np.ndarray)) and image.ndim == 3:
             if isinstance(image, torch.Tensor):
                 # if image is a pytorch tensor could have 2 possible shapes:
                 #    1. batch x height x width: we should insert the channel dimension at position 1
@@ -213,22 +201,14 @@ class BooguImageProcessor(VaeImageProcessor):
                 else:
                     image = np.expand_dims(image, axis=-1)
 
-        if (
-            isinstance(image, list)
-            and isinstance(image[0], np.ndarray)
-            and image[0].ndim == 4
-        ):
+        if isinstance(image, list) and isinstance(image[0], np.ndarray) and image[0].ndim == 4:
             warnings.warn(
                 "Passing `image` as a list of 4d np.ndarray is deprecated."
                 "Please concatenate the list along the batch dimension and pass it as a single 4d np.ndarray",
                 FutureWarning,
             )
             image = np.concatenate(image, axis=0)
-        if (
-            isinstance(image, list)
-            and isinstance(image[0], torch.Tensor)
-            and image[0].ndim == 4
-        ):
+        if isinstance(image, list) and isinstance(image[0], torch.Tensor) and image[0].ndim == 4:
             warnings.warn(
                 "Passing `image` as a list of 4d torch.Tensor is deprecated."
                 "Please concatenate the list along the batch dimension and pass it as a single 4d torch.Tensor",
@@ -249,13 +229,8 @@ class BooguImageProcessor(VaeImageProcessor):
             if crops_coords is not None:
                 image = [i.crop(crops_coords) for i in image]
             if self.config.do_resize:
-                height, width = self.get_new_height_width(
-                    image[0], height, width, max_pixels, max_side_length
-                )
-                image = [
-                    self.resize(i, height, width, resize_mode=resize_mode)
-                    for i in image
-                ]
+                height, width = self.get_new_height_width(image[0], height, width, max_pixels, max_side_length)
+                image = [self.resize(i, height, width, resize_mode=resize_mode) for i in image]
             if self.config.do_convert_rgb:
                 image = [self.convert_to_rgb(i) for i in image]
             elif self.config.do_convert_grayscale:
@@ -264,26 +239,16 @@ class BooguImageProcessor(VaeImageProcessor):
             image = self.numpy_to_pt(image)  # to pt
 
         elif isinstance(image[0], np.ndarray):
-            image = (
-                np.concatenate(image, axis=0)
-                if image[0].ndim == 4
-                else np.stack(image, axis=0)
-            )
+            image = np.concatenate(image, axis=0) if image[0].ndim == 4 else np.stack(image, axis=0)
 
             image = self.numpy_to_pt(image)
 
-            height, width = self.get_new_height_width(
-                image, height, width, max_pixels, max_side_length
-            )
+            height, width = self.get_new_height_width(image, height, width, max_pixels, max_side_length)
             if self.config.do_resize:
                 image = self.resize(image, height, width)
 
         elif isinstance(image[0], torch.Tensor):
-            image = (
-                torch.cat(image, axis=0)
-                if image[0].ndim == 4
-                else torch.stack(image, axis=0)
-            )
+            image = torch.cat(image, axis=0) if image[0].ndim == 4 else torch.stack(image, axis=0)
 
             if self.config.do_convert_grayscale and image.ndim == 3:
                 image = image.unsqueeze(1)
@@ -293,9 +258,7 @@ class BooguImageProcessor(VaeImageProcessor):
             if channel == self.config.vae_latent_channels:
                 return image
 
-            height, width = self.get_new_height_width(
-                image, height, width, max_pixels, max_side_length
-            )
+            height, width = self.get_new_height_width(image, height, width, max_pixels, max_side_length)
             if self.config.do_resize:
                 image = self.resize(image, height, width)
 

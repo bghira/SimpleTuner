@@ -25,6 +25,7 @@ def _get_package_dir() -> _Path:
             return _Path(spec.submodule_search_locations[0])
     raise RuntimeError("Cannot determine simpletuner package directory")
 
+
 # Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)
 # These warnings are issued during import before we can install custom handlers.
 warnings.filterwarnings(

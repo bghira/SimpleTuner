@@ -871,6 +871,18 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **说明**：使用 `combined` 时不能在条件数据集中定义单独的 `captions`，会使用源数据集的字幕。
 - **另见**：[DATALOADER.md](DATALOADER.md#conditioning_data) 获取多条件数据集配置说明。
 
+### LTX-2 条件选项
+
+这些是 LTX-2 训练的可选高级设置。可以在 JSON/TOML 配置中使用下面的名称，也可以使用对应的 CLI flag，例如 `--ltx2_first_frame_conditioning_probability`。
+
+- **目标 token 内在条件**：选中的目标视频 token 会从 clean latent 复制，token timestep 设为 `0`，并从 video loss 中排除。
+  - `ltx2_intrinsic_conditioning`：条件对象的 JSON 数组，例如 `[{"type":"first_frame","probability":1.0}]`。支持的 `type` 值为 `first_frame`、`prefix`、`suffix`、`spatial_crop`、`mask`。
+  - 简写键：`ltx2_first_frame_conditioning_probability`、`ltx2_prefix_conditioning_probability`、`ltx2_prefix_conditioning_frames`、`ltx2_suffix_conditioning_probability`、`ltx2_suffix_conditioning_frames`、`ltx2_mask_conditioning_probability`。
+  - 对于 `mask`，值 `1` 表示 clean conditioning/no loss；值 `0` 表示正常 noisy training。
+- **IC-LoRA 参考缩放**：`ltx2_reference_spatial_scale_factor` 和 `ltx2_reference_temporal_scale_factor` 调整参考 token 坐标。未设置时会从 reference/target latent 尺寸推断空间缩放。
+- **IC-LoRA 验证参考**：`validation_ltx2_video_conditioning` 是用于验证的本地 reference video JSON 列表，例如 `[{"path":"data/reference.mp4","strength":1.0}]`。
+- **范围**：这些设置只控制模型侧的 LTX-2 条件行为。Dataset pairing、mask files、reference datasets、WebUI controls、dataset templates 需要单独配置。
+
 ---
 
 ## 🎛 训练参数

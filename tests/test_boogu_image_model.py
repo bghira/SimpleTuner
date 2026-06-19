@@ -1,12 +1,12 @@
-import unittest
 import inspect
+import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
 
-from simpletuner.helpers.models.boogu_image.lora_pipeline import BooguImageLoraLoaderMixin
 from simpletuner.helpers.models.boogu_image.embeddings import apply_rotary_emb
+from simpletuner.helpers.models.boogu_image.lora_pipeline import BooguImageLoraLoaderMixin
 from simpletuner.helpers.models.boogu_image.model import BooguImage
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline, retrieve_timesteps
 from simpletuner.helpers.models.boogu_image.rope import BooguImageDoubleStreamRotaryPosEmbed
@@ -192,10 +192,13 @@ class BooguImageModelTests(unittest.TestCase):
         angles = torch.randn(2, 5, 4)
         freqs_cis = torch.polar(torch.ones_like(angles), angles)
 
-        expected = torch.view_as_real(
-            torch.view_as_complex(x.float().reshape(*x.shape[:-1], x.shape[-1] // 2, 2))
-            * freqs_cis.unsqueeze(2)
-        ).flatten(-2).to(x.dtype)
+        expected = (
+            torch.view_as_real(
+                torch.view_as_complex(x.float().reshape(*x.shape[:-1], x.shape[-1] // 2, 2)) * freqs_cis.unsqueeze(2)
+            )
+            .flatten(-2)
+            .to(x.dtype)
+        )
 
         with patch("torch.view_as_complex", side_effect=AssertionError("complex path used")):
             actual = apply_rotary_emb(x, freqs_cis, use_real=False)

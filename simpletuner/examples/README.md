@@ -48,6 +48,12 @@ ACE-Step examples are split by model generation:
 - `ace_step-v1-0.peft-lora` for the original ACE-Step v1 3.5B path
 - `ace_step-v1-5.peft-lora` for the forward-compatible ACE-Step v1.5 LoRA path
 
+LTX-2 conditioning examples are split by conditioning style:
+
+- `ltxvideo2-19b-t2v.peft-lora+first-frame-conditioning` shows the shorthand `ltx2_*` probability fields.
+- `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
+- `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
+
 ### Modifying and extending an example
 
 You'll want to copy the folder from `simpletuner/examples` to `config` before modifying anything, otherwise your changes will conflict with newer example config updates.

@@ -16,16 +16,16 @@ from simpletuner.helpers.acceleration import (
     get_torchao_presets,
 )
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
-from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.zlab_i1.latent_utils import (
     normalize_flux2_latents,
     pixel_shuffle_2x,
     pixel_unshuffle_2x,
     unscale_flux2_latents,
 )
-from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.zlab_i1.pipeline import ZlabI1Pipeline
 from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 
 logger = logging.getLogger(__name__)
@@ -268,7 +268,9 @@ class ZLabI1(ImageModelFoundation):
         with torch.no_grad():
             mask_img = prepared_batch["conditioning_pixel_values"].to(device=latents.device, dtype=latents.dtype)
             if mask_img.ndim != 4:
-                raise ValueError(f"conditioning_pixel_values must have shape [batch, channels, height, width], got {tuple(mask_img.shape)}.")
+                raise ValueError(
+                    f"conditioning_pixel_values must have shape [batch, channels, height, width], got {tuple(mask_img.shape)}."
+                )
             if mask_img.shape[0] != latents.shape[0]:
                 raise ValueError(
                     "conditioning_pixel_values batch size must match noisy_latents batch size, "
@@ -321,7 +323,9 @@ class ZLabI1(ImageModelFoundation):
 
         timesteps = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.base_weight_dtype)
         if timesteps.shape[0] != latents.shape[0]:
-            raise ValueError(f"timesteps batch size must match noisy_latents batch size, got {timesteps.shape[0]} and {latents.shape[0]}.")
+            raise ValueError(
+                f"timesteps batch size must match noisy_latents batch size, got {timesteps.shape[0]} and {latents.shape[0]}."
+            )
         if timesteps.ndim > 1:
             timesteps = timesteps[:, 0]
 
