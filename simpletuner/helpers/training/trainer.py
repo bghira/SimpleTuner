@@ -383,30 +383,6 @@ class Trainer:
 
         optimizer.register_attention_params_from_model(trained_component, name_filter=self._muon_attention_param_filter)
 
-    def _unwrap_peft_component(self, component):
-        candidates = []
-        queue = [component, unwrap_model(self.accelerator, component)]
-        seen = set()
-
-        while queue:
-            candidate = queue.pop(0)
-            if candidate is None:
-                continue
-            candidate_id = id(candidate)
-            if candidate_id in seen:
-                continue
-            seen.add(candidate_id)
-            candidates.append(candidate)
-            if hasattr(candidate, "peft_config"):
-                return candidate
-            for attr_name in ("module", "_orig_mod", "base_model", "model"):
-                wrapped = getattr(candidate, attr_name, None)
-                if wrapped is not None:
-                    queue.append(wrapped)
-
-        candidate_types = ", ".join(type(candidate).__name__ for candidate in candidates)
-        raise AttributeError(f"Could not find a PEFT component while unwrapping: {candidate_types}")
-
     @staticmethod
     def _muon_attention_param_filter(name: str) -> bool:
         lowered = name.lower()
@@ -6518,7 +6494,7 @@ class Trainer:
             if self.model.get_trained_component() is not None:
                 self.model.model = unwrap_model(self.accelerator, self.model.model)
             if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
-                trained_component = self._unwrap_peft_component(self.model.get_trained_component(unwrap_model=False))
+                trained_component = unwrap_model(self.accelerator, self.model.get_trained_component(unwrap_model=False))
                 lora_save_kwargs = {
                     "save_directory": self.config.output_dir,
                     f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(trained_component),

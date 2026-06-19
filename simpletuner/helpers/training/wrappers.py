@@ -1,13 +1,31 @@
 from diffusers.utils.torch_utils import is_compiled_module
 
 
-def unwrap_model(accelerator, model, keep_fp32_wrapper: bool = True):
-    try:
-        model = accelerator.unwrap_model(model, keep_fp32_wrapper=keep_fp32_wrapper)
-    except TypeError:
-        model = accelerator.unwrap_model(model)
-    model = model._orig_mod if is_compiled_module(model) else model
+def _is_fsdp_module(model) -> bool:
+    return model is not None and model.__class__.__name__ == "FullyShardedDataParallel"
+
+
+def _unwrap_execution_wrappers(model):
+    while model is not None and not _is_fsdp_module(model):
+        wrapped = None
+        if is_compiled_module(model):
+            wrapped = model._orig_mod
+        elif hasattr(model, "module"):
+            wrapped = model.module
+
+        if wrapped is None or wrapped is model:
+            break
+        model = wrapped
     return model
+
+
+def unwrap_model(accelerator, model, keep_fp32_wrapper: bool = True):
+    if accelerator is not None:
+        try:
+            model = accelerator.unwrap_model(model, keep_fp32_wrapper=keep_fp32_wrapper)
+        except TypeError:
+            model = accelerator.unwrap_model(model)
+    return _unwrap_execution_wrappers(model)
 
 
 def gather_dict_of_tensors_shapes(tensors: dict) -> dict:

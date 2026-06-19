@@ -36,6 +36,7 @@ from simpletuner.helpers.training.lora_format import (
     normalize_lora_format,
 )
 from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+from simpletuner.helpers.training.wrappers import unwrap_model
 
 from .audio_autoencoder import AutoencoderKLLTX2Audio
 from .autoencoder import AutoencoderKLLTX2Video
@@ -91,20 +92,8 @@ EXAMPLE_DOC_STRING = """
 """
 
 
-def _unwrap_pipeline_transformer(transformer):
-    while transformer is not None and transformer.__class__.__name__ != "FullyShardedDataParallel":
-        if hasattr(transformer, "_orig_mod"):
-            transformer = transformer._orig_mod
-            continue
-        if hasattr(transformer, "module"):
-            transformer = transformer.module
-            continue
-        break
-    return transformer
-
-
 def _set_pipeline_transformer(pipeline, transformer):
-    transformer = _unwrap_pipeline_transformer(transformer)
+    transformer = unwrap_model(None, transformer)
     pipeline.transformer = transformer
     if transformer is not None:
         pipeline.transformer_spatial_patch_size = transformer.config.patch_size
@@ -268,7 +257,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         vocoder: LTX2Vocoder,
     ):
         super().__init__()
-        transformer = _unwrap_pipeline_transformer(transformer)
+        transformer = unwrap_model(None, transformer)
 
         self.register_modules(
             vae=vae,
