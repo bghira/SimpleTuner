@@ -1492,7 +1492,8 @@ class LTXVideo2(VideoModelFoundation):
         return (mask[:, 0] > 0.5).flatten(1).to(torch.float32)
 
     def _ltx2_intrinsic_condition_specs(self) -> list[dict]:
-        specs = getattr(self.config, "ltx2_intrinsic_conditioning", None)
+        config_values = vars(self.config)
+        specs = config_values.get("ltx2_intrinsic_conditioning", None)
         if specs is None:
             specs = []
         elif isinstance(specs, str):
@@ -1509,12 +1510,12 @@ class LTXVideo2(VideoModelFoundation):
             ("mask", "ltx2_mask_conditioning_probability", {}),
         )
         for cond_type, probability_attr, extra_attrs in aliases:
-            probability = float(getattr(self.config, probability_attr, 0.0) or 0.0)
+            probability = float(config_values.get(probability_attr, 0.0) or 0.0)
             if probability <= 0:
                 continue
             spec = {"type": cond_type, "probability": probability}
             for key, attr in extra_attrs.items():
-                value = getattr(self.config, attr, None)
+                value = config_values.get(attr, None)
                 if value is not None:
                     spec[key] = value
             specs.append(spec)
@@ -1532,8 +1533,9 @@ class LTXVideo2(VideoModelFoundation):
         width: int,
         patch_size: int,
         patch_size_t: int,
+        specs: Optional[list[dict]] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        specs = self._ltx2_intrinsic_condition_specs()
+        specs = self._ltx2_intrinsic_condition_specs() if specs is None else specs
         if not specs:
             return packed_noisy, target_timesteps, None
 
@@ -1723,11 +1725,6 @@ class LTXVideo2(VideoModelFoundation):
         patch_size_t = getattr(self.model.config, "patch_size_t", 1)
 
         packed_target_noisy = pack_ltx2_latents(noisy_latents, patch_size, patch_size_t).to(self.config.weight_dtype)
-        packed_target_clean = pack_ltx2_latents(
-            prepared_batch["latents"].to(device=noisy_latents.device, dtype=noisy_latents.dtype),
-            patch_size,
-            patch_size_t,
-        ).to(self.config.weight_dtype)
         target_timesteps = self._normalize_audio_visual_timesteps(
             prepared_batch["timesteps"],
             batch_size=packed_target_noisy.shape[0],
@@ -1738,17 +1735,28 @@ class LTXVideo2(VideoModelFoundation):
         )
         if target_timesteps.ndim == 1:
             target_timesteps = target_timesteps[:, None].expand(target_timesteps.shape[0], packed_target_noisy.shape[1])
-        packed_target_noisy, target_timesteps, video_loss_mask = self._apply_ltx2_intrinsic_conditioning(
-            packed_noisy=packed_target_noisy,
-            packed_clean=packed_target_clean,
-            target_timesteps=target_timesteps,
-            prepared_batch=prepared_batch,
-            num_frames=num_frames,
-            height=height,
-            width=width,
-            patch_size=patch_size,
-            patch_size_t=patch_size_t,
-        )
+        intrinsic_specs = self._ltx2_intrinsic_condition_specs()
+        video_loss_mask = None
+        if intrinsic_specs:
+            if "latents" not in prepared_batch:
+                raise ValueError("LTX-2 intrinsic conditioning requires clean target latents in prepared_batch['latents'].")
+            packed_target_clean = pack_ltx2_latents(
+                prepared_batch["latents"].to(device=noisy_latents.device, dtype=noisy_latents.dtype),
+                patch_size,
+                patch_size_t,
+            ).to(self.config.weight_dtype)
+            packed_target_noisy, target_timesteps, video_loss_mask = self._apply_ltx2_intrinsic_conditioning(
+                packed_noisy=packed_target_noisy,
+                packed_clean=packed_target_clean,
+                target_timesteps=target_timesteps,
+                prepared_batch=prepared_batch,
+                num_frames=num_frames,
+                height=height,
+                width=width,
+                patch_size=patch_size,
+                patch_size_t=patch_size_t,
+                specs=intrinsic_specs,
+            )
         prepared_batch["video_loss_mask"] = video_loss_mask
         packed_noisy = packed_target_noisy
         combined_timesteps = target_timesteps
