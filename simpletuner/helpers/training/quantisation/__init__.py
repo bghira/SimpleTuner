@@ -1,6 +1,7 @@
 import logging
 import os
 from functools import partial
+from inspect import Parameter, signature
 from typing import Any, Callable, Mapping, Optional
 
 import torch
@@ -112,6 +113,60 @@ def _get_torchao_config_cls(component_type: str):
     return TorchAoConfig
 
 
+TORCHAO_QUANT_TYPE_CONFIG_MAP = {
+    "float8_dynamic_activation_float8_weight": "Float8DynamicActivationFloat8WeightConfig",
+    "float8_dynamic_activation_int4_weight": "Float8DynamicActivationInt4WeightConfig",
+    "int4_weight_only": "Int4WeightOnlyConfig",
+    "int8_dynamic_activation_int8_weight": "Int8DynamicActivationInt8WeightConfig",
+    "int8_dynamic_activation_intx_weight": "Int8DynamicActivationIntxWeightConfig",
+    "int8_weight_only": "Int8WeightOnlyConfig",
+    "float8_weight_only": "Float8WeightOnlyConfig",
+}
+
+
+def _normalize_torchao_quant_type_kwargs(quant_type_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(quant_type_kwargs)
+    for key, value in list(normalized.items()):
+        if key.endswith("_dtype"):
+            normalized[key] = _normalize_dtype(value)
+    return normalized
+
+
+def _build_torchao_quant_type(quant_type: Any, quant_type_kwargs: Mapping[str, Any]):
+    from torchao.quantization import quant_api
+    from torchao.quantization.quant_api import AOBaseConfig
+
+    if isinstance(quant_type, AOBaseConfig):
+        if quant_type_kwargs:
+            raise ValueError("quant_type_kwargs cannot be used when quant_type is already a TorchAO config instance.")
+        return quant_type
+    if not isinstance(quant_type, str):
+        raise TypeError(
+            "quant_type must be a TorchAO quantization name or AOBaseConfig instance, " f"got {type(quant_type).__name__}"
+        )
+
+    config_cls_name = TORCHAO_QUANT_TYPE_CONFIG_MAP.get(quant_type)
+    if config_cls_name is None:
+        raise ValueError(
+            f"Unsupported TorchAO quant_type '{quant_type}'. Supported values: "
+            f"{', '.join(sorted(TORCHAO_QUANT_TYPE_CONFIG_MAP))}."
+        )
+    config_cls = getattr(quant_api, config_cls_name)
+    return config_cls(**_normalize_torchao_quant_type_kwargs(quant_type_kwargs))
+
+
+def _split_torchao_config_kwargs(torchao_cls, override_dict: dict[str, Any], quant_type_kwargs: Mapping[str, Any]):
+    outer_keys = {
+        name
+        for name, parameter in signature(torchao_cls.__init__).parameters.items()
+        if name not in {"self", "quant_type"} and parameter.kind is not Parameter.VAR_KEYWORD
+    }
+    outer_kwargs = {key: override_dict.pop(key) for key in list(override_dict) if key in outer_keys}
+    inner_kwargs = dict(override_dict)
+    inner_kwargs.update(quant_type_kwargs)
+    return outer_kwargs, inner_kwargs
+
+
 def _build_torchao_config(
     weight_dtype=None,
     overrides: Optional[Mapping[str, Any]] = None,
@@ -129,11 +184,26 @@ def _build_torchao_config(
 
     override_dict = dict(overrides) if isinstance(overrides, Mapping) else {}
     quant_type_override = override_dict.pop("quant_type", None)
-    quant_type_kwargs = override_dict.pop("quant_type_kwargs", None)
-    if isinstance(quant_type_kwargs, Mapping):
-        override_dict.update(quant_type_kwargs)
+    quant_type_kwargs = override_dict.pop("quant_type_kwargs", {})
+    if quant_type_kwargs is None:
+        quant_type_kwargs = {}
+    if not isinstance(quant_type_kwargs, Mapping):
+        raise TypeError(f"quant_type_kwargs must be a mapping, got {type(quant_type_kwargs).__name__}")
     quant_type_override = quant_type_override or default_quant_type
-    return torchao_cls(quant_type=quant_type_override, **override_dict)
+    outer_kwargs, inner_kwargs = _split_torchao_config_kwargs(
+        torchao_cls,
+        override_dict,
+        quant_type_kwargs,
+    )
+    quant_type = _build_torchao_quant_type(quant_type_override, inner_kwargs)
+    return torchao_cls(quant_type=quant_type, **outer_kwargs)
+
+
+TORCHAO_PIPELINE_PRESET_MAP = {
+    "int4-torchao": "int4_weight_only",
+    "int8-torchao": "int8_weight_only",
+    "fp8-torchao": "float8_weight_only",
+}
 
 
 def _get_quanto_config_cls(component_type: str):
@@ -197,11 +267,6 @@ def _build_quanto_fp8uz_config(
     )
 
 
-TORCHAO_PIPELINE_PRESET_MAP = {
-    "int4-torchao": "int4_weight_only",
-    "int8-torchao": "int8_weight_only",
-    "fp8-torchao": "float8_weight_only",
-}
 QUANTO_PIPELINE_PRESET_MAP = {
     "int8-quanto": "int8",
     "int4-quanto": "int4",
