@@ -1,9 +1,12 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
 from diffusers import QwenImagePipeline
+from diffusers.models import attention_dispatch
+from diffusers.models.attention_dispatch import _HUB_KERNELS_REGISTRY, AttentionBackendName
 from diffusers.models.transformers.transformer_qwenimage import QwenDoubleStreamAttnProcessor2_0
 
 from simpletuner.helpers.training import diffusers_overrides
@@ -113,6 +116,82 @@ class FakeAttention:
 
 
 class QwenDiffusersOverrideTests(unittest.TestCase):
+    def test_flash_attn2_hub_registry_uses_published_kernel_attrs(self):
+        flash_config = _HUB_KERNELS_REGISTRY[AttentionBackendName.FLASH_HUB]
+        varlen_config = _HUB_KERNELS_REGISTRY[AttentionBackendName.FLASH_VARLEN_HUB]
+        original_attrs = (
+            flash_config.wrapped_forward_attr,
+            flash_config.wrapped_backward_attr,
+            varlen_config.wrapped_forward_attr,
+            varlen_config.wrapped_backward_attr,
+        )
+        try:
+            flash_config.wrapped_forward_attr = "flash_attn_interface._wrapped_flash_attn_forward"
+            flash_config.wrapped_backward_attr = "flash_attn_interface._wrapped_flash_attn_backward"
+            varlen_config.wrapped_forward_attr = "flash_attn_interface._wrapped_flash_attn_varlen_forward"
+            varlen_config.wrapped_backward_attr = "flash_attn_interface._wrapped_flash_attn_varlen_backward"
+
+            diffusers_overrides.patch_flash_attn2_hub_kernel_attrs()
+
+            self.assertEqual(flash_config.wrapped_forward_attr, "flash_attn_interface._flash_attn_forward")
+            self.assertEqual(flash_config.wrapped_backward_attr, "flash_attn_interface._flash_attn_backward")
+            self.assertEqual(varlen_config.wrapped_forward_attr, "flash_attn_interface._flash_attn_varlen_forward")
+            self.assertEqual(varlen_config.wrapped_backward_attr, "flash_attn_interface._flash_attn_varlen_backward")
+        finally:
+            (
+                flash_config.wrapped_forward_attr,
+                flash_config.wrapped_backward_attr,
+                varlen_config.wrapped_forward_attr,
+                varlen_config.wrapped_backward_attr,
+            ) = original_attrs
+
+    def test_ring_anything_attention_accepts_four_dim_lse(self):
+        class FakeRingMesh:
+            def get_group(self):
+                return object()
+
+        parallel_config = SimpleNamespace(
+            context_parallel_config=SimpleNamespace(
+                _ring_mesh=FakeRingMesh(),
+                _ring_local_rank=0,
+                ring_degree=2,
+                convert_to_fp32=False,
+            )
+        )
+        query = torch.randn(1, 2, 1, 4)
+        key = torch.randn(1, 2, 1, 4)
+        value = torch.randn(1, 2, 1, 4)
+
+        def forward_op(ctx, query, key, value, *args, **kwargs):
+            out = torch.ones_like(query) * (1.0 if kwargs["_save_ctx"] else 2.0)
+            lse = torch.zeros(query.shape[0], query.shape[1], query.shape[2], 1, dtype=query.dtype)
+            return out, lse
+
+        kv_buffer = torch.cat([key.flatten(), value.flatten()]).contiguous()
+
+        with (
+            patch.object(attention_dispatch, "gather_size_by_comm", return_value=[2, 2]),
+            patch.object(attention_dispatch.funcol, "all_gather_tensor", return_value=torch.cat([kv_buffer, kv_buffer])),
+        ):
+            output, lse = diffusers_overrides._patched_ring_anything_attention_forward(
+                SimpleNamespace(),
+                query,
+                key,
+                value,
+                None,
+                0.0,
+                False,
+                None,
+                False,
+                True,
+                forward_op,
+                object(),
+                parallel_config,
+            )
+
+        self.assertEqual(output.shape, query.shape)
+        self.assertEqual(lse.shape, (1, 2, 1))
+
     def test_diffusers_qwen_pipeline_is_monkey_patched(self):
         self.assertIs(
             QwenImagePipeline._get_qwen_prompt_embeds,
