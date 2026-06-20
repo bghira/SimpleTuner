@@ -7,6 +7,7 @@ from typing import Any, Callable, Mapping, Optional
 import torch
 
 from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.quantisation.fp8_native import mark_fp8_native_ddp_ignore_params
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,11 @@ else:
 PIPELINE_ONLY_PRESETS = {"nf4-bnb", "int4-torchao"}
 PIPELINE_QUANTIZATION_PRESETS = PIPELINE_ONLY_PRESETS | {
     "int8-torchao",
+    "int8dq-torchao",
+    "int8dq-int4-torchao",
     "fp8-torchao",
+    "fp8wo-torchao",
+    "fp8-int4-torchao",
     "int8-quanto",
     "int4-quanto",
     "int2-quanto",
@@ -26,7 +31,15 @@ PIPELINE_QUANTIZATION_PRESETS = PIPELINE_ONLY_PRESETS | {
     "fp8uz-quanto",
 }
 MANUAL_QUANTO_PRESETS = {"int2-quanto", "int4-quanto", "int8-quanto", "fp8-quanto", "fp8uz-quanto"}
-MANUAL_TORCHAO_PRESETS = {"int8-torchao", "fp8-torchao"}
+MANUAL_TORCHAO_PRESETS = {
+    "int8-torchao",
+    "int8dq-torchao",
+    "int8dq-int4-torchao",
+    "fp8-torchao",
+    "fp8wo-torchao",
+    "fp8-int4-torchao",
+}
+MANUAL_FP8_NATIVE_PRESETS = {"fp8-native"}
 MANUAL_SDNQ_PRESETS = {
     "int8-sdnq",
     "uint8-sdnq",
@@ -40,7 +53,9 @@ MANUAL_SDNQ_PRESETS = {
     "uint3-sdnq",
     "uint2-sdnq",
 }
-MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS | MANUAL_SDNQ_PRESETS
+MANUAL_QUANTIZATION_PRESETS = (
+    MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS | MANUAL_SDNQ_PRESETS | MANUAL_FP8_NATIVE_PRESETS
+)
 
 
 def _normalize_dtype(weight_dtype: Any):
@@ -190,6 +205,10 @@ def _build_torchao_config(
     if not isinstance(quant_type_kwargs, Mapping):
         raise TypeError(f"quant_type_kwargs must be a mapping, got {type(quant_type_kwargs).__name__}")
     quant_type_override = quant_type_override or default_quant_type
+    if quant_type_override == "int8_dynamic_activation_int8_weight" and "version" not in quant_type_kwargs:
+        quant_type_kwargs = {**quant_type_kwargs, "version": 2}
+    if quant_type_override == "int8_dynamic_activation_intx_weight" and "weight_dtype" not in quant_type_kwargs:
+        quant_type_kwargs = {**quant_type_kwargs, "weight_dtype": "int4"}
     outer_kwargs, inner_kwargs = _split_torchao_config_kwargs(
         torchao_cls,
         override_dict,
@@ -202,7 +221,11 @@ def _build_torchao_config(
 TORCHAO_PIPELINE_PRESET_MAP = {
     "int4-torchao": "int4_weight_only",
     "int8-torchao": "int8_weight_only",
-    "fp8-torchao": "float8_weight_only",
+    "int8dq-torchao": "int8_dynamic_activation_int8_weight",
+    "int8dq-int4-torchao": "int8_dynamic_activation_intx_weight",
+    "fp8-torchao": "float8_dynamic_activation_float8_weight",
+    "fp8wo-torchao": "float8_weight_only",
+    "fp8-int4-torchao": "float8_dynamic_activation_int4_weight",
 }
 
 
@@ -480,6 +503,8 @@ def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
     # Skip RamTorch-offloaded modules; TorchAO expects GPU-resident weights.
     if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
         return False
+    if not isinstance(mod, torch.nn.Linear):
+        return False
     # Boogu T2I sends empty tensors through reference-image modules; TorchAO fp8
     # cannot dynamically scale empty activations.
     if fqn.startswith("ref_image_"):
@@ -488,10 +513,57 @@ def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
     if fqn == "proj_out":
         return False
     # don't convert linear modules with weight dimensions not divisible by 16
-    if isinstance(mod, torch.nn.Linear):
-        if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
-            return False
+    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+        return False
     return True
+
+
+def mark_torchao_ddp_ignore_params(module: torch.nn.Module) -> int:
+    try:
+        from torchao.utils import TorchAOBaseTensor
+    except ImportError:
+        return 0
+
+    def _is_torchao_tensor(value: torch.Tensor) -> bool:
+        return isinstance(value, TorchAOBaseTensor) or isinstance(getattr(value, "data", None), TorchAOBaseTensor)
+
+    ignored_names = [name for name, param in module.named_parameters() if _is_torchao_tensor(param)]
+    ignored_names.extend(name for name, buffer in module.named_buffers() if _is_torchao_tensor(buffer))
+    if not ignored_names:
+        return 0
+
+    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
+    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ignored_names)
+    return len(ignored_names)
+
+
+def _log_torchao_storage_summary(model: torch.nn.Module, model_precision: str) -> None:
+    try:
+        from torchao.utils import TorchAOBaseTensor
+    except ImportError:
+        return
+
+    torchao_params = 0
+    logical_bytes = 0
+    payload_bytes = 0
+    for param in model.parameters():
+        tensor = param.detach()
+        logical_bytes += tensor.numel() * tensor.element_size()
+        if not isinstance(tensor, TorchAOBaseTensor):
+            continue
+        torchao_params += 1
+        for attr_name in getattr(tensor, "tensor_data_names", ()):
+            payload = getattr(tensor, attr_name, None)
+            if torch.is_tensor(payload):
+                payload_bytes += payload.numel() * payload.element_size()
+
+    logger.info(
+        "TorchAO storage summary for %s: tensor_subclass_params=%s, logical_param_size=%.2f GB, payload_size=%.2f GB",
+        model_precision,
+        torchao_params,
+        logical_bytes / (1024**3),
+        payload_bytes / (1024**3),
+    )
 
 
 def _torchao_model(
@@ -520,9 +592,15 @@ def _torchao_model(
 
     try:
         import torchao
-        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
         from torchao.prototype.quantized_training import int8_weight_only_quantized_training
         from torchao.quantization import quantize_
+        from torchao.quantization.quant_api import (
+            Float8DynamicActivationFloat8WeightConfig,
+            Float8DynamicActivationInt4WeightConfig,
+            Float8WeightOnlyConfig,
+            Int8DynamicActivationInt8WeightConfig,
+            Int8DynamicActivationIntxWeightConfig,
+        )
 
         from simpletuner.helpers.training.quantisation import torchao_workarounds
     except ImportError as e:
@@ -536,11 +614,35 @@ def _torchao_model(
             model,
             int8_weight_only_quantized_training(),  # , filter_fn=_torchao_filter_fn
         )
-    elif model_precision == "fp8-torchao":
-        model = convert_to_float8_training(
+    elif model_precision == "int8dq-torchao":
+        quantize_(
             model,
-            module_filter_fn=_torchao_filter_fn,
-            config=Float8LinearConfig(pad_inner_dim=True),
+            Int8DynamicActivationInt8WeightConfig(version=2),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "int8dq-int4-torchao":
+        quantize_(
+            model,
+            Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "fp8-torchao":
+        quantize_(
+            model,
+            Float8DynamicActivationFloat8WeightConfig(),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "fp8wo-torchao":
+        quantize_(
+            model,
+            Float8WeightOnlyConfig(),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "fp8-int4-torchao":
+        quantize_(
+            model,
+            Float8DynamicActivationInt4WeightConfig(),
+            filter_fn=_torchao_filter_fn,
         )
 
     else:
@@ -548,6 +650,43 @@ def _torchao_model(
             f"Invalid quantisation level. model_precision={model_precision}, base_model_precision={base_model_precision}"
         )
 
+    _log_torchao_storage_summary(model, model_precision)
+    return model
+
+
+def _fp8_native_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
+    if model_precision is None:
+        model_precision = base_model_precision
+    if model is None:
+        return model
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+    if model_precision != "fp8-native":
+        raise ValueError(
+            f"Invalid native FP8 quantisation level. model_precision={model_precision}, "
+            f"base_model_precision={base_model_precision}"
+        )
+    if quantize_activations:
+        logger.warning("Activation quantisation flag is ignored for fp8-native; activations are scaled inside _scaled_mm.")
+
+    from simpletuner.helpers.training.quantisation.fp8_native import (
+        log_fp8_native_storage_summary,
+        patch_peft_fp8_native_dispatcher,
+        replace_linear_with_fp8_native,
+    )
+
+    compute_dtype = next((param.dtype for param in model.parameters() if torch.is_floating_point(param)), torch.bfloat16)
+    logger.info("Quantising %s using fp8-native.", model.__class__.__name__)
+    patch_peft_fp8_native_dispatcher()
+    converted = replace_linear_with_fp8_native(model, _torchao_filter_fn, compute_dtype)
+    logger.info("Converted %s Linear layer(s) to native FP8.", converted)
+    log_fp8_native_storage_summary(model, model_precision)
     return model
 
 
@@ -692,6 +831,8 @@ def get_quant_fn(base_model_precision):
         return None
     if "quanto" in precision:
         return _quanto_model
+    elif precision in MANUAL_FP8_NATIVE_PRESETS:
+        return _fp8_native_model
     elif "torchao" in precision:
         return _torchao_model
     elif "sdnq" in precision:
