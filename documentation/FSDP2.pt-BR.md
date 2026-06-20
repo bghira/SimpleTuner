@@ -8,6 +8,14 @@ O SimpleTuner agora oferece suporte de primeira classe ao PyTorch Fully Sharded 
 
 O FSDP2 e a proxima iteracao do mecanismo de data-parallel sharded do PyTorch. Em vez da logica legada de parametros achatados do FSDP v1, o plugin v2 fica em cima do DTensor. Ele shardia parametros do modelo, gradientes e otimizadores entre ranks enquanto mantem um pequeno conjunto de trabalho por rank. Em comparacao com abordagens classicas no estilo ZeRO, ele mantem o fluxo de lancamento do Hugging Face accelerate, entao checkpoints, otimizadores e caminhos de inferencia permanecem compativeis com o restante do SimpleTuner.
 
+## Quando escolher FSDP2
+
+O FSDP2 e principalmente uma ferramenta para escalar memoria. Ele e a escolha certa quando o modelo, a resolucao, a duracao do video ou o comprimento de sequencia nao cabem confortavelmente com data parallelism normal, ou quando voce precisa de context parallelism para sequencias longas de atencao. Ele nao e automaticamente o caminho multi-GPU mais rapido.
+
+Para treino LoRA/PEFT, prefira DDP quando o modelo cabe em cada GPU. Em testes com LTX-2.3 IC-LoRA em 8x H100, uma execucao DDP normal com `train_batch_size=1` por GPU foi aproximadamente 3-6x mais rapida do que uma execucao FSDP2 em 8x H100 para o mesmo batch pequeno por rank. Use FSDP2 para LoRA quando a alternativa for reduzir resolucao, encurtar clips, usar offload agressivo ou nao conseguir rodar o treino.
+
+O Torch Dynamo tambem tende a encontrar mais churn de guards em execucoes FSDP2, especialmente com shapes dinamicos, schedules tokenwise, mudancas de shape entre treino/validacao e regional compile. Voce pode ver mensagens frequentes de recompilacao mesmo sem atingir o limite de cache do Dynamo. Trate `TORCH_LOGS=recompiles` como ferramenta de profiling antes de assumir que compile ajuda em uma nova configuracao FSDP2.
+
 ## Visao geral de recursos
 
 - Toggle na WebUI (Hardware -> Accelerate) que gera um FullyShardedDataParallelPlugin com defaults sensatos
@@ -19,7 +27,7 @@ O FSDP2 e a proxima iteracao do mecanismo de data-parallel sharded do PyTorch. E
 
 ## Limitacoes conhecidas
 
-- O FSDP2 so pode ser habilitado quando `model_type` e `full`. Execucoes PEFT/LoRA continuam usando caminhos padrao de um unico dispositivo.
+- O FSDP2 e mais util para execucoes full-model e execucoes PEFT/LoRA limitadas por memoria. Se uma execucao LoRA cabe com DDP, DDP geralmente oferece melhor throughput.
 - DeepSpeed e FSDP sao mutuamente exclusivos. Fornecer `--fsdp_enable` e um config DeepSpeed gera um erro explicito nos fluxos de CLI e WebUI.
 - O paralelismo de contexto e limitado a sistemas CUDA e exige `--context_parallel_size > 1` com `--fsdp_version=2`.
 - Passes de validacao agora funcionam com `--fsdp_reshard_after_forward=true` - modelos com FSDP sao passados diretamente para pipelines, que lidam com all-gather/reshard de forma transparente.
@@ -111,6 +119,7 @@ Ambas as acoes mostram toasts e atualizam a area de status de manutencao para qu
 | Falha na deteccao de blocos com `Unknown model_family` | O formulario nao tem uma family ou flavour suportada. | Escolha um modelo no dropdown; families customizadas devem ser registradas em `model_families`. |
 | A deteccao mostra classes desatualizadas | Resultado em cache reutilizado. | Clique em **Refresh Detection** ou limpe o cache em WebUI Preferences. |
 | Retomada esgota RAM do host | Agregacao de full state dict durante o carregamento. | Troque para `SHARDED_STATE_DICT` e/ou habilite CPU RAM efficient loading. |
+| Execucoes FSDP2 compiladas continuam registrando recompilacoes do Dynamo | Shapes dinamicos ou mudancas de shape entre validacao/treino invalidam guards. | Rode uma vez sem compile, ou use `TORCH_LOGS=recompiles` para encontrar as entradas variaveis antes de aumentar limites de cache. |
 
 ## Referencia de flags da CLI
 
