@@ -54,6 +54,16 @@ LTX-2 conditioning examples are split by conditioning style:
 - `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
 - `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
 
+Large multi-GPU video examples are split from the standard 24G examples:
+
+- `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`
+- `wan2.1-i2v-14b-480p-8xh100.peft-lora+cp-fa3`
+- `wan2.1-i2v-14b-720p-8xh100.peft-lora+cp-fa3`
+- `ltxvideo2-2.3-dev-720p-8xh100.peft-lora+cp-fa3`
+- `ltxvideo2-2.3-dev-1080p-8xh100.peft-lora+cp-fa3`
+
+These profiles assume 8xH100-class hardware, BF16 weights, `context_parallel_size=2`, and the Hugging Face FlashAttention 3 varlen backend. On A100-class systems, copy the example and change `attention_mechanism` to `flash-attn-varlen-hub` before benchmarking.
+
 ### Modifying and extending an example
 
 You'll want to copy the folder from `simpletuner/examples` to `config` before modifying anything, otherwise your changes will conflict with newer example config updates.

@@ -1,5 +1,9 @@
 *.code-workspace
 multidatabackend*json
+!simpletuner/examples/multidatabackend-small-video-480p+81f.json
+!simpletuner/examples/multidatabackend-small-video-720p+81f.json
+!simpletuner/examples/multidatabackend-small-video-720p+49f.json
+!simpletuner/examples/multidatabackend-small-video-1080p+49f.json
 # Python and virtual environment files
 output/
 temp/
