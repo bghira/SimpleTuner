@@ -130,3 +130,72 @@ except ImportError:
 except Exception as e:
     print(f"Warning: Failed to monkeypatch int8 cat operation: {e}")
     print("DDP may not work with int8 quantization")
+
+
+try:
+    import peft.tuners.lora.model as peft_lora_model
+    import peft.tuners.lora.torchao as peft_lora_torchao
+    from peft.import_utils import is_torchao_available
+    from peft.tuners.lora.torchao import TorchaoLoraLinear
+    from peft.tuners.tuners_utils import BaseTunerLayer
+    from torchao.prototype.quantized_training import int8_weight_only_quantized_training
+    from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight
+    from torchao.quantization import Float8Tensor, IntxUnpackedToInt8Tensor
+    from torchao.quantization.linear_activation_quantized_tensor import LinearActivationQuantizedTensor
+    from torchao.quantization.quant_api import (
+        Float8DynamicActivationFloat8WeightConfig,
+        Float8DynamicActivationInt4WeightConfig,
+        Float8WeightOnlyConfig,
+        Int8DynamicActivationInt8WeightConfig,
+        Int8DynamicActivationIntxWeightConfig,
+    )
+    from torchao.utils import TorchAOBaseTensor
+
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
+    def _simpletuner_torchao_requantize_config(weight):
+        args = StateTracker.get_args()
+        model_precision = getattr(args, "base_model_precision", None) if args is not None else None
+        if isinstance(weight, Int8QuantizedTrainingLinearWeight):
+            return int8_weight_only_quantized_training
+        if model_precision == "int8dq-torchao":
+            return lambda: Int8DynamicActivationInt8WeightConfig(version=2)
+        if isinstance(weight, LinearActivationQuantizedTensor):
+            return Int8DynamicActivationInt8WeightConfig
+        if model_precision == "int8dq-int4-torchao" or isinstance(weight, IntxUnpackedToInt8Tensor):
+            return lambda: Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4)
+        if model_precision == "fp8-torchao" and isinstance(weight, Float8Tensor):
+            return Float8DynamicActivationFloat8WeightConfig
+        if model_precision == "fp8wo-torchao" and isinstance(weight, Float8Tensor):
+            return Float8WeightOnlyConfig
+        if model_precision == "fp8-int4-torchao":
+            return Float8DynamicActivationInt4WeightConfig
+        return None
+
+    def _simpletuner_dispatch_torchao(target: torch.nn.Module, adapter_name: str, config, **kwargs):
+        new_module = None
+        target_base_layer = target.get_base_layer() if isinstance(target, BaseTunerLayer) else target
+        if not hasattr(target_base_layer, "weight") or not is_torchao_available():
+            return new_module
+        get_apply_tensor_subclass = _simpletuner_torchao_requantize_config(target_base_layer.weight)
+        if isinstance(target_base_layer.weight, TorchAOBaseTensor) and get_apply_tensor_subclass is not None:
+            return TorchaoLoraLinear(
+                target,
+                adapter_name,
+                config=config,
+                get_apply_tensor_subclass=get_apply_tensor_subclass,
+                **kwargs,
+            )
+        return peft_lora_torchao._simpletuner_original_dispatch_torchao(
+            target,
+            adapter_name,
+            config=config,
+            **kwargs,
+        )
+
+    if not hasattr(peft_lora_torchao, "_simpletuner_original_dispatch_torchao"):
+        peft_lora_torchao._simpletuner_original_dispatch_torchao = peft_lora_torchao.dispatch_torchao
+    peft_lora_torchao.dispatch_torchao = _simpletuner_dispatch_torchao
+    peft_lora_model.dispatch_torchao = _simpletuner_dispatch_torchao
+except ImportError:
+    pass

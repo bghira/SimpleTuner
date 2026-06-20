@@ -69,7 +69,7 @@ from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_ind
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import broadcast_object_from_main
+from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
 from simpletuner.helpers.training.optimizer_param import (
     cpu_offload_optimizer,
     create_optimizer_with_param_groups,
@@ -82,7 +82,13 @@ from simpletuner.helpers.training.optimizer_param import (
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
-from simpletuner.helpers.training.quantisation import PIPELINE_ONLY_PRESETS, PIPELINE_QUANTIZATION_PRESETS
+from simpletuner.helpers.training.quantisation import (
+    MANUAL_FP8_NATIVE_PRESETS,
+    PIPELINE_ONLY_PRESETS,
+    PIPELINE_QUANTIZATION_PRESETS,
+    mark_fp8_native_ddp_ignore_params,
+    mark_torchao_ddp_ignore_params,
+)
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -894,7 +900,7 @@ class Trainer:
             elif str(getattr(self.config, "model_family", "")).lower() in {"hunyuanvideo", "ltxvideo2"}:
                 accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=True))
 
-            if not will_create_dynamo_plugin and dynamo_backend_env:
+            if not will_create_dynamo_plugin and dynamo_backend_env != "no":
                 accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
 
             fsdp_plugin = None
@@ -988,8 +994,19 @@ class Trainer:
                         self._context_parallel_topology.dp_shard_size,
                     )
 
+            def _report_active_dynamo_plugin() -> None:
+                if will_create_dynamo_plugin and should_log():
+                    active_plugin = getattr(getattr(self.accelerator, "state", None), "dynamo_plugin", None)
+                    if active_plugin is None:
+                        logger.warning("Torch Dynamo was requested, but no TorchDynamoPlugin is active on Accelerator.")
+                    else:
+                        message = f"Torch Dynamo active on Accelerator: {active_plugin}"
+                        print(message)
+                        logger.info(message)
+
             try:
                 self.accelerator = Accelerator(**accelerator_kwargs)
+                _report_active_dynamo_plugin()
             except ValueError as err:
                 if "dynamo_plugin and dynamo_backend" in str(err):
                     has_backend = "dynamo_backend" in accelerator_kwargs
@@ -1009,6 +1026,7 @@ class Trainer:
                     )
                     self._enable_bf16_override()
                     self.accelerator = Accelerator(**accelerator_kwargs)
+                    _report_active_dynamo_plugin()
                 else:
                     raise
             if (
@@ -2168,6 +2186,7 @@ class Trainer:
         base_pipeline_precision = pipeline_only_precision or (quantize_via_pipeline and pipeline_capable_precision)
         self.config.is_quanto = False
         self.config.is_torchao = False
+        self.config.is_fp8_native = False
         self.config.is_sdnq = False
         self.config.is_bnb = False
         self.config.pipeline_quantization = bool(
@@ -2179,6 +2198,8 @@ class Trainer:
         if not base_pipeline_precision:
             if "quanto" in base_model_precision:
                 self.config.is_quanto = True
+            elif base_model_precision in MANUAL_FP8_NATIVE_PRESETS:
+                self.config.is_fp8_native = True
             elif "torchao" in base_model_precision:
                 self.config.is_torchao = True
             elif "sdnq" in base_model_precision:
@@ -2200,11 +2221,13 @@ class Trainer:
                             "Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels."
                         )
                     self.config.is_torchao = True
+                elif getattr(self.config, f"text_encoder_{i}_precision") in MANUAL_FP8_NATIVE_PRESETS:
+                    self.config.is_fp8_native = True
                 elif "sdnq" in getattr(self.config, f"text_encoder_{i}_precision"):
                     self.config.is_sdnq = True
                 elif "bnb" in getattr(self.config, f"text_encoder_{i}_precision"):
                     self.config.is_bnb = True
-        if self.config.is_quanto or self.config.is_torchao or self.config.is_sdnq:
+        if self.config.is_quanto or self.config.is_torchao or self.config.is_fp8_native or self.config.is_sdnq:
             from simpletuner.helpers.training.quantisation import quantise_model
 
             self.quantise_model = quantise_model
@@ -2279,6 +2302,7 @@ class Trainer:
     def init_freeze_models(self):
         self.model.freeze_components()
         self.accelerator.wait_for_everyone()
+        self._report_cuda_usage_if_requested("after_freeze_components")
 
     def init_load_base_model(self):
         # Suppress verbose transformers/diffusers logging before loading models
@@ -2299,6 +2323,7 @@ class Trainer:
         )
         self.model.load_model(move_to_device=False)
         self.accelerator.wait_for_everyone()
+        self._report_cuda_usage_if_requested("after_base_model_load")
         self._emit_event(
             lifecycle_stage_event(
                 key="init_load_base_model",
@@ -2466,6 +2491,17 @@ class Trainer:
         if not torch.cuda.is_available():
             return
 
+        def _tensor_storage_bytes(tensor: torch.Tensor) -> int:
+            tensor_data_names = getattr(tensor, "tensor_data_names", None)
+            if tensor_data_names:
+                total = 0
+                for attr_name in tensor_data_names:
+                    payload = getattr(tensor, attr_name, None)
+                    if torch.is_tensor(payload) and payload.device.type == "cuda":
+                        total += payload.numel() * payload.element_size()
+                return total
+            return tensor.numel() * tensor.element_size()
+
         def _bytes_and_devices(obj) -> tuple[int, dict[str, int]]:
             total = 0
             devices: dict[str, int] = {}
@@ -2482,10 +2518,21 @@ class Trainer:
             for t in tensors:
                 if not torch.is_tensor(t) or t.device.type != "cuda":
                     continue
-                size = t.numel() * t.element_size()
+                size = _tensor_storage_bytes(t)
                 total += size
                 devices[str(t.device)] = devices.get(str(t.device), 0) + 1
             return total, devices
+
+        allocated = torch.cuda.memory_allocated() / (1024**3)
+        reserved = torch.cuda.memory_reserved() / (1024**3)
+        peak_allocated = torch.cuda.max_memory_allocated() / (1024**3)
+        logger.warning(
+            "[%s] CUDA memory allocated=%.2f GB, reserved=%.2f GB, peak_allocated=%.2f GB",
+            label,
+            allocated,
+            reserved,
+            peak_allocated,
+        )
 
         components: list[tuple[str, object]] = []
         components.append(("model", getattr(self.model, "model", None)))
@@ -2537,6 +2584,10 @@ class Trainer:
             if total > 0:
                 gb = total / (1024**3)
                 logger.warning("[%s] %s holds %.2f GB on %s", label, name, gb, devices)
+
+    def _report_cuda_usage_if_requested(self, label: str):
+        if os.environ.get("SIMPLETUNER_LOG_CUDA_USAGE", "0") == "1":
+            self._report_cuda_usage(label)
 
     def _clear_pipeline_caches(self):
         """Drop cached pipelines and cache-held pipelines to release VRAM before training."""
@@ -2740,6 +2791,47 @@ class Trainer:
                         args=self.config,
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
+                self._report_cuda_usage_if_requested("after_torchao_quantization")
+        elif self.config.is_fp8_native:
+            with self.accelerator.local_main_process_first():
+                if ema_only:
+                    if not pipeline_base_quantization:
+                        self.ema_model = self.quantise_model(ema=self.ema_model, args=self.config, return_dict=True)["ema"]
+
+                    return
+                (
+                    q_model,
+                    self.model.text_encoders,
+                    self.controlnet,
+                    self.ema_model,
+                ) = self.quantise_model(
+                    model=(
+                        None
+                        if preprocessing_models_only or pipeline_base_quantization
+                        else self.model.get_trained_component(base_model=True)
+                    ),
+                    text_encoders=self.model.text_encoders,
+                    controlnet=None,
+                    ema=self.ema_model,
+                    args=self.config,
+                )
+                self.model.set_prepared_model(q_model, base_model=True)
+                if self.config.controlnet:
+                    (
+                        q_model,
+                        _,
+                        _,
+                        _,
+                    ) = self.quantise_model(
+                        model=(
+                            None
+                            if preprocessing_models_only or pipeline_base_quantization
+                            else self.model.get_trained_component(base_model=False)
+                        ),
+                        args=self.config,
+                    )
+                    self.model.set_prepared_model(q_model, base_model=False)
+                self._report_cuda_usage_if_requested("after_fp8_native_quantization")
         elif self.config.is_sdnq:
             with self.accelerator.local_main_process_first():
                 if ema_only:
@@ -2872,6 +2964,22 @@ class Trainer:
             logger.info(
                 f"LoRA network has been initialized with {trainable_parameter_count(self._get_trainable_parameters())} parameters"
             )
+            trainable_non_lora = [
+                name
+                for name, param in self.model.get_trained_component(unwrap_model=False).named_parameters()
+                if param.requires_grad
+                and ".lora_" not in name
+                and "lora_magnitude_vector" not in name
+                and ".modules_to_save." not in name
+            ]
+            if trainable_non_lora:
+                logger.warning(
+                    "LoRA setup left %s non-LoRA parameter%s trainable; first entries: %s",
+                    len(trainable_non_lora),
+                    "" if len(trainable_non_lora) == 1 else "s",
+                    ", ".join(trainable_non_lora[:10]),
+                )
+            self._report_cuda_usage_if_requested("after_lora_adapter_init")
             if hasattr(self.model, "configure_assistant_lora_for_training"):
                 self.model.configure_assistant_lora_for_training()
         elif "lycoris" == self.config.lora_type.lower():
@@ -3845,6 +3953,14 @@ class Trainer:
             attached = attach_shared_ramtorch_parameters(primary_model)
             if attached:
                 logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+        if primary_model is not None and "torchao" in str(getattr(self.config, "base_model_precision", "")):
+            ignored = mark_torchao_ddp_ignore_params(primary_model)
+            if ignored:
+                logger.info("Marking %s frozen TorchAO tensors to ignore for DDP.", ignored)
+        if primary_model is not None and getattr(self.config, "base_model_precision", "") in MANUAL_FP8_NATIVE_PRESETS:
+            ignored = mark_fp8_native_ddp_ignore_params(primary_model)
+            if ignored:
+                logger.info("Marking %s native FP8 buffers to ignore for DDP.", ignored)
         if getattr(self.config, "use_fsdp", False):
             moved_param_count = 0
             for param in primary_model.parameters():
@@ -3864,6 +3980,7 @@ class Trainer:
             logger.warning("Primary model has no parameters when preparing accelerator.")
         self.lr_scheduler = lr_scheduler
         self._finalize_deepspeed_config_auto_values(primary_model)
+        self._report_cuda_usage_if_requested("before_accelerator_prepare")
         prepare_targets = [primary_model]
         prepared_labels = ["primary_model"]
         if lr_scheduler is not None:
@@ -3935,6 +4052,7 @@ class Trainer:
                 self.sidecar_lr_scheduler = prepared
             elif label == "train_dataloader":
                 self.train_dataloaders = [prepared]
+        self._report_cuda_usage_if_requested("after_accelerator_prepare")
         if self.config.use_ema and self.ema_model is not None:
             if self.config.ema_device == "accelerator":
                 logger.info("Moving EMA model weights to accelerator...")
@@ -4769,6 +4887,7 @@ class Trainer:
                     self.model.get_trained_component(unwrap_model=False).to(target_device)
                 else:
                     self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
+                self._report_cuda_usage_if_requested("after_move_trained_component")
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
                 target_device, dtype=self.config.weight_dtype
@@ -5757,10 +5876,51 @@ class Trainer:
 
         return should_validate
 
+    def _create_torch_profiler(self):
+        trace_dir = os.environ.get("SIMPLETUNER_TORCH_PROFILER_DIR")
+        if not trace_dir:
+            return None
+
+        try:
+            from torch.profiler import ProfilerActivity, profile, schedule, tensorboard_trace_handler
+        except ImportError:
+            raise RuntimeError("SIMPLETUNER_TORCH_PROFILER_DIR was set, but torch.profiler could not be imported.")
+
+        activities = [ProfilerActivity.CPU]
+        if torch.cuda.is_available():
+            activities.append(ProfilerActivity.CUDA)
+
+        rank_trace_dir = Path(trace_dir) / f"rank-{get_rank()}"
+        rank_trace_dir.mkdir(parents=True, exist_ok=True)
+        wait = int(os.environ.get("SIMPLETUNER_TORCH_PROFILER_WAIT", "1"))
+        warmup = int(os.environ.get("SIMPLETUNER_TORCH_PROFILER_WARMUP", "1"))
+        active = int(os.environ.get("SIMPLETUNER_TORCH_PROFILER_ACTIVE", "3"))
+        repeat = int(os.environ.get("SIMPLETUNER_TORCH_PROFILER_REPEAT", "1"))
+        profiler = profile(
+            activities=activities,
+            schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=repeat),
+            on_trace_ready=tensorboard_trace_handler(str(rank_trace_dir)),
+            record_shapes=os.environ.get("SIMPLETUNER_TORCH_PROFILER_RECORD_SHAPES", "1") != "0",
+            profile_memory=os.environ.get("SIMPLETUNER_TORCH_PROFILER_MEMORY", "1") != "0",
+            with_stack=os.environ.get("SIMPLETUNER_TORCH_PROFILER_WITH_STACK", "0") == "1",
+        )
+        logger.info(
+            "Torch profiler enabled: trace_dir=%s, wait=%s, warmup=%s, active=%s, repeat=%s",
+            rank_trace_dir,
+            wait,
+            warmup,
+            active,
+            repeat,
+        )
+        return profiler
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
         self.mark_optimizer_train()
+        torch_profiler = self._create_torch_profiler()
+        if torch_profiler is not None:
+            torch_profiler.start()
         # Start GPU health monitoring
         if hasattr(self, "gpu_circuit_breaker") and self.gpu_circuit_breaker is not None:
             self.gpu_circuit_breaker.start_monitoring()
@@ -6487,6 +6647,8 @@ class Trainer:
                     if step_checkpoint_path:
                         self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
+                if torch_profiler is not None:
+                    torch_profiler.step()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
                     epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -6527,6 +6689,9 @@ class Trainer:
 
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()
+        if torch_profiler is not None:
+            torch_profiler.stop()
+            logger.info("Torch profiler stopped.")
         validation_images = None
         final_lora_save_kwargs = None
         if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():

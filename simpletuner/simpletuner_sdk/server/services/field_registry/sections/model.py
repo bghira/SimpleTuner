@@ -28,6 +28,18 @@ def register_model_fields(registry: "FieldRegistry") -> None:
     def _quant_label(value: str) -> str:
         if value == "no_change":
             return "No Change"
+        if value == "int8dq-torchao":
+            return "INT8 dynamic activations (TorchAO)"
+        if value == "int8dq-int4-torchao":
+            return "INT8 dynamic activations + INT4 weights (TorchAO)"
+        if value == "fp8-native":
+            return "FP8 native scaled matmul"
+        if value == "fp8-torchao":
+            return "FP8 dynamic activations (TorchAO)"
+        if value == "fp8wo-torchao":
+            return "FP8 weight-only (TorchAO)"
+        if value == "fp8-int4-torchao":
+            return "FP8 dynamic activations + INT4 weights (TorchAO)"
         if "-" in value:
             prefix, suffix = value.split("-", 1)
             prefix_label = prefix.upper()
