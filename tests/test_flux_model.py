@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import torch
+from diffusers.models.attention_processor import Attention
 
 from simpletuner.helpers.models.flux.model import Flux
 
@@ -21,6 +22,7 @@ class FluxModelTests(unittest.TestCase):
             tread_config=None,
             model_flavour="kontext",
             crepa_self_flow_mask_ratio=0.0,
+            fuse_qkv_projections=False,
         )
         self.model.noise_schedule = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
         self.model.get_trained_component = MagicMock(
@@ -131,6 +133,19 @@ class FluxModelTests(unittest.TestCase):
         self.assertEqual(result["timesteps"].shape, (1, 4))
         self.assertEqual(result["crepa_self_flow_mask"].shape, (1, 2, 2))
         self.assertEqual(result["crepa_teacher_timesteps"].shape, (1,))
+
+    def test_unfuse_qkv_projections_uses_explicit_unfuse_method(self):
+        attn = Attention(query_dim=8, heads=1, dim_head=8)
+        attn.unfuse_projections = MagicMock()
+        self.model.model = torch.nn.Sequential(attn)
+        self.model.controlnet = None
+        self.model.config.fuse_qkv_projections = True
+        self.model._qkv_projections_fused = True
+
+        self.model.unfuse_qkv_projections()
+
+        attn.unfuse_projections.assert_called_once_with()
+        self.assertFalse(self.model._qkv_projections_fused)
 
 
 if __name__ == "__main__":

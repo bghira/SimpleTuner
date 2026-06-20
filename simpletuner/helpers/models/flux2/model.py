@@ -153,6 +153,27 @@ class Flux2(ImageModelFoundation):
     def supports_crepa_self_flow(self) -> bool:
         return True
 
+    def fuse_qkv_projections(self):
+        if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
+            return
+        if self.model is None:
+            logger.warning("Model does not support QKV projection fusing. Skipping.")
+            return
+        logger.debug("Fusing QKV projections in the Flux2 double-stream attention blocks..")
+        self.unwrap_model(model=self.model).fuse_qkv_projections(
+            preferred_backend=getattr(self.config, "attention_mechanism", None),
+        )
+        self._qkv_projections_fused = True
+
+    def unfuse_qkv_projections(self):
+        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
+            return
+        self._qkv_projections_fused = False
+        if self.model is None:
+            return
+        logger.debug("Temporarily unfusing QKV projections in the Flux2 double-stream attention blocks..")
+        self.unwrap_model(model=self.model).unfuse_qkv_projections()
+
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         latents = batch["latents"]
         input_noise = batch["input_noise"]

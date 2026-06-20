@@ -2,11 +2,12 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from simpletuner.helpers.training import attention_backend as attention_backend_module
-from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
+from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase, PackedAttentionBackend
 
 
 class TestAttentionBackendPersistence(unittest.TestCase):
@@ -30,6 +31,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._sla_state_store = {}
         AttentionBackendController._diffusers_backend_context = None
         AttentionBackendController._diffusers_backend_name = None
+        attention_backend_module.get_packed_attention_backend.cache_clear()
 
     def test_save_checkpoint_no_state(self):
         AttentionBackendController._active_backend = "sla"
@@ -89,3 +91,57 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertEqual(AttentionBackendController._diffusers_backend_name, "native-math")
         AttentionBackendController.restore_default()
         self.assertIsNone(AttentionBackendController._diffusers_backend_name)
+
+    def test_packed_backend_dispatches_fixed_qkvpacked(self):
+        class DummyKernel:
+            @staticmethod
+            def flash_attn_qkvpacked_func(qkv, dropout_p=0.0, softmax_scale=None, causal=False):
+                return qkv[:, :, 0]
+
+        backend = PackedAttentionBackend("dummy", DummyKernel())
+        qkv = torch.randn(2, 4, 3, 2, 8)
+
+        output = backend.qkvpacked(qkv)
+
+        self.assertTrue(torch.equal(output, qkv[:, :, 0]))
+
+    def test_packed_backend_dispatches_varlen_qkvpacked_with_bool_mask(self):
+        calls = {}
+
+        class DummyKernel:
+            @staticmethod
+            def flash_attn_qkvpacked_func(qkv, dropout_p=0.0, softmax_scale=None, causal=False):
+                return qkv[:, :, 0]
+
+            @staticmethod
+            def flash_attn_varlen_qkvpacked_func(
+                qkv, cu_seqlens, max_seqlen, dropout_p=0.0, softmax_scale=None, causal=False
+            ):
+                calls["qkv"] = qkv
+                calls["cu_seqlens"] = cu_seqlens
+                calls["max_seqlen"] = max_seqlen
+                return qkv[:, 0]
+
+        backend = PackedAttentionBackend("dummy", DummyKernel())
+        qkv = torch.arange(2 * 4 * 3 * 1 * 2, dtype=torch.float32).view(2, 4, 3, 1, 2)
+        mask = torch.tensor([[1, 1, 0, 1], [0, 1, 1, 0]], dtype=torch.bool)
+
+        output = backend.qkvpacked(qkv, attention_mask=mask)
+
+        expected = torch.zeros(2, 4, 1, 2)
+        expected[mask] = qkv[:, :, 0][mask]
+        self.assertTrue(torch.equal(output, expected))
+        self.assertTrue(torch.equal(calls["cu_seqlens"].cpu(), torch.tensor([0, 3, 5], dtype=torch.int32)))
+        self.assertEqual(calls["max_seqlen"], 3)
+        self.assertEqual(calls["qkv"].shape, (5, 3, 1, 2))
+
+    def test_auto_packed_backend_prefers_fa2_hub_for_varlen_qkvpacked(self):
+        with (
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "get_device_capability", return_value=(9, 0)),
+        ):
+            self.assertEqual(
+                attention_backend_module._select_packed_backend(None, require_varlen_qkvpacked=True),
+                "flash2-hub",
+            )
+            self.assertEqual(attention_backend_module._select_packed_backend(None), "flash3-hub")

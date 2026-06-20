@@ -339,14 +339,11 @@ class Flux(ImageModelFoundation):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
             return
 
-        try:
-            from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
+        from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 
-            attn_processor = FluxFusedFlashAttnProcessor3()
-        except:
-            from simpletuner.helpers.models.flux.attention import FluxFusedSDPAProcessor
-
-            attn_processor = FluxFusedSDPAProcessor()
+        attn_processor = FluxFusedFlashAttnProcessor3(
+            preferred_backend=getattr(self.config, "attention_mechanism", None),
+        )
 
         if self.model is not None:
             logger.debug("Fusing QKV projections in the model..")
@@ -380,12 +377,12 @@ class Flux(ImageModelFoundation):
             logger.debug("Temporarily unfusing QKV projections in the model..")
             for module in self.model.modules():
                 if isinstance(module, Attention):
-                    module.fuse_projections(fuse=False)
+                    module.unfuse_projections()
             if self.controlnet is not None:
                 logger.debug("Tempoarily unfusing QKV projections in the ControlNet..")
                 for module in self.controlnet.modules():
                     if isinstance(module, Attention):
-                        module.fuse_projections(fuse=False)
+                        module.unfuse_projections()
 
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
@@ -1033,8 +1030,9 @@ class Flux(ImageModelFoundation):
                 logger.warning("LibreFlux requires attention masking. Enabling it.")
                 self.config.flux_attention_masked_training = True
             if self.config.fuse_qkv_projections:
-                logger.warning("LibreFlux does not support fused QKV projections. Disabling it.")
-                self.config.fuse_qkv_projections = False
+                logger.info(
+                    "LibreFlux fused QKV projections require a packed attention backend with varlen qkvpacked mask support."
+                )
         if self.config.model_flavour == "fluxbooru":
             # FluxBooru requires some special settings, we'll just override them here.
             if self.config.validation_num_inference_steps < 28:

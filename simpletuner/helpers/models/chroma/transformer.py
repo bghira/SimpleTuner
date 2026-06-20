@@ -28,6 +28,7 @@ from simpletuner.helpers.models.flowmap import (
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
+from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import AttentionBackendController
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
@@ -687,6 +688,19 @@ class ChromaTransformer2DModel(
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def fuse_qkv_projections(self, preferred_backend: Optional[str] = None):
+        processor = FluxFusedFlashAttnProcessor3(preferred_backend=preferred_backend)
+        for module in self.modules():
+            if isinstance(module, FluxAttention):
+                module.fuse_projections()
+                module.set_processor(processor)
+
+    def unfuse_qkv_projections(self):
+        for module in self.modules():
+            if isinstance(module, FluxAttention):
+                module.unfuse_projections()
+                module.set_processor(FluxAttnProcessor())
 
     def set_gradient_checkpointing_interval(self, interval: int):
         """

@@ -6,12 +6,7 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
-from diffusers.models.attention_processor import (
-    Attention,
-    AttentionProcessor,
-    AuraFlowAttnProcessor2_0,
-    FusedAuraFlowAttnProcessor2_0,
-)
+from diffusers.models.attention_processor import Attention, AttentionProcessor, AuraFlowAttnProcessor2_0
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
@@ -29,6 +24,7 @@ from simpletuner.helpers.models.flowmap import (
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.packed_attention_processors import PackedAuraFlowAttnProcessor2_0
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -631,7 +627,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
 
-    def fuse_qkv_projections(self):
+    def fuse_qkv_projections(self, preferred_backend: Optional[str] = None):
         self.original_attn_processors = None
 
         for _, attn_processor in self.attn_processors.items():
@@ -644,11 +640,14 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             if isinstance(module, Attention):
                 module.fuse_projections(fuse=True)
 
-        self.set_attn_processor(FusedAuraFlowAttnProcessor2_0())
+        self.set_attn_processor(PackedAuraFlowAttnProcessor2_0(preferred_backend=preferred_backend))
 
     def unfuse_qkv_projections(self):
         if self.original_attn_processors is not None:
             self.set_attn_processor(self.original_attn_processors)
+        for module in self.modules():
+            if isinstance(module, Attention):
+                module.unfuse_projections()
 
     def forward(
         self,

@@ -47,6 +47,7 @@ from simpletuner.helpers.models.flowmap import (
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.packed_attention_processors import run_packed_qkv_attention
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -332,6 +333,7 @@ class LTX2AudioVideoAttnProcessor:
     """
 
     _attention_backend = None
+    _packed_attention_backend = None
     _parallel_config = None
 
     def __init__(self):
@@ -393,14 +395,23 @@ class LTX2AudioVideoAttnProcessor:
         value = value.unflatten(2, (attn.heads, -1))
         query, key, value = _ltx2_cast_attention_inputs(query, key, value, hidden_states, attn)
 
-        hidden_states = _ltx2_dispatch_attention(
-            query,
-            key,
-            value,
-            attention_mask=attention_mask,
-            backend=self._attention_backend,
-            parallel_config=self._parallel_config,
-        )
+        if self._packed_attention_backend is not None and encoder_hidden_states is hidden_states:
+            hidden_states = run_packed_qkv_attention(
+                query,
+                key,
+                value,
+                attention_mask,
+                self._packed_attention_backend,
+            )
+        else:
+            hidden_states = _ltx2_dispatch_attention(
+                query,
+                key,
+                value,
+                attention_mask=attention_mask,
+                backend=self._attention_backend,
+                parallel_config=self._parallel_config,
+            )
         hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
         hidden_states = hidden_states.to(query.dtype)
 
@@ -417,6 +428,7 @@ class LTX2AudioVideoAttnProcessor:
 
 class LTX2PerturbedAttnProcessor:
     _attention_backend = None
+    _packed_attention_backend = None
     _parallel_config = None
 
     def __init__(self):
@@ -478,14 +490,23 @@ class LTX2PerturbedAttnProcessor:
             value = value.unflatten(2, (attn.heads, -1))
             query, key, value = _ltx2_cast_attention_inputs(query, key, value, hidden_states, attn)
 
-            hidden_states = _ltx2_dispatch_attention(
-                query,
-                key,
-                value,
-                attention_mask=attention_mask,
-                backend=self._attention_backend,
-                parallel_config=self._parallel_config,
-            )
+            if self._packed_attention_backend is not None and encoder_hidden_states is hidden_states:
+                hidden_states = run_packed_qkv_attention(
+                    query,
+                    key,
+                    value,
+                    attention_mask,
+                    self._packed_attention_backend,
+                )
+            else:
+                hidden_states = _ltx2_dispatch_attention(
+                    query,
+                    key,
+                    value,
+                    attention_mask=attention_mask,
+                    backend=self._attention_backend,
+                    parallel_config=self._parallel_config,
+                )
             hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
             hidden_states = hidden_states.to(query.dtype)
 
@@ -1583,6 +1604,22 @@ class LTX2VideoTransformer3DModel(
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def fuse_qkv_projections(self, preferred_backend: Optional[str] = None):
+        for module in self.modules():
+            if isinstance(module, LTX2Attention):
+                module.fuse_projections()
+            processor = getattr(module, "processor", None)
+            if processor is not None and hasattr(processor, "_packed_attention_backend"):
+                processor._packed_attention_backend = preferred_backend
+
+    def unfuse_qkv_projections(self):
+        for module in self.modules():
+            if isinstance(module, LTX2Attention):
+                module.unfuse_projections()
+            processor = getattr(module, "processor", None)
+            if processor is not None and hasattr(processor, "_packed_attention_backend"):
+                processor._packed_attention_backend = None
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend

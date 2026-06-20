@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 import torch
@@ -106,6 +108,236 @@ class AttentionBackendMode(str, Enum):
 class AttentionPhase(Enum):
     TRAIN = "train"
     EVAL = "eval"
+
+
+@dataclass(frozen=True)
+class PackedAttentionCapabilities:
+    fixed_qkvpacked: bool
+    varlen_qkvpacked: bool
+    varlen_unpacked: bool
+
+
+class PackedAttentionBackend:
+    """
+    Dispatch QKV-packed attention through direct FlashAttention or Hugging Face Kernels providers.
+
+    The model processors own projection, normalization, and RoPE ordering. This class only owns kernel
+    selection, bool-mask unpadding, and padding the visible-token output back to batch-major layout.
+    """
+
+    def __init__(self, name: str, module: Any):
+        self.name = name
+        self.module = module
+        self.fixed_qkvpacked_func = getattr(module, "flash_attn_qkvpacked_func", None)
+        self.varlen_qkvpacked_func = getattr(module, "flash_attn_varlen_qkvpacked_func", None)
+        self.varlen_unpacked_func = getattr(module, "flash_attn_varlen_func", None)
+        self.capabilities = PackedAttentionCapabilities(
+            fixed_qkvpacked=self.fixed_qkvpacked_func is not None,
+            varlen_qkvpacked=self.varlen_qkvpacked_func is not None,
+            varlen_unpacked=self.varlen_unpacked_func is not None,
+        )
+
+    def qkvpacked(
+        self,
+        qkv: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        *,
+        causal: bool = False,
+        dropout_p: float = 0.0,
+        softmax_scale: Optional[float] = None,
+    ) -> torch.Tensor:
+        if attention_mask is None:
+            if self.fixed_qkvpacked_func is None:
+                raise RuntimeError(f"Packed attention backend '{self.name}' does not provide fixed qkvpacked attention.")
+            return _call_qkvpacked_kernel(
+                self.fixed_qkvpacked_func,
+                qkv,
+                causal=causal,
+                dropout_p=dropout_p,
+                softmax_scale=softmax_scale,
+            )
+
+        if self.varlen_qkvpacked_func is None:
+            raise RuntimeError(
+                f"Packed attention backend '{self.name}' does not provide varlen qkvpacked attention for masked inputs."
+            )
+
+        qkv_unpad, indices, cu_seqlens, max_seqlen, batch_size, padded_seqlen = _unpad_qkv(qkv, attention_mask)
+        output_unpad = _call_varlen_qkvpacked_kernel(
+            self.varlen_qkvpacked_func,
+            qkv_unpad,
+            cu_seqlens,
+            max_seqlen,
+            causal=causal,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+        )
+        return _pad_varlen_output(output_unpad, indices, batch_size, padded_seqlen)
+
+
+_PACKED_BACKEND_ALIASES = {
+    "flash-attn-2": ("direct-fa2", "flash_attn"),
+    "flash_attn_2": ("direct-fa2", "flash_attn"),
+    "flash2": ("direct-fa2", "flash_attn"),
+    "flash-attn-2-hub": ("hub-fa2", "kernels-community/flash-attn2"),
+    "flash_attn_2_hub": ("hub-fa2", "kernels-community/flash-attn2"),
+    "flash2-hub": ("hub-fa2", "kernels-community/flash-attn2"),
+    "flash-attn-3": ("direct-fa3", "flash_attn_interface"),
+    "flash_attn_3": ("direct-fa3", "flash_attn_interface"),
+    "flash3": ("direct-fa3", "flash_attn_interface"),
+    "flash-attn-3-hub": ("hub-fa3", "kernels-community/flash-attn3"),
+    "flash_attn_3_hub": ("hub-fa3", "kernels-community/flash-attn3"),
+    "flash3-hub": ("hub-fa3", "kernels-community/flash-attn3"),
+    "flash-attn-3-varlen": ("direct-fa3", "flash_attn_interface"),
+    "flash_attn_3_varlen": ("direct-fa3", "flash_attn_interface"),
+    "flash3-varlen": ("direct-fa3", "flash_attn_interface"),
+    "flash-attn-3-varlen-hub": ("hub-fa3", "kernels-community/flash-attn3"),
+    "flash_attn_3_varlen_hub": ("hub-fa3", "kernels-community/flash-attn3"),
+    "flash3-varlen-hub": ("hub-fa3", "kernels-community/flash-attn3"),
+    "flash-attn-4": ("direct-fa4", "flash_attn.cute"),
+    "flash_attn_4": ("direct-fa4", "flash_attn.cute"),
+    "flash4": ("direct-fa4", "flash_attn.cute"),
+    "flash-attn-4-hub": ("hub-fa4", "kernels-community/flash-attn4"),
+    "flash_attn_4_hub": ("hub-fa4", "kernels-community/flash-attn4"),
+    "flash4-hub": ("hub-fa4", "kernels-community/flash-attn4"),
+}
+
+
+def _normalize_backend_key(value: str) -> str:
+    return value.replace("_", "-")
+
+
+@lru_cache(maxsize=32)
+def get_packed_attention_backend(
+    preferred_backend: Optional[str] = None,
+    require_varlen_qkvpacked: bool = False,
+) -> PackedAttentionBackend:
+    backend_key = _select_packed_backend(preferred_backend, require_varlen_qkvpacked=require_varlen_qkvpacked)
+    provider, target = _PACKED_BACKEND_ALIASES[backend_key]
+    if provider.startswith("hub-"):
+        try:
+            from kernels import get_kernel
+        except ImportError as exc:
+            raise RuntimeError("The 'kernels' package is required for Hugging Face Hub attention kernels.") from exc
+
+        module = get_kernel(target)
+        return PackedAttentionBackend(backend_key, module)
+
+    import importlib
+
+    try:
+        module = importlib.import_module(target)
+    except ImportError as exc:
+        raise RuntimeError(f"Could not import packed attention backend '{target}'.") from exc
+    return PackedAttentionBackend(backend_key, module)
+
+
+def _select_packed_backend(preferred_backend: Optional[str], *, require_varlen_qkvpacked: bool = False) -> str:
+    if preferred_backend:
+        normalized = _normalize_backend_key(preferred_backend.strip().lower())
+        raw = preferred_backend.strip().lower()
+        if raw in _PACKED_BACKEND_ALIASES:
+            return raw
+        if normalized in _PACKED_BACKEND_ALIASES:
+            return normalized
+        if normalized in ("auto", "automatic"):
+            return _auto_packed_backend(require_varlen_qkvpacked=require_varlen_qkvpacked)
+        raise ValueError(f"Unsupported packed attention backend '{preferred_backend}'.")
+    return _auto_packed_backend(require_varlen_qkvpacked=require_varlen_qkvpacked)
+
+
+def _auto_packed_backend(*, require_varlen_qkvpacked: bool = False) -> str:
+    if not torch.cuda.is_available():
+        raise RuntimeError("Packed FlashAttention backends require CUDA.")
+    major, minor = torch.cuda.get_device_capability()
+    if require_varlen_qkvpacked and major >= 8:
+        return "flash2-hub"
+    if major >= 10:
+        return "flash4-hub"
+    if major >= 9:
+        return "flash3-hub"
+    if major == 8:
+        return "flash2-hub"
+    raise RuntimeError(f"No packed FlashAttention backend is configured for CUDA capability {major}.{minor}.")
+
+
+def _normalize_bool_mask(attention_mask: torch.Tensor, batch_size: int, seqlen: int) -> torch.Tensor:
+    if attention_mask.ndim != 2:
+        raise ValueError(
+            f"Packed varlen attention expects a [batch, sequence] bool-compatible mask, got {tuple(attention_mask.shape)}."
+        )
+    if attention_mask.shape != (batch_size, seqlen):
+        raise ValueError(
+            f"Packed varlen attention mask shape {tuple(attention_mask.shape)} does not match qkv shape "
+            f"{(batch_size, seqlen)}."
+        )
+    return attention_mask.to(dtype=torch.bool)
+
+
+def _unpad_qkv(qkv: torch.Tensor, attention_mask: torch.Tensor):
+    if qkv.ndim != 5 or qkv.shape[2] != 3:
+        raise ValueError(f"Expected qkv shape [batch, sequence, 3, heads, head_dim], got {tuple(qkv.shape)}.")
+    batch_size, seqlen = qkv.shape[:2]
+    mask = _normalize_bool_mask(attention_mask, batch_size, seqlen).to(device=qkv.device)
+    lengths = mask.sum(dim=1, dtype=torch.int32)
+    if torch.any(lengths == 0):
+        raise ValueError("Packed varlen attention received an empty sequence in the attention mask.")
+
+    indices = torch.nonzero(mask.flatten(), as_tuple=False).flatten()
+    qkv_unpad = qkv.reshape(batch_size * seqlen, *qkv.shape[2:]).index_select(0, indices)
+    cu_seqlens = torch.zeros(batch_size + 1, device=qkv.device, dtype=torch.int32)
+    cu_seqlens[1:] = torch.cumsum(lengths, dim=0)
+    max_seqlen = int(lengths.max().item())
+    return qkv_unpad.contiguous(), indices, cu_seqlens, max_seqlen, batch_size, seqlen
+
+
+def _pad_varlen_output(output_unpad: torch.Tensor, indices: torch.Tensor, batch_size: int, seqlen: int) -> torch.Tensor:
+    output = output_unpad.new_zeros((batch_size * seqlen, *output_unpad.shape[1:]))
+    output.index_copy_(0, indices, output_unpad)
+    return output.view(batch_size, seqlen, *output_unpad.shape[1:])
+
+
+def _call_qkvpacked_kernel(func, qkv: torch.Tensor, *, causal: bool, dropout_p: float, softmax_scale: Optional[float]):
+    try:
+        output = func(qkv, dropout_p=dropout_p, softmax_scale=softmax_scale, causal=causal)
+    except TypeError:
+        output = func(qkv, causal=causal)
+    if isinstance(output, tuple):
+        return output[0]
+    return output
+
+
+def _call_varlen_qkvpacked_kernel(
+    func,
+    qkv_unpad: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    max_seqlen: int,
+    *,
+    causal: bool,
+    dropout_p: float,
+    softmax_scale: Optional[float],
+):
+    try:
+        output = func(
+            qkv_unpad,
+            cu_seqlens,
+            max_seqlen,
+            dropout_p,
+            softmax_scale=softmax_scale,
+            causal=causal,
+        )
+    except TypeError:
+        output = func(
+            qkv_unpad,
+            cu_seqlens,
+            max_seqlen,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+            causal=causal,
+        )
+    if isinstance(output, tuple):
+        return output[0]
+    return output
 
 
 def is_sageattention_available() -> bool:

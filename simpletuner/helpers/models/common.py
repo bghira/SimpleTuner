@@ -3128,10 +3128,18 @@ class ModelFoundation(ABC):
         self._init_layersync_regularizer()
 
     def fuse_qkv_projections(self):
-        if self.config.fuse_qkv_projections:
-            logger.warning(
-                f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker."
-            )
+        if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
+            return
+        if self.model is not None:
+            model = self.unwrap_model(model=self.model)
+            fuse = getattr(model, "fuse_qkv_projections", None)
+            if callable(fuse):
+                fuse(preferred_backend=getattr(self.config, "attention_mechanism", None))
+                self._qkv_projections_fused = True
+                return
+        logger.warning(
+            f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker."
+        )
 
     def unfuse_qkv_projections(self):
         """
@@ -3144,7 +3152,14 @@ class ModelFoundation(ABC):
         - Saving full model checkpoints
         - Any operation that expects separate Q, K, V projections
         """
-        pass
+        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
+            return
+        self._qkv_projections_fused = False
+        if self.model is not None:
+            model = self.unwrap_model(model=self.model)
+            unfuse = getattr(model, "unfuse_qkv_projections", None)
+            if callable(unfuse):
+                unfuse()
 
     def set_prepared_model(self, model, base_model: bool = False):
         if self.config.controlnet and not base_model:
