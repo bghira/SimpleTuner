@@ -78,6 +78,30 @@ class PackedAttentionProcessorTests(unittest.TestCase):
         self.assertEqual(context.shape, encoder_hidden_states.shape)
         self.assertEqual(backend.calls[0]["shape"], (2, 8, 3, 2, 4))
 
+    def test_packed_joint_attention_splits_4d_sample_by_sequence_length(self):
+        backend = _FakePackedBackend()
+        attn = Attention(
+            query_dim=8,
+            added_kv_proj_dim=8,
+            heads=2,
+            dim_head=4,
+            out_dim=8,
+            context_pre_only=False,
+            bias=True,
+            out_bias=True,
+        )
+        attn.fuse_projections(fuse=True)
+        processor = PackedJointAttnProcessor2_0(preferred_backend="flash2-hub")
+        hidden_states = torch.randn(2, 8, 4, 5)
+        encoder_hidden_states = torch.randn(2, 3, 8)
+
+        with self._patch_backend(backend):
+            sample, context = processor(attn, hidden_states, encoder_hidden_states)
+
+        self.assertEqual(sample.shape, hidden_states.shape)
+        self.assertEqual(context.shape, encoder_hidden_states.shape)
+        self.assertEqual(backend.calls[0]["shape"], (2, 23, 3, 2, 4))
+
     def test_packed_auraflow_attention_preserves_context_first_order(self):
         backend = _FakePackedBackend()
         attn = Attention(

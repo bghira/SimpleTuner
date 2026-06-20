@@ -136,17 +136,21 @@ class PackedJointAttnProcessor2_0:
         *args,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        residual = hidden_states
+        sample_input_shape = hidden_states.shape
+        context_input_shape = encoder_hidden_states.shape
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+            batch_size, sample_channel, sample_height, sample_width = sample_input_shape
+            hidden_states = hidden_states.view(batch_size, sample_channel, sample_height * sample_width).transpose(1, 2)
         context_input_ndim = encoder_hidden_states.ndim
         if context_input_ndim == 4:
-            batch_size, channel, height, width = encoder_hidden_states.shape
-            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+            batch_size, context_channel, context_height, context_width = context_input_shape
+            encoder_hidden_states = encoder_hidden_states.view(
+                batch_size, context_channel, context_height * context_width
+            ).transpose(1, 2)
 
         batch_size = encoder_hidden_states.shape[0]
+        context_sequence_length = encoder_hidden_states.shape[1]
         qkv = attn.to_qkv(hidden_states)
         query, key, value = torch.chunk(qkv, 3, dim=-1)
         encoder_qkv = attn.to_added_qkv(encoder_hidden_states)
@@ -163,9 +167,10 @@ class PackedJointAttnProcessor2_0:
 
         hidden_states = run_packed_qkv_attention(query, key, value, attention_mask, self.preferred_backend)
         hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim).to(query.dtype)
+        sample_sequence_length = hidden_states.shape[1] - context_sequence_length
         hidden_states, encoder_hidden_states = (
-            hidden_states[:, : residual.shape[1]],
-            hidden_states[:, residual.shape[1] :],
+            hidden_states[:, :sample_sequence_length],
+            hidden_states[:, sample_sequence_length:],
         )
 
         hidden_states = attn.to_out[0](hidden_states)
@@ -174,9 +179,11 @@ class PackedJointAttnProcessor2_0:
             encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
 
         if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, sample_channel, sample_height, sample_width)
         if context_input_ndim == 4:
-            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
+                batch_size, context_channel, context_height, context_width
+            )
         return hidden_states, encoder_hidden_states
 
 
