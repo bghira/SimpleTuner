@@ -89,6 +89,20 @@ def _ltx2_cast_attention_inputs(
     return query.to(dispatch_dtype), key.to(dispatch_dtype), value.to(dispatch_dtype)
 
 
+def _ltx2_project_qkv(
+    attn: "LTX2Attention",
+    hidden_states: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if getattr(attn, "fused_projections", False):
+        if encoder_hidden_states is hidden_states:
+            return attn.to_qkv(hidden_states).chunk(3, dim=-1)
+        key, value = attn.to_kv(encoder_hidden_states).chunk(2, dim=-1)
+        return attn.to_q(hidden_states), key, value
+
+    return attn.to_q(hidden_states), attn.to_k(encoder_hidden_states), attn.to_v(encoder_hidden_states)
+
+
 def _ltx2_active_attention_backend(backend: Optional[AttentionBackendName]) -> AttentionBackendName:
     if backend is not None:
         return AttentionBackendName(backend)
@@ -125,6 +139,24 @@ def _ltx2_normalize_varlen_mask(
             f"expected ({batch_size}, {seq_len_kv})"
         )
     return keep_mask
+
+
+def _ltx2_prompt_timesteps(timestep: torch.Tensor, batch_size: int, name: str) -> torch.Tensor:
+    if timestep.ndim == 0:
+        return timestep.expand(batch_size)
+    if timestep.ndim == 1:
+        if timestep.shape[0] == 1:
+            return timestep.expand(batch_size)
+        if timestep.shape[0] == batch_size:
+            return timestep
+        raise ValueError(f"LTX-2 expected 1 or {batch_size} {name} timesteps, got {timestep.shape[0]}.")
+    if timestep.ndim == 2:
+        if timestep.shape[0] == 1:
+            return timestep[:, 0].expand(batch_size)
+        if timestep.shape[0] == batch_size:
+            return timestep[:, 0]
+        raise ValueError(f"LTX-2 expected tokenwise {name} timesteps for batch size {batch_size}, got {timestep.shape[0]}.")
+    raise ValueError(f"LTX-2 expected scalar, batch, or tokenwise {name} timesteps, got shape {tuple(timestep.shape)}.")
 
 
 def _ltx2_flash3_varlen_hub_attention(
@@ -198,6 +230,8 @@ def _ltx2_dispatch_attention(
             scale=None,
             is_causal=False,
         )
+    if backend_name == AttentionBackendName.FLASH_VARLEN_HUB:
+        attention_mask = _ltx2_normalize_varlen_mask(attention_mask, key.shape[0], key.shape[1])
     return dispatch_attention_fn(
         query,
         key,
@@ -214,6 +248,59 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
     if buffer is None:
         return
     buffer[key] = hidden_states
+
+
+def _ltx2_shard_cp_tensor(tensor: Optional[torch.Tensor], target_length: int, parallel_config, split_dim: int = 1):
+    if tensor is None:
+        return None
+    context_config = getattr(parallel_config, "context_parallel_config", None)
+    if context_config is None or tensor.dim() <= split_dim or tensor.shape[split_dim] == target_length:
+        return tensor
+    if tensor.shape[split_dim] < target_length:
+        return tensor
+
+    from diffusers.hooks.context_parallel import PartitionAnythingSharder
+
+    sharded = PartitionAnythingSharder.shard_anything(tensor, split_dim, context_config._flattened_mesh)
+    if sharded.shape[split_dim] != target_length:
+        raise ValueError(
+            f"LTX-2 context parallel shard length mismatch: got {sharded.shape[split_dim]}, expected {target_length}."
+        )
+    return sharded
+
+
+def _ltx2_shard_cp_rope(rope, target_length: int, parallel_config):
+    if rope is None:
+        return None
+    if isinstance(rope, tuple):
+        return tuple(_ltx2_shard_cp_rope(item, target_length, parallel_config) for item in rope)
+    split_dim = 2 if rope.dim() == 4 else 1
+    return _ltx2_shard_cp_tensor(rope, target_length, parallel_config, split_dim=split_dim)
+
+
+def _ltx2_prepare_attention_mask(
+    attn: "LTX2Attention",
+    attention_mask: torch.Tensor,
+    sequence_length: int,
+    batch_size: int,
+    parallel_config,
+) -> torch.Tensor:
+    attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+    attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+
+    context_config = getattr(parallel_config, "context_parallel_config", None)
+    if context_config is None or getattr(context_config, "ulysses_degree", 1) <= 1:
+        return attention_mask
+
+    key_length = sequence_length * context_config.ulysses_degree
+    mask_length = attention_mask.shape[-1]
+    if mask_length < key_length:
+        raise ValueError(
+            f"LTX-2 Ulysses attention mask length {mask_length} is shorter than attention key length {key_length}."
+        )
+    if mask_length > key_length:
+        attention_mask = attention_mask[..., -key_length:]
+    return attention_mask[:, :1]
 
 
 def apply_interleaved_rotary_emb(x: torch.Tensor, freqs: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
@@ -364,10 +451,13 @@ class LTX2AudioVideoAttnProcessor:
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
+        is_self_attention = encoder_hidden_states is None
 
         if attention_mask is not None:
-            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+            mask_parallel_config = self._parallel_config if is_self_attention else None
+            attention_mask = _ltx2_prepare_attention_mask(
+                attn, attention_mask, sequence_length, batch_size, mask_parallel_config
+            )
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
@@ -375,9 +465,7 @@ class LTX2AudioVideoAttnProcessor:
         if attn.to_gate_logits is not None:
             gate_logits = attn.to_gate_logits(hidden_states)
 
-        query = attn.to_q(hidden_states)
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
+        query, key, value = _ltx2_project_qkv(attn, hidden_states, encoder_hidden_states)
 
         query = attn.norm_q(query)
         key = attn.norm_k(key)
@@ -410,7 +498,7 @@ class LTX2AudioVideoAttnProcessor:
                 value,
                 attention_mask=attention_mask,
                 backend=self._attention_backend,
-                parallel_config=self._parallel_config,
+                parallel_config=self._parallel_config if is_self_attention else None,
             )
         hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
         hidden_states = hidden_states.to(query.dtype)
@@ -426,7 +514,7 @@ class LTX2AudioVideoAttnProcessor:
         return hidden_states
 
 
-class LTX2PerturbedAttnProcessor:
+class LTX2PerturbedAttnProcessor(LTX2AudioVideoAttnProcessor):
     _attention_backend = None
     _packed_attention_backend = None
     _parallel_config = None
@@ -451,10 +539,13 @@ class LTX2PerturbedAttnProcessor:
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
+        is_self_attention = encoder_hidden_states is None
 
         if attention_mask is not None:
-            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+            mask_parallel_config = self._parallel_config if is_self_attention else None
+            attention_mask = _ltx2_prepare_attention_mask(
+                attn, attention_mask, sequence_length, batch_size, mask_parallel_config
+            )
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
@@ -462,16 +553,13 @@ class LTX2PerturbedAttnProcessor:
         if attn.to_gate_logits is not None:
             gate_logits = attn.to_gate_logits(hidden_states)
 
-        value = attn.to_v(encoder_hidden_states)
+        query, key, value = _ltx2_project_qkv(attn, hidden_states, encoder_hidden_states)
         if all_perturbed is None:
             all_perturbed = torch.all(perturbation_mask == 0) if perturbation_mask is not None else False
 
         if all_perturbed:
             hidden_states = value
         else:
-            query = attn.to_q(hidden_states)
-            key = attn.to_k(encoder_hidden_states)
-
             query = attn.norm_q(query)
             key = attn.norm_k(key)
 
@@ -505,7 +593,7 @@ class LTX2PerturbedAttnProcessor:
                     value,
                     attention_mask=attention_mask,
                     backend=self._attention_backend,
-                    parallel_config=self._parallel_config,
+                    parallel_config=self._parallel_config if is_self_attention else None,
                 )
             hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
             hidden_states = hidden_states.to(query.dtype)
@@ -583,6 +671,51 @@ class LTX2Attention(torch.nn.Module, AttentionModuleMixin):
         if processor is None:
             processor = self._default_processor_cls()
         self.set_processor(processor)
+        self.fused_projections = False
+
+    @torch.no_grad()
+    def fuse_projections(self):
+        if getattr(self, "fused_projections", False):
+            return
+
+        device = self.to_q.weight.device
+        dtype = self.to_q.weight.dtype
+        if self.cross_attention_dim == self.query_dim:
+            concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
+            self.to_qkv = nn.Linear(
+                concatenated_weights.shape[1],
+                concatenated_weights.shape[0],
+                bias=self.use_bias,
+                device=device,
+                dtype=dtype,
+            )
+            self.to_qkv.weight.copy_(concatenated_weights)
+            if self.use_bias:
+                self.to_qkv.bias.copy_(torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data]))
+        else:
+            concatenated_weights = torch.cat([self.to_k.weight.data, self.to_v.weight.data])
+            self.to_kv = nn.Linear(
+                concatenated_weights.shape[1],
+                concatenated_weights.shape[0],
+                bias=self.use_bias,
+                device=device,
+                dtype=dtype,
+            )
+            self.to_kv.weight.copy_(concatenated_weights)
+            if self.use_bias:
+                self.to_kv.bias.copy_(torch.cat([self.to_k.bias.data, self.to_v.bias.data]))
+
+        self.fused_projections = True
+
+    @torch.no_grad()
+    def unfuse_projections(self):
+        if not getattr(self, "fused_projections", False):
+            return
+        if hasattr(self, "to_qkv"):
+            delattr(self, "to_qkv")
+        if hasattr(self, "to_kv"):
+            delattr(self, "to_kv")
+        self.fused_projections = False
 
     def forward(
         self,
@@ -1351,14 +1484,18 @@ class LTX2VideoTransformer3DModel(
     _cp_plan = {
         "": {
             "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-            "encoder_attention_mask": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+            "audio_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
         },
         "rope": {
-            0: ContextParallelInput(split_dim=1, expected_dims=3, split_output=True),
-            1: ContextParallelInput(split_dim=1, expected_dims=3, split_output=True),
+            0: ContextParallelInput(split_dim=2, expected_dims=4, split_output=True),
+            1: ContextParallelInput(split_dim=2, expected_dims=4, split_output=True),
+        },
+        "audio_rope": {
+            0: ContextParallelInput(split_dim=2, expected_dims=4, split_output=True),
+            1: ContextParallelInput(split_dim=2, expected_dims=4, split_output=True),
         },
         "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+        "audio_proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
     }
 
     @register_to_config
@@ -1822,7 +1959,7 @@ class LTX2VideoTransformer3DModel(
                 if audio_sigma is None:
                     audio_sigma = audio_timestep if audio_timestep is not None else timestep
                 temb_prompt_audio, _ = self.audio_prompt_adaln(
-                    audio_sigma.flatten(),
+                    _ltx2_prompt_timesteps(audio_sigma, batch_size, "audio prompt"),
                     batch_size=batch_size,
                     hidden_dtype=audio_hidden_states.dtype,
                 )
@@ -2011,12 +2148,12 @@ class LTX2VideoTransformer3DModel(
             if audio_sigma is None:
                 audio_sigma = sigma
             temb_prompt, _ = self.prompt_adaln(
-                sigma.flatten(),
+                _ltx2_prompt_timesteps(sigma, batch_size, "video prompt"),
                 batch_size=batch_size,
                 hidden_dtype=hidden_states.dtype,
             )
             temb_prompt_audio, _ = self.audio_prompt_adaln(
-                audio_sigma.flatten(),
+                _ltx2_prompt_timesteps(audio_sigma, batch_size, "audio prompt"),
                 batch_size=batch_size,
                 hidden_dtype=audio_hidden_states.dtype,
             )
@@ -2091,6 +2228,37 @@ class LTX2VideoTransformer3DModel(
         saved_tokens = None
         current_video_rotary_emb = video_rotary_emb
         current_ca_video_rotary_emb = video_cross_attn_rotary_emb
+
+        parallel_config = getattr(self, "_parallel_config", None)
+        if getattr(parallel_config, "context_parallel_config", None) is not None:
+            video_sequence_length = hidden_states.shape[1]
+            audio_sequence_length = audio_hidden_states.shape[1]
+            temb = _ltx2_shard_cp_tensor(temb, video_sequence_length, parallel_config)
+            embedded_timestep = _ltx2_shard_cp_tensor(embedded_timestep, video_sequence_length, parallel_config)
+            temb_prompt = _ltx2_shard_cp_tensor(temb_prompt, video_sequence_length, parallel_config)
+            video_cross_attn_scale_shift = _ltx2_shard_cp_tensor(
+                video_cross_attn_scale_shift, video_sequence_length, parallel_config
+            )
+            video_cross_attn_a2v_gate = _ltx2_shard_cp_tensor(
+                video_cross_attn_a2v_gate, video_sequence_length, parallel_config
+            )
+            current_video_rotary_emb = _ltx2_shard_cp_rope(current_video_rotary_emb, video_sequence_length, parallel_config)
+            current_ca_video_rotary_emb = _ltx2_shard_cp_rope(
+                current_ca_video_rotary_emb, video_sequence_length, parallel_config
+            )
+
+            temb_audio = _ltx2_shard_cp_tensor(temb_audio, audio_sequence_length, parallel_config)
+            audio_embedded_timestep = _ltx2_shard_cp_tensor(audio_embedded_timestep, audio_sequence_length, parallel_config)
+            audio_cross_attn_scale_shift = _ltx2_shard_cp_tensor(
+                audio_cross_attn_scale_shift, audio_sequence_length, parallel_config
+            )
+            audio_cross_attn_v2a_gate = _ltx2_shard_cp_tensor(
+                audio_cross_attn_v2a_gate, audio_sequence_length, parallel_config
+            )
+            audio_rotary_emb = _ltx2_shard_cp_rope(audio_rotary_emb, audio_sequence_length, parallel_config)
+            audio_cross_attn_rotary_emb = _ltx2_shard_cp_rope(
+                audio_cross_attn_rotary_emb, audio_sequence_length, parallel_config
+            )
 
         if routes:
             total_layers = len(self.transformer_blocks)
