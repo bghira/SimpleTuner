@@ -64,6 +64,39 @@ LTX2_AUDIO_VAE_PREFIX = "audio_vae."
 LTX2_VOCODER_PREFIX = "vocoder."
 
 
+def _align_ltx2_connector_attention_mask(attention_mask: torch.Tensor, sequence_length: int) -> torch.Tensor:
+    mask_length = attention_mask.shape[-1]
+    if mask_length == sequence_length:
+        return attention_mask
+    if mask_length < sequence_length:
+        raise ValueError(
+            f"LTX-2 connector attention mask length {mask_length} is shorter than connector sequence length "
+            f"{sequence_length}."
+        )
+    return attention_mask[..., -sequence_length:]
+
+
+def _pad_ltx2_audio_sequence_for_cp(
+    audio_hidden_states: torch.Tensor,
+    audio_num_frames: int,
+    cp_size: int,
+    strategy: str,
+) -> tuple[torch.Tensor, int]:
+    if cp_size <= 1 or strategy != "alltoall":
+        return audio_hidden_states, audio_num_frames
+    remainder = audio_hidden_states.shape[1] % cp_size
+    if remainder == 0:
+        return audio_hidden_states, audio_num_frames
+
+    pad_tokens = cp_size - remainder
+    padding = audio_hidden_states.new_zeros(
+        audio_hidden_states.shape[0],
+        pad_tokens,
+        audio_hidden_states.shape[2],
+    )
+    return torch.cat([audio_hidden_states, padding], dim=1), audio_num_frames + pad_tokens
+
+
 class LTXVideo2(VideoModelFoundation):
     NAME = "LTXVideo2"
     MODEL_DESCRIPTION = "Audio-video generation model with flow matching"
@@ -1874,6 +1907,15 @@ class LTXVideo2(VideoModelFoundation):
         audio_num_frames = audio_latents.shape[2]
         audio_mel_bins = audio_latents.shape[3]
         packed_audio_noisy = pack_ltx2_audio_latents(audio_noisy).to(self.config.weight_dtype)
+        transformer_audio_num_frames = audio_num_frames
+        cp_size = int(getattr(self.config, "context_parallel_size", 1) or 1)
+        cp_strategy = str(getattr(self.config, "context_parallel_comm_strategy", "allgather") or "allgather").lower()
+        packed_audio_noisy, transformer_audio_num_frames = _pad_ltx2_audio_sequence_for_cp(
+            packed_audio_noisy,
+            transformer_audio_num_frames,
+            cp_size,
+            cp_strategy,
+        )
 
         encoder_hidden_states = prepared_batch["encoder_hidden_states"]
         encoder_attention_mask = prepared_batch.get("encoder_attention_mask")
@@ -1888,6 +1930,12 @@ class LTXVideo2(VideoModelFoundation):
             encoder_hidden_states,
             additive_attention_mask,
             additive_mask=True,
+        )
+        connector_video_attention_mask = _align_ltx2_connector_attention_mask(
+            connector_attention_mask, connector_video_embeds.shape[1]
+        )
+        connector_audio_attention_mask = _align_ltx2_connector_attention_mask(
+            connector_attention_mask, connector_audio_embeds.shape[1]
         )
 
         force_keep_mask = None
@@ -1935,13 +1983,13 @@ class LTXVideo2(VideoModelFoundation):
             "timestep_sign": (
                 prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
             ),
-            "encoder_attention_mask": connector_attention_mask,
-            "audio_encoder_attention_mask": connector_attention_mask,
+            "encoder_attention_mask": connector_video_attention_mask,
+            "audio_encoder_attention_mask": connector_audio_attention_mask,
             "num_frames": num_frames,
             "height": height,
             "width": width,
             "fps": self.config.framerate or 25,
-            "audio_num_frames": audio_num_frames,
+            "audio_num_frames": transformer_audio_num_frames,
             "return_dict": False,
         }
         if combined_video_coords is not None:
@@ -1958,6 +2006,10 @@ class LTXVideo2(VideoModelFoundation):
             transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if is_audio_only:
             transformer_kwargs["audio_only"] = True
+
+        if os.environ.get("SIMPLETUNER_CP_DEBUG_SHAPES") == "1" and should_log():
+            debug_shapes = {key: tuple(value.shape) for key, value in transformer_kwargs.items() if torch.is_tensor(value)}
+            logger.info("LTX-2 transformer kwargs tensor shapes: %s", debug_shapes)
 
         grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
         if grounding_kwargs is not None:
@@ -1987,6 +2039,8 @@ class LTXVideo2(VideoModelFoundation):
 
         if ref_seq_len:
             video_pred = video_pred[:, ref_seq_len:, :]
+        if transformer_audio_num_frames != audio_num_frames:
+            audio_pred = audio_pred[:, :audio_num_frames, :]
 
         video_pred = unpack_ltx2_latents(
             video_pred,
