@@ -135,7 +135,6 @@ except Exception as e:
 try:
     import peft.tuners.lora.model as peft_lora_model
     import peft.tuners.lora.torchao as peft_lora_torchao
-    from peft.import_utils import is_torchao_available
     from peft.tuners.lora.torchao import TorchaoLoraLinear
     from peft.tuners.tuners_utils import BaseTunerLayer
     from torchao.prototype.quantized_training import int8_weight_only_quantized_training
@@ -149,7 +148,6 @@ try:
         Int8DynamicActivationInt8WeightConfig,
         Int8DynamicActivationIntxWeightConfig,
     )
-    from torchao.utils import TorchAOBaseTensor
 
     from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -175,10 +173,10 @@ try:
     def _simpletuner_dispatch_torchao(target: torch.nn.Module, adapter_name: str, config, **kwargs):
         new_module = None
         target_base_layer = target.get_base_layer() if isinstance(target, BaseTunerLayer) else target
-        if not hasattr(target_base_layer, "weight") or not is_torchao_available():
+        if not hasattr(target_base_layer, "weight"):
             return new_module
         get_apply_tensor_subclass = _simpletuner_torchao_requantize_config(target_base_layer.weight)
-        if isinstance(target_base_layer.weight, TorchAOBaseTensor) and get_apply_tensor_subclass is not None:
+        if get_apply_tensor_subclass is not None:
             return TorchaoLoraLinear(
                 target,
                 adapter_name,
