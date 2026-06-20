@@ -8,6 +8,14 @@ SimpleTuner 现已一流支持 PyTorch Fully Sharded Data Parallel v2（基于 D
 
 FSDP2 是 PyTorch 分片数据并行引擎的下一代版本。不同于 FSDP v1 的旧式扁平参数逻辑，v2 插件基于 DTensor。它在各 rank 间分片模型参数、梯度与优化器，同时保持每个 rank 的工作集较小。与经典的 ZeRO 风格方案相比，它保留了 Hugging Face accelerate 的启动流程，因此检查点、优化器与推理路径能与 SimpleTuner 其余部分保持兼容。
 
+## 何时选择 FSDP2
+
+FSDP2 主要是内存扩展工具。当模型、分辨率、视频时长或序列长度无法用普通数据并行舒适容纳，或长 attention 序列需要上下文并行时，它才是合适选择。它并不自动代表最快的多 GPU 路径。
+
+对于 LoRA/PEFT 训练，只要模型能放进每张 GPU，优先使用 DDP。在 8x H100 的 LTX-2.3 IC-LoRA 测试中，每张 GPU `train_batch_size=1` 的普通 DDP，在相同小 per-rank batch 形状下大约比 8x H100 FSDP2 快 3-6 倍。只有当替代方案是降低分辨率、缩短片段、强制 offload，或根本无法运行时，才为 LoRA 选择 FSDP2。
+
+Torch Dynamo 在 FSDP2 运行中也更容易出现 guard churn，尤其是动态 shape、tokenwise schedule、训练/验证 shape 变化和 regional compile 组合时。即使没有达到 Dynamo cache limit，也可能频繁看到重编译 guard 日志。在新的 FSDP2 配置中假设 compile 有收益之前，先用 `TORCH_LOGS=recompiles` 做 profiling。
+
 ## 功能概览
 
 - WebUI 开关（Hardware → Accelerate）可生成带合理默认值的 FullyShardedDataParallelPlugin
@@ -19,7 +27,7 @@ FSDP2 是 PyTorch 分片数据并行引擎的下一代版本。不同于 FSDP v1
 
 ## 已知限制
 
-- 仅当 `model_type` 为 `full` 时可启用 FSDP2。PEFT/LoRA 仍使用单设备路径。
+- FSDP2 最适合全模型训练和受内存限制的 PEFT/LoRA 训练。如果 LoRA 能用 DDP 放下，DDP 通常有更好的吞吐。
 - DeepSpeed 与 FSDP 互斥。若同时提供 `--fsdp_enable` 与 DeepSpeed 配置，CLI/WebUI 会明确报错。
 - 上下文并行仅限 CUDA，且需要 `--context_parallel_size > 1` 与 `--fsdp_version=2`。
 - 现在验证可与 `--fsdp_reshard_after_forward=true` 协同工作：FSDP 包裹模型会直接传入 pipelines，自动处理 all-gather/reshard。
@@ -111,6 +119,7 @@ WebUI 在 **WebUI Preferences → Cache Maintenance** 中提供维护功能：
 | `Unknown model_family` 导致检测失败 | 表单未选择支持的家族/风味。 | 从下拉菜单选择模型；自定义家族需在 `model_families` 注册。 |
 | 检测显示旧类 | 复用了缓存结果。 | 点击 **Refresh Detection** 或清理缓存。 |
 | 恢复时耗尽主机 RAM | 加载时聚合完整 state dict。 | 切换为 `SHARDED_STATE_DICT` 并/或启用 CPU RAM Efficient Loading。 |
+| 编译后的 FSDP2 运行持续记录 Dynamo 重编译 | 动态 shape 或训练/验证 shape 变化使 guard 失效。 | 先无 compile 运行一次，或在提高 cache limit 前用 `TORCH_LOGS=recompiles` 找到变化的输入。 |
 
 ## CLI 参数参考
 
