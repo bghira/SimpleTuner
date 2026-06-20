@@ -7,13 +7,125 @@ import torch
 import torch.nn as nn
 from accelerate import Accelerator
 from accelerate.utils import fsdp_utils as accelerate_fsdp_utils
+from diffusers.models import attention_dispatch
 from diffusers.models.attention import Attention
-from diffusers.models.attention_dispatch import dispatch_attention_fn
+from diffusers.models.attention_dispatch import _HUB_KERNELS_REGISTRY, AttentionBackendName, dispatch_attention_fn
 
 logger = logging.getLogger(__name__)
 
 # SimpleTuner always fuses.
 PERMANENT_FUSION = True
+
+
+def patch_flash_attn2_hub_kernel_attrs():
+    flash_config = _HUB_KERNELS_REGISTRY[AttentionBackendName.FLASH_HUB]
+    flash_config.wrapped_forward_attr = "flash_attn_interface._flash_attn_forward"
+    flash_config.wrapped_backward_attr = "flash_attn_interface._flash_attn_backward"
+
+    varlen_config = _HUB_KERNELS_REGISTRY[AttentionBackendName.FLASH_VARLEN_HUB]
+    varlen_config.wrapped_forward_attr = "flash_attn_interface._flash_attn_varlen_forward"
+    varlen_config.wrapped_backward_attr = "flash_attn_interface._flash_attn_varlen_backward"
+
+
+def _patched_ring_anything_attention_forward(
+    ctx,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor],
+    dropout_p: float,
+    is_causal: bool,
+    scale: Optional[float],
+    enable_gqa: bool,
+    return_lse: bool,
+    forward_op,
+    backward_op,
+    _parallel_config=None,
+):
+    if attn_mask is not None:
+        raise ValueError(
+            "TemplatedRingAnythingAttention does not support non-None attn_mask: "
+            "non-uniform sequence lengths across ranks make cross-rank mask slicing ambiguous."
+        )
+    ring_mesh = _parallel_config.context_parallel_config._ring_mesh
+    group = ring_mesh.get_group()
+    rank = _parallel_config.context_parallel_config._ring_local_rank
+    world_size = _parallel_config.context_parallel_config.ring_degree
+    next_rank = (rank + 1) % world_size
+    prev_out = prev_lse = None
+
+    ctx.forward_op = forward_op
+    ctx.backward_op = backward_op
+    ctx.q_shape = query.shape
+    ctx.kv_shape = key.shape
+    ctx._parallel_config = _parallel_config
+
+    kv_seq_len = key.shape[1]
+    all_kv_seq_lens = attention_dispatch.gather_size_by_comm(kv_seq_len, group)
+    s_max = max(all_kv_seq_lens)
+
+    def pad_to_s_max(tensor: torch.Tensor) -> torch.Tensor:
+        pad_len = s_max - tensor.shape[1]
+        if pad_len == 0:
+            return tensor
+        pad_shape = (tensor.shape[0], pad_len, *tensor.shape[2:])
+        return torch.cat([tensor, tensor.new_zeros(pad_shape)], dim=1)
+
+    key_padded = pad_to_s_max(key)
+    value_padded = pad_to_s_max(value)
+
+    kv_buffer = torch.cat([key_padded.flatten(), value_padded.flatten()]).contiguous()
+    kv_buffer = attention_dispatch.funcol.all_gather_tensor(kv_buffer, gather_dim=0, group=group)
+    kv_buffer = kv_buffer.chunk(world_size)
+
+    kv_padded_numel = key_padded.numel()
+
+    for idx in range(world_size):
+        if idx > 0:
+            true_seq_len = all_kv_seq_lens[next_rank]
+            kv = kv_buffer[next_rank]
+            key = kv[:kv_padded_numel].reshape_as(key_padded)[:, :true_seq_len]
+            value = kv[kv_padded_numel:].reshape_as(value_padded)[:, :true_seq_len]
+            next_rank = (next_rank + 1) % world_size
+        else:
+            key = key_padded[:, :kv_seq_len]
+            value = value_padded[:, :kv_seq_len]
+
+        out, lse = forward_op(
+            ctx,
+            query,
+            key,
+            value,
+            attn_mask,
+            dropout_p,
+            is_causal,
+            scale,
+            enable_gqa,
+            True,
+            _save_ctx=idx == 0,
+            _parallel_config=_parallel_config,
+        )
+
+        if _parallel_config.context_parallel_config.convert_to_fp32:
+            out = out.to(torch.float32)
+            lse = lse.to(torch.float32)
+
+        if lse.ndim == 3:
+            lse = lse.unsqueeze(-1)
+        if prev_out is not None:
+            out = prev_out - torch.nn.functional.sigmoid(lse - prev_lse) * (prev_out - out)
+            lse = prev_lse - torch.nn.functional.logsigmoid(prev_lse - lse)
+        prev_out = out
+        prev_lse = lse
+
+    out = out.to(query.dtype)
+    lse = lse.squeeze(-1)
+
+    return (out, lse) if return_lse else out
+
+
+def patch_ring_anything_attention_lse_shape():
+    attention_dispatch.TemplatedRingAnythingAttention.forward = staticmethod(_patched_ring_anything_attention_forward)
 
 
 @torch.no_grad()
@@ -380,6 +492,8 @@ def enable_reversible_fusion():
     logger.info("Enabled reversible QKV fusion mode")
 
 
+patch_flash_attn2_hub_kernel_attrs()
+patch_ring_anything_attention_lse_shape()
 patch_attention_flexible()
 
 
