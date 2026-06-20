@@ -58,6 +58,7 @@ _DIFFUSERS_BACKEND_TARGETS: Dict[str, str] = {
     "flash_attn_4_hub": "flash_4_hub",
     "flex": "flex",
     "flex-attn": "flex",
+    "native": "native",
     "cudnn": "_native_cudnn",
     "native-cudnn": "_native_cudnn",
     "native-efficient": "_native_efficient",
