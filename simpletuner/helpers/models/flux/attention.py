@@ -5,6 +5,8 @@ from einops import rearrange
 from torch import FloatTensor, Tensor
 from torch.nn import functional as F
 
+from simpletuner.helpers.training.attention_backend import get_packed_attention_backend
+
 try:
     from flash_attn_interface import flash_attn_func, flash_attn_qkvpacked_func
 except:
@@ -192,17 +194,18 @@ class FluxFusedFlashAttnProcessor3(object):
     Keeps QKV tensors packed through the entire attention computation.
     """
 
-    def __init__(self):
-        self.flash_attn_qkvpacked_func = None
-        try:
-            from flash_attn_interface import flash_attn_qkvpacked_func
-
-            self.flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
-        except ImportError:
-            raise ImportError(
-                "FluxFusedFlashAttnProcessor3 requires flash-attn library. "
-                "Please see this link for Hopper and Blackwell instructions: https://github.com/bghira/SimpleTuner/blob/main/INSTALL.md#nvidia-hopper--blackwell-follow-up-steps"
+    def __init__(self, preferred_backend: str | None = None):
+        self.preferred_backend = preferred_backend
+        self.packed_backend = get_packed_attention_backend(preferred_backend)
+        if not self.packed_backend.capabilities.fixed_qkvpacked:
+            raise RuntimeError(
+                f"Packed attention backend '{self.packed_backend.name}' does not support fixed qkvpacked attention."
             )
+
+    def _get_backend(self, attention_mask: FloatTensor = None):
+        if attention_mask is None:
+            return self.packed_backend
+        return get_packed_attention_backend(self.preferred_backend, require_varlen_qkvpacked=True)
 
     def __call__(
         self,
@@ -296,13 +299,13 @@ class FluxFusedFlashAttnProcessor3(object):
             # Transpose back and repack
             qkv = torch.stack([q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2)
 
-        # Flash Attention 3 with packed QKV
+        # Flash Attention with packed QKV.
         # Input shape: (batch, seq_len, 3, heads, head_dim)
         # Output shape: (batch, seq_len, heads, head_dim)
-        hidden_states = self.flash_attn_qkvpacked_func(
+        hidden_states = self._get_backend(attention_mask).qkvpacked(
             qkv,
+            attention_mask=attention_mask,
             causal=False,
-            # Don't pass num_heads_q for standard MHA
         )
 
         # Reshape output: (batch, seq_len, heads, head_dim) -> (batch, seq_len, heads * head_dim)

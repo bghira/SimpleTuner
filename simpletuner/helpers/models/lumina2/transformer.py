@@ -49,6 +49,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.packed_attention_processors import run_packed_qkv_attention
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -203,6 +204,71 @@ class Lumina2AttnProcessor2_0:
         hidden_states = hidden_states.type_as(query)
 
         # linear proj
+        hidden_states = attn.to_out[0](hidden_states)
+        hidden_states = attn.to_out[1](hidden_states)
+        return hidden_states
+
+
+class Lumina2PackedAttnProcessor2_0:
+    def __init__(self, preferred_backend: Optional[str] = None):
+        self.preferred_backend = preferred_backend
+
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+        base_sequence_length: Optional[int] = None,
+    ) -> torch.Tensor:
+        if encoder_hidden_states is not hidden_states:
+            raise ValueError("Lumina2 packed QKV attention only supports self-attention inputs.")
+
+        batch_size, sequence_length, _ = hidden_states.shape
+        qkv = attn.to_qkv(hidden_states)
+        query_dim = attn.inner_dim
+        kv_dim = attn.inner_kv_dim
+        query, key, value = torch.split(qkv, (query_dim, kv_dim, kv_dim), dim=-1)
+        head_dim = query_dim // attn.heads
+        kv_heads = kv_dim // head_dim
+        if attn.heads % kv_heads != 0:
+            raise ValueError(f"Lumina2 GQA head layout requires heads divisible by kv_heads, got {attn.heads}/{kv_heads}.")
+        dtype = query.dtype
+
+        query = query.view(batch_size, -1, attn.heads, head_dim)
+        key = key.view(batch_size, -1, kv_heads, head_dim)
+        value = value.view(batch_size, -1, kv_heads, head_dim)
+
+        if attn.norm_q is not None:
+            query = attn.norm_q(query)
+        if attn.norm_k is not None:
+            key = attn.norm_k(key)
+
+        if image_rotary_emb is not None:
+            query = apply_rotary_emb(query, image_rotary_emb, use_real=False)
+            key = apply_rotary_emb(key, image_rotary_emb, use_real=False)
+
+        query, key = query.to(dtype), key.to(dtype)
+        if base_sequence_length is not None:
+            softmax_scale = math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
+        else:
+            softmax_scale = attn.scale
+
+        n_rep = attn.heads // kv_heads
+        if n_rep >= 1:
+            key = key.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
+            value = value.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
+
+        hidden_states = run_packed_qkv_attention(
+            query,
+            key,
+            value,
+            attention_mask,
+            self.preferred_backend,
+            softmax_scale=softmax_scale,
+        )
+        hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim).type_as(query)
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
         return hidden_states
@@ -546,6 +612,18 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def fuse_qkv_projections(self, preferred_backend: Optional[str] = None):
+        for module in self.modules():
+            if isinstance(module, Attention):
+                module.fuse_projections(fuse=True)
+                module.set_processor(Lumina2PackedAttnProcessor2_0(preferred_backend=preferred_backend))
+
+    def unfuse_qkv_projections(self):
+        for module in self.modules():
+            if isinstance(module, Attention):
+                module.unfuse_projections()
+                module.set_processor(Lumina2AttnProcessor2_0())
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.time_caption_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)

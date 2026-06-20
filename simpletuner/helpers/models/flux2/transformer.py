@@ -39,6 +39,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.attention_backend import get_packed_attention_backend
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -128,6 +129,12 @@ def _get_qkv_projections(attn: "Flux2Attention", hidden_states, encoder_hidden_s
     return _get_projections(attn, hidden_states, encoder_hidden_states)
 
 
+def _run_packed_qkv_attention(query, key, value, attention_mask, preferred_backend):
+    backend = get_packed_attention_backend(preferred_backend, require_varlen_qkvpacked=attention_mask is not None)
+    qkv = torch.stack([query, key, value], dim=2).contiguous()
+    return backend.qkvpacked(qkv, attention_mask=attention_mask, causal=False)
+
+
 class Flux2SwiGLU(nn.Module):
     """
     Flux 2 uses a SwiGLU-style activation in the transformer feedforward sub-blocks, but with the linear projection
@@ -172,6 +179,7 @@ class Flux2FeedForward(nn.Module):
 
 class Flux2AttnProcessor:
     _attention_backend = None
+    _packed_attention_backend = None
     _parallel_config = None
 
     def __init__(self):
@@ -221,14 +229,17 @@ class Flux2AttnProcessor:
             getattr(attn, "to_k", None) and getattr(attn, "to_k", None).weight,
         )
 
-        hidden_states = dispatch_attention_fn(
-            query,
-            key,
-            value,
-            attn_mask=attention_mask,
-            backend=self._attention_backend,
-            # parallel_config=self._parallel_config,
-        )
+        if self._packed_attention_backend is not None:
+            hidden_states = _run_packed_qkv_attention(query, key, value, attention_mask, self._packed_attention_backend)
+        else:
+            hidden_states = dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                backend=self._attention_backend,
+                # parallel_config=self._parallel_config,
+            )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)
 
@@ -324,6 +335,7 @@ class Flux2Attention(torch.nn.Module, AttentionModuleMixin):
 
 class Flux2ParallelSelfAttnProcessor:
     _attention_backend = None
+    _packed_attention_backend = None
     _parallel_config = None
 
     def __init__(self):
@@ -365,14 +377,17 @@ class Flux2ParallelSelfAttnProcessor:
             getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
         )
 
-        hidden_states = dispatch_attention_fn(
-            query,
-            key,
-            value,
-            attn_mask=attention_mask,
-            backend=self._attention_backend,
-            # parallel_config=self._parallel_config,
-        )
+        if self._packed_attention_backend is not None:
+            hidden_states = _run_packed_qkv_attention(query, key, value, attention_mask, self._packed_attention_backend)
+        else:
+            hidden_states = dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                backend=self._attention_backend,
+                # parallel_config=self._parallel_config,
+            )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)
 
@@ -929,6 +944,22 @@ class Flux2Transformer2DModel(
         # TREAD router for efficient training
         self._tread_router = None
         self._tread_routes = None
+
+    def fuse_qkv_projections(self, preferred_backend: Optional[str] = None):
+        for module in self.modules():
+            if isinstance(module, Flux2Attention):
+                module.fuse_projections()
+            processor = getattr(module, "processor", None)
+            if processor is not None and hasattr(processor, "_packed_attention_backend"):
+                processor._packed_attention_backend = preferred_backend
+
+    def unfuse_qkv_projections(self):
+        for module in self.modules():
+            if isinstance(module, Flux2Attention):
+                module.unfuse_projections()
+            processor = getattr(module, "processor", None)
+            if processor is not None and hasattr(processor, "_packed_attention_backend"):
+                processor._packed_attention_backend = None
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
