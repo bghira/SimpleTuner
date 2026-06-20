@@ -1,4 +1,5 @@
 import atexit
+import contextvars
 import json
 import logging
 from os import environ
@@ -25,6 +26,7 @@ environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from simpletuner.helpers import log_format
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
+from simpletuner.helpers.training.dynamo import dynamo_config_context
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -35,6 +37,52 @@ if hasattr(log_format, "configure_third_party_loggers"):
     log_format.configure_third_party_loggers()
 
 logger = get_logger("SimpleTuner")
+
+
+def _run_training(trainer: Trainer) -> None:
+    signal_file = environ.get("SIMPLETUNER_ACCELERATE_SIGNAL_FILE")
+    validation_consumer = _build_signal_consumer(signal_file, "manual_validation")
+    checkpoint_consumer = _build_signal_consumer(signal_file, "manual_checkpoint")
+    if callable(validation_consumer):
+        trainer.register_manual_validation_trigger(validation_consumer)
+    if callable(checkpoint_consumer):
+        trainer.register_manual_checkpoint_trigger(checkpoint_consumer)
+    trainer.configure_webhook()
+    trainer.init_noise_schedule()
+    trainer.init_seed()
+
+    trainer.init_huggingface_hub()
+
+    trainer.init_preprocessing_models()
+    trainer.init_precision(preprocessing_models_only=True)
+    trainer.init_data_backend()
+    # trainer.init_validation_prompts()
+    trainer.init_unload_text_encoder()
+    trainer.init_unload_vae()
+
+    trainer.init_load_base_model()
+    trainer.init_delete_model_caches()
+
+    trainer.init_controlnet_model()
+    trainer.init_tread_model()
+    trainer.init_precision()
+    trainer.init_freeze_models()
+    trainer.init_trainable_peft_adapter()
+    trainer.init_ema_model()
+    # EMA must be quantised if the base model is as well.
+    trainer.init_precision(ema_only=True)
+
+    trainer.move_models(destination="accelerator")
+    trainer.init_distillation()
+    trainer.init_validations()
+    AttentionBackendController.apply(trainer.config, AttentionPhase.EVAL)
+    trainer.init_benchmark_base_model()
+    AttentionBackendController.apply(trainer.config, AttentionPhase.TRAIN)
+
+    trainer.resume_and_prepare()
+
+    trainer.init_trackers()
+    trainer.train()
 
 
 def _build_signal_consumer(signal_path_text: str | None, key: str):
@@ -180,49 +228,8 @@ if __name__ == "__main__":
         trainer = Trainer(
             exit_on_error=True,
         )
-        signal_file = environ.get("SIMPLETUNER_ACCELERATE_SIGNAL_FILE")
-        validation_consumer = _build_signal_consumer(signal_file, "manual_validation")
-        checkpoint_consumer = _build_signal_consumer(signal_file, "manual_checkpoint")
-        if callable(validation_consumer):
-            trainer.register_manual_validation_trigger(validation_consumer)
-        if callable(checkpoint_consumer):
-            trainer.register_manual_checkpoint_trigger(checkpoint_consumer)
-        trainer.configure_webhook()
-        trainer.init_noise_schedule()
-        trainer.init_seed()
-
-        trainer.init_huggingface_hub()
-
-        trainer.init_preprocessing_models()
-        trainer.init_precision(preprocessing_models_only=True)
-        trainer.init_data_backend()
-        # trainer.init_validation_prompts()
-        trainer.init_unload_text_encoder()
-        trainer.init_unload_vae()
-
-        trainer.init_load_base_model()
-        trainer.init_delete_model_caches()
-
-        trainer.init_controlnet_model()
-        trainer.init_tread_model()
-        trainer.init_precision()
-        trainer.init_freeze_models()
-        trainer.init_trainable_peft_adapter()
-        trainer.init_ema_model()
-        # EMA must be quantised if the base model is as well.
-        trainer.init_precision(ema_only=True)
-
-        trainer.move_models(destination="accelerator")
-        trainer.init_distillation()
-        trainer.init_validations()
-        AttentionBackendController.apply(trainer.config, AttentionPhase.EVAL)
-        trainer.init_benchmark_base_model()
-        AttentionBackendController.apply(trainer.config, AttentionPhase.TRAIN)
-
-        trainer.resume_and_prepare()
-
-        trainer.init_trackers()
-        trainer.train()
+        with dynamo_config_context(trainer.config):
+            contextvars.copy_context().run(_run_training, trainer)
     except KeyboardInterrupt:
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(

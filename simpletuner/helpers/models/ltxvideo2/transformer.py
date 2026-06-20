@@ -45,6 +45,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -144,7 +145,7 @@ def _ltx2_flash3_varlen_hub_attention(
         value_packed = value.flatten(0, 1)
     else:
         seqlens_k = keep_mask.sum(dim=1, dtype=torch.int32)
-        if torch.any(seqlens_k == 0):
+        if not torch.compiler.is_compiling() and torch.any(seqlens_k == 0):
             raise ValueError("LTX-2 varlen attention received a mask with no valid key/value tokens.")
         key_packed = torch.cat([key[idx, keep_mask[idx]] for idx in range(batch_size)], dim=0)
         value_packed = torch.cat([value[idx, keep_mask[idx]] for idx in range(batch_size)], dim=0)
@@ -162,14 +163,17 @@ def _ltx2_flash3_varlen_hub_attention(
         v=value_packed,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
-        max_seqlen_q=int(seqlens_q.max().item()),
-        max_seqlen_k=int(seqlens_k.max().item()),
+        max_seqlen_q=seq_len_q,
+        max_seqlen_k=seq_len_kv,
         softmax_scale=scale,
         causal=is_causal,
     )
     if isinstance(output, tuple):
         output = output[0]
     return output.unflatten(0, (batch_size, seq_len_q))
+
+
+_ltx2_flash3_varlen_hub_attention_eager = torch.compiler.disable(_ltx2_flash3_varlen_hub_attention)
 
 
 def _ltx2_dispatch_attention(
@@ -182,7 +186,10 @@ def _ltx2_dispatch_attention(
 ) -> torch.Tensor:
     backend_name = _ltx2_active_attention_backend(backend)
     if backend_name == AttentionBackendName._FLASH_3_VARLEN_HUB:
-        return _ltx2_flash3_varlen_hub_attention(
+        attention_fn = (
+            _ltx2_flash3_varlen_hub_attention_eager if torch.compiler.is_compiling() else _ltx2_flash3_varlen_hub_attention
+        )
+        return attention_fn(
             query=query,
             key=key,
             value=value,
@@ -572,7 +579,14 @@ class LTX2Attention(torch.nn.Module, AttentionModuleMixin):
                 f"attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
             )
         kwargs = {k: w for k, w in kwargs.items() if k in attn_parameters}
-        hidden_states = self.processor(
+        processor_call = self.processor.__call__
+        if (
+            torch.compiler.is_compiling()
+            and _ltx2_active_attention_backend(getattr(self.processor, "_attention_backend", None))
+            == AttentionBackendName._FLASH_3_VARLEN_HUB
+        ):
+            processor_call = torch.compiler.disable(processor_call)
+        hidden_states = processor_call(
             self, hidden_states, encoder_hidden_states, attention_mask, query_rotary_emb, key_rotary_emb, **kwargs
         )
         return hidden_states
@@ -1650,6 +1664,14 @@ class LTX2VideoTransformer3DModel(
             return tuple(_route_one(r) for r in rope)
         return _route_one(rope)
 
+    @staticmethod
+    def _rope_to_dtype(rope, dtype: torch.dtype):
+        if rope is None:
+            return None
+        if isinstance(rope, tuple):
+            return tuple(r.to(dtype=dtype) for r in rope)
+        return rope.to(dtype=dtype)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1896,11 +1918,20 @@ class LTX2VideoTransformer3DModel(
         if audio_coords is None:
             audio_coords = self.audio_rope.prepare_audio_coords(batch_size, audio_num_frames, audio_hidden_states.device)
 
-        video_rotary_emb = self.rope(video_coords, fps=fps, device=hidden_states.device)
-        audio_rotary_emb = self.audio_rope(audio_coords, device=audio_hidden_states.device)
+        video_rotary_emb = self._rope_to_dtype(
+            self.rope(video_coords, fps=fps, device=hidden_states.device), hidden_states.dtype
+        )
+        audio_rotary_emb = self._rope_to_dtype(
+            self.audio_rope(audio_coords, device=audio_hidden_states.device), audio_hidden_states.dtype
+        )
 
-        video_cross_attn_rotary_emb = self.cross_attn_rope(video_coords[:, 0:1, :], device=hidden_states.device)
-        audio_cross_attn_rotary_emb = self.cross_attn_audio_rope(audio_coords[:, 0:1, :], device=audio_hidden_states.device)
+        video_cross_attn_rotary_emb = self._rope_to_dtype(
+            self.cross_attn_rope(video_coords[:, 0:1, :], device=hidden_states.device), hidden_states.dtype
+        )
+        audio_cross_attn_rotary_emb = self._rope_to_dtype(
+            self.cross_attn_audio_rope(audio_coords[:, 0:1, :], device=audio_hidden_states.device),
+            audio_hidden_states.dtype,
+        )
 
         # 2. Patchify input projections
         hidden_states = self.proj_in(hidden_states)
@@ -2096,10 +2127,9 @@ class LTX2VideoTransformer3DModel(
 
                     checkpoint_fn = offloaded_checkpoint
                 else:
-                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+                    checkpoint_fn = simpletuner_checkpoint
 
-                hidden_states, audio_hidden_states = checkpoint_fn(
-                    block,
+                def _checkpoint_block(
                     hidden_states,
                     audio_hidden_states,
                     encoder_hidden_states,
@@ -2116,16 +2146,54 @@ class LTX2VideoTransformer3DModel(
                     audio_rotary_emb,
                     current_ca_video_rotary_emb,
                     audio_cross_attn_rotary_emb,
-                    encoder_attention_mask,
-                    audio_encoder_attention_mask,
-                    self_attention_mask,
-                    audio_self_attention_mask,
-                    a2v_cross_attention_mask,
-                    v2a_cross_attention_mask,
-                    True,
-                    True,
-                    None,
-                    None,
+                ):
+                    return block(
+                        hidden_states,
+                        audio_hidden_states,
+                        encoder_hidden_states,
+                        audio_encoder_hidden_states,
+                        temb,
+                        temb_audio,
+                        video_cross_attn_scale_shift,
+                        audio_cross_attn_scale_shift,
+                        video_cross_attn_a2v_gate,
+                        audio_cross_attn_v2a_gate,
+                        temb_prompt,
+                        temb_prompt_audio,
+                        current_video_rotary_emb,
+                        audio_rotary_emb,
+                        current_ca_video_rotary_emb,
+                        audio_cross_attn_rotary_emb,
+                        encoder_attention_mask,
+                        audio_encoder_attention_mask,
+                        self_attention_mask,
+                        audio_self_attention_mask,
+                        a2v_cross_attention_mask,
+                        v2a_cross_attention_mask,
+                        True,
+                        True,
+                        None,
+                        None,
+                    )
+
+                hidden_states, audio_hidden_states = checkpoint_fn(
+                    _checkpoint_block,
+                    hidden_states,
+                    audio_hidden_states,
+                    encoder_hidden_states,
+                    audio_encoder_hidden_states,
+                    temb,
+                    temb_audio,
+                    video_cross_attn_scale_shift,
+                    audio_cross_attn_scale_shift,
+                    video_cross_attn_a2v_gate,
+                    audio_cross_attn_v2a_gate,
+                    temb_prompt,
+                    temb_prompt_audio,
+                    current_video_rotary_emb,
+                    audio_rotary_emb,
+                    current_ca_video_rotary_emb,
+                    audio_cross_attn_rotary_emb,
                     use_reentrant=False,
                 )
             else:

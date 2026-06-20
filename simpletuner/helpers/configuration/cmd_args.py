@@ -1164,6 +1164,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             filtered_values = [entry for entry in values if entry]
             args.fsdp_transformer_layer_cls_to_wrap = filtered_values or None
             info_log(f"FSDP transformer layer classes to wrap: {args.fsdp_transformer_layer_cls_to_wrap}")
+
+        fsdp_quantized_precision_fields = ["base_model_precision"] + [f"text_encoder_{idx}_precision" for idx in range(1, 5)]
+        fsdp_quanto_fields = [
+            field for field in fsdp_quantized_precision_fields if "quanto" in str(getattr(args, field, "") or "").lower()
+        ]
+        if args.fsdp_version == 2 and fsdp_quanto_fields:
+            field_list = ", ".join(fsdp_quanto_fields)
+            raise ValueError(
+                "FSDP v2 uses DTensor-sharded parameters, but Quanto kernels do not register DTensor sharding "
+                f"strategies. Disable Quanto precision for FSDP v2 runs ({field_list}), or use non-FSDP LoRA training."
+            )
     else:
         # When FSDP is disabled, normalise auxiliary options so downstream logic can rely on None/False.
         args.fsdp_transformer_layer_cls_to_wrap = None

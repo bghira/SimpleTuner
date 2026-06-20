@@ -62,6 +62,7 @@ from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
+from simpletuner.helpers.training.dynamo import mark_cudagraph_step_begin
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
@@ -77,6 +78,7 @@ from simpletuner.helpers.training.optimizer_param import (
     is_bitsandbytes_available,
     is_lr_schedulefree,
     is_lr_scheduler_disabled,
+    patch_prodigy_for_fsdp2_dtensor,
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
@@ -604,11 +606,51 @@ class Trainer:
                 "Torch Dynamo config lacks capture_dynamic_output_shape_ops; skipping dynamic output capture configuration."
             )
             return
-        if getattr(config_obj, "capture_dynamic_output_shape_ops", False):
+        if not getattr(config_obj, "capture_dynamic_output_shape_ops", False):
+            config_obj.capture_dynamic_output_shape_ops = True
+            logger.info("Torch Dynamo capture_dynamic_output_shape_ops enabled for dynamic output shape support.")
+
+        if hasattr(config_obj, "force_parameter_static_shapes") and getattr(
+            config_obj, "force_parameter_static_shapes", True
+        ):
+            config_obj.force_parameter_static_shapes = False
+            logger.info("Torch Dynamo force_parameter_static_shapes disabled for dynamic parameter shape support.")
+
+    def _disable_dynamo_lru_cache_for_checkpointing(self) -> None:
+        eval_frame = getattr(getattr(torch._C, "_dynamo", None), "eval_frame", None)
+        set_lru_cache = getattr(eval_frame, "_set_lru_cache", None)
+        if set_lru_cache is None:
+            logger.debug("Torch Dynamo eval_frame._set_lru_cache unavailable; skipping LRU cache configuration.")
             return
 
-        config_obj.capture_dynamic_output_shape_ops = True
-        logger.info("Torch Dynamo capture_dynamic_output_shape_ops enabled for bitsandbytes models.")
+        set_lru_cache(False)
+        logger.info("Torch Dynamo LRU cache disabled for compiled gradient checkpointing.")
+
+    def _configure_inductor_dynamic_training_passes(self, dynamo_backend: str) -> None:
+        if dynamo_backend != "inductor":
+            return
+
+        disabled_passes = [
+            candidate.strip()
+            for candidate in os.environ.get("TORCHINDUCTOR_DISABLED_PASSES", "").split(",")
+            if candidate.strip()
+        ]
+        if not any(candidate.upper() == "PASS_PATTERN_1" for candidate in disabled_passes):
+            disabled_passes.append("PASS_PATTERN_1")
+            os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = ",".join(disabled_passes)
+
+        try:
+            import torch._inductor.config as inductor_config
+        except Exception as exc:
+            logger.warning("Unable to configure TorchInductor pass disables: %s", exc)
+            return
+
+        if getattr(inductor_config, "disabled_passes", "") != os.environ["TORCHINDUCTOR_DISABLED_PASSES"]:
+            inductor_config.disabled_passes = os.environ["TORCHINDUCTOR_DISABLED_PASSES"]
+        logger.info(
+            "TorchInductor disabled passes for compiled training: %s",
+            os.environ["TORCHINDUCTOR_DISABLED_PASSES"],
+        )
 
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
         skip_config_fallback = False
@@ -728,6 +770,7 @@ class Trainer:
         elif isinstance(dynamo_backend_value, str) and dynamo_backend_value.strip():
             dynamo_backend_env = dynamo_backend_value.strip().lower()
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
+        self._configure_inductor_dynamic_training_passes(dynamo_backend_env)
 
         report_to_value = getattr(self.config, "report_to", None)
         if isinstance(report_to_value, unittest_mock.Mock):
@@ -860,8 +903,12 @@ class Trainer:
 
             dynamo_plugin = None
             if will_create_dynamo_plugin:
-                if is_bitsandbytes_available and self._config_uses_bitsandbytes():
+                if (is_bitsandbytes_available and self._config_uses_bitsandbytes()) or _coerce_flag(
+                    getattr(self.config, "dynamo_dynamic", None)
+                ):
                     self._enable_dynamo_dynamic_output_capture()
+                if _coerce_flag(getattr(self.config, "gradient_checkpointing", None)):
+                    self._disable_dynamo_lru_cache_for_checkpointing()
 
                 plugin_kwargs: Dict[str, object] = {"backend": resolved_dynamo_backend}
 
@@ -934,14 +981,44 @@ class Trainer:
                     )
                 setattr(self.config, "context_parallel_comm_strategy", context_parallel_strategy)
 
+                world_size = None
+                for world_size_candidate in (
+                    os.environ.get("WORLD_SIZE"),
+                    os.environ.get("TRAINING_NUM_PROCESSES"),
+                    getattr(self.config, "num_processes", None),
+                ):
+                    if world_size_candidate in (None, "", "None"):
+                        continue
+                    try:
+                        world_size = int(world_size_candidate)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"Context parallelism requires an integer process count, got {world_size_candidate!r}."
+                        ) from exc
+                    break
+                if world_size is None:
+                    raise ValueError("Context parallelism requires a known process count before Accelerator setup.")
+                if world_size < context_parallel_size:
+                    raise ValueError(
+                        f"Context parallel size ({context_parallel_size}) cannot exceed process count ({world_size})."
+                    )
+                if world_size % context_parallel_size != 0:
+                    raise ValueError(
+                        f"Context parallel size ({context_parallel_size}) must evenly divide process count ({world_size})."
+                    )
+                dp_shard_size = world_size // context_parallel_size
+
                 accelerator_kwargs["parallelism_config"] = ParallelismConfig(
+                    dp_shard_size=dp_shard_size,
                     cp_size=context_parallel_size,
+                    cp_backend="torch",
                     cp_handler=TorchContextParallelConfig(cp_comm_strategy=context_parallel_strategy),
                 )
                 logger.info(
-                    "Context parallelism enabled (size=%s, rotation=%s).",
+                    "Context parallelism enabled (size=%s, rotation=%s, dp_shard_size=%s).",
                     context_parallel_size,
                     context_parallel_strategy,
+                    dp_shard_size,
                 )
             elif context_parallel_size is not None:
                 # Normalise stored value when users explicitly set 1 to disable sharding
@@ -3558,6 +3635,7 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
+        patch_prodigy_for_fsdp2_dtensor(self.optimizer, self.config)
         self._register_optimizer_attention_params(self.optimizer)
         AttentionBackendController.bind_optimizer(self.optimizer)
         if is_optimi_available and self.config.optimizer_release_gradients and "optimi" in self.config.optimizer:
@@ -3592,6 +3670,7 @@ class Trainer:
                 offload_gradients=self.config.optimizer_offload_gradients,
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
+            patch_prodigy_for_fsdp2_dtensor(self.sidecar_optimizer, lyrics_config)
             self.sidecar_is_schedulefree = is_lr_schedulefree(lyrics_optimizer_name)
             logger.info(
                 "Configured lyrics embedder optimizer with %s parameters",
@@ -3784,6 +3863,8 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        if hasattr(self.model, "before_accelerator_prepare"):
+            self.model.before_accelerator_prepare()
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
@@ -5192,6 +5273,7 @@ class Trainer:
 
         try:
             if not self.config.disable_accelerator:
+                mark_cudagraph_step_begin(self.config)
                 if self.config.controlnet:
                     model_pred = self.model.controlnet_predict(
                         prepared_batch=prepared_batch,
@@ -5963,6 +6045,15 @@ class Trainer:
                     parent_loss = None
                     if is_regularisation_data:
                         parent_loss = loss
+                    if not torch.isfinite(loss.detach()).all():
+                        batch_filepaths = prepared_batch.get("filepaths")
+                        batch_backend_id = prepared_batch.get("data_backend_id")
+                        loss_logs_context = {k: v for k, v in (loss_logs or {}).items()}
+                        raise RuntimeError(
+                            "Non-finite training loss detected "
+                            f"(loss={loss.detach().item()}, data_backend_id={batch_backend_id}, "
+                            f"filepaths={batch_filepaths}, loss_logs={loss_logs_context})."
+                        )
 
                     # Gather the losses across all processes for logging (if using distributed training)
                     avg_loss = self.accelerator.gather(loss.repeat(self.config.train_batch_size)).mean()
@@ -6452,6 +6543,35 @@ class Trainer:
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()
         validation_images = None
+        final_lora_save_kwargs = None
+        if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
+            from simpletuner.helpers.training.save_hooks import _materialize_state_dict_for_save
+
+            trained_component = unwrap_model(self.accelerator, self.model.get_trained_component(unwrap_model=False))
+            final_lora_save_kwargs = {
+                "save_directory": self.config.output_dir,
+                f"{self.model.MODEL_TYPE.value}_lora_layers": _materialize_state_dict_for_save(
+                    get_peft_model_state_dict(trained_component)
+                ),
+            }
+
+            if self.config.train_text_encoder:
+                if self.model.get_text_encoder(0) is not None:
+                    self.text_encoder_1 = self.accelerator.unwrap_model(self.model.get_text_encoder(0))
+                    final_lora_save_kwargs["text_encoder_lora_layers"] = _materialize_state_dict_for_save(
+                        convert_state_dict_to_diffusers(get_peft_model_state_dict(self.text_encoder_1))
+                    )
+                if self.model.get_text_encoder(1) is not None:
+                    self.text_encoder_2 = self.accelerator.unwrap_model(self.model.get_text_encoder(1))
+                    final_lora_save_kwargs["text_encoder_2_lora_layers"] = _materialize_state_dict_for_save(
+                        convert_state_dict_to_diffusers(get_peft_model_state_dict(self.text_encoder_2))
+                    )
+                    if self.model.get_text_encoder(2) is not None:
+                        self.text_encoder_3 = self.accelerator.unwrap_model(self.model.get_text_encoder(2))
+
+            if self.config.fsdp_enable:
+                self.accelerator.wait_for_everyone()
+
         if self.accelerator.is_main_process:
             event = lifecycle_stage_event(
                 key="model_save",
@@ -6494,34 +6614,12 @@ class Trainer:
             if self.model.get_trained_component() is not None:
                 self.model.model = unwrap_model(self.accelerator, self.model.model)
             if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
-                trained_component = unwrap_model(self.accelerator, self.model.get_trained_component(unwrap_model=False))
-                lora_save_kwargs = {
-                    "save_directory": self.config.output_dir,
-                    f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(trained_component),
-                }
-
-                if self.config.train_text_encoder:
-                    if self.model.get_text_encoder(0) is not None:
-                        self.text_encoder_1 = self.accelerator.unwrap_model(self.model.get_text_encoder(0))
-                        lora_save_kwargs["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(self.text_encoder_1)
-                        )
-                    if self.model.get_text_encoder(1) is not None:
-                        self.text_encoder_2 = self.accelerator.unwrap_model(self.model.get_text_encoder(1))
-                        lora_save_kwargs["text_encoder_2_lora_layers"] = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(self.text_encoder_2)
-                        )
-                        if self.model.get_text_encoder(2) is not None:
-                            self.text_encoder_3 = self.accelerator.unwrap_model(self.model.get_text_encoder(2))
-                else:
-                    text_encoder_lora_layers = None
-                    text_encoder_2_lora_layers = None
-
+                if final_lora_save_kwargs is None:
+                    raise RuntimeError("Final LoRA save kwargs were not materialized before the main-process save.")
                 self.model.save_lora_weights(
-                    **lora_save_kwargs,
+                    **final_lora_save_kwargs,
                 )
-                del text_encoder_lora_layers
-                del text_encoder_2_lora_layers
+                del final_lora_save_kwargs
                 reclaim_memory()
             elif "lora" in self.config.model_type and "lycoris" == self.config.lora_type.lower():
                 if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:

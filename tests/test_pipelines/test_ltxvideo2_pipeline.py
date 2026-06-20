@@ -181,20 +181,6 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertTrue(torch.equal(scaled[:, 2], ref_coords[:, 2] * 2))
         self.assertTrue(torch.equal(scaled[:, 0], torch.clamp(ref_coords[:, 0] - 0.25, min=0)))
 
-    def test_masked_video_loss_ignores_intrinsic_condition_tokens(self):
-        self.model.model = SimpleNamespace(config=SimpleNamespace(patch_size=1, patch_size_t=1))
-        self.model.config.loss_type = "l2"
-        prepared_batch = {
-            "latents": torch.zeros(1, 1, 1, 1, 2),
-            "noise": torch.ones(1, 1, 1, 1, 2),
-            "video_loss_mask": torch.tensor([[False, True]]),
-        }
-        model_output = {"model_prediction": torch.tensor([[[[[99.0, 1.0]]]]])}
-
-        loss = self.model._compute_ltx2_masked_video_loss(prepared_batch, model_output)
-
-        self.assertEqual(loss.item(), 0.0)
-
 
 class TestLTXVideo2Metadata(unittest.TestCase):
     def test_model_metadata_exposes_only_named_ltx23_flavours(self):
@@ -206,6 +192,23 @@ class TestLTXVideo2Metadata(unittest.TestCase):
             metadata["ltxvideo2"]["flavour_choices"],
             ["dev", "dev-fp4", "dev-fp8", "2.3-dev", "2.3-distilled"],
         )
+
+
+class TestLTXVideo2Loss(unittest.TestCase):
+    def test_masked_video_loss_ignores_intrinsic_condition_tokens(self):
+        model = LTXVideo2.__new__(LTXVideo2)
+        model.model = SimpleNamespace(config=SimpleNamespace(patch_size=1, patch_size_t=1))
+        model.config = SimpleNamespace(loss_type="l2")
+        prepared_batch = {
+            "latents": torch.zeros(1, 1, 1, 1, 2),
+            "noise": torch.ones(1, 1, 1, 1, 2),
+            "video_loss_mask": torch.tensor([[False, True]]),
+        }
+        model_output = {"model_prediction": torch.tensor([[[[[99.0, 1.0]]]]])}
+
+        loss = model._compute_ltx2_masked_video_loss(prepared_batch, model_output)
+
+        self.assertEqual(loss.item(), 0.0)
 
 
 class TestLTXVideo2TransformerLoading(unittest.TestCase):
