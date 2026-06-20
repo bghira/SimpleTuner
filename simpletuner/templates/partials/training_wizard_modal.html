@@ -407,14 +407,6 @@
                                 </select>
                                 <div class="form-text">Sharded checkpoints save memory by keeping tensors distributed when writing to disk.</div>
                             </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Context Parallel Size</label>
-                                <input type="number"
-                                       min="1"
-                                       class="form-control"
-                                       x-model.number="answers.context_parallel_size">
-                                <div class="form-text">Set &gt; 1 to shard attention / context across GPUs. Requires models that support context parallelism.</div>
-                            </div>
                         </div>
 
                         <div class="form-check mt-3">
@@ -455,6 +447,22 @@
                                    placeholder="TransformerBlock,DiffusionTransformerLayer"
                                    x-model="answers.fsdp_transformer_layer_cls_to_wrap">
                             <div class="form-text">Override Accelerate&rsquo;s detected layer classes when validation errors request a specific module.</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4"
+                         x-show="answers.model_type === 'full'"
+                         x-transition>
+                        <h6 class="wizard-question-small">Context Parallel</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Context Parallel Size</label>
+                                <input type="number"
+                                       min="1"
+                                       class="form-control"
+                                       x-model.number="answers.context_parallel_size">
+                                <div class="form-text">Set &gt; 1 to shard attention context across GPUs. Without FSDP2, each CP group keeps replicated model weights.</div>
+                            </div>
                         </div>
                     </div>
                 </div>

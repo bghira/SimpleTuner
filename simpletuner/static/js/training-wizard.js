@@ -1866,7 +1866,6 @@ function trainingWizardComponent() {
             this.answers.fsdp_limit_all_gathers = true;
             this.answers.fsdp_cpu_offload = false;
             this.answers.fsdp_activation_checkpointing = false;
-            this.answers.context_parallel_size = null;
         },
 
         applyAccelerationFromConfig(config) {
@@ -1925,8 +1924,18 @@ function trainingWizardComponent() {
                 this.resetDeepSpeedState();
                 this.clearGroupOffloadState();
                 this.clearFsdpState();
+                this.answers.context_parallel_size = null;
                 this.answers.full_training_strategy = 'none';
                 return;
+            }
+
+            const contextParallel = this.coerceNumber(
+                config.context_parallel_size ?? config['--context_parallel_size']
+            );
+            if (contextParallel) {
+                this.answers.context_parallel_size = contextParallel;
+            } else if (!Number.isFinite(this.answers.context_parallel_size) || this.answers.context_parallel_size <= 0) {
+                this.answers.context_parallel_size = 1;
             }
 
             if (fsdpEnabled) {
@@ -1988,13 +1997,6 @@ function trainingWizardComponent() {
                 );
                 if (layerClasses !== null) {
                     this.answers.fsdp_transformer_layer_cls_to_wrap = layerClasses;
-                }
-
-                const contextParallel = this.coerceNumber(
-                    config.context_parallel_size ?? config['--context_parallel_size']
-                );
-                if (contextParallel) {
-                    this.answers.context_parallel_size = contextParallel;
                 }
 
                 return;

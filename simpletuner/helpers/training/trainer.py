@@ -170,6 +170,15 @@ from torch.distributions import Beta
 
 from simpletuner.configure import model_classes, model_labels
 from simpletuner.helpers.configuration.sanitization import sanitize_cli_args_for_public_logging
+from simpletuner.helpers.training.context_parallel import (
+    ContextParallelTopology,
+    apply_standalone_context_parallel,
+    build_context_parallel_topology,
+    configure_cp_only_accelerator,
+    normalize_context_parallel_size,
+    normalize_context_parallel_strategy,
+    resolve_context_parallel_world_size,
+)
 
 try:
     from lycoris import LycorisNetwork
@@ -278,6 +287,7 @@ class Trainer:
         self._tlora_config = {}
         self._attention_max_logits: Optional[Dict[str, torch.Tensor]] = None
         self._ramtorch_zero_state: Optional[dict] = None
+        self._context_parallel_topology: Optional[ContextParallelTopology] = None
         self._hub_upload_executor: ThreadPoolExecutor | None = None
         self._hub_upload_futures: deque[tuple[str, Future]] = deque()
         StateTracker.set_job_id(job_id)
@@ -944,87 +954,39 @@ class Trainer:
                 extras = f" ({', '.join(flag_details)})" if flag_details else ""
                 logger.info("Torch Dynamo enabled (backend=%s)%s.", resolved_dynamo_backend.value.lower(), extras)
 
-            context_parallel_size_raw = getattr(self.config, "context_parallel_size", None)
-            context_parallel_strategy_raw = getattr(self.config, "context_parallel_comm_strategy", None)
-            context_parallel_size = None
-            if context_parallel_size_raw not in (None, "", "None"):
-                try:
-                    context_parallel_size = int(context_parallel_size_raw)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        f"Context parallel size must be an integer, got {context_parallel_size_raw!r}."
-                    ) from exc
+            context_parallel_size = normalize_context_parallel_size(getattr(self.config, "context_parallel_size", None))
+            if context_parallel_size is not None:
                 setattr(self.config, "context_parallel_size", context_parallel_size)
-
-            if context_parallel_size is not None and context_parallel_size <= 0:
-                raise ValueError("Context parallel size must be greater than 0 when specified.")
+            context_parallel_strategy = normalize_context_parallel_strategy(
+                getattr(self.config, "context_parallel_comm_strategy", None)
+            )
+            setattr(self.config, "context_parallel_comm_strategy", context_parallel_strategy)
 
             enable_context_parallel = context_parallel_size is not None and context_parallel_size > 1
+            self._context_parallel_topology = None
             if enable_context_parallel:
-                if not getattr(self.config, "fsdp_enable", False) or fsdp_plugin is None:
-                    raise ValueError(
-                        "Context parallelism requires FSDP2. Enable FSDP in Hardware > Accelerate before setting a context parallel size."
-                    )
-                fsdp_version_value = getattr(self.config, "fsdp_version", 2)
-                try:
-                    fsdp_version = int(fsdp_version_value)
-                except (TypeError, ValueError):
-                    fsdp_version = 2
-                if fsdp_version != 2:
-                    raise ValueError("Context parallelism currently only supports FSDP version 2.")
-
-                context_parallel_strategy = (context_parallel_strategy_raw or "allgather").strip().lower()
-                if context_parallel_strategy not in {"allgather", "alltoall"}:
-                    raise ValueError(
-                        f"Unsupported context parallel rotation '{context_parallel_strategy_raw}'. "
-                        "Valid options are 'allgather' and 'alltoall'."
-                    )
-                setattr(self.config, "context_parallel_comm_strategy", context_parallel_strategy)
-
-                world_size = None
-                for world_size_candidate in (
-                    os.environ.get("WORLD_SIZE"),
-                    os.environ.get("TRAINING_NUM_PROCESSES"),
-                    getattr(self.config, "num_processes", None),
-                ):
-                    if world_size_candidate in (None, "", "None"):
-                        continue
-                    try:
-                        world_size = int(world_size_candidate)
-                    except (TypeError, ValueError) as exc:
-                        raise ValueError(
-                            f"Context parallelism requires an integer process count, got {world_size_candidate!r}."
-                        ) from exc
-                    break
-                if world_size is None:
-                    raise ValueError("Context parallelism requires a known process count before Accelerator setup.")
-                if world_size < context_parallel_size:
-                    raise ValueError(
-                        f"Context parallel size ({context_parallel_size}) cannot exceed process count ({world_size})."
-                    )
-                if world_size % context_parallel_size != 0:
-                    raise ValueError(
-                        f"Context parallel size ({context_parallel_size}) must evenly divide process count ({world_size})."
-                    )
-                dp_shard_size = world_size // context_parallel_size
-
-                accelerator_kwargs["parallelism_config"] = ParallelismConfig(
-                    dp_shard_size=dp_shard_size,
+                world_size = resolve_context_parallel_world_size(self.config)
+                self._context_parallel_topology = build_context_parallel_topology(
+                    self.config,
+                    world_size=world_size,
                     cp_size=context_parallel_size,
-                    cp_backend="torch",
-                    cp_handler=TorchContextParallelConfig(cp_comm_strategy=context_parallel_strategy),
+                    strategy=context_parallel_strategy,
                 )
-                logger.info(
-                    "Context parallelism enabled (size=%s, rotation=%s, dp_shard_size=%s).",
-                    context_parallel_size,
-                    context_parallel_strategy,
-                    dp_shard_size,
-                )
-            elif context_parallel_size is not None:
-                # Normalise stored value when users explicitly set 1 to disable sharding
-                strategy_fallback = context_parallel_strategy_raw or "allgather"
-                strategy_text = strategy_fallback.strip().lower() if isinstance(strategy_fallback, str) else "allgather"
-                setattr(self.config, "context_parallel_comm_strategy", strategy_text)
+                if self._context_parallel_topology.dp_shard_size > 1:
+                    if fsdp_plugin is None:
+                        raise ValueError("Context parallelism with FSDP sharding requires FSDP2.")
+                    accelerator_kwargs["parallelism_config"] = ParallelismConfig(
+                        dp_shard_size=self._context_parallel_topology.dp_shard_size,
+                        cp_size=self._context_parallel_topology.cp_size,
+                        cp_backend="torch",
+                        cp_handler=TorchContextParallelConfig(cp_comm_strategy=context_parallel_strategy),
+                    )
+                    logger.info(
+                        "FSDP2 context parallelism enabled (size=%s, rotation=%s, dp_shard_size=%s).",
+                        self._context_parallel_topology.cp_size,
+                        context_parallel_strategy,
+                        self._context_parallel_topology.dp_shard_size,
+                    )
 
             try:
                 self.accelerator = Accelerator(**accelerator_kwargs)
@@ -1049,6 +1011,12 @@ class Trainer:
                     self.accelerator = Accelerator(**accelerator_kwargs)
                 else:
                     raise
+            if (
+                self._context_parallel_topology is not None
+                and self._context_parallel_topology.cp_size > 1
+                and self._context_parallel_topology.dp_shard_size == 1
+            ):
+                configure_cp_only_accelerator(self.accelerator, self._context_parallel_topology)
             if self.accelerator:
                 os.environ["RANK"] = str(self.accelerator.process_index)
                 os.environ["WORLD_SIZE"] = str(self.accelerator.num_processes)
@@ -3865,6 +3833,7 @@ class Trainer:
         primary_model = self.model.get_trained_component(unwrap_model=False)
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
+        apply_standalone_context_parallel(self.accelerator, primary_model, self._context_parallel_topology)
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
@@ -3927,13 +3896,29 @@ class Trainer:
                 group_offload_requested,
             )
         # DeepSpeed handles device placement internally
-        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            results = self.accelerator.prepare(*prepare_targets)
-        else:
-            device_placement = [
-                (False if label == "primary_model" and skip_model_device_placement else True) for label in prepared_labels
-            ]
-            results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
+        standalone_cp_prepare_config = None
+        accelerator_state = getattr(self.accelerator, "state", None)
+        hide_standalone_cp_from_accelerate_prepare = (
+            self._context_parallel_topology is not None
+            and self._context_parallel_topology.cp_size > 1
+            and self._context_parallel_topology.dp_shard_size == 1
+            and accelerator_state is not None
+        )
+        if hide_standalone_cp_from_accelerate_prepare:
+            standalone_cp_prepare_config = getattr(accelerator_state, "parallelism_config", None)
+            accelerator_state.parallelism_config = None
+        try:
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                results = self.accelerator.prepare(*prepare_targets)
+            else:
+                device_placement = [
+                    (False if label == "primary_model" and skip_model_device_placement else True)
+                    for label in prepared_labels
+                ]
+                results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
+        finally:
+            if hide_standalone_cp_from_accelerate_prepare:
+                accelerator_state.parallelism_config = standalone_cp_prepare_config
         for label, prepared in zip(prepared_labels, results):
             if label == "primary_model":
                 self.model.set_prepared_model(prepared)
