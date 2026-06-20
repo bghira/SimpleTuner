@@ -23,7 +23,6 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.loaders import peft as diffusers_peft
-from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -41,6 +40,12 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.context_parallel_tensors import (
+    context_parallel_config,
+    prepare_cp_attention_mask,
+    shard_cp_tensor,
+    unshard_cp_tensor,
+)
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -260,9 +265,14 @@ class ZSingleStreamAttnProcessor:
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
 
-        # From [batch, seq_len] to [batch, 1, 1, seq_len] -> broadcast to [batch, heads, seq_len, seq_len]
-        if attention_mask is not None and attention_mask.ndim == 2:
-            attention_mask = attention_mask[:, None, None, :]
+        parallel_config = self._parallel_config if getattr(attn, "_zimage_omni_allow_context_parallel", False) else None
+        attention_mask = prepare_cp_attention_mask(
+            attention_mask,
+            hidden_states.shape[1],
+            parallel_config,
+            model_name="Z-Image Omni",
+            crop="right",
+        )
 
         # Compute joint attention
         publish_attention_max_logits(
@@ -280,7 +290,7 @@ class ZSingleStreamAttnProcessor:
             dropout_p=0.0,
             is_causal=False,
             backend=self._attention_backend,
-            parallel_config=self._parallel_config,
+            parallel_config=parallel_config,
         )
 
         # Reshape back
@@ -553,13 +563,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
     _no_split_modules = ["ZImageTransformerBlock"]
     _repeated_blocks = ["ZImageTransformerBlock"]
     _skip_layerwise_casting_patterns = ["t_embedder", "cap_embedder"]
-    _cp_plan = {
-        "": {
-            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-        },
-        "final_layer": ContextParallelOutput(gather_dim=1, expected_dims=3),
-    }
+    _cp_plan = {}
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
@@ -678,6 +682,8 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         self.layers = nn.ModuleList(
             [ZImageTransformerBlock(layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm) for layer_id in range(n_layers)]
         )
+        for block in self.layers:
+            block.attention._zimage_omni_allow_context_parallel = True
         head_dim = dim // n_heads
         assert head_dim == sum(axes_dims)
         self.axes_dims = axes_dims
@@ -1269,9 +1275,21 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             t_noisy_x = unified_noisy
             t_clean_x = unified_clean
 
+        parallel_config = getattr(self, "_parallel_config", None)
+        cp_active = context_parallel_config(parallel_config) is not None
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        if cp_active and use_routing:
+            raise ValueError("Z-Image Omni TREAD routing is not supported together with context_parallel_size.")
+        if cp_active:
+            unified = shard_cp_tensor(unified, parallel_config)
+            unified_freqs_cis = shard_cp_tensor(unified_freqs_cis, parallel_config)
+            unified_noise_mask_tensor = shard_cp_tensor(unified_noise_mask_tensor, parallel_config)
+            if t_noisy_x.ndim == 3:
+                t_noisy_x = shard_cp_tensor(t_noisy_x, parallel_config)
+                t_clean_x = shard_cp_tensor(t_clean_x, parallel_config)
+
         if use_routing and router is None:
             raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
 
@@ -1359,6 +1377,9 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             unified = layer_out
 
             if hidden_states_buffer is not None:
+                capture_tokens = unified
+                if cp_active:
+                    capture_tokens = unshard_cp_tensor(capture_tokens, parallel_config)
                 max_target_tokens = 1
                 target_positions_per_batch = []
                 for b in range(bsz):
@@ -1378,7 +1399,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                     target_positions = target_positions_per_batch[b]
                     target_count = int(target_positions.numel())
                     if target_count > 0:
-                        img_tokens[b, :target_count] = unified[b, cap_len + target_positions]
+                        img_tokens[b, :target_count] = capture_tokens[b, cap_len + target_positions]
                 _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", img_tokens, image_tokens_start=0)
                 capture_idx += 1
 
@@ -1403,6 +1424,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             c_noisy=t_noisy_x,
             c_clean=t_clean_x,
         )
+        unified = unshard_cp_tensor(unified, getattr(self, "_parallel_config", None))
 
         x = self.unpatchify(unified, x_size, patch_size, f_patch_size, x_pos_offsets)
 

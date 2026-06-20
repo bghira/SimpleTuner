@@ -40,6 +40,7 @@ from simpletuner.helpers.models.flowmap import (
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import get_packed_attention_backend
+from simpletuner.helpers.training.context_parallel_tensors import context_parallel_config, prepare_cp_attention_mask
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -229,7 +230,18 @@ class Flux2AttnProcessor:
             getattr(attn, "to_k", None) and getattr(attn, "to_k", None).weight,
         )
 
-        if self._packed_attention_backend is not None:
+        parallel_config = self._parallel_config
+        cp_active = context_parallel_config(parallel_config) is not None
+        if cp_active:
+            attention_mask = prepare_cp_attention_mask(
+                attention_mask,
+                query.shape[1],
+                parallel_config,
+                model_name="Flux2",
+                crop="right",
+            )
+
+        if self._packed_attention_backend is not None and not cp_active:
             hidden_states = _run_packed_qkv_attention(query, key, value, attention_mask, self._packed_attention_backend)
         else:
             hidden_states = dispatch_attention_fn(
@@ -238,7 +250,7 @@ class Flux2AttnProcessor:
                 value,
                 attn_mask=attention_mask,
                 backend=self._attention_backend,
-                # parallel_config=self._parallel_config,
+                parallel_config=parallel_config,
             )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)
@@ -377,7 +389,18 @@ class Flux2ParallelSelfAttnProcessor:
             getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
         )
 
-        if self._packed_attention_backend is not None:
+        parallel_config = self._parallel_config
+        cp_active = context_parallel_config(parallel_config) is not None
+        if cp_active:
+            attention_mask = prepare_cp_attention_mask(
+                attention_mask,
+                query.shape[1],
+                parallel_config,
+                model_name="Flux2",
+                crop="right",
+            )
+
+        if self._packed_attention_backend is not None and not cp_active:
             hidden_states = _run_packed_qkv_attention(query, key, value, attention_mask, self._packed_attention_backend)
         else:
             hidden_states = dispatch_attention_fn(
@@ -386,7 +409,7 @@ class Flux2ParallelSelfAttnProcessor:
                 value,
                 attn_mask=attention_mask,
                 backend=self._attention_backend,
-                # parallel_config=self._parallel_config,
+                parallel_config=parallel_config,
             )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)

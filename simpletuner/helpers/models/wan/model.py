@@ -6,7 +6,7 @@ from functools import partial
 from typing import Dict, Optional
 
 import torch
-from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
+from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler, WanImageToVideoPipeline
 from torchvision import transforms
 from transformers import CLIPImageProcessor, CLIPVisionModel, T5TokenizerFast, UMT5EncoderModel
 
@@ -31,6 +31,7 @@ from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
 from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 
 logger = logging.getLogger(__name__)
 from torch.nn import functional as F
@@ -51,20 +52,15 @@ def time_text_monkeypatch(
     encoder_hidden_states,
     encoder_hidden_states_image=None,
     timestep_sign=None,
+    r_timestep=None,
 ):
-    timestep_seq_len: Optional[int] = None
-    if timestep.ndim > 1:
-        timestep_seq_len = timestep.shape[1]
-        timestep = timestep.reshape(-1)
+    temb, timestep_seq_len = self._embed_timestep(timestep, encoder_hidden_states, self.time_embedder)
 
-    timestep = self.timesteps_proj(timestep)
-    if timestep_seq_len is not None:
-        timestep = timestep.unflatten(0, (-1, timestep_seq_len))
-
-    time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
-    if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
-        timestep = timestep.to(time_embedder_dtype)
-    temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
+    if r_timestep is not None:
+        delta_timestep = self._prepare_flowmap_delta_timestep(timestep, r_timestep)
+        delta_emb, _ = self._embed_timestep(delta_timestep, encoder_hidden_states, self.delta_embedder)
+        gate = self.flowmap_delta_emb_gate.to(device=temb.device, dtype=temb.dtype)
+        temb = (1.0 - gate) * temb + gate * delta_emb
 
     if timestep_sign is not None:
         time_sign_embed = getattr(self, "time_sign_embed", None)
@@ -322,6 +318,15 @@ class Wan(VideoModelFoundation):
 
     def requires_special_scheduler_setup(self) -> bool:
         return True
+
+    def _load_scheduler_for_pipeline(self, pipeline_type: str):
+        return fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler.from_pretrained(
+                self._model_config_path(),
+                subfolder="scheduler",
+                shift=self.config.flow_schedule_shift,
+            )
+        )
 
     def supports_crepa_self_flow(self) -> bool:
         return bool(getattr(self, "_wan_expand_timesteps", False))

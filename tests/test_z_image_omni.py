@@ -1,5 +1,6 @@
 import types
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -126,6 +127,48 @@ class TestZImageOmniTransformer(unittest.TestCase):
             axes_dims=[1, 1, 2],
             axes_lens=[4, 4, 4],
         )
+
+    def test_context_parallel_only_marks_unified_transformer_blocks(self):
+        transformer = self._build_small_transformer()
+
+        self.assertEqual(transformer._cp_plan, {})
+        for block in transformer.noise_refiner:
+            self.assertFalse(getattr(block.attention, "_zimage_omni_allow_context_parallel", False))
+        for block in transformer.context_refiner:
+            self.assertFalse(getattr(block.attention, "_zimage_omni_allow_context_parallel", False))
+        for block in transformer.siglip_refiner:
+            self.assertFalse(getattr(block.attention, "_zimage_omni_allow_context_parallel", False))
+        for block in transformer.layers:
+            self.assertTrue(block.attention._zimage_omni_allow_context_parallel)
+
+    def test_context_parallel_rejects_tread_before_sharding(self):
+        transformer = self._build_small_transformer()
+        transformer._parallel_config = types.SimpleNamespace(context_parallel_config=types.SimpleNamespace(ulysses_degree=2))
+        transformer.set_router(
+            types.SimpleNamespace(),
+            [{"start_layer_idx": 0, "end_layer_idx": 0, "selection_ratio": 0.5}],
+        )
+
+        x = [torch.zeros(2, 1, 4, 4)]
+        cap_feats = [[torch.zeros(2, 4)]]
+        cond_latents = [[]]
+        siglip_feats = [None]
+        timesteps = torch.tensor([[0.5, 0.25, 0.75, 0.1]])
+
+        with (
+            torch.enable_grad(),
+            patch("simpletuner.helpers.models.z_image_omni.transformer.shard_cp_tensor") as shard,
+            self.assertRaisesRegex(ValueError, "TREAD routing is not supported"),
+        ):
+            transformer.forward(
+                x=x,
+                t=timesteps,
+                cap_feats=cap_feats,
+                cond_latents=cond_latents,
+                siglip_feats=siglip_feats,
+            )
+
+        shard.assert_not_called()
 
     def test_forward_handles_mixed_siglip_presence(self):
         transformer = self._build_small_transformer().eval()

@@ -9,6 +9,12 @@ from simpletuner.helpers.models.ernie.transformer_diffusers import (
     ErnieImageTransformer2DModel as DiffusersErnieImageTransformer2DModel,
 )
 from simpletuner.helpers.models.ernie.transformer_diffusers import ErnieImageTransformer2DModelOutput
+from simpletuner.helpers.training.context_parallel_tensors import (
+    context_parallel_config,
+    prepare_cp_attention_mask,
+    shard_cp_tensor,
+    unshard_cp_tensor,
+)
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.getLogger(__name__)
@@ -49,6 +55,7 @@ class ErnieImageTransformer2DModel(
     PeftAdapterMixin,
     FromOriginalModelMixin,
 ):
+    _cp_plan = {}
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
@@ -152,10 +159,25 @@ class ErnieImageTransformer2DModel(
         current_rotary = rotary_pos_emb
         current_attention_mask = attention_mask
         current_temb = temb
-
+        parallel_config = getattr(self, "_parallel_config", None)
+        cp_active = context_parallel_config(parallel_config) is not None
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        if cp_active and use_routing:
+            raise ValueError("ERNIE TREAD routing is not supported together with context_parallel_size.")
+        if cp_active:
+            hidden_states = shard_cp_tensor(hidden_states, parallel_config, split_dim=1)
+            current_rotary = shard_cp_tensor(current_rotary, parallel_config, split_dim=1)
+            current_temb = [shard_cp_tensor(value, parallel_config, split_dim=0) for value in current_temb]
+            current_attention_mask = prepare_cp_attention_mask(
+                current_attention_mask,
+                hidden_states.shape[1],
+                parallel_config,
+                model_name="ERNIE",
+                crop="left",
+            )
+
         if use_routing and router is None:
             raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
 
@@ -276,6 +298,8 @@ class ErnieImageTransformer2DModel(
                     tread_mask_info,
                     original_x=saved_hidden_states,
                 )
+            if cp_active:
+                capture_hidden_states = unshard_cp_tensor(capture_hidden_states, parallel_config, split_dim=1)
             _store_hidden_state(
                 hidden_states_buffer,
                 f"layer_{capture_idx}",
@@ -294,6 +318,8 @@ class ErnieImageTransformer2DModel(
                 musubi_manager.stream_out(layer)
 
         hidden_states = hidden_states.permute(1, 0, 2).contiguous()
+        if cp_active:
+            hidden_states = unshard_cp_tensor(hidden_states, parallel_config, split_dim=0)
         hidden_states = self.final_norm(hidden_states, conditioning).type_as(hidden_states)
         patches = self.final_linear(hidden_states)[:image_token_count].transpose(0, 1).contiguous()
         output = (
