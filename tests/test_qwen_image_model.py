@@ -9,6 +9,20 @@ from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.qwen_image.model import QwenImage
 
 
+class _DummyTransformer:
+    def __init__(self, output=None, forward=None):
+        self.config = SimpleNamespace(patch_size=2)
+        self.output = output
+        self.forward = forward
+        self.call_args = None
+
+    def __call__(self, **kwargs):
+        self.call_args = SimpleNamespace(kwargs=kwargs)
+        if self.forward is not None:
+            return self.forward(**kwargs)
+        return self.output
+
+
 class QwenImageModelTests(unittest.TestCase):
     def setUp(self):
         self.model = QwenImage.__new__(QwenImage)
@@ -21,8 +35,7 @@ class QwenImageModelTests(unittest.TestCase):
         self.model._is_edit_v2_flavour = lambda: False
         self.model._is_edit_v2_plus_flavour = lambda: False
         self.model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=3)
-        self.model.model = MagicMock()
-        self.model.model.config = SimpleNamespace(patch_size=2)
+        self.model.model = _DummyTransformer()
 
         class _Pipeline:
             @staticmethod
@@ -48,7 +61,7 @@ class QwenImageModelTests(unittest.TestCase):
             kwargs["hidden_states_buffer"]["layer_7"] = torch.full((1, 4, 8), 7.0)
             return (torch.randn(1, 4, 64),)
 
-        self.model.model = MagicMock(side_effect=_forward)
+        self.model.model = _DummyTransformer(forward=_forward)
 
         prepared_batch = {
             "noisy_latents": torch.randn(1, 16, 4, 4),
@@ -65,7 +78,7 @@ class QwenImageModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(transformer_kwargs["timestep"], torch.tensor([0.5], dtype=torch.float32)))
 
     def test_model_predict_accepts_tokenwise_timesteps(self):
-        self.model.model = MagicMock(return_value=(torch.randn(1, 4, 64),))
+        self.model.model = _DummyTransformer(output=(torch.randn(1, 4, 64),))
 
         prepared_batch = {
             "noisy_latents": torch.randn(1, 16, 4, 4),
