@@ -14,6 +14,7 @@ import torch.nn.functional as F
 from diffusers import ModelMixin
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, set_weights_and_activate_adapters
@@ -329,6 +330,13 @@ class _LLMAdapter(nn.Module):
 class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["CosmosTransformerBlock"]
+    _cp_plan = {
+        "core": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "core.proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     @register_to_config
     def __init__(

@@ -22,7 +22,6 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.loaders import peft as diffusers_peft
-from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_utils import ModelMixin
@@ -39,6 +38,12 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.context_parallel_tensors import (
+    context_parallel_config,
+    prepare_cp_attention_mask,
+    shard_cp_tensor,
+    unshard_cp_tensor,
+)
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -55,6 +60,20 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states[:, image_tokens_start:, ...]
     else:
         buffer[key] = hidden_states
+
+
+def _zimage_prepare_attention_mask(
+    attention_mask: torch.Tensor | None,
+    sequence_length: int,
+    parallel_config,
+) -> torch.Tensor | None:
+    return prepare_cp_attention_mask(
+        attention_mask,
+        sequence_length,
+        parallel_config,
+        model_name="Z-Image",
+        crop="right",
+    )
 
 
 # Clamp NaN/Inf that can appear when running in float16. Ported from ComfyUI commit daaceac769a1355ab975758ede064317ea7514b4.
@@ -242,9 +261,8 @@ class ZSingleStreamAttnProcessor:
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
 
-        # From [batch, seq_len] to [batch, 1, 1, seq_len] -> broadcast to [batch, heads, seq_len, seq_len]
-        if attention_mask is not None and attention_mask.ndim == 2:
-            attention_mask = attention_mask[:, None, None, :]
+        parallel_config = self._parallel_config if getattr(attn, "_zimage_allow_context_parallel", False) else None
+        attention_mask = _zimage_prepare_attention_mask(attention_mask, hidden_states.shape[1], parallel_config)
 
         # Compute joint attention
         publish_attention_max_logits(
@@ -262,7 +280,7 @@ class ZSingleStreamAttnProcessor:
             dropout_p=0.0,
             is_causal=False,
             backend=self._attention_backend,
-            # parallel_config=self._parallel_config,
+            parallel_config=parallel_config,
         )
 
         # Reshape back
@@ -467,13 +485,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
     _no_split_modules = ["ZImageTransformerBlock"]
     _repeated_blocks = ["ZImageTransformerBlock"]
     _skip_layerwise_casting_patterns = ["t_embedder", "cap_embedder"]  # precision sensitive layers
-    _cp_plan = {
-        "": {
-            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-        },
-        "final_layer": ContextParallelOutput(gather_dim=1, expected_dims=3),
-    }
+    _cp_plan = {}
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
@@ -576,6 +588,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.layers = nn.ModuleList(
             [ZImageTransformerBlock(layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm) for layer_id in range(n_layers)]
         )
+        for block in self.layers:
+            block.attention._zimage_allow_context_parallel = True
         head_dim = dim // n_heads
         assert head_dim == sum(axes_dims)
         self.axes_dims = axes_dims
@@ -871,6 +885,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for i, seq_len in enumerate(unified_item_seqlens):
             unified_attn_mask[i, :seq_len] = 1
 
+        parallel_config = getattr(self, "_parallel_config", None)
+        if context_parallel_config(parallel_config) is not None:
+            unified = shard_cp_tensor(unified, parallel_config)
+            unified_freqs_cis = shard_cp_tensor(unified_freqs_cis, parallel_config)
+            if unified_adaln_input is not None:
+                unified_adaln_input = shard_cp_tensor(unified_adaln_input, parallel_config)
+
         # TREAD routing (padded, similar to Flux)
         routes = self._tread_routes or []
         router = self._tread_router
@@ -969,6 +990,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         final_adaln = unified_adaln_input if unified_adaln_input is not None else adaln_input
         unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, final_adaln)
+        unified = unshard_cp_tensor(unified, getattr(self, "_parallel_config", None))
         unified = list(unified.unbind(dim=0))
         x = self.unpatchify(unified, x_size, patch_size, f_patch_size)
 

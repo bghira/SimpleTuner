@@ -72,6 +72,33 @@ class ZImageTransformerPaddingTests(unittest.TestCase):
         model._set_gradient_checkpointing(enable=True)
         self.assertTrue(model.gradient_checkpointing)
 
+    def test_context_parallel_only_marks_unified_transformer_blocks(self):
+        model = ZImageTransformer2DModel(
+            all_patch_size=(2,),
+            all_f_patch_size=(1,),
+            in_channels=1,
+            dim=4,
+            n_layers=2,
+            n_refiner_layers=1,
+            n_heads=1,
+            n_kv_heads=1,
+            norm_eps=1e-5,
+            qk_norm=False,
+            cap_feat_dim=4,
+            rope_theta=1.0,
+            t_scale=1.0,
+            axes_dims=[4],
+            axes_lens=[1],
+        )
+
+        self.assertEqual(model._cp_plan, {})
+        for block in model.noise_refiner:
+            self.assertFalse(getattr(block.attention, "_zimage_allow_context_parallel", False))
+        for block in model.context_refiner:
+            self.assertFalse(getattr(block.attention, "_zimage_allow_context_parallel", False))
+        for block in model.layers:
+            self.assertTrue(block.attention._zimage_allow_context_parallel)
+
     def test_mask_flattening_for_prompt_embeds(self):
         # Ensure 2D attention masks are flattened when selecting prompt embeddings
         zimage = ZImage.__new__(ZImage)

@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from huggingface_hub import hf_hub_download
 
@@ -452,6 +453,16 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[list[dict[str, Any]]] = None
+    _cp_plan = {
+        "x_embedder": {
+            0: ContextParallelInput(split_dim=1, expected_dims=3, split_output=True),
+        },
+        "rope_embedder": {
+            0: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+            1: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+        },
+        "final_layer": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     @register_to_config
     def __init__(

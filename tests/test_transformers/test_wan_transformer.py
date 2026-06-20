@@ -1629,23 +1629,53 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         # Test should complete within reasonable time for small model
         self.run_performance_benchmark(model, inputs, max_time_ms=3000.0)
 
-    def test_time_text_monkeypatch_accepts_timestep_sign(self):
-        """Regression test: time_text_monkeypatch must accept timestep_sign kwarg.
+    def test_time_text_monkeypatch_accepts_forward_kwargs(self):
+        """Regression test: time_text_monkeypatch must accept Wan forward kwargs.
 
         WanTransformer3DModel.forward (wan/transformer.py) unconditionally
-        passes timestep_sign= to condition_embedder for every forward pass,
-        even on non-TwinFlow runs (where the value is None). The monkeypatch
-        signature in wan/model.py must therefore accept this kwarg or every
-        Wan training/validation forward will raise TypeError.
+        passes timestep_sign= and r_timestep= to condition_embedder for every
+        forward pass, even when either value is None. The monkeypatch signature
+        in wan/model.py must therefore accept these kwargs or Wan
+        training/validation forward will raise TypeError.
 
         Originally broken by commit 07e670c4 ("TwinFlow: Wan").
         """
         import inspect
+        from functools import partial
 
         from simpletuner.helpers.models.wan.model import time_text_monkeypatch
 
         params = inspect.signature(time_text_monkeypatch).parameters
         self.assertIn("timestep_sign", params)
+        self.assertIn("r_timestep", params)
+
+        embedding_config = {
+            "dim": self.hidden_dim,
+            "time_freq_dim": 256,
+            "time_proj_dim": self.hidden_dim * 6,
+            "text_embed_dim": self.model_config["text_dim"],
+            "image_embed_dim": self.model_config["image_dim"],
+        }
+        embedding = WanTimeTextImageEmbedding(**embedding_config)
+        embedding.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        embedding.forward = partial(time_text_monkeypatch, embedding)
+
+        timestep = torch.full((self.batch_size,), 900)
+        r_timestep = torch.zeros_like(timestep)
+        encoder_hidden_states = torch.randn(self.batch_size, 77, embedding_config["text_embed_dim"])
+
+        temb, timestep_proj, text_emb, image_emb = embedding.forward(
+            timestep=timestep,
+            r_timestep=r_timestep,
+            timestep_sign=None,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_hidden_states_image=None,
+        )
+
+        self.assertEqual(temb.shape[0], self.batch_size)
+        self.assertEqual(timestep_proj.shape[0], self.batch_size)
+        self.assertEqual(text_emb.shape[:2], encoder_hidden_states.shape[:2])
+        self.assertIsNone(image_emb)
 
 
 if __name__ == "__main__":

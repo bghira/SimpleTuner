@@ -87,18 +87,26 @@ def get_cp_info(accelerator) -> Tuple[bool, Optional[Any], int, int]:
         )
         return False, None, 0, 1
 
-    # Try to find the CP dimension in the mesh
-    # The mesh dimension name should be "cp" when using accelerate's ParallelismConfig
+    # Try to find the CP dimension in the mesh.
+    # Accelerate's ParallelismConfig uses "cp"; SimpleTuner's standalone CP mesh
+    # uses Diffusers' "ring"/"ulysses" dimensions and flattens them as the CP group.
     try:
         cp_group = device_mesh.get_group("cp")
         cp_rank = device_mesh.get_local_rank("cp")
         return True, cp_group, cp_rank, cp_size
     except Exception as e:
-        # Mesh may use different dimension names depending on config
         logger.debug(f"Could not get 'cp' dimension from mesh: {e}")
 
-        # Try alternative mesh dimension names
         mesh_dim_names = getattr(device_mesh, "mesh_dim_names", None)
+        if mesh_dim_names and {"ring", "ulysses"}.issubset(set(mesh_dim_names)):
+            try:
+                cp_mesh = device_mesh["ring", "ulysses"]._flatten("cp")
+                cp_group = cp_mesh.get_group()
+                cp_rank = cp_mesh.get_local_rank()
+                return True, cp_group, cp_rank, cp_size
+            except Exception as flatten_error:
+                logger.debug(f"Could not flatten Diffusers CP mesh dimensions: {flatten_error}")
+
         if mesh_dim_names:
             for dim_name in mesh_dim_names:
                 if "cp" in dim_name.lower() or "context" in dim_name.lower():

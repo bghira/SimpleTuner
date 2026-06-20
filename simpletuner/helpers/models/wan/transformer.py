@@ -688,8 +688,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
     _repeated_blocks = ["WanTransformerBlock"]
     _cp_plan = {
         "rope": {
-            0: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
-            1: ContextParallelInput(split_dim=1, expected_dims=4, split_output=True),
+            0: ContextParallelInput(split_dim=2, expected_dims=4, split_output=True),
         },
         "blocks.0": {
             "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
