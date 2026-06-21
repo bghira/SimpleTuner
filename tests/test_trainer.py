@@ -610,6 +610,37 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_resolve_ddp_find_unused_parameters_uses_explicit_config(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(find_unused_parameters=False, model_family="ltxvideo2")
+
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get") as mock_get:
+            self.assertFalse(trainer._resolve_ddp_find_unused_parameters())
+
+        mock_get.assert_not_called()
+
+        trainer.config.find_unused_parameters = True
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get") as mock_get:
+            self.assertTrue(trainer._resolve_ddp_find_unused_parameters())
+
+        mock_get.assert_not_called()
+
+    def test_resolve_ddp_find_unused_parameters_uses_model_opt_in(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(find_unused_parameters=None, model_family="needs_unused")
+        model_cls = type("NeedsUnusedParameters", (), {"DDP_FIND_UNUSED_PARAMETERS": True})
+
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get", return_value=model_cls):
+            self.assertTrue(trainer._resolve_ddp_find_unused_parameters())
+
+    def test_resolve_ddp_find_unused_parameters_defaults_to_accelerate(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(find_unused_parameters=None, model_family="ltxvideo2")
+        model_cls = type("DoesNotNeedUnusedParameters", (), {"DDP_FIND_UNUSED_PARAMETERS": False})
+
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get", return_value=model_cls):
+            self.assertIsNone(trainer._resolve_ddp_find_unused_parameters())
+
     def _build_trainer_for_grad_logging(self, grad_clip_method: str, use_deepspeed: bool, grad_value):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(
