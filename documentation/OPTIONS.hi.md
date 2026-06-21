@@ -269,7 +269,7 @@ simpletuner configure config/foo/config.json
 #### Diffusers pipeline presets
 
 - `nf4-bnb` Diffusers के माध्यम से 4‑bit NF4 BitsAndBytes config के साथ लोड होता है (CUDA only)। `bitsandbytes` और BnB support वाली diffusers build आवश्यक है।
-- `int4-torchao`, `int8-torchao`, और `fp8-torchao` Diffusers के माध्यम से TorchAoConfig का उपयोग करते हैं (CUDA)। `torchao` और recent diffusers/transformers आवश्यक है।
+- `int4-torchao`, `int8-torchao`, `fp8-torchao`, और `fp8wo-torchao` Diffusers के माध्यम से TorchAoConfig का उपयोग करते हैं (CUDA)। `torchao` और recent diffusers/transformers आवश्यक है।
 - `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto`, और `fp8uz-quanto` Diffusers के माध्यम से QuantoConfig का उपयोग करते हैं। Diffusers FP8-NUZ को float8 weights पर map करता है; NUZ variant के लिए manual quanto quantization उपयोग करें।
 - `.gguf` checkpoints auto‑detect होकर उपलब्ध होने पर `GGUFQuantizationConfig` के साथ लोड होते हैं। GGUF support के लिए recent diffusers/transformers install करें।
 
@@ -300,7 +300,8 @@ PyTorch की एक नई लाइब्रेरी, AO हमें linear
   - लिखते समय, Apple MPS पर Quanto (9s/iter) की तुलना में थोड़ा धीमा (11s/iter)
   - `torch.compile` उपयोग न करने पर CUDA devices पर `int8-quanto` जैसी speed और memory, ROCm पर speed profile अज्ञात
   - `torch.compile` उपयोग करने पर `int8-quanto` से धीमा
-- `fp8-torchao` केवल Hopper (H100, H200) या नए (Blackwell B200) accelerators के लिए उपलब्ध है
+- `fp8-native` and `fp8-torchao` के लिए FP8 scaled matmul support वाले Ada Lovelace (RTX 40/L40S), Hopper (H100/H200), या newer accelerators चाहिए
+- `fp8-transformerengine` eligible Linear layers को TransformerEngine FP8 modules से बदलता है और model forward को TE FP8 autocast से wrap करता है। `pip install 'simpletuner[transformerengine]'` से install करें; यह preset Ada Lovelace, Hopper, या newer CUDA accelerators के लिए है।
 
 ##### Optimisers
 
@@ -319,6 +320,7 @@ TorchAO में सामान्य 4bit और 8bit optimisers हैं: `
 - `uint16-sdnq` - अधिकतम quality के लिए उच्च precision (उदा. Stable Cascade)
 - `int16-sdnq` - signed 16‑bit विकल्प
 - `fp16-sdnq` - quantized FP16, SDNQ लाभों के साथ अधिकतम precision
+- `fp8-sdnq` - SDNQ native FP8 matmul के साथ FP8 weights, H100/H200 class accelerators के लिए
 
 **LoRA training के लिए** (base model weights frozen):
 - `int8-sdnq` - signed 8‑bit, अच्छा general purpose विकल्प
@@ -334,6 +336,19 @@ TorchAO में सामान्य 4bit और 8bit optimisers हैं: `
 - Training‑optimized: stochastic rounding से quantization error accumulation कम होता है
 - Memory efficient: quantized optimizer state buffers सपोर्ट करता है
 - Decoupled matmul: weight precision और matmul precision स्वतंत्र हैं (INT8/FP8/FP16 matmul उपलब्ध)
+
+##### SDNQ Native Matmul Options
+
+- `--sdnq_weights_dtype` - SDNQ storage dtype override करें, जैसे `float8_e4m3fn`, `int8`, या `uint4`।
+- `--sdnq_quantized_matmul_dtype` - Matmul dtype: `auto`, `int8`, `float8_e4m3fn`, `fp8`, `float16`, या `fp16`।
+- `--sdnq_group_size` - Quantization group size। पूरे tensor/static matmul के लिए `-1`; `fp8-sdnq` default `-1` है।
+- `--sdnq_use_quantized_matmul` - SDNQ quantized matmul enable/disable करें।
+- `--sdnq_compile_mode` - `auto`, `compile`, या `eager`। Quantized matmul के लिए `compile` चाहिए।
+- `--sdnq_use_static_quantization`, `--sdnq_use_stochastic_rounding`, `--sdnq_dequantize_fp32` - SDNQ training quantization defaults override करें।
+- `--sdnq_use_svd`, `--sdnq_svd_rank`, `--sdnq_svd_steps` - Low-bit SDNQ presets के लिए SVDQuant configure करें।
+- `--sdnq_use_hadamard`, `--sdnq_hadamard_group_size` - SDNQ Hadamard rotation enable/configure करें।
+- `--sdnq_modules_to_not_convert`, `--sdnq_modules_to_not_use_matmul` - JSON array, file path, या comma-separated module patterns।
+- `--sdnq_modules_dtype_dict`, `--sdnq_modules_quant_config` - Per-module dtype और quantization overrides के JSON objects या file paths।
 
 ##### SDNQ Optimisers
 
@@ -1547,11 +1562,11 @@ usage: train.py [-h] --model_family
                 [--vae_cache_ondemand [VAE_CACHE_ONDEMAND]]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
                 [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
-                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
                 [--quantize_via {cpu,accelerator,pipeline}]
@@ -1848,19 +1863,19 @@ options:
   --aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}
                         Number of decimal places to round aspect ratios to for
                         bucket creation
-  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for loading the base model. Lower precision
                         saves memory.
-  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
