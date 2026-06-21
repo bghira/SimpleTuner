@@ -50,3 +50,24 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         args_list = _base_args() + ["--quantize_via=pipeline", "--base_model_precision=int8-quanto"]
         args = parse_cmdline_args(input_args=args_list, exit_on_error=False)
         self.assertEqual(args.base_model_precision, "int8-quanto")
+
+    def test_sdnq_advanced_options_parse(self):
+        args_list = _base_args() + [
+            "--base_model_precision=fp8-sdnq",
+            "--sdnq_quantized_matmul_dtype=float8_e4m3fn",
+            "--sdnq_group_size=-1",
+            "--sdnq_use_quantized_matmul=true",
+            "--sdnq_compile_mode=compile",
+            "--sdnq_modules_to_not_convert=proj_out,norm_out",
+            '--sdnq_modules_dtype_dict={"minimum_6bit":["x_embedder"]}',
+            '--sdnq_modules_quant_config={"attn":{"group_size":-1}}',
+        ]
+        args = parse_cmdline_args(input_args=args_list, exit_on_error=False)
+        self.assertEqual(args.base_model_precision, "fp8-sdnq")
+        self.assertEqual(args.sdnq_quantized_matmul_dtype, "float8_e4m3fn")
+        self.assertEqual(args.sdnq_group_size, -1)
+        self.assertTrue(args.sdnq_use_quantized_matmul)
+        self.assertEqual(args.sdnq_compile_mode, "compile")
+        self.assertEqual(args.sdnq_modules_to_not_convert, ["proj_out", "norm_out"])
+        self.assertEqual(args.sdnq_modules_dtype_dict, {"minimum_6bit": ["x_embedder"]})
+        self.assertEqual(args.sdnq_modules_quant_config, {"attn": {"group_size": -1}})

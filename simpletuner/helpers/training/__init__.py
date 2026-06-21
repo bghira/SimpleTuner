@@ -15,6 +15,7 @@ quantised_precision_levels = [
     "int16-sdnq",
     "uint16-sdnq",
     "fp16-sdnq",
+    "fp8-sdnq",
     # LoRA-only (frozen weights): lower precision options
     "int6-sdnq",
     "int5-sdnq",
@@ -46,6 +47,7 @@ if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "ye
             quantised_precision_levels.append("fp8-torchao")
             quantised_precision_levels.append("fp8wo-torchao")
             quantised_precision_levels.append("fp8-int4-torchao")
+            quantised_precision_levels.append("fp8-transformerengine")
 
 try:
     import pillow_jxl

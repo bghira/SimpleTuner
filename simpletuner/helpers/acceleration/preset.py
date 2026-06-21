@@ -80,6 +80,23 @@ def get_sdnq_presets(base_config: dict[str, Any] | None = None) -> list[Accelera
                 "base_model_precision": "uint8-sdnq",
             },
         ),
+        AccelerationPreset(
+            backend=AccelerationBackend.SDNQ,
+            level="fp8-native-mm",
+            name="SDNQ - fp8 native matmul",
+            description="FP8 model quantization with SDNQ native FP8 matmul for H100/H200-class accelerators.",
+            tab="basic",
+            tradeoff_vram="Reduces model weight VRAM by ~50%",
+            tradeoff_speed="Can improve large forward matmul throughput on H100/H200",
+            tradeoff_notes="Requires FP8 matmul support and SDNQ compile mode.",
+            requires_cuda=True,
+            group="quantization",
+            config={
+                **base_config,
+                "base_model_precision": "fp8-sdnq",
+                "sdnq_compile_mode": "compile",
+            },
+        ),
         # Advanced tab - SDNQ presets
         AccelerationPreset(
             backend=AccelerationBackend.SDNQ,

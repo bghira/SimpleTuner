@@ -84,6 +84,7 @@ from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from simpletuner.helpers.training.quantisation import (
     MANUAL_FP8_NATIVE_PRESETS,
+    MANUAL_TRANSFORMERENGINE_PRESETS,
     PIPELINE_ONLY_PRESETS,
     PIPELINE_QUANTIZATION_PRESETS,
     mark_fp8_native_ddp_ignore_params,
@@ -892,13 +893,11 @@ class Trainer:
                 kwargs_handlers=accelerator_custom_config,
             )
 
-            # Enable unused parameter detection for models that may skip params (e.g., multimodal heads),
-            # or when explicitly requested via config.
-            find_unused_cfg = getattr(self.config, "find_unused_parameters", None)
-            if find_unused_cfg is not None:
-                accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=bool(find_unused_cfg)))
-            elif str(getattr(self.config, "model_family", "")).lower() in {"hunyuanvideo", "ltxvideo2"}:
-                accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=True))
+            find_unused_parameters = self._resolve_ddp_find_unused_parameters()
+            if find_unused_parameters is not None:
+                accelerator_custom_config.append(
+                    DistributedDataParallelKwargs(find_unused_parameters=find_unused_parameters)
+                )
 
             if not will_create_dynamo_plugin and dynamo_backend_env != "no":
                 accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
@@ -1078,6 +1077,21 @@ class Trainer:
             return False
 
         return "bf16 mixed precision requires" in str(error).lower()
+
+    def _resolve_ddp_find_unused_parameters(self) -> bool | None:
+        find_unused_cfg = getattr(self.config, "find_unused_parameters", None)
+        if find_unused_cfg is not None:
+            return bool(find_unused_cfg)
+
+        model_family = getattr(self.config, "model_family", None)
+        model_family_cls = ModelRegistry.get(model_family) if model_family else None
+        if model_family_cls is None:
+            return None
+
+        if bool(getattr(model_family_cls, "DDP_FIND_UNUSED_PARAMETERS", False)):
+            return True
+
+        return None
 
     @staticmethod
     def _enable_bf16_override() -> None:
@@ -2187,6 +2201,7 @@ class Trainer:
         self.config.is_quanto = False
         self.config.is_torchao = False
         self.config.is_fp8_native = False
+        self.config.is_transformerengine = False
         self.config.is_sdnq = False
         self.config.is_bnb = False
         self.config.pipeline_quantization = bool(
@@ -2200,6 +2215,8 @@ class Trainer:
                 self.config.is_quanto = True
             elif base_model_precision in MANUAL_FP8_NATIVE_PRESETS:
                 self.config.is_fp8_native = True
+            elif base_model_precision in MANUAL_TRANSFORMERENGINE_PRESETS:
+                self.config.is_transformerengine = True
             elif "torchao" in base_model_precision:
                 self.config.is_torchao = True
             elif "sdnq" in base_model_precision:
@@ -2223,11 +2240,19 @@ class Trainer:
                     self.config.is_torchao = True
                 elif getattr(self.config, f"text_encoder_{i}_precision") in MANUAL_FP8_NATIVE_PRESETS:
                     self.config.is_fp8_native = True
+                elif getattr(self.config, f"text_encoder_{i}_precision") in MANUAL_TRANSFORMERENGINE_PRESETS:
+                    self.config.is_transformerengine = True
                 elif "sdnq" in getattr(self.config, f"text_encoder_{i}_precision"):
                     self.config.is_sdnq = True
                 elif "bnb" in getattr(self.config, f"text_encoder_{i}_precision"):
                     self.config.is_bnb = True
-        if self.config.is_quanto or self.config.is_torchao or self.config.is_fp8_native or self.config.is_sdnq:
+        if (
+            self.config.is_quanto
+            or self.config.is_torchao
+            or self.config.is_fp8_native
+            or self.config.is_transformerengine
+            or self.config.is_sdnq
+        ):
             from simpletuner.helpers.training.quantisation import quantise_model
 
             self.quantise_model = quantise_model
@@ -2832,6 +2857,46 @@ class Trainer:
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
                 self._report_cuda_usage_if_requested("after_fp8_native_quantization")
+        elif self.config.is_transformerengine:
+            with self.accelerator.local_main_process_first():
+                if ema_only:
+                    if not pipeline_base_quantization:
+                        self.ema_model = self.quantise_model(ema=self.ema_model, args=self.config, return_dict=True)["ema"]
+
+                    return
+                (
+                    q_model,
+                    self.model.text_encoders,
+                    self.controlnet,
+                    self.ema_model,
+                ) = self.quantise_model(
+                    model=(
+                        None
+                        if preprocessing_models_only or pipeline_base_quantization
+                        else self.model.get_trained_component(base_model=True)
+                    ),
+                    text_encoders=self.model.text_encoders,
+                    controlnet=None,
+                    ema=self.ema_model,
+                    args=self.config,
+                )
+                self.model.set_prepared_model(q_model, base_model=True)
+                if self.config.controlnet:
+                    (
+                        q_model,
+                        _,
+                        _,
+                        _,
+                    ) = self.quantise_model(
+                        model=(
+                            None
+                            if preprocessing_models_only or pipeline_base_quantization
+                            else self.model.get_trained_component(base_model=False)
+                        ),
+                        args=self.config,
+                    )
+                    self.model.set_prepared_model(q_model, base_model=False)
+                self._report_cuda_usage_if_requested("after_transformerengine_quantization")
         elif self.config.is_sdnq:
             with self.accelerator.local_main_process_first():
                 if ema_only:

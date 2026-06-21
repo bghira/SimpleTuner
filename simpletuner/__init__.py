@@ -6,6 +6,8 @@ import os
 import warnings
 from pathlib import Path as _Path
 
+os.environ.setdefault("TORCH_BLAS_PREFER_CUBLASLT", "1")
+
 
 def _get_package_dir() -> _Path:
     """Return the path to the simpletuner package directory.

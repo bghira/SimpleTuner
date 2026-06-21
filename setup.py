@@ -76,6 +76,7 @@ PYTORCH_DEPENDENCIES = [
 ]
 
 TORCHAO_DEPENDENCY = "torchao>=0.17.0,<0.18.0"
+TRANSFORMERENGINE_DEPENDENCY = "transformer_engine[pytorch]>=2.16.0,<2.17.0"
 
 
 def _cuda_nightly_base_url() -> str:
@@ -368,6 +369,7 @@ extras_require = {
     "captioning": ["caption-flow[vllm]>=0.5.2"],
     "captioning-cuda13": get_captioning_cuda13_dependencies(),
     "cuda13-captioning": get_captioning_cuda13_dependencies(),
+    "transformerengine": [TRANSFORMERENGINE_DEPENDENCY],
     "dev": [
         "selenium>=4.0.0",
         "coverage>=7.0.0",
