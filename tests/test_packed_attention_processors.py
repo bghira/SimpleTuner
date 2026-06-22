@@ -59,6 +59,33 @@ class PackedAttentionProcessorTests(unittest.TestCase):
         self.assertEqual(backend.calls[0]["shape"], (2, 5, 3, 2, 4))
         self.assertIsNone(backend.calls[0]["mask"])
 
+    def test_flux_fused_flash_varlen_backend_creates_all_valid_mask(self):
+        backend = _FakePackedBackend()
+        attn = Attention(
+            query_dim=8,
+            added_kv_proj_dim=8,
+            heads=2,
+            dim_head=4,
+            out_dim=8,
+            context_pre_only=False,
+            bias=True,
+            out_bias=True,
+        )
+        attn.fuse_projections(fuse=True)
+        hidden_states = torch.randn(2, 5, 8)
+        encoder_hidden_states = torch.randn(2, 3, 8)
+
+        with patch("simpletuner.helpers.models.flux.attention.get_packed_attention_backend", return_value=backend):
+            processor = FluxFusedFlashAttnProcessor3(preferred_backend="flash-attn-3-varlen-hub")
+            sample, context = processor(attn, hidden_states, encoder_hidden_states)
+
+        self.assertEqual(sample.shape, hidden_states.shape)
+        self.assertEqual(context.shape, encoder_hidden_states.shape)
+        self.assertEqual(backend.calls[0]["shape"], (2, 8, 3, 2, 4))
+        self.assertEqual(backend.calls[0]["mask"].shape, (2, 8))
+        self.assertEqual(backend.calls[0]["mask"].dtype, torch.bool)
+        self.assertTrue(backend.calls[0]["mask"].all())
+
     def test_packed_joint_attention_concatenates_context_and_sample(self):
         backend = _FakePackedBackend()
         attn = Attention(
