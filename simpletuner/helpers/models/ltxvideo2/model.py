@@ -301,6 +301,9 @@ class LTXVideo2(VideoModelFoundation):
         if self._data_has_audio:
             return targets
 
+        if not hasattr(self, "model"):
+            return targets
+
         filtered_targets = []
         for module_name, _module in self.model.named_modules():
             if "video_to_audio_attn" in module_name:

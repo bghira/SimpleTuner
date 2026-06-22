@@ -887,6 +887,8 @@ def _transformerengine_filter_fn(mod: torch.nn.Module, fqn: str):
     if "lora" in str(getattr(args, "model_type", "")):
         if os.environ.get("SIMPLETUNER_TE_LORA_CONVERT_ALL", "").lower() in ("1", "true", "yes"):
             return True
+        if fqn in {"proj_in", "proj_out"}:
+            return False
         return any(
             fqn.endswith(f".{target}")
             for target in (
