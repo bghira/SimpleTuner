@@ -135,6 +135,95 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertEqual(calls["max_seqlen"], 3)
         self.assertEqual(calls["qkv"].shape, (5, 3, 1, 2))
 
+    def test_packed_backend_dispatches_varlen_unpacked_when_qkvpacked_unavailable(self):
+        calls = {}
+
+        class DummyKernel:
+            @staticmethod
+            def flash_attn_qkvpacked_func(qkv, dropout_p=0.0, softmax_scale=None, causal=False):
+                return qkv[:, :, 0]
+
+            @staticmethod
+            def flash_attn_varlen_func(
+                query,
+                key,
+                value,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                dropout_p=0.0,
+                softmax_scale=None,
+                causal=False,
+            ):
+                calls["query"] = query
+                calls["key"] = key
+                calls["value"] = value
+                calls["cu_seqlens_q"] = cu_seqlens_q
+                calls["cu_seqlens_k"] = cu_seqlens_k
+                calls["max_seqlen_q"] = max_seqlen_q
+                calls["max_seqlen_k"] = max_seqlen_k
+                return query
+
+        backend = PackedAttentionBackend("dummy", DummyKernel())
+        qkv = torch.arange(2 * 4 * 3 * 1 * 2, dtype=torch.float32).view(2, 4, 3, 1, 2)
+        mask = torch.tensor([[1, 1, 0, 1], [0, 1, 1, 0]], dtype=torch.bool)
+
+        output = backend.qkvpacked(qkv, attention_mask=mask)
+
+        expected = torch.zeros(2, 4, 1, 2)
+        expected[mask] = qkv[:, :, 0][mask]
+        self.assertTrue(torch.equal(output, expected))
+        self.assertTrue(torch.equal(calls["cu_seqlens_q"].cpu(), torch.tensor([0, 3, 5], dtype=torch.int32)))
+        self.assertTrue(torch.equal(calls["cu_seqlens_k"].cpu(), torch.tensor([0, 3, 5], dtype=torch.int32)))
+        self.assertEqual(calls["max_seqlen_q"], 3)
+        self.assertEqual(calls["max_seqlen_k"], 3)
+        self.assertEqual(calls["query"].shape, (5, 1, 2))
+        self.assertTrue(torch.equal(calls["key"], qkv[:, :, 1][mask]))
+        self.assertTrue(torch.equal(calls["value"], qkv[:, :, 2][mask]))
+
+    def test_packed_backend_varlen_unpacked_supports_fa3_signature_without_dropout(self):
+        calls = {}
+
+        class DummyKernel:
+            @staticmethod
+            def flash_attn_qkvpacked_func(qkv, dropout_p=0.0, softmax_scale=None, causal=False):
+                return qkv[:, :, 0]
+
+            @staticmethod
+            def flash_attn_varlen_func(
+                query,
+                key,
+                value,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                seqused_q=None,
+                seqused_k=None,
+                softmax_scale=None,
+                causal=False,
+            ):
+                calls["seqused_q"] = seqused_q
+                calls["seqused_k"] = seqused_k
+                calls["softmax_scale"] = softmax_scale
+                calls["causal"] = causal
+                return value
+
+        backend = PackedAttentionBackend("dummy-fa3", DummyKernel())
+        qkv = torch.arange(2 * 4 * 3 * 1 * 2, dtype=torch.float32).view(2, 4, 3, 1, 2)
+        mask = torch.tensor([[1, 1, 0, 1], [0, 1, 1, 0]], dtype=torch.bool)
+
+        output = backend.qkvpacked(qkv, attention_mask=mask, causal=True, softmax_scale=0.5)
+
+        expected = torch.zeros(2, 4, 1, 2)
+        expected[mask] = qkv[:, :, 2][mask]
+        self.assertTrue(torch.equal(output, expected))
+        self.assertIsNone(calls["seqused_q"])
+        self.assertIsNone(calls["seqused_k"])
+        self.assertEqual(calls["softmax_scale"], 0.5)
+        self.assertTrue(calls["causal"])
+
     def test_auto_packed_backend_prefers_fa2_hub_for_varlen_qkvpacked(self):
         with (
             patch.object(torch.cuda, "is_available", return_value=True),
@@ -145,3 +234,9 @@ class TestAttentionBackendPersistence(unittest.TestCase):
                 "flash2-hub",
             )
             self.assertEqual(attention_backend_module._select_packed_backend(None), "flash3-hub")
+
+    def test_packed_backend_accepts_config_fa2_hub_varlen_alias(self):
+        self.assertEqual(
+            attention_backend_module._select_packed_backend("flash-attn-varlen-hub"),
+            "flash-attn-varlen-hub",
+        )
