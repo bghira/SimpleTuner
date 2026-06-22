@@ -342,8 +342,8 @@ TorchAO में सामान्य 4bit और 8bit optimisers हैं: `
 - `--sdnq_weights_dtype` - SDNQ storage dtype override करें, जैसे `float8_e4m3fn`, `int8`, या `uint4`।
 - `--sdnq_quantized_matmul_dtype` - Matmul dtype: `auto`, `int8`, `float8_e4m3fn`, `fp8`, `float16`, या `fp16`।
 - `--sdnq_group_size` - Quantization group size। पूरे tensor/static matmul के लिए `-1`; `fp8-sdnq` default `-1` है।
-- `--sdnq_use_quantized_matmul` - SDNQ quantized matmul enable/disable करें।
-- `--sdnq_compile_mode` - `auto`, `compile`, या `eager`। Quantized matmul के लिए `compile` चाहिए।
+- `--sdnq_use_quantized_matmul` - SDNQ quantized matmul enable/disable करें। Unset होने पर, `fp8-sdnq` native FP8 matmul तभी इस्तेमाल करता है जब SDNQ compile mode और FP8 matmul support दोनों available हों; दूसरे presets SDNQ compile availability follow करते हैं।
+- `--sdnq_compile_mode` - `auto`, `compile`, या `eager`। SDNQ के internal `torch.compile` use को control करता है। SDNQ currently quantized matmul के लिए compile mode require करता है; eager mode dequantized matmul use करता है।
 - `--sdnq_use_static_quantization`, `--sdnq_use_stochastic_rounding`, `--sdnq_dequantize_fp32` - SDNQ training quantization defaults override करें।
 - `--sdnq_use_svd`, `--sdnq_svd_rank`, `--sdnq_svd_steps` - Low-bit SDNQ presets के लिए SVDQuant configure करें।
 - `--sdnq_use_hadamard`, `--sdnq_hadamard_group_size` - SDNQ Hadamard rotation enable/configure करें।

@@ -349,8 +349,8 @@ It also provides two optimisers that are directed toward Hopper (H100 or better)
 - `--sdnq_weights_dtype` - Override the SDNQ storage dtype, e.g. `float8_e4m3fn`, `int8`, or `uint4`.
 - `--sdnq_quantized_matmul_dtype` - Matmul dtype: `auto`, `int8`, `float8_e4m3fn`, `fp8`, `float16`, or `fp16`.
 - `--sdnq_group_size` - Quantization group size. Use `-1` for whole-tensor/static matmul; `fp8-sdnq` defaults to `-1`, older SDNQ presets default to `32`.
-- `--sdnq_use_quantized_matmul` - Enable or disable SDNQ quantized matmul. If unset, SimpleTuner follows SDNQ compile availability.
-- `--sdnq_compile_mode` - `auto`, `compile`, or `eager`. Quantized matmul requires compile mode; eager mode uses dequantized matmul.
+- `--sdnq_use_quantized_matmul` - Enable or disable SDNQ quantized matmul. If unset, `fp8-sdnq` uses native FP8 matmul only when SDNQ compile mode and FP8 matmul support are both available; other presets follow SDNQ compile availability.
+- `--sdnq_compile_mode` - `auto`, `compile`, or `eager`. Controls SDNQ's internal `torch.compile` use. SDNQ currently requires compile mode for quantized matmul; eager mode uses dequantized matmul.
 - `--sdnq_use_static_quantization`, `--sdnq_use_stochastic_rounding`, `--sdnq_dequantize_fp32` - Override SDNQ training quantization defaults.
 - `--sdnq_use_svd`, `--sdnq_svd_rank`, `--sdnq_svd_steps` - Override SVDQuant behavior for low-bit SDNQ presets.
 - `--sdnq_use_hadamard`, `--sdnq_hadamard_group_size` - Enable and configure SDNQ Hadamard rotation.

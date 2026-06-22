@@ -345,8 +345,8 @@ TorchAO 提供通用 4bit/8bit 优化器：`ao-adamw8bit`、`ao-adamw4bit`
 - `--sdnq_weights_dtype` - 覆盖 SDNQ 存储 dtype，例如 `float8_e4m3fn`、`int8` 或 `uint4`。
 - `--sdnq_quantized_matmul_dtype` - Matmul dtype：`auto`、`int8`、`float8_e4m3fn`、`fp8`、`float16` 或 `fp16`。
 - `--sdnq_group_size` - 量化 group size。`-1` 表示整张量 static matmul；`fp8-sdnq` 默认使用 `-1`。
-- `--sdnq_use_quantized_matmul` - 启用或禁用 SDNQ quantized matmul。
-- `--sdnq_compile_mode` - `auto`、`compile` 或 `eager`。Quantized matmul 需要 `compile`。
+- `--sdnq_use_quantized_matmul` - 启用或禁用 SDNQ quantized matmul。未设置时，`fp8-sdnq` 仅在 SDNQ compile 模式和 FP8 matmul 支持都可用时使用原生 FP8 matmul；其他 preset 跟随 SDNQ compile 可用性。
+- `--sdnq_compile_mode` - `auto`、`compile` 或 `eager`。控制 SDNQ 内部 `torch.compile` 的使用。目前 SDNQ quantized matmul 需要 compile 模式；eager 模式使用 dequantized matmul。
 - `--sdnq_use_static_quantization`、`--sdnq_use_stochastic_rounding`、`--sdnq_dequantize_fp32` - 覆盖 SDNQ 训练量化默认值。
 - `--sdnq_use_svd`、`--sdnq_svd_rank`、`--sdnq_svd_steps` - 配置低 bit SDNQ preset 的 SVDQuant。
 - `--sdnq_use_hadamard`、`--sdnq_hadamard_group_size` - 启用并配置 SDNQ Hadamard rotation。

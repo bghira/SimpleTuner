@@ -342,8 +342,8 @@ También proporciona dos optimizadores dirigidos a usuarios de Hopper (H100 o me
 - `--sdnq_weights_dtype` - Sobrescribe el dtype de almacenamiento SDNQ, por ejemplo `float8_e4m3fn`, `int8` o `uint4`.
 - `--sdnq_quantized_matmul_dtype` - Dtype de matmul: `auto`, `int8`, `float8_e4m3fn`, `fp8`, `float16` o `fp16`.
 - `--sdnq_group_size` - Tamano de grupo de cuantizacion. Usa `-1` para matmul estatico de tensor completo; `fp8-sdnq` usa `-1` por defecto.
-- `--sdnq_use_quantized_matmul` - Activa o desactiva el matmul cuantizado de SDNQ.
-- `--sdnq_compile_mode` - `auto`, `compile` o `eager`. El matmul cuantizado requiere `compile`.
+- `--sdnq_use_quantized_matmul` - Activa o desactiva el matmul cuantizado de SDNQ. Si no se define, `fp8-sdnq` usa matmul FP8 nativo solo cuando el modo compile de SDNQ y el soporte de matmul FP8 estan disponibles; otros presets siguen la disponibilidad de compile de SDNQ.
+- `--sdnq_compile_mode` - `auto`, `compile` o `eager`. Controla el uso interno de `torch.compile` de SDNQ. Actualmente SDNQ requiere modo compile para matmul cuantizado; el modo eager usa matmul dequantizado.
 - `--sdnq_use_static_quantization`, `--sdnq_use_stochastic_rounding`, `--sdnq_dequantize_fp32` - Sobrescriben los defaults de cuantizacion de entrenamiento SDNQ.
 - `--sdnq_use_svd`, `--sdnq_svd_rank`, `--sdnq_svd_steps` - Configuran SVDQuant para presets SDNQ de bajo bit.
 - `--sdnq_use_hadamard`, `--sdnq_hadamard_group_size` - Activan y configuran la rotacion Hadamard de SDNQ.
