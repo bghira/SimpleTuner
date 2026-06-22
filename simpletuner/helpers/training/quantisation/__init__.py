@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from contextlib import nullcontext
 from functools import partial
 from inspect import Parameter, signature
 from typing import Any, Callable, Mapping, Optional
@@ -16,6 +17,42 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel(logging.ERROR)
+
+_TRANSFORMERENGINE_AUTOCAST_RECIPE_KWARG: dict[int, str] = {}
+
+
+def _wrap_transformerengine_debug_forward(module: torch.nn.Module, fqn: str) -> None:
+    if os.environ.get("SIMPLETUNER_TE_DEBUG_BACKWARD", "") != "1":
+        return
+    if hasattr(module, "_simpletuner_te_debug_original_forward"):
+        return
+
+    module._simpletuner_te_debug_original_forward = module.forward
+    original_forward = module.forward
+
+    def _simpletuner_te_debug_forward(*args, **kwargs):
+        output = original_forward(*args, **kwargs)
+        if not torch.is_tensor(output) or not output.requires_grad:
+            return output
+        input_tensor = next((arg for arg in args if torch.is_tensor(arg)), None)
+        input_shape = tuple(input_tensor.shape) if input_tensor is not None else None
+        input_stride = tuple(input_tensor.stride()) if input_tensor is not None else None
+
+        def _log_backward_entry(grad):
+            print(
+                f"[SimpleTuner TE debug] backward {fqn} "
+                f"input_shape={input_shape} input_stride={input_stride} "
+                f"output_shape={tuple(output.shape)} grad_shape={tuple(grad.shape)} "
+                f"grad_stride={tuple(grad.stride())}",
+                flush=True,
+            )
+            return grad
+
+        output.register_hook(_log_backward_entry)
+        return output
+
+    module.forward = _simpletuner_te_debug_forward
+
 
 PIPELINE_ONLY_PRESETS = {"nf4-bnb", "int4-torchao"}
 PIPELINE_QUANTIZATION_PRESETS = PIPELINE_ONLY_PRESETS | {
@@ -516,9 +553,6 @@ def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
     # cannot dynamically scale empty activations.
     if fqn.startswith("ref_image_"):
         return False
-    # don't convert the output module
-    if fqn == "proj_out":
-        return False
     # don't convert linear modules with weight dimensions not divisible by 16
     if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
         return False
@@ -536,6 +570,37 @@ def mark_torchao_ddp_ignore_params(module: torch.nn.Module) -> int:
 
     ignored_names = [name for name, param in module.named_parameters() if _is_torchao_tensor(param)]
     ignored_names.extend(name for name, buffer in module.named_buffers() if _is_torchao_tensor(buffer))
+    if not ignored_names:
+        return 0
+
+    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
+    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ignored_names)
+    return len(ignored_names)
+
+
+def _is_transformerengine_float8_tensor(value: Any) -> bool:
+    for candidate in (value, getattr(value, "data", None)):
+        tensor_type = type(candidate)
+        if (
+            tensor_type.__name__ == "Float8Tensor"
+            and tensor_type.__module__ == "transformer_engine.pytorch.tensor.float8_tensor"
+        ):
+            return True
+    return False
+
+
+def mark_transformerengine_ddp_ignore_params(module: torch.nn.Module) -> int:
+    ignored_names = [
+        name
+        for name, param in module.named_parameters()
+        if not param.requires_grad and _is_transformerengine_float8_tensor(param)
+    ]
+    ignored_names.extend(name for name, buffer in module.named_buffers() if _is_transformerengine_float8_tensor(buffer))
+    if os.environ.get("SIMPLETUNER_TE_DEBUG_DDP_IGNORE", "") == "1":
+        print(
+            "[SimpleTuner TE debug] DDP ignore candidates " f"count={len(ignored_names)} names={ignored_names[:8]}",
+            flush=True,
+        )
     if not ignored_names:
         return 0
 
@@ -698,32 +763,90 @@ def _fp8_native_model(
 
 
 def _transformerengine_autocast_context(te, recipe):
-    autocast = getattr(te, "autocast", None) or getattr(te, "fp8_autocast", None)
+    autocast = getattr(te, "fp8_autocast", None) or getattr(te, "autocast", None)
     if autocast is None:
         raise RuntimeError("TransformerEngine does not expose an FP8 autocast context.")
-    try:
+    autocast_id = id(autocast)
+    recipe_kwarg = _TRANSFORMERENGINE_AUTOCAST_RECIPE_KWARG.get(autocast_id)
+    if recipe_kwarg is None:
+        parameters = signature(autocast).parameters
+        recipe_kwarg = "fp8_recipe" if "fp8_recipe" in parameters else "recipe"
+        _TRANSFORMERENGINE_AUTOCAST_RECIPE_KWARG[autocast_id] = recipe_kwarg
+    if recipe_kwarg == "recipe":
         return autocast(enabled=True, recipe=recipe)
-    except TypeError:
-        return autocast(enabled=True, fp8_recipe=recipe)
+    return autocast(enabled=True, fp8_recipe=recipe)
+
+
+def _make_transformerengine_checkpoint_context_fn(te, recipe):
+    def _simpletuner_te_checkpoint_context_fn():
+        return (
+            _transformerengine_autocast_context(te, recipe),
+            _transformerengine_autocast_context(te, recipe),
+        )
+
+    return _simpletuner_te_checkpoint_context_fn
+
+
+def _attach_transformerengine_checkpoint_context(model: torch.nn.Module, te, recipe) -> None:
+    context_fn = _make_transformerengine_checkpoint_context_fn(te, recipe)
+    for module in model.modules():
+        module._simpletuner_te_checkpoint_context_fn = context_fn
+
+
+def _transformerengine_fp8_output_filter_fn(fqn: str) -> bool:
+    if os.environ.get("SIMPLETUNER_TE_FP8_ATTENTION_OUTPUT", "").lower() not in ("1", "true", "yes"):
+        return False
+    return any(fqn.endswith(f".{target}") for target in ("to_q", "to_k", "to_v"))
+
+
+def _wrap_transformerengine_fp8_output_forward(module: torch.nn.Module) -> None:
+    if hasattr(module, "_simpletuner_te_fp8_output_original_forward"):
+        return
+    module._simpletuner_te_fp8_output_original_forward = module.forward
+    module.forward = partial(module.forward, fp8_output=True)
+
+
+def _wrap_transformerengine_frozen_weight_cache_forward(module: torch.nn.Module) -> None:
+    if hasattr(module, "_simpletuner_te_weight_cache_original_forward"):
+        return
+
+    module._simpletuner_te_weight_cache_original_forward = module.forward
+    module._simpletuner_te_weight_cache_initialized = False
+    original_forward = module.forward
+
+    def _simpletuner_te_weight_cache_forward(*args, **kwargs):
+        if "is_first_microbatch" not in kwargs:
+            kwargs["is_first_microbatch"] = not module._simpletuner_te_weight_cache_initialized
+            module._simpletuner_te_weight_cache_initialized = True
+        return original_forward(*args, **kwargs)
+
+    module.forward = _simpletuner_te_weight_cache_forward
 
 
 def _replace_linears_with_transformerengine(
     module: torch.nn.Module,
     te,
     compute_dtype: torch.dtype,
+    recipe=None,
+    fp8_model_init_enabled: bool = False,
     prefix: str = "",
 ) -> int:
     converted = 0
     for name, child in list(module.named_children()):
         fqn = f"{prefix}.{name}" if prefix else name
-        if _torchao_filter_fn(child, fqn):
-            te_linear = te.Linear(
-                child.in_features,
-                child.out_features,
-                bias=child.bias is not None,
-                params_dtype=compute_dtype,
-                device=child.weight.device,
-            )
+        if _transformerengine_filter_fn(child, fqn):
+            fp8_model_init = getattr(te, "fp8_model_init", None)
+            if fp8_model_init_enabled and fp8_model_init is None:
+                raise RuntimeError("TransformerEngine does not expose fp8_model_init for FP8 weight storage.")
+            context = fp8_model_init(enabled=True) if fp8_model_init_enabled else nullcontext()
+            with context:
+                te_linear = te.Linear(
+                    child.in_features,
+                    child.out_features,
+                    bias=child.bias is not None,
+                    params_dtype=compute_dtype,
+                    device=child.weight.device,
+                )
             te_linear.train(child.training)
             with torch.no_grad():
                 te_linear.weight.copy_(
@@ -733,11 +856,50 @@ def _replace_linears_with_transformerengine(
                 if child.bias is not None:
                     te_linear.bias.copy_(child.bias.detach().to(dtype=te_linear.bias.dtype, device=te_linear.bias.device))
                     te_linear.bias.requires_grad_(child.bias.requires_grad)
+            if _transformerengine_fp8_output_filter_fn(fqn):
+                _wrap_transformerengine_fp8_output_forward(te_linear)
+            if not te_linear.weight.requires_grad and os.environ.get("SIMPLETUNER_TE_FROZEN_WEIGHT_CACHE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                _wrap_transformerengine_frozen_weight_cache_forward(te_linear)
+            _wrap_transformerengine_debug_forward(te_linear, fqn)
             setattr(module, name, te_linear)
             converted += 1
             continue
-        converted += _replace_linears_with_transformerengine(child, te, compute_dtype, fqn)
+        converted += _replace_linears_with_transformerengine(child, te, compute_dtype, recipe, fp8_model_init_enabled, fqn)
     return converted
+
+
+def _transformerengine_filter_fn(mod: torch.nn.Module, fqn: str):
+    if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
+        return False
+    if not isinstance(mod, torch.nn.Linear):
+        return False
+    if fqn.startswith("ref_image_"):
+        return False
+    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+        return False
+    if "audio" in fqn or "timestep_embedder" in fqn or "_adaln" in fqn:
+        return False
+    args = StateTracker.get_args()
+    if "lora" in str(getattr(args, "model_type", "")):
+        if os.environ.get("SIMPLETUNER_TE_LORA_CONVERT_ALL", "").lower() in ("1", "true", "yes"):
+            return True
+        return any(
+            fqn.endswith(f".{target}")
+            for target in (
+                "to_q",
+                "to_k",
+                "to_v",
+                "to_qkv",
+                "to_kv",
+                "to_added_qkv",
+                "to_out.0",
+            )
+        )
+    return True
 
 
 def _wrap_transformerengine_fp8_forward(model: torch.nn.Module, te, recipe) -> None:
@@ -796,13 +958,30 @@ def _transformerengine_model(
 
     compute_dtype = next((param.dtype for param in model.parameters() if torch.is_floating_point(param)), torch.bfloat16)
     recipe = DelayedScaling(fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="max")
-    logger.info("Quantising %s using TransformerEngine FP8.", model.__class__.__name__)
-    converted = _replace_linears_with_transformerengine(model, te, compute_dtype)
+    args = StateTracker.get_args()
+    fp8_model_init_enabled = getattr(args, "model_type", None) != "full"
+    logger.info(
+        "Quantising %s using TransformerEngine FP8. fp8_model_init=%s.",
+        model.__class__.__name__,
+        fp8_model_init_enabled,
+    )
+    converted = _replace_linears_with_transformerengine(model, te, compute_dtype, recipe, fp8_model_init_enabled)
     if converted == 0:
         raise RuntimeError(f"TransformerEngine FP8 did not find any eligible Linear layers in {model.__class__.__name__}.")
+    _attach_transformerengine_checkpoint_context(model, te, recipe)
     _wrap_transformerengine_fp8_forward(model, te, recipe)
     logger.info("Converted %s Linear layer(s) to TransformerEngine FP8.", converted)
     return model
+
+
+def _default_sdnq_use_quantized_matmul(
+    model_precision: str,
+    sdnq_use_torch_compile: bool,
+    sdnq_fp8_mm_supported: bool,
+) -> bool:
+    if model_precision == "fp8-sdnq":
+        return sdnq_use_torch_compile and sdnq_fp8_mm_supported
+    return sdnq_use_torch_compile
 
 
 def _sdnq_model(
@@ -844,8 +1023,9 @@ def _sdnq_model(
     try:
         # Silence sdnq startup logs
         logging.getLogger("sdnq").setLevel(logging.WARNING)
+        from sdnq.common import is_fp8_mm_supported as sdnq_fp8_mm_supported
         from sdnq.common import use_tensorwise_fp8_matmul as sdnq_tensorwise_fp8_matmul
-        from sdnq.common import use_torch_compile as sdnq_triton_available
+        from sdnq.common import use_torch_compile as sdnq_use_torch_compile
         from sdnq.training import sdnq_training_post_load_quant
     except ImportError as e:
         raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
@@ -914,7 +1094,11 @@ def _sdnq_model(
         group_size = -1 if model_precision == "fp8-sdnq" else 32
     use_quantized_matmul = getattr(args, "sdnq_use_quantized_matmul", None)
     if use_quantized_matmul is None:
-        use_quantized_matmul = sdnq_triton_available
+        use_quantized_matmul = _default_sdnq_use_quantized_matmul(
+            model_precision,
+            sdnq_use_torch_compile,
+            sdnq_fp8_mm_supported,
+        )
     use_hadamard = bool(getattr(args, "sdnq_use_hadamard", False))
     hadamard_group_size = getattr(args, "sdnq_hadamard_group_size", None) or 128
     use_static_quantization = getattr(args, "sdnq_use_static_quantization", None)
@@ -960,12 +1144,13 @@ def _sdnq_model(
             modules_quant_config=getattr(args, "sdnq_modules_quant_config", None),
         )
         logger.info(
-            "SDNQ config: weights_dtype=%s, matmul_dtype=%s, group_size=%s, qmm=%s, compile=%s, tensorwise_fp8=%s, svd=%s, hadamard=%s.",
+            "SDNQ config: weights_dtype=%s, matmul_dtype=%s, group_size=%s, qmm=%s, compile=%s, fp8_mm=%s, tensorwise_fp8=%s, svd=%s, hadamard=%s.",
             weights_dtype,
             quantized_matmul_dtype,
             group_size,
             use_quantized_matmul,
-            sdnq_triton_available,
+            sdnq_use_torch_compile,
+            sdnq_fp8_mm_supported,
             sdnq_tensorwise_fp8_matmul,
             use_svd,
             use_hadamard,
