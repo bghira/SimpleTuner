@@ -62,7 +62,7 @@ from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
-from simpletuner.helpers.training.dynamo import mark_cudagraph_step_begin
+from simpletuner.helpers.training.dynamo import install_cudagraph_workarounds, mark_cudagraph_step_begin
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
@@ -89,6 +89,7 @@ from simpletuner.helpers.training.quantisation import (
     PIPELINE_QUANTIZATION_PRESETS,
     mark_fp8_native_ddp_ignore_params,
     mark_torchao_ddp_ignore_params,
+    mark_transformerengine_ddp_ignore_params,
 )
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -788,6 +789,7 @@ class Trainer:
             dynamo_backend_env = dynamo_backend_value.strip().lower()
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
         self._configure_inductor_dynamic_training_passes(dynamo_backend_env)
+        install_cudagraph_workarounds(self.config)
 
         report_to_value = getattr(self.config, "report_to", None)
         if isinstance(report_to_value, unittest_mock.Mock):
@@ -3047,6 +3049,10 @@ class Trainer:
             self._report_cuda_usage_if_requested("after_lora_adapter_init")
             if hasattr(self.model, "configure_assistant_lora_for_training"):
                 self.model.configure_assistant_lora_for_training()
+            if self.config.base_model_precision in MANUAL_TRANSFORMERENGINE_PRESETS:
+                ignored = mark_transformerengine_ddp_ignore_params(self.model.get_trained_component(unwrap_model=False))
+                if ignored:
+                    logger.info("Marking %s TransformerEngine FP8 tensors to ignore for DDP after LoRA init.", ignored)
         elif "lycoris" == self.config.lora_type.lower():
             from lycoris import create_lycoris
 
@@ -3172,6 +3178,13 @@ class Trainer:
             logger.info(
                 f"LyCORIS network has been initialized with {trainable_parameter_count(self.lycoris_wrapped_network.parameters())} parameters"
             )
+            if self.config.base_model_precision in MANUAL_TRANSFORMERENGINE_PRESETS:
+                ignored = mark_transformerengine_ddp_ignore_params(self.model.get_trained_component(unwrap_model=False))
+                if ignored:
+                    logger.info(
+                        "Marking %s TransformerEngine FP8 tensors to ignore for DDP after LyCORIS init.",
+                        ignored,
+                    )
         self.accelerator.wait_for_everyone()
 
     def init_lyrics_embedder_training(self):
@@ -4026,6 +4039,13 @@ class Trainer:
             ignored = mark_fp8_native_ddp_ignore_params(primary_model)
             if ignored:
                 logger.info("Marking %s native FP8 buffers to ignore for DDP.", ignored)
+        if (
+            primary_model is not None
+            and getattr(self.config, "base_model_precision", "") in MANUAL_TRANSFORMERENGINE_PRESETS
+        ):
+            ignored = mark_transformerengine_ddp_ignore_params(primary_model)
+            if ignored:
+                logger.info("Marking %s TransformerEngine FP8 tensors to ignore for DDP.", ignored)
         if getattr(self.config, "use_fsdp", False):
             moved_param_count = 0
             for param in primary_model.parameters():
