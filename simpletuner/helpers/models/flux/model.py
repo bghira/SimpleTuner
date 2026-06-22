@@ -339,11 +339,7 @@ class Flux(ImageModelFoundation):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
             return
 
-        from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
-
-        attn_processor = FluxFusedFlashAttnProcessor3(
-            preferred_backend=getattr(self.config, "attention_mechanism", None),
-        )
+        attn_processor = self._get_fused_qkv_attention_processor()
 
         if self.model is not None:
             logger.debug("Fusing QKV projections in the model..")
@@ -359,11 +355,24 @@ class Flux(ImageModelFoundation):
             for module in self.controlnet.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=True)
-            logger.debug("Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3")
+            logger.debug("Setting ControlNet attention processor to fused QKV processor")
             self.unwrap_model(model=self.controlnet).set_attn_processor(attn_processor)
         elif self.config.controlnet:
             logger.warning("ControlNet does not support QKV projection fusing. Skipping.")
         self._qkv_projections_fused = True
+
+    def _get_fused_qkv_attention_processor(self):
+        from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3, FluxFusedSDPAProcessor
+
+        attention_mechanism = getattr(self.config, "attention_mechanism", None)
+        if attention_mechanism is None:
+            return FluxFusedSDPAProcessor()
+
+        normalized_attention_mechanism = str(attention_mechanism).strip().lower().replace("_", "-")
+        if normalized_attention_mechanism.startswith("flash"):
+            return FluxFusedFlashAttnProcessor3(preferred_backend=attention_mechanism)
+
+        return FluxFusedSDPAProcessor()
 
     def unfuse_qkv_projections(self):
         """
