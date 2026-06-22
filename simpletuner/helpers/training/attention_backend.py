@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from dataclasses import dataclass
@@ -158,21 +159,35 @@ class PackedAttentionBackend:
                 softmax_scale=softmax_scale,
             )
 
-        if self.varlen_qkvpacked_func is None:
+        if self.varlen_qkvpacked_func is None and self.varlen_unpacked_func is None:
             raise RuntimeError(
-                f"Packed attention backend '{self.name}' does not provide varlen qkvpacked attention for masked inputs."
+                f"Packed attention backend '{self.name}' does not provide varlen attention for masked inputs."
             )
 
         qkv_unpad, indices, cu_seqlens, max_seqlen, batch_size, padded_seqlen = _unpad_qkv(qkv, attention_mask)
-        output_unpad = _call_varlen_qkvpacked_kernel(
-            self.varlen_qkvpacked_func,
-            qkv_unpad,
-            cu_seqlens,
-            max_seqlen,
-            causal=causal,
-            dropout_p=dropout_p,
-            softmax_scale=softmax_scale,
-        )
+        if self.varlen_qkvpacked_func is not None:
+            output_unpad = _call_varlen_qkvpacked_kernel(
+                self.varlen_qkvpacked_func,
+                qkv_unpad,
+                cu_seqlens,
+                max_seqlen,
+                causal=causal,
+                dropout_p=dropout_p,
+                softmax_scale=softmax_scale,
+            )
+        else:
+            query, key, value = qkv_unpad.unbind(dim=1)
+            output_unpad = _call_varlen_unpacked_kernel(
+                self.varlen_unpacked_func,
+                query.contiguous(),
+                key.contiguous(),
+                value.contiguous(),
+                cu_seqlens,
+                max_seqlen,
+                causal=causal,
+                dropout_p=dropout_p,
+                softmax_scale=softmax_scale,
+            )
         return _pad_varlen_output(output_unpad, indices, batch_size, padded_seqlen)
 
 
@@ -183,6 +198,9 @@ _PACKED_BACKEND_ALIASES = {
     "flash-attn-2-hub": ("hub-fa2", "kernels-community/flash-attn2"),
     "flash_attn_2_hub": ("hub-fa2", "kernels-community/flash-attn2"),
     "flash2-hub": ("hub-fa2", "kernels-community/flash-attn2"),
+    "flash-attn-varlen-hub": ("hub-fa2", "kernels-community/flash-attn2"),
+    "flash_attn_varlen_hub": ("hub-fa2", "kernels-community/flash-attn2"),
+    "flash-varlen-hub": ("hub-fa2", "kernels-community/flash-attn2"),
     "flash-attn-3": ("direct-fa3", "flash_attn_interface"),
     "flash_attn_3": ("direct-fa3", "flash_attn_interface"),
     "flash3": ("direct-fa3", "flash_attn_interface"),
@@ -336,6 +354,39 @@ def _call_varlen_qkvpacked_kernel(
             softmax_scale=softmax_scale,
             causal=causal,
         )
+    if isinstance(output, tuple):
+        return output[0]
+    return output
+
+
+def _call_varlen_unpacked_kernel(
+    func,
+    query_unpad: torch.Tensor,
+    key_unpad: torch.Tensor,
+    value_unpad: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    max_seqlen: int,
+    *,
+    causal: bool,
+    dropout_p: float,
+    softmax_scale: Optional[float],
+):
+    kwargs = {
+        "softmax_scale": softmax_scale,
+        "causal": causal,
+    }
+    if "dropout_p" in inspect.signature(func).parameters:
+        kwargs["dropout_p"] = dropout_p
+    output = func(
+        query_unpad,
+        key_unpad,
+        value_unpad,
+        cu_seqlens,
+        cu_seqlens,
+        max_seqlen,
+        max_seqlen,
+        **kwargs,
+    )
     if isinstance(output, tuple):
         return output[0]
     return output
