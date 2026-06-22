@@ -28,6 +28,11 @@ class IdeogramFp8LinearTests(unittest.TestCase):
         self.assertIs(layer.weight, weight)
         self.assertIs(layer.weight_scale, weight_scale)
 
+    def test_fp8_linear_is_linear_subclass_for_adapter_discovery(self):
+        layer = Fp8Linear(4, 3, bias=True, compute_dtype=torch.bfloat16)
+
+        self.assertIsInstance(layer, torch.nn.Linear)
+
     def test_forward_requires_fp8_weight(self):
         layer = Fp8Linear(4, 3, bias=False, compute_dtype=torch.bfloat16)
         layer.weight = layer.weight.to(dtype=torch.bfloat16)
@@ -89,6 +94,63 @@ class IdeogramFp8LinearTests(unittest.TestCase):
         self.assertEqual(out.shape, (8, 16))
         self.assertEqual(out.dtype, torch.float32)
         self.assertEqual(x.grad.shape, x.shape)
+
+    def test_lycoris_lokr_wraps_fp8_linear_in_bypass_mode(self):
+        try:
+            from lycoris import LycorisNetwork, create_lycoris
+        except ImportError:
+            self.skipTest("LyCORIS is not installed")
+
+        class ToyBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.proj = Fp8Linear(16, 16, bias=False, compute_dtype=torch.bfloat16)
+                weight = torch.randn(16, 16, dtype=torch.bfloat16)
+                quantized_weight, weight_scale = quantize_weight_to_fp8(weight)
+                self.proj.weight.copy_(quantized_weight)
+                self.proj.weight_scale.copy_(weight_scale)
+
+            def forward(self, x):
+                return self.proj(x)
+
+        class ToyModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.block = ToyBlock()
+
+            def forward(self, x):
+                return self.block(x)
+
+        target_module_attr = (
+            "UNET_TARGET_REPLACE_MODULE"
+            if hasattr(LycorisNetwork, "UNET_TARGET_REPLACE_MODULE")
+            else "TARGET_REPLACE_MODULE"
+        )
+        target_name_attr = (
+            "UNET_TARGET_REPLACE_NAME" if hasattr(LycorisNetwork, "UNET_TARGET_REPLACE_NAME") else "TARGET_REPLACE_NAME"
+        )
+        original_target_modules = list(getattr(LycorisNetwork, target_module_attr))
+        original_target_names = list(getattr(LycorisNetwork, target_name_attr))
+        try:
+            LycorisNetwork.apply_preset({"target_module": ["ToyBlock"], "target_name": []})
+            model = ToyModel()
+            network = create_lycoris(model, 1.0, 4, 1, algo="lokr", bypass_mode=True)
+
+            self.assertEqual(len(network.loras), 1)
+            self.assertIs(network.loras[0].org_module[0], model.block.proj)
+            self.assertTrue(network.loras[0].bypass_mode)
+
+            network.apply_to()
+            network.to(dtype=torch.bfloat16)
+            x = torch.randn(2, 16, dtype=torch.bfloat16, requires_grad=True)
+            out = model(x)
+            out.float().sum().backward()
+
+            self.assertEqual(out.shape, (2, 16))
+            self.assertIsNotNone(x.grad)
+        finally:
+            setattr(LycorisNetwork, target_module_attr, original_target_modules)
+            setattr(LycorisNetwork, target_name_attr, original_target_names)
 
 
 class IdeogramFp8DequantTests(unittest.TestCase):

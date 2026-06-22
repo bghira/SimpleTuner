@@ -316,7 +316,7 @@ def dequantize_fp8_state_dict(
     return out
 
 
-class Fp8Linear(nn.Module):
+class Fp8Linear(nn.Linear):
     """Linear layer holding an e4m3 float8 weight + per-row float32 scale.
 
     The weight and scale are registered as buffers (not parameters) so they load
@@ -335,7 +335,7 @@ class Fp8Linear(nn.Module):
         bias: bool,
         compute_dtype: torch.dtype,
     ) -> None:
-        super().__init__()
+        nn.Module.__init__(self)
         self.in_features = in_features
         self.out_features = out_features
         self.compute_dtype = compute_dtype
