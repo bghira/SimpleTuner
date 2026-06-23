@@ -206,6 +206,13 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Path to the pretrained model or its identifier from <https://huggingface.co/models>.
 - **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository. This also supports single-file `.safetensors` paths for SDXL, Flux, and SD3.x.
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **What**: Optional path to pretrained transformer weights or their identifier from <https://huggingface.co/models>.
+- **Default**: `None` (the transformer source stays tied to `--pretrained_model_name_or_path` for loaders that support this override)
+- **Why**: Use this when the transformer component lives in a separate repository, local folder, or checkpoint from the base model package.
+- **Notes**: Pair with `--pretrained_transformer_subfolder` when the transformer weights are inside a subfolder of that path.
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **What**: Path to the pretrained T5 model or its identifier from <https://huggingface.co/models>.

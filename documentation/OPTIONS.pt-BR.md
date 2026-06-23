@@ -206,6 +206,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Para especificar o modelo base a partir do qual iniciar o treino. Use `--revision` e `--variant` para especificar versoes especificas de um repositorio. Isso tambem suporta caminhos `.safetensors` de arquivo unico para SDXL, Flux e SD3.x.
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **O que**: Caminho opcional para pesos transformer pre-treinados ou seu identificador em <https://huggingface.co/models>.
+- **Padrao**: `None` (para loaders que suportam esta sobrescrita, a origem do transformer continua ligada a `--pretrained_model_name_or_path`)
+- **Por que**: Use quando o componente transformer estiver em um repositorio, pasta local ou checkpoint separado do pacote do modelo base.
+- **Notas**: Combine com `--pretrained_transformer_subfolder` quando os pesos transformer estiverem em uma subpasta desse caminho.
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **O que**: Caminho para o modelo T5 pre-treinado ou seu identificador em <https://huggingface.co/models>.

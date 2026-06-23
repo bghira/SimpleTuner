@@ -207,6 +207,13 @@ simpletuner configure config/foo/config.json
 - **内容**：预训练模型路径或 <https://huggingface.co/models> 上的标识符。
 - **原因**：指定训练起点的基础模型。可用 `--revision` 与 `--variant` 选择仓库中的特定版本。也支持 SDXL、Flux、SD3.x 的单文件 `.safetensors` 路径。
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **内容**：可选的预训练 transformer 权重路径，或 <https://huggingface.co/models> 上的标识符。
+- **默认**：`None`（对于支持此覆盖项的加载器，transformer 来源仍跟随 `--pretrained_model_name_or_path`）
+- **原因**：当 transformer 组件位于独立仓库、本地目录或不同于基础模型包的 checkpoint 中时使用。
+- **说明**：如果 transformer 权重位于该路径下的子目录中，请与 `--pretrained_transformer_subfolder` 配合使用。
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **内容**：预训练 T5 模型路径或 <https://huggingface.co/models> 上的标识符。

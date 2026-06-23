@@ -206,6 +206,13 @@ simpletuner configure config/foo/config.json
 - **What**: pretrained model का path या <https://huggingface.co/models> से उसका identifier.
 - **Why**: उस base model को निर्दिष्ट करने के लिए जिससे training शुरू होगी। Repository से specific versions चुनने के लिए `--revision` और `--variant` उपयोग करें। यह SDXL, Flux, और SD3.x के लिए single‑file `.safetensors` paths भी सपोर्ट करता है।
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **What**: pretrained transformer weights का optional path या <https://huggingface.co/models> से उनका identifier.
+- **Default**: `None` (जो loaders इस override को support करते हैं उनमें transformer source `--pretrained_model_name_or_path` से जुड़ा रहता है)
+- **Why**: जब transformer component base model package से अलग repository, local folder, या checkpoint में हो तब इसका उपयोग करें।
+- **Notes**: अगर transformer weights उस path के subfolder में हैं, तो इसे `--pretrained_transformer_subfolder` के साथ उपयोग करें।
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **What**: pretrained T5 model का path या <https://huggingface.co/models> से उसका identifier.
