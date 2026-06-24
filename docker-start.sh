@@ -4,7 +4,7 @@
 # This file can then later be sourced in a login shell
 echo "Exporting environment variables..."
 printenv |
-	grep -E '^RUNPOD_|^PATH=|^HF_HOME=|^HF_TOKEN=|^HUGGING_FACE_HUB_TOKEN=|^WANDB_API_KEY=|^WANDB_TOKEN=|^_=' |
+	grep -E '^RUNPOD_|^PATH=|^HF_HOME=|^HF_TOKEN=|^HUGGING_FACE_HUB_TOKEN=|^SIMPLETUNER_WORKSPACE=|^WANDB_API_KEY=|^WANDB_TOKEN=|^_=' |
 	sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >>/etc/rp_environment
 
 # Add it to Bash login script
