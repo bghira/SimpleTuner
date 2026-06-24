@@ -81,31 +81,31 @@ For deployment details, see the [Enterprise Guide](/documentation/experimental/s
 
 ### Model Architecture Support
 
-| Model | Parameters | PEFT LoRA | Lycoris | Full-Rank | ControlNet | Quantization | Flow Matching | Text Encoders |
-|-------|------------|-----------|---------|-----------|------------|--------------|---------------|---------------|
-| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
-| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
-| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
-| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
-| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
-| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | None |
-| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
-| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
-| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
-| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2-2B |
-| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2 |
-| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ChatGLM-6B |
-| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | int8/fp8 | ✓ | Gemma3 |
-| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
-| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | T5-XXL |
-| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | int8/nf4 (req.) | ✓ | T5-XXL |
-| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L |
+| Model | Parameters | PEFT LoRA | Lycoris | Full-Rank | ControlNet | Ref Inputs | Quantization | Flow Matching | Text Encoders |
+|-------|------------|-----------|---------|-----------|------------|------------|--------------|---------------|---------------|
+| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | ✗ | int8/nf4 | ✗ | CLIP-L/G |
+| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
+| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | ✓ (Kontext) | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
+| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8/fp8/nf4 | ✓ | Mistral-3 Small |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
+| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | UMT5 |
+| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✗ | None |
+| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
+| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | UMT5-XXL |
+| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | ✗ | int8 | ✗ | T5-XXL |
+| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | Gemma2-2B |
+| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | Gemma2 |
+| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ChatGLM-6B |
+| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | ✓ I2V | int8/fp8 | ✓ | T5-XXL |
+| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8/fp8 | ✓ | Gemma3 |
+| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | UMT5 |
+| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
+| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | T5-XXL |
+| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | ✗ | int8/fp8 | ✓ | T5-XXL |
+| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | ✓ req (Edit) | int8/nf4 (req.) | ✓ | T5-XXL |
+| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | ✗ | int8/nf4 | ✗ | CLIP-L |
 
-*✓ = Supported, ✗ = Not supported, * = Requires DeepSpeed for full-rank training*
+*✓ = Supported, ✗ = Not supported, * = Requires DeepSpeed for full-rank training, Ref Inputs marks existing reference/edit/I2V conditioning paths only*
 
 ### Advanced Training Techniques
 
@@ -125,6 +125,7 @@ For deployment details, see the [Enterprise Guide](/documentation/experimental/s
 ### Model-Specific Features
 
 - **Flux Kontext** - Edit conditioning and image-to-image training for Flux models
+- **Reference-input training** - Existing paired reference/edit/I2V paths for Flux Kontext, Flux.2, LTX Video 2, Qwen Edit, LongCat edit/I2V, Boogu edit, Hunyuan I2V, and Kandinsky I2I/I2V
 - **PixArt two-stage** - eDiff training pipeline support for PixArt Sigma
 - **Flow matching models** - Advanced scheduling with beta/uniform distributions
 - **HiDream MoE** - Mixture of Experts gate loss augmentation
