@@ -2,6 +2,7 @@ import contextlib
 import os
 import types
 import unittest
+from unittest import mock
 
 import torch
 
@@ -226,10 +227,7 @@ class TestTransformerEngineQuantizationHelpers(unittest.TestCase):
         from simpletuner.helpers.training.quantisation import _transformerengine_filter_fn
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        previous_args = StateTracker.get_args()
-        try:
-            StateTracker.set_args(types.SimpleNamespace(model_type="lora"))
-
+        with mock.patch.object(StateTracker, "get_args", return_value=types.SimpleNamespace(model_type="lora")):
             self.assertFalse(_transformerengine_filter_fn(torch.nn.Linear(128, 4096), "audio_proj_in"))
             self.assertFalse(
                 _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.audio_attn1.to_q")
@@ -241,29 +239,33 @@ class TestTransformerEngineQuantizationHelpers(unittest.TestCase):
             self.assertFalse(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "proj_in"))
             self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_q"))
             self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn2.to_out.0"))
-        finally:
-            StateTracker.set_args(previous_args)
 
     def test_transformerengine_filter_can_expand_lora_scope_for_benchmarks(self):
         from simpletuner.helpers.training.quantisation import _transformerengine_filter_fn
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        previous_args = StateTracker.get_args()
         previous_override = os.environ.get("SIMPLETUNER_TE_LORA_CONVERT_ALL")
         try:
-            StateTracker.set_args(types.SimpleNamespace(model_type="lora"))
-            self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_qkv"))
-            self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn2.to_kv"))
-            self.assertTrue(
-                _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn.to_added_qkv")
-            )
-            os.environ["SIMPLETUNER_TE_LORA_CONVERT_ALL"] = "1"
-            self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_qkv"))
-            self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_out.0"))
-            self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(16384, 4096), "transformer_blocks.0.ff.net.2"))
-            self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 512), "proj_out"))
+            with mock.patch.object(StateTracker, "get_args", return_value=types.SimpleNamespace(model_type="lora")):
+                self.assertTrue(
+                    _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_qkv")
+                )
+                self.assertTrue(
+                    _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn2.to_kv")
+                )
+                self.assertTrue(
+                    _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn.to_added_qkv")
+                )
+                os.environ["SIMPLETUNER_TE_LORA_CONVERT_ALL"] = "1"
+                self.assertTrue(
+                    _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_qkv")
+                )
+                self.assertTrue(
+                    _transformerengine_filter_fn(torch.nn.Linear(4096, 4096), "transformer_blocks.0.attn1.to_out.0")
+                )
+                self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(16384, 4096), "transformer_blocks.0.ff.net.2"))
+                self.assertTrue(_transformerengine_filter_fn(torch.nn.Linear(4096, 512), "proj_out"))
         finally:
-            StateTracker.set_args(previous_args)
             if previous_override is None:
                 os.environ.pop("SIMPLETUNER_TE_LORA_CONVERT_ALL", None)
             else:
