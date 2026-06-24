@@ -60,6 +60,13 @@ for _float8_name in ("float8_e4m3fn", "float8_e4m3fnuz"):
         _LTX2_FLASH_ATTENTION_DTYPES.add(_float8_dtype)
 
 
+def _transformerengine_checkpoint_kwargs(module: nn.Module) -> Dict[str, Any]:
+    context_fn = getattr(module, "_simpletuner_te_checkpoint_context_fn", None)
+    if context_fn is None:
+        return {}
+    return {"context_fn": context_fn}
+
+
 def _ltx2_attention_dispatch_dtype(
     query: torch.Tensor,
     hidden_states: torch.Tensor,
@@ -1980,7 +1987,8 @@ class LTX2VideoTransformer3DModel(
                     musubi_manager.stream_in(block, hidden_states.device)
 
                 if torch.is_grad_enabled() and self.gradient_checkpointing:
-                    hidden_states, audio_hidden_states = self._gradient_checkpointing_func(
+                    checkpoint_kwargs = {"use_reentrant": False, **_transformerengine_checkpoint_kwargs(block)}
+                    hidden_states, audio_hidden_states = simpletuner_checkpoint(
                         block,
                         hidden_states,
                         audio_hidden_states,
@@ -2009,6 +2017,7 @@ class LTX2VideoTransformer3DModel(
                         None,
                         None,
                         True,
+                        **checkpoint_kwargs,
                     )
                 else:
                     hidden_states, audio_hidden_states = block(
@@ -2381,6 +2390,10 @@ class LTX2VideoTransformer3DModel(
                         None,
                     )
 
+                checkpoint_kwargs = {"use_reentrant": False}
+                if checkpoint_fn is simpletuner_checkpoint:
+                    checkpoint_kwargs.update(_transformerengine_checkpoint_kwargs(block))
+
                 hidden_states, audio_hidden_states = checkpoint_fn(
                     _checkpoint_block,
                     hidden_states,
@@ -2399,7 +2412,7 @@ class LTX2VideoTransformer3DModel(
                     audio_rotary_emb,
                     current_ca_video_rotary_emb,
                     audio_cross_attn_rotary_emb,
-                    use_reentrant=False,
+                    **checkpoint_kwargs,
                 )
             else:
                 hidden_states, audio_hidden_states = block(

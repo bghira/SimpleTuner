@@ -128,6 +128,7 @@ class TestTorchAoPipelineQuantization(unittest.TestCase):
     def test_torchao_filter_only_matches_linear_modules(self):
         self.assertFalse(_torchao_filter_fn(torch.nn.Sequential(torch.nn.Linear(16, 16)), ""))
         self.assertTrue(_torchao_filter_fn(torch.nn.Linear(16, 16), "to_q"))
+        self.assertTrue(_torchao_filter_fn(torch.nn.Linear(16, 16), "proj_out"))
         self.assertFalse(_torchao_filter_fn(torch.nn.Linear(15, 16), "to_q"))
 
     def test_fp8_native_is_manual_only(self):

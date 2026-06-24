@@ -200,6 +200,9 @@ pip install 'simpletuner[cuda]'
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
 pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 
+# CUDA 13 with TransformerEngine FP8 support
+pip install 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130
+
 # ROCm users (AMD GPUs)
 pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1
 

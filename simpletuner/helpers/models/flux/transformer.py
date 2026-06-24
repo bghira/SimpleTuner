@@ -44,6 +44,7 @@ from simpletuner.helpers.models.flowmap import (
 )
 from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -57,6 +58,13 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states[:, image_tokens_start:, ...]
     else:
         buffer[key] = hidden_states
+
+
+def _transformerengine_checkpoint_kwargs(module: nn.Module) -> Dict[str, Any]:
+    context_fn = getattr(module, "_simpletuner_te_checkpoint_context_fn", None)
+    if context_fn is None:
+        return {}
+    return {"context_fn": context_fn}
 
 
 def _apply_rotary_emb_anyshape(x, freqs_cis, use_real=True, use_real_unbind_dim=-1):
@@ -1086,10 +1094,13 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
+                    ckpt_kwargs: Dict[str, Any] = {}
                 else:
-                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+                    checkpoint_fn = simpletuner_checkpoint
+                    ckpt_kwargs = _transformerengine_checkpoint_kwargs(block)
 
-                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                if is_torch_version(">=", "1.11.0"):
+                    ckpt_kwargs["use_reentrant"] = False
                 encoder_hidden_states, hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
@@ -1206,10 +1217,13 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
+                    ckpt_kwargs: Dict[str, Any] = {}
                 else:
-                    checkpoint_fn = torch.utils.checkpoint.checkpoint
+                    checkpoint_fn = simpletuner_checkpoint
+                    ckpt_kwargs = _transformerengine_checkpoint_kwargs(block)
 
-                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                if is_torch_version(">=", "1.11.0"):
+                    ckpt_kwargs["use_reentrant"] = False
                 hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,

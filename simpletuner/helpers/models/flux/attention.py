@@ -196,6 +196,8 @@ class FluxFusedFlashAttnProcessor3(object):
 
     def __init__(self, preferred_backend: str | None = None):
         self.preferred_backend = preferred_backend
+        normalized_backend = str(preferred_backend or "").strip().lower().replace("_", "-")
+        self.force_varlen = "varlen" in normalized_backend
         self.packed_backend = get_packed_attention_backend(preferred_backend)
         if not self.packed_backend.capabilities.fixed_qkvpacked:
             raise RuntimeError(
@@ -203,7 +205,7 @@ class FluxFusedFlashAttnProcessor3(object):
             )
 
     def _get_backend(self, attention_mask: FloatTensor = None):
-        if attention_mask is None:
+        if attention_mask is None and not self.force_varlen:
             return self.packed_backend
         return get_packed_attention_backend(self.preferred_backend, require_varlen_qkvpacked=True)
 
@@ -302,6 +304,8 @@ class FluxFusedFlashAttnProcessor3(object):
         # Flash Attention with packed QKV.
         # Input shape: (batch, seq_len, 3, heads, head_dim)
         # Output shape: (batch, seq_len, heads, head_dim)
+        if attention_mask is None and self.force_varlen:
+            attention_mask = torch.ones(qkv.shape[:2], device=qkv.device, dtype=torch.bool)
         hidden_states = self._get_backend(attention_mask).qkvpacked(
             qkv,
             attention_mask=attention_mask,

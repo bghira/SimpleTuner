@@ -1,10 +1,11 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 from diffusers.models.attention_processor import Attention
 
+from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3, FluxFusedSDPAProcessor
 from simpletuner.helpers.models.flux.model import Flux
 
 
@@ -146,6 +147,22 @@ class FluxModelTests(unittest.TestCase):
 
         attn.unfuse_projections.assert_called_once_with()
         self.assertFalse(self.model._qkv_projections_fused)
+
+    def test_fused_qkv_processor_uses_sdpa_for_default_attention(self):
+        self.model.config.attention_mechanism = "diffusers"
+
+        processor = self.model._get_fused_qkv_attention_processor()
+
+        self.assertIsInstance(processor, FluxFusedSDPAProcessor)
+
+    def test_fused_qkv_processor_uses_packed_flash_for_flash_attention(self):
+        self.model.config.attention_mechanism = "flash-attn-varlen-hub"
+        backend = SimpleNamespace(capabilities=SimpleNamespace(fixed_qkvpacked=True))
+
+        with patch("simpletuner.helpers.models.flux.attention.get_packed_attention_backend", return_value=backend):
+            processor = self.model._get_fused_qkv_attention_processor()
+
+        self.assertIsInstance(processor, FluxFusedFlashAttnProcessor3)
 
 
 if __name__ == "__main__":

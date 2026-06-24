@@ -297,7 +297,21 @@ class LTXVideo2(VideoModelFoundation):
                     targets.append(extra)
             return targets
 
-        return super().get_lora_target_layers()
+        targets = super().get_lora_target_layers()
+        if self._data_has_audio:
+            return targets
+
+        if not hasattr(self, "model"):
+            return targets
+
+        filtered_targets = []
+        for module_name, _module in self.model.named_modules():
+            if "video_to_audio_attn" in module_name:
+                continue
+            if any(module_name == target or module_name.endswith(f".{target}") for target in targets):
+                filtered_targets.append(module_name)
+
+        return filtered_targets or targets
 
     def _configure_gemma_path(self) -> None:
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)

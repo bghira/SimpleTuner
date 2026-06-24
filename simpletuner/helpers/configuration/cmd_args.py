@@ -742,6 +742,31 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 f"Received a raw string instead: {args.quantization_config}"
             )
 
+    sdnq_list_options = ("sdnq_modules_to_not_convert", "sdnq_modules_to_not_use_matmul")
+    for option_name in sdnq_list_options:
+        if hasattr(args, option_name):
+            value = getattr(args, option_name)
+            parsed = _parse_json_like_option(value, option_name)
+            if parsed in (None, "", "None"):
+                setattr(args, option_name, None)
+            elif isinstance(parsed, str):
+                setattr(args, option_name, [entry.strip() for entry in parsed.split(",") if entry.strip()])
+            elif isinstance(parsed, list) and all(isinstance(entry, str) for entry in parsed):
+                setattr(args, option_name, parsed)
+            else:
+                raise ValueError(f"{option_name} must be a JSON array of strings or a comma-separated string.")
+
+    sdnq_dict_options = ("sdnq_modules_dtype_dict", "sdnq_modules_quant_config")
+    for option_name in sdnq_dict_options:
+        if hasattr(args, option_name):
+            parsed = _parse_json_like_option(getattr(args, option_name), option_name)
+            if parsed in (None, "", "None"):
+                setattr(args, option_name, None)
+            elif isinstance(parsed, dict):
+                setattr(args, option_name, parsed)
+            else:
+                raise ValueError(f"{option_name} must be a JSON object or a path to a JSON object.")
+
     manual_quant_precisions = set(MANUAL_QUANTIZATION_PRESETS)
     pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
     manual_only_precisions = manual_quant_precisions - pipeline_quant_precisions

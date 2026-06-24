@@ -94,3 +94,75 @@ class LoKrInitTorchAOTests(unittest.TestCase):
                     self.assertTrue(callable(new_module.get_apply_tensor_subclass))
         finally:
             StateTracker.set_args(previous_args)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "TorchAO fp8 LoRA backward test requires CUDA")
+    def test_fp8_dynamic_downstream_layer_backprops_to_upstream_lora(self):
+        from peft import LoraConfig, get_peft_model
+        from torchao.quantization import quantize_
+        from torchao.quantization.quant_api import Float8DynamicActivationFloat8WeightConfig
+
+        import simpletuner.helpers.training.quantisation.torchao_workarounds  # noqa: F401
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class TwoLayerModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.upstream = torch.nn.Linear(32, 32, bias=False, device="cuda", dtype=torch.bfloat16)
+                self.downstream = torch.nn.Linear(32, 32, bias=False, device="cuda", dtype=torch.bfloat16)
+                quantize_(self.downstream, Float8DynamicActivationFloat8WeightConfig())
+
+            def forward(self, x):
+                return self.downstream(self.upstream(x))
+
+        previous_args = StateTracker.get_args()
+        try:
+            StateTracker.set_args(SimpleNamespace(base_model_precision="fp8-torchao"))
+            model = TwoLayerModel().requires_grad_(False)
+            model = get_peft_model(
+                model,
+                LoraConfig(r=2, lora_alpha=2, target_modules=["upstream"]),
+            )
+
+            loss = model(torch.randn(4, 32, device="cuda", dtype=torch.bfloat16)).sum()
+            loss.backward()
+
+            trainable_grads = [param.grad for param in model.parameters() if param.requires_grad]
+            self.assertTrue(any(grad is not None and grad.abs().sum() > 0 for grad in trainable_grads))
+        finally:
+            StateTracker.set_args(previous_args)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "TorchAO fp8 float32-output backward test requires CUDA")
+    def test_fp8_dynamic_float32_output_backprops_to_upstream_lora(self):
+        from peft import LoraConfig, get_peft_model
+        from torchao.quantization import quantize_
+        from torchao.quantization.quant_api import Float8DynamicActivationFloat8WeightConfig
+
+        import simpletuner.helpers.training.quantisation.torchao_workarounds  # noqa: F401
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class TwoLayerModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.upstream = torch.nn.Linear(32, 32, bias=False, device="cuda", dtype=torch.float32)
+                self.downstream = torch.nn.Linear(32, 32, bias=True, device="cuda", dtype=torch.float32)
+                quantize_(self.downstream, Float8DynamicActivationFloat8WeightConfig())
+
+            def forward(self, x):
+                return self.downstream(self.upstream(x))
+
+        previous_args = StateTracker.get_args()
+        try:
+            StateTracker.set_args(SimpleNamespace(base_model_precision="fp8-torchao"))
+            model = TwoLayerModel().requires_grad_(False)
+            model = get_peft_model(
+                model,
+                LoraConfig(r=2, lora_alpha=2, target_modules=["upstream"]),
+            )
+
+            loss = model(torch.randn(4, 32, device="cuda", dtype=torch.float32)).sum()
+            loss.backward()
+
+            trainable_grads = [param.grad for param in model.parameters() if param.requires_grad]
+            self.assertTrue(any(grad is not None and grad.abs().sum() > 0 for grad in trainable_grads))
+        finally:
+            StateTracker.set_args(previous_args)

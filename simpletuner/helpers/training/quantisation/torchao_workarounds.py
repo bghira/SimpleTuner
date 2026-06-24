@@ -133,6 +133,271 @@ except Exception as e:
 
 
 try:
+    import importlib
+
+    from torchao.quantization.quant_primitives import _dequantize_affine_float8, _maybe_expand_scale_to_tensor_shape
+
+    _torchao_float8_inference = importlib.import_module("torchao.float8.inference")
+    _torchao_float8_ops = importlib.import_module("torchao.float8.float8_ops")
+    _torchao_float8_tensor = importlib.import_module("torchao.quantization.quantize_.workflows.float8.float8_tensor")
+    _orig_addmm_float8_unwrapped_inference = _torchao_float8_inference.addmm_float8_unwrapped_inference
+    _orig_addmm_float8_unwrapped = _torchao_float8_ops.addmm_float8_unwrapped
+    _orig_torch_scaled_mm = torch._scaled_mm
+    _orig_aten_scaled_mm = torch.ops.aten._scaled_mm.default
+
+    class _ScaledMmGrad(torch.autograd.Function):
+        @staticmethod
+        def forward(
+            ctx,
+            input: torch.Tensor,
+            mat2: torch.Tensor,
+            scale_a: torch.Tensor,
+            scale_b: torch.Tensor,
+            bias: Optional[torch.Tensor],
+            out_dtype: torch.dtype,
+            use_fast_accum: bool,
+        ):
+            ctx.save_for_backward(input, mat2, scale_a, scale_b)
+            ctx.has_bias = bias is not None
+            return _orig_torch_scaled_mm(
+                input,
+                mat2,
+                scale_a=scale_a,
+                scale_b=scale_b,
+                bias=bias,
+                out_dtype=out_dtype,
+                use_fast_accum=use_fast_accum,
+            )
+
+        @staticmethod
+        def backward(ctx, grad_output: torch.Tensor):
+            input, mat2, scale_a, scale_b = ctx.saved_tensors
+            grad_output_2d = grad_output.reshape(-1, grad_output.shape[-1])
+
+            grad_input = grad_mat2 = None
+            if ctx.needs_input_grad[0]:
+                mat2_hp = _dequantize_affine_float8(mat2, scale_b, grad_output.dtype)
+                grad_input = grad_output_2d.matmul(mat2_hp.t()).reshape(input.shape)
+                scale_a_expanded = _maybe_expand_scale_to_tensor_shape(scale_a, input.shape)
+                grad_input = grad_input * scale_a_expanded.to(grad_input.dtype)
+
+            if ctx.needs_input_grad[1]:
+                input_hp = _dequantize_affine_float8(input, scale_a, grad_output.dtype)
+                grad_mat2 = input_hp.reshape(-1, input_hp.shape[-1]).t().matmul(grad_output_2d)
+                scale_b_expanded = _maybe_expand_scale_to_tensor_shape(scale_b, mat2.shape)
+                grad_mat2 = grad_mat2 * scale_b_expanded.to(grad_mat2.dtype)
+
+            grad_bias = None
+            if ctx.has_bias and ctx.needs_input_grad[4]:
+                grad_bias = grad_output.sum(tuple(range(grad_output.ndim - 1)))
+            return grad_input, grad_mat2, None, None, grad_bias, None, None
+
+    def _simpletuner_scaled_mm(
+        input: torch.Tensor,
+        mat2: torch.Tensor,
+        *,
+        scale_a: torch.Tensor,
+        scale_b: torch.Tensor,
+        bias: Optional[torch.Tensor] = None,
+        scale_result: Optional[torch.Tensor] = None,
+        out_dtype: Optional[torch.dtype] = None,
+        use_fast_accum: bool = False,
+    ) -> torch.Tensor:
+        if scale_result is None and (
+            input.requires_grad
+            or mat2.requires_grad
+            or scale_a.requires_grad
+            or scale_b.requires_grad
+            or (bias is not None and bias.requires_grad)
+        ):
+            return _ScaledMmGrad.apply(input, mat2, scale_a, scale_b, bias, out_dtype, use_fast_accum)
+        return _orig_torch_scaled_mm(
+            input,
+            mat2,
+            scale_a=scale_a,
+            scale_b=scale_b,
+            bias=bias,
+            scale_result=scale_result,
+            out_dtype=out_dtype,
+            use_fast_accum=use_fast_accum,
+        )
+
+    torch._scaled_mm = _simpletuner_scaled_mm
+
+    def _simpletuner_aten_scaled_mm(
+        input: torch.Tensor,
+        mat2: torch.Tensor,
+        scale_a: torch.Tensor,
+        scale_b: torch.Tensor,
+        bias: Optional[torch.Tensor] = None,
+        scale_result: Optional[torch.Tensor] = None,
+        out_dtype: Optional[torch.dtype] = None,
+        use_fast_accum: bool = False,
+    ) -> torch.Tensor:
+        if scale_result is None and (
+            input.requires_grad
+            or mat2.requires_grad
+            or scale_a.requires_grad
+            or scale_b.requires_grad
+            or (bias is not None and bias.requires_grad)
+        ):
+            return _ScaledMmGrad.apply(input, mat2, scale_a, scale_b, bias, out_dtype, use_fast_accum)
+        return _orig_aten_scaled_mm(
+            input,
+            mat2,
+            scale_a,
+            scale_b,
+            bias,
+            scale_result,
+            out_dtype,
+            use_fast_accum,
+        )
+
+    torch.ops.aten._scaled_mm.default = _simpletuner_aten_scaled_mm
+
+    class _ScaledMmInputGrad(torch.autograd.Function):
+        @staticmethod
+        def forward(
+            ctx,
+            a_data: torch.Tensor,
+            a_scale: torch.Tensor,
+            b_data: torch.Tensor,
+            b_scale: torch.Tensor,
+            bias: Optional[torch.Tensor],
+            output_dtype: torch.dtype,
+            use_fast_accum: bool,
+        ):
+            ctx.save_for_backward(a_scale, b_data, b_scale)
+            ctx.input_shape = a_data.shape
+            ctx.has_bias = bias is not None
+            return _orig_torch_scaled_mm(
+                a_data,
+                b_data,
+                scale_a=a_scale,
+                scale_b=b_scale,
+                bias=bias,
+                out_dtype=output_dtype,
+                use_fast_accum=use_fast_accum,
+            )
+
+        @staticmethod
+        def backward(ctx, grad_output: torch.Tensor):
+            a_scale, b_data, b_scale = ctx.saved_tensors
+            grad_output_2d = grad_output.reshape(-1, grad_output.shape[-1])
+            b_hp = _dequantize_affine_float8(b_data, b_scale, grad_output.dtype)
+            grad_a_data = grad_output_2d.matmul(b_hp.t()).reshape(ctx.input_shape)
+            grad_a_data = grad_a_data * a_scale.to(grad_a_data.dtype)
+            grad_bias = None
+            if ctx.has_bias:
+                grad_bias = grad_output.sum(tuple(range(grad_output.ndim - 1)))
+            return grad_a_data, None, None, None, grad_bias, None, None
+
+    def _simpletuner_addmm_float8_unwrapped_inference(
+        a_data: torch.Tensor,
+        a_scale: torch.Tensor,
+        b_data: torch.Tensor,
+        b_scale: torch.Tensor,
+        output_dtype: torch.dtype,
+        output_scale: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+        use_fast_accum: bool = False,
+    ) -> torch.Tensor:
+        if output_scale is None and (
+            a_data.requires_grad
+            or b_data.requires_grad
+            or a_scale.requires_grad
+            or b_scale.requires_grad
+            or (bias is not None and bias.requires_grad)
+        ):
+            if output_dtype == torch.float32 and bias is not None:
+                return (
+                    _ScaledMmInputGrad.apply(
+                        a_data,
+                        a_scale,
+                        b_data,
+                        b_scale,
+                        None,
+                        output_dtype,
+                        use_fast_accum,
+                    )
+                    + bias
+                )
+            return _ScaledMmInputGrad.apply(
+                a_data,
+                a_scale,
+                b_data,
+                b_scale,
+                bias,
+                output_dtype,
+                use_fast_accum,
+            )
+        return _orig_addmm_float8_unwrapped_inference(
+            a_data,
+            a_scale,
+            b_data,
+            b_scale,
+            output_dtype,
+            output_scale,
+            bias,
+            use_fast_accum,
+        )
+
+    _torchao_float8_inference.addmm_float8_unwrapped_inference = _simpletuner_addmm_float8_unwrapped_inference
+    _torchao_float8_tensor.addmm_float8_unwrapped_inference = _simpletuner_addmm_float8_unwrapped_inference
+
+    def _simpletuner_addmm_float8_unwrapped(
+        a_data: torch.Tensor,
+        a_scale: torch.Tensor,
+        b_data: torch.Tensor,
+        b_scale: torch.Tensor,
+        output_dtype: torch.dtype,
+        output_scale: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+        use_fast_accum: bool = False,
+    ) -> torch.Tensor:
+        if output_scale is None and (
+            a_data.requires_grad or b_data.requires_grad or (bias is not None and bias.requires_grad)
+        ):
+            a_inverse_scale = a_scale.reciprocal()
+            b_inverse_scale = b_scale.reciprocal()
+            post_inverse_scale = None
+            is_rowwise_scaling = a_scale.shape == (a_data.shape[0], 1) and b_scale.shape == (
+                1,
+                b_data.shape[1],
+            )
+            if is_rowwise_scaling and not use_fast_accum:
+                post_inverse_scale = a_inverse_scale * b_inverse_scale
+                a_inverse_scale = a_inverse_scale.new_ones(())
+                b_inverse_scale = a_inverse_scale.new_ones(())
+            output = _ScaledMmGrad.apply(
+                a_data,
+                b_data,
+                a_inverse_scale,
+                b_inverse_scale,
+                bias,
+                output_dtype,
+                use_fast_accum,
+            )
+            if post_inverse_scale is not None:
+                output = output * post_inverse_scale
+            return output
+        return _orig_addmm_float8_unwrapped(
+            a_data,
+            a_scale,
+            b_data,
+            b_scale,
+            output_dtype,
+            output_scale,
+            bias,
+            use_fast_accum,
+        )
+
+    _torchao_float8_ops.addmm_float8_unwrapped = _simpletuner_addmm_float8_unwrapped
+except ImportError:
+    pass
+
+
+try:
     import peft.tuners.lora.model as peft_lora_model
     import peft.tuners.lora.torchao as peft_lora_torchao
     from peft.tuners.lora.torchao import TorchaoLoraLinear
