@@ -54,6 +54,10 @@ LTX-2 conditioning examples are split by conditioning style:
 - `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
 - `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
 
+Z-Image conditioning examples:
+
+- `z-image-turbo.peft-lora+canny-conditioning` auto-generates Canny edge conditioning data and validates with those references through the IC-LoRA conditioning path.
+
 Large multi-GPU video examples are split from the standard 24G examples:
 
 - `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`

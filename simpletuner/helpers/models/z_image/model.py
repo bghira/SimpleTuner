@@ -344,6 +344,14 @@ class ZImage(ImageModelFoundation):
     def requires_conditioning_latents(self) -> bool:
         return True
 
+    def requires_conditioning_validation_inputs(self) -> bool:
+        return True
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        if "image" in pipeline_kwargs and "reference_image" not in pipeline_kwargs:
+            pipeline_kwargs["reference_image"] = pipeline_kwargs.pop("image")
+        return pipeline_kwargs
+
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch_conditions(batch=batch, state=state)
 

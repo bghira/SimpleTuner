@@ -58,6 +58,21 @@ class ZImageModelTests(unittest.TestCase):
 
         self.assertTrue(model.supports_conditioning_dataset())
         self.assertTrue(model.requires_conditioning_latents())
+        self.assertTrue(model.requires_conditioning_validation_inputs())
+
+    def test_update_pipeline_call_kwargs_maps_validation_image_to_reference_image(self):
+        model = self._build_model()
+
+        updated = model.update_pipeline_call_kwargs({"image": "reference"})
+
+        self.assertEqual(updated, {"reference_image": "reference"})
+
+    def test_update_pipeline_call_kwargs_preserves_explicit_reference_image(self):
+        model = self._build_model()
+
+        updated = model.update_pipeline_call_kwargs({"image": "validation", "reference_image": "explicit"})
+
+        self.assertEqual(updated, {"image": "validation", "reference_image": "explicit"})
 
     def test_prepare_batch_conditions_accepts_reference_conditioning_only(self):
         model = self._build_model()

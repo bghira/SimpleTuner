@@ -32,11 +32,13 @@ class FakeTransformer(torch.nn.Module):
     def __init__(self, pos_value=1.0, neg_value=0.0, single_value=1.0, skip_value=0.0):
         super().__init__()
         self.in_channels = 1
+        self.config = types.SimpleNamespace(all_patch_size=(2,), all_f_patch_size=(1,))
         self.pos_value = pos_value
         self.neg_value = neg_value
         self.single_value = single_value
         self.skip_value = skip_value
         self.last_skip_layers = None
+        self.calls = []
         self.register_parameter("_dummy", torch.nn.Parameter(torch.zeros(1), requires_grad=False))
 
     @property
@@ -45,6 +47,13 @@ class FakeTransformer(torch.nn.Module):
 
     def __call__(self, latent_list, timestep, prompt_embeds, skip_layers=None, **kwargs):
         self.last_skip_layers = skip_layers
+        self.calls.append(
+            {
+                "latent_shapes": [latent.shape for latent in latent_list],
+                "timestep": timestep.detach().clone(),
+                "skip_layers": skip_layers,
+            }
+        )
 
         def _fill_like(tensor, value):
             return torch.full_like(tensor, value)
@@ -81,6 +90,12 @@ class FakeVAE(torch.nn.Module):
     def decode(self, latents, return_dict=False):
         return (latents.clone(),)
 
+    def encode(self, image):
+        latents = image[:, :1].clone()
+        return types.SimpleNamespace(
+            latent_dist=types.SimpleNamespace(sample=lambda generator=None: latents),
+        )
+
 
 class ZImagePipelineFeatureTests(unittest.TestCase):
     def _build_pipeline(self, transformer):
@@ -99,7 +114,27 @@ class ZImagePipelineFeatureTests(unittest.TestCase):
             tokenizer=None,
             transformer=transformer,
         )
-        pipe.image_processor = types.SimpleNamespace(postprocess=lambda x, output_type=None: x)
+
+        def preprocess(images, height=None, width=None):
+            if torch.is_tensor(images):
+                return images
+            if not isinstance(images, list):
+                images = [images]
+            tensors = []
+            for image in images:
+                if torch.is_tensor(image):
+                    tensor = image
+                    if tensor.ndim == 3:
+                        tensor = tensor.unsqueeze(0)
+                    tensors.append(tensor.squeeze(0).to(dtype=torch.float32))
+                else:
+                    tensors.append(torch.ones(3, height, width, dtype=torch.float32))
+            return torch.stack(tensors)
+
+        pipe.image_processor = types.SimpleNamespace(
+            preprocess=preprocess,
+            postprocess=lambda x, output_type=None: x,
+        )
         pipe = pipe.to(torch_device="cpu", torch_dtype=torch.bfloat16)
         pipe._dtype = torch.bfloat16
         return pipe
@@ -191,6 +226,66 @@ class ZImagePipelineFeatureTests(unittest.TestCase):
         self.assertEqual(transformer.last_skip_layers, [1])
         # Base CFG Zero* gives -2, skip correction adds 2.8 -> 0.8
         self.assertTrue(torch.allclose(pipe.scheduler.step_calls[0], torch.full_like(latents, 0.8), atol=1e-5))
+
+    def test_reference_image_concats_reference_latents_and_crops_prediction(self):
+        transformer = FakeTransformer(single_value=1.0)
+        pipe = self._build_pipeline(transformer)
+
+        latents = torch.ones(1, 1, 2, 4)
+        prompt_embeds = torch.zeros(1, 1, 1, dtype=torch.bfloat16)
+        reference_image = torch.ones(1, 3, 2, 4)
+
+        pipe(
+            prompt="",
+            num_inference_steps=1,
+            guidance_scale=1.0,
+            height=2,
+            width=4,
+            latents=latents.clone(),
+            prompt_embeds=prompt_embeds,
+            reference_image=reference_image,
+            output_type="latent",
+        )
+
+        self.assertEqual(transformer.calls[0]["latent_shapes"], [torch.Size([1, 1, 2, 8])])
+        self.assertEqual(transformer.calls[0]["timestep"].shape, torch.Size([1, 4]))
+        torch.testing.assert_close(transformer.calls[0]["timestep"][:, :2], torch.zeros(1, 2))
+        torch.testing.assert_close(transformer.calls[0]["timestep"][:, 2:], torch.ones(1, 2))
+        self.assertEqual(pipe.scheduler.step_calls[0].shape, latents.shape)
+        self.assertTrue(torch.allclose(pipe.scheduler.step_calls[0], torch.full_like(latents, -1.0)))
+
+    def test_reference_image_cfg_repeats_reference_latents_and_crops_prediction(self):
+        transformer = FakeTransformer(pos_value=1.0, neg_value=0.0)
+        pipe = self._build_pipeline(transformer)
+
+        latents = torch.ones(1, 1, 2, 4)
+        prompt_embeds = torch.zeros(1, 1, 1, dtype=torch.bfloat16)
+        neg_embeds = torch.zeros(1, 1, 1, dtype=torch.bfloat16)
+        reference_image = torch.ones(1, 3, 2, 4)
+
+        pipe(
+            prompt="",
+            negative_prompt="",
+            num_inference_steps=1,
+            guidance_scale=2.0,
+            height=2,
+            width=4,
+            latents=latents.clone(),
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=neg_embeds,
+            reference_image=reference_image,
+            output_type="latent",
+            cfg_truncation=None,
+            use_zero_init=False,
+            zero_steps=0,
+        )
+
+        self.assertEqual(transformer.calls[0]["latent_shapes"], [torch.Size([1, 1, 2, 8]), torch.Size([1, 1, 2, 8])])
+        self.assertEqual(transformer.calls[0]["timestep"].shape, torch.Size([2, 4]))
+        torch.testing.assert_close(transformer.calls[0]["timestep"][:, :2], torch.zeros(2, 2))
+        torch.testing.assert_close(transformer.calls[0]["timestep"][:, 2:], torch.ones(2, 2))
+        self.assertEqual(pipe.scheduler.step_calls[0].shape, latents.shape)
+        self.assertTrue(torch.allclose(pipe.scheduler.step_calls[0], torch.full_like(latents, -2.0)))
 
 
 if __name__ == "__main__":
