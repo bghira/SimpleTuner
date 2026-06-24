@@ -352,6 +352,20 @@ Genera versiones de baja calidad de las imágenes para entrenamiento de super-re
 }
 ```
 
+##### `sdr` / `logc3_sdr`
+Genera imágenes SDR/de referencia de condicionamiento para datasets de condicionamiento emparejados. El transform `rec709` predeterminado normaliza y recorta entradas Rec.709 SDR ya existentes, igual que la ruta de acondicionamiento de referencia HDR IC-LoRA de LTX-2:
+```json
+{
+  "type": "sdr",
+  "conditioning_type": "reference_strict",
+  "transform": "rec709",
+  "input_scale": 1.0,
+  "exposure": 0.0,
+  "captions": false
+}
+```
+Usa `transform: "srgb"` cuando los valores decodificados sean lineales y quieras un proxy SDR de pantalla. Usa `transform: "logc3"` (o el alias `logc3_sdr`) solo cuando quieras muestras codificadas en LogC3. `input_scale` se aplica antes de exposure y sirve cuando los valores decodificados necesitan normalización. Este generador actualmente opera sobre muestras de imagen que el backend de imágenes de SimpleTuner puede decodificar.
+
 ##### `jpeg_artifacts`
 Crea artefactos de compresión JPEG para entrenamiento de eliminación de artefactos:
 ```json
