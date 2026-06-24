@@ -352,6 +352,20 @@
 }
 ```
 
+##### `logc3_sdr` / `sdr`
+从 HDR 或线性图像样本生成 SDR/参考条件图像。默认的 `logc3` transform 使用与 LTX-2 HDR IC-LoRA 工具相同的 ARRI LogC3 压缩常量：
+```json
+{
+  "type": "logc3_sdr",
+  "conditioning_type": "reference_strict",
+  "transform": "logc3",
+  "input_scale": 1.0,
+  "exposure": 0.0,
+  "captions": false
+}
+```
+如果需要显示用 SDR 预览而不是 LogC3 编码条件图像，请使用 `transform: "srgb"`。`input_scale` 会在 exposure 前应用，适用于解码后的源值需要归一化的情况。此生成器目前仅处理 SimpleTuner 图像后端可以解码的图像样本。
+
 ##### `jpeg_artifacts`
 为伪影去除训练生成 JPEG 压缩伪影：
 ```json

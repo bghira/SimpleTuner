@@ -19,6 +19,7 @@ const CONDITIONING_GENERATOR_TYPES = [
     { value: 'inpainting', label: 'Inpainting Mask', description: 'Alias for random mask based generators.' },
     { value: 'jpeg_artifacts', label: 'JPEG Artifacts', description: 'Generates degraded JPEG control inputs.' },
     { value: 'superresolution', label: 'Super Resolution', description: 'Reconstructs high-res conditioning frames.' },
+    { value: 'logc3_sdr', label: 'HDR to SDR (LogC3)', description: 'Generates SDR/reference conditioning images from HDR or linear sources.' },
     { value: 'content_shuffle', label: 'Content Shuffle', description: 'Shuffles image content for texture variations.' },
     { value: 'tile', label: 'Tile / Texture', description: 'Tile-friendly control inputs for seamless textures.' },
     { value: 'rembg', label: 'Foreground Mask (Rembg)', description: 'Foreground/background segmentation using Rembg.' },

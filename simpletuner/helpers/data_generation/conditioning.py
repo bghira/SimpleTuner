@@ -97,6 +97,8 @@ def transform_worker_process(
                         ".png": "PNG",
                         ".webp": "WEBP",
                         ".bmp": "BMP",
+                        ".tif": "TIFF",
+                        ".tiff": "TIFF",
                     }
                     save_format = format_map.get(ext, "PNG")
 
@@ -309,6 +311,8 @@ class DataGenerator:
                     ".png": "PNG",
                     ".webp": "WEBP",
                     ".bmp": "BMP",
+                    ".tif": "TIFF",
+                    ".tiff": "TIFF",
                 }
                 fmt = fmt_map.get(ext, "PNG")
 

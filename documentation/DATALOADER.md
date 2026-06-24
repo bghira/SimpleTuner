@@ -353,6 +353,20 @@ Generates low-quality versions of images for super-resolution training:
 }
 ```
 
+##### `logc3_sdr` / `sdr`
+Generates SDR/reference conditioning images from HDR or linear image samples. The default `logc3` transform uses the same ARRI LogC3 compression constants used by LTX-2 HDR IC-LoRA tooling:
+```json
+{
+  "type": "logc3_sdr",
+  "conditioning_type": "reference_strict",
+  "transform": "logc3",
+  "input_scale": 1.0,
+  "exposure": 0.0,
+  "captions": false
+}
+```
+Use `transform: "srgb"` when you want a display SDR preview instead of LogC3-encoded conditioning. `input_scale` is applied before exposure and is useful when your decoded source values need normalization. This generator currently operates on image samples that the SimpleTuner image backend can decode.
+
 ##### `jpeg_artifacts`
 Creates JPEG compression artifacts for artifact removal training:
 ```json
