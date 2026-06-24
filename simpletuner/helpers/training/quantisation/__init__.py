@@ -18,8 +18,6 @@ if should_log():
 else:
     logger.setLevel(logging.ERROR)
 
-_TRANSFORMERENGINE_AUTOCAST_RECIPE_KWARG: dict[int, str] = {}
-
 
 def _wrap_transformerengine_debug_forward(module: torch.nn.Module, fqn: str) -> None:
     if os.environ.get("SIMPLETUNER_TE_DEBUG_BACKWARD", "") != "1":
@@ -766,12 +764,8 @@ def _transformerengine_autocast_context(te, recipe):
     autocast = getattr(te, "fp8_autocast", None) or getattr(te, "autocast", None)
     if autocast is None:
         raise RuntimeError("TransformerEngine does not expose an FP8 autocast context.")
-    autocast_id = id(autocast)
-    recipe_kwarg = _TRANSFORMERENGINE_AUTOCAST_RECIPE_KWARG.get(autocast_id)
-    if recipe_kwarg is None:
-        parameters = signature(autocast).parameters
-        recipe_kwarg = "fp8_recipe" if "fp8_recipe" in parameters else "recipe"
-        _TRANSFORMERENGINE_AUTOCAST_RECIPE_KWARG[autocast_id] = recipe_kwarg
+    parameters = signature(autocast).parameters
+    recipe_kwarg = "fp8_recipe" if "fp8_recipe" in parameters else "recipe"
     if recipe_kwarg == "recipe":
         return autocast(enabled=True, recipe=recipe)
     return autocast(enabled=True, fp8_recipe=recipe)
@@ -885,9 +879,11 @@ def _transformerengine_filter_fn(mod: torch.nn.Module, fqn: str):
         return False
     args = StateTracker.get_args()
     if "lora" in str(getattr(args, "model_type", "")):
+        if fqn == "proj_in":
+            return False
         if os.environ.get("SIMPLETUNER_TE_LORA_CONVERT_ALL", "").lower() in ("1", "true", "yes"):
             return True
-        if fqn in {"proj_in", "proj_out"}:
+        if fqn == "proj_out":
             return False
         return any(
             fqn.endswith(f".{target}")
