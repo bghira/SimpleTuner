@@ -572,6 +572,96 @@ class TrainingEpochsStepsValidationTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_epochs_steps_cross_validation", scenario)
 
 
+class ValidationPromptLibraryLayoutTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test full-mode Validation prompt library modal layout."""
+
+    MAX_BROWSERS = 1
+
+    def test_full_mode_prompt_library_modal_contains_prompt_row(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            driver.set_window_size(1280, 900)
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            driver.execute_script("localStorage.setItem('st_validation_hints', JSON.stringify({ ez_mode: false }));")
+            trainer_page.wait_for_tab("validation")
+            trainer_page.wait_for_htmx()
+
+            trigger_selector = "#prompt-library-button-user_prompt_library"
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const button = document.querySelector(arguments[0]);"
+                    "return Boolean(button && button.offsetParent !== null && button.dataset.promptLibraryInit === 'true');",
+                    trigger_selector,
+                ),
+                message="Prompt library trigger was not visible and initialised in Validation full mode",
+            )
+
+            driver.execute_script(
+                "const button = document.querySelector(arguments[0]);"
+                "button.scrollIntoView({ block: 'center', inline: 'nearest' });"
+                "button.click();",
+                trigger_selector,
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const modal = document.querySelector('#promptLibraryModal');"
+                    "const prompt = modal && modal.querySelector('.prompt-library-prompt');"
+                    "return Boolean(modal && prompt && getComputedStyle(modal).display !== 'none');"
+                ),
+                message="Prompt library modal did not open with an editable prompt row",
+            )
+
+            metrics = driver.execute_script(
+                """
+                const rect = (element) => {
+                    const r = element.getBoundingClientRect();
+                    return {
+                        left: r.left,
+                        right: r.right,
+                        top: r.top,
+                        bottom: r.bottom,
+                        width: r.width,
+                        height: r.height
+                    };
+                };
+                const modal = document.querySelector('#promptLibraryModal');
+                const dialog = modal.querySelector('.modal-dialog');
+                const body = modal.querySelector('.modal-body');
+                const rows = modal.querySelector('#prompt-library-rows');
+                const row = modal.querySelector('.prompt-library-row');
+                const prompt = modal.querySelector('.prompt-library-prompt');
+                const modalStyle = getComputedStyle(modal);
+                return {
+                    modalDisplay: modalStyle.display,
+                    modalPosition: modalStyle.position,
+                    dialog: rect(dialog),
+                    body: rect(body),
+                    rows: rect(rows),
+                    row: rect(row),
+                    prompt: rect(prompt),
+                    rowsClientWidth: rows.clientWidth,
+                    rowsScrollWidth: rows.scrollWidth
+                };
+                """
+            )
+
+            tolerance = 1.5
+            self.assertEqual(metrics["modalDisplay"], "flex")
+            self.assertEqual(metrics["modalPosition"], "fixed")
+            self.assertLessEqual(metrics["rowsScrollWidth"], metrics["rowsClientWidth"] + tolerance, metrics)
+            self.assertGreaterEqual(metrics["row"]["left"], metrics["body"]["left"] - tolerance, metrics)
+            self.assertLessEqual(metrics["row"]["right"], metrics["body"]["right"] + tolerance, metrics)
+            self.assertGreaterEqual(metrics["prompt"]["left"], metrics["body"]["left"] - tolerance, metrics)
+            self.assertLessEqual(metrics["prompt"]["right"], metrics["body"]["right"] + tolerance, metrics)
+
+        self.for_each_browser("test_full_mode_prompt_library_modal_contains_prompt_row", scenario)
+
+
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test configuring and starting training."""
 
