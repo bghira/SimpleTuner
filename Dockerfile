@@ -37,6 +37,8 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     && git lfs install
 
 # 2. Python Environment & Core Deps
+# Keep container CUDA deps explicit: the full cuda extra installs NVIDIA
+# library wheels that conflict with this CUDA base image.
 RUN python${PYTHON_VERSION} -m venv /opt/venv \
     && pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir \
@@ -44,14 +46,19 @@ RUN python${PYTHON_VERSION} -m venv /opt/venv \
        wandb \
        mpi4py \
        ninja \
-       "torchao>=0.17.0,<0.18.0"
+       "bitsandbytes>=0.45.0" \
+       "deepspeed>=0.17.2" \
+       "torchao>=0.17.0,<0.18.0" \
+       "nvidia-ml-py>=12.555" \
+       "lm-eval>=0.4.4" \
+       ramtorch
 
 # 3. Install SimpleTuner
 # Use main for current model integrations such as Boogu-Image.
 ARG SIMPLETUNER_BRANCH=main
 RUN git clone https://github.com/bghira/SimpleTuner --branch $SIMPLETUNER_BRANCH \
     && cd SimpleTuner \
-    && pip install --no-cache-dir -e .[jxl] \
+    && pip install --no-cache-dir -e ".[jxl]" \
     && pip install --no-build-isolation --no-cache-dir sageattention==1.0.6
 
 # 4. Setup Runtime
