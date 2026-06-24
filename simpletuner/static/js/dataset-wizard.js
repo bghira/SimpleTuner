@@ -16,7 +16,7 @@
         { value: 'random_masks', label: 'Random Masks', description: 'Randomly generated masks for inpainting.' },
         { value: 'jpeg_artifacts', label: 'JPEG Artifacts', description: 'Generates degraded JPEG control inputs.' },
         { value: 'superresolution', label: 'Super Resolution', description: 'Reconstructs high-res conditioning frames.' },
-        { value: 'logc3_sdr', label: 'HDR to SDR (LogC3)', description: 'Generates SDR/reference conditioning images from HDR or linear sources.' },
+        { value: 'sdr', label: 'SDR Reference', description: 'Generates Rec.709 SDR/reference conditioning images.' },
     ];
 
     const buildDefaultDataset = () => ({
@@ -686,8 +686,10 @@
                         type: this.selectedConditioningType,
                         params: this.selectedConditioningType === 'canny' ?
                             { ...this.conditioningParams } :
-                            this.selectedConditioningType === 'logc3_sdr' ?
-                                { transform: 'logc3', input_scale: 1.0, exposure: 0.0 } : {}
+                            this.selectedConditioningType === 'sdr' ?
+                                { transform: 'rec709', input_scale: 1.0, exposure: 0.0 } :
+                                this.selectedConditioningType === 'logc3_sdr' ?
+                                    { transform: 'logc3', input_scale: 1.0, exposure: 0.0 } : {}
                     }];
 
                     // Check if conditioning dataset already exists (in case of ID reuse)

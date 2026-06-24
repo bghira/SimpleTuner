@@ -177,9 +177,16 @@
                     high_threshold: { type: 'number', default: 200, min: 0, max: 255 }
                 }
             },
+            sdr: {
+                params: {
+                    transform: { type: 'select', options: ['rec709', 'srgb', 'logc3'], default: 'rec709' },
+                    input_scale: { type: 'number', default: 1.0, min: 0.000001, step: 0.1 },
+                    exposure: { type: 'number', default: 0.0, step: 0.1 }
+                }
+            },
             logc3_sdr: {
                 params: {
-                    transform: { type: 'select', options: ['logc3', 'srgb'], default: 'logc3' },
+                    transform: { type: 'select', options: ['rec709', 'srgb', 'logc3'], default: 'logc3' },
                     input_scale: { type: 'number', default: 1.0, min: 0.000001, step: 0.1 },
                     exposure: { type: 'number', default: 0.0, step: 0.1 }
                 }

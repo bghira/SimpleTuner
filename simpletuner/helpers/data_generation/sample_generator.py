@@ -200,10 +200,12 @@ class SuperResolutionSampleGenerator(SampleGenerator):
 
 class SDRDownsampleSampleGenerator(SampleGenerator):
     """
-    Creates SDR/reference conditioning images from decoded HDR or linear image samples.
+    Creates SDR/reference conditioning images from decoded image samples.
 
-    The default LogC3 transform mirrors the ARRI LogC3 compression constants used
-    by LTX-2 HDR IC-LoRA tooling.
+    The default SDR transform mirrors LTX-2 HDR IC-LoRA reference conditioning:
+    callers provide Rec.709 SDR inputs, then the pipeline normalizes and clamps
+    them. Use the explicit LogC3 transform only when generating LogC3-encoded
+    proxies.
     """
 
     A = 5.555556
@@ -219,9 +221,13 @@ class SDRDownsampleSampleGenerator(SampleGenerator):
         params = config.get("params") if isinstance(config.get("params"), dict) else {}
         options = {**config, **params}
 
-        self.transform = str(options.get("transform", "logc3")).lower()
-        if self.transform not in {"logc3", "srgb"}:
-            raise ValueError("SDR conditioning transform must be one of: logc3, srgb.")
+        generator_type = str(options.get("type", "sdr")).lower()
+        default_transform = "logc3" if generator_type == "logc3_sdr" else "rec709"
+        self.transform = str(options.get("transform", default_transform)).lower()
+        if self.transform in {"identity", "ldr"}:
+            self.transform = "rec709"
+        if self.transform not in {"rec709", "logc3", "srgb"}:
+            raise ValueError("SDR conditioning transform must be one of: rec709, logc3, srgb.")
 
         self.input_scale = float(options.get("input_scale", 1.0))
         if self.input_scale <= 0:
@@ -240,12 +246,14 @@ class SDRDownsampleSampleGenerator(SampleGenerator):
 
         for sample, path in zip(images, source_paths):
             try:
-                linear = self._sample_to_linear_array(sample)
-                linear = linear * self.input_scale * (2.0**self.exposure)
+                values = self._sample_to_float_array(sample)
+                values = values * self.input_scale * (2.0**self.exposure)
                 if self.transform == "logc3":
-                    sdr = self._compress_logc3(linear)
+                    sdr = self._compress_logc3(values)
+                elif self.transform == "srgb":
+                    sdr = self._linear_to_srgb(values)
                 else:
-                    sdr = self._linear_to_srgb(linear)
+                    sdr = self._compress_ldr(values)
                 transformed_images.append(self._array_to_rgb_image(sdr))
             except Exception as e:
                 logger.error(f"Error creating SDR conditioning image for {path}: {e}")
@@ -261,12 +269,16 @@ class SDRDownsampleSampleGenerator(SampleGenerator):
         return np.clip(np.where(x >= cls.CUT, log_part, lin_part), 0.0, 1.0)
 
     @staticmethod
+    def _compress_ldr(ldr: np.ndarray) -> np.ndarray:
+        return np.clip(ldr.astype(np.float32, copy=False), 0.0, 1.0)
+
+    @staticmethod
     def _linear_to_srgb(linear: np.ndarray) -> np.ndarray:
         x = np.clip(linear.astype(np.float32, copy=False), 0.0, 1.0)
         return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1.0 / 2.4) - 0.055)
 
     @staticmethod
-    def _sample_to_linear_array(sample: Any) -> np.ndarray:
+    def _sample_to_float_array(sample: Any) -> np.ndarray:
         if torch.is_tensor(sample):
             sample = sample.detach().cpu().numpy()
 

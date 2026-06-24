@@ -48,6 +48,14 @@ class TestSDRDownsampleSampleGenerator(unittest.TestCase):
         )
         self.assertEqual(np.asarray(result[0])[0, 0, 0], expected_value)
 
+    def test_sdr_default_clamps_rec709_ldr_values(self):
+        source = np.array([[[0.25, 1.25, -0.5]]], dtype=np.float32)
+        generator = SDRDownsampleSampleGenerator({"type": "sdr"})
+
+        result = generator.transform_batch([source], ["sample.npy"], [{}], None)
+
+        np.testing.assert_array_equal(np.asarray(result[0])[0, 0], np.array([64, 255, 0], dtype=np.uint8))
+
     def test_transform_batch_accepts_nested_params_from_webui(self):
         source = Image.fromarray(np.full((1, 1, 3), 64, dtype=np.uint8), mode="RGB")
         generator = SDRDownsampleSampleGenerator({"type": "sdr", "params": {"transform": "srgb", "input_scale": 1.0}})
