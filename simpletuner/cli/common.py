@@ -11,6 +11,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
+from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_data_roots
+
 CONFIG_FILENAMES = {
     "json": "config.json",
     "toml": "config.toml",
@@ -61,7 +63,7 @@ def _find_webui_state_file(filename: str) -> Optional[Path]:
     if base_candidate:
         candidates.append(Path(base_candidate).expanduser() / "webui" / filename)
 
-    for root in (Path("/workspace/simpletuner"), Path("/notebooks/simpletuner"), Path.home() / ".simpletuner"):
+    for root in get_simpletuner_data_roots():
         candidates.append(root / "webui" / filename)
 
     seen = set()

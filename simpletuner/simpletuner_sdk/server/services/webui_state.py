@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from simpletuner.simpletuner_sdk.server.utils.assets import get_asset_version
+from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_data_roots
 
 _WEBUI_CONFIG_ENV = "SIMPLETUNER_WEB_UI_CONFIG"
 _XDG_HOME_ENV = "XDG_HOME"
@@ -263,12 +264,7 @@ class WebUIStateStore:
             root.mkdir(parents=True, exist_ok=True)
             return root / "webui"
 
-        candidate_roots = []
-        if Path("/workspace").exists():
-            candidate_roots.append(Path("/workspace/simpletuner"))
-        if Path("/notebooks").exists():
-            candidate_roots.append(Path("/notebooks/simpletuner"))
-        candidate_roots.append(Path.home() / ".simpletuner")
+        candidate_roots = get_simpletuner_data_roots()
 
         for root in candidate_roots:
             webui_dir = root / "webui"
