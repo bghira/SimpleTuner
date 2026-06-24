@@ -95,7 +95,7 @@ class IdeogramFp8LinearTests(unittest.TestCase):
         self.assertEqual(out.dtype, torch.float32)
         self.assertEqual(x.grad.shape, x.shape)
 
-    def test_lycoris_lokr_wraps_fp8_linear_in_bypass_mode(self):
+    def test_lycoris_algorithms_wrap_fp8_linear_in_bypass_mode(self):
         try:
             from lycoris import LycorisNetwork, create_lycoris
         except ImportError:
@@ -132,22 +132,24 @@ class IdeogramFp8LinearTests(unittest.TestCase):
         original_target_modules = list(getattr(LycorisNetwork, target_module_attr))
         original_target_names = list(getattr(LycorisNetwork, target_name_attr))
         try:
-            LycorisNetwork.apply_preset({"target_module": ["ToyBlock"], "target_name": []})
-            model = ToyModel()
-            network = create_lycoris(model, 1.0, 4, 1, algo="lokr", bypass_mode=True)
+            for algo in ("lokr", "loha"):
+                with self.subTest(algo=algo):
+                    LycorisNetwork.apply_preset({"target_module": ["ToyBlock"], "target_name": []})
+                    model = ToyModel()
+                    network = create_lycoris(model, 1.0, 4, 1, algo=algo, bypass_mode=True)
 
-            self.assertEqual(len(network.loras), 1)
-            self.assertIs(network.loras[0].org_module[0], model.block.proj)
-            self.assertTrue(network.loras[0].bypass_mode)
+                    self.assertEqual(len(network.loras), 1)
+                    self.assertIs(network.loras[0].org_module[0], model.block.proj)
+                    self.assertTrue(network.loras[0].bypass_mode)
 
-            network.apply_to()
-            network.to(dtype=torch.bfloat16)
-            x = torch.randn(2, 16, dtype=torch.bfloat16, requires_grad=True)
-            out = model(x)
-            out.float().sum().backward()
+                    network.apply_to()
+                    network.to(dtype=torch.bfloat16)
+                    x = torch.randn(2, 16, dtype=torch.bfloat16, requires_grad=True)
+                    out = model(x)
+                    out.float().sum().backward()
 
-            self.assertEqual(out.shape, (2, 16))
-            self.assertIsNotNone(x.grad)
+                    self.assertEqual(out.shape, (2, 16))
+                    self.assertIsNotNone(x.grad)
         finally:
             setattr(LycorisNetwork, target_module_attr, original_target_modules)
             setattr(LycorisNetwork, target_name_attr, original_target_names)
