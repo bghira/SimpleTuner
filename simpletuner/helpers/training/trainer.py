@@ -3098,12 +3098,12 @@ class Trainer:
             logger.info("Using lycoris training mode")
             self._send_webhook_msg(message="Using lycoris training mode.")
 
-            if self.lycoris_config.get("algo") == "lokr" and "bypass_mode" not in self.lycoris_config:
+            if "bypass_mode" not in self.lycoris_config:
                 from simpletuner.helpers.models.ideogram.quantized_loading import Fp8Linear
 
                 component = self.model.get_trained_component()
                 if any(isinstance(module, Fp8Linear) for module in component.modules()):
-                    logger.info("Enabling LyCORIS LoKr bypass_mode for Ideogram FP8 Linear layers.")
+                    logger.info("Enabling LyCORIS bypass_mode for Ideogram FP8 Linear layers.")
                     self.lycoris_config["bypass_mode"] = True
 
             if self.model.supports_grounding() and getattr(self.model, "_data_has_grounding", False):
