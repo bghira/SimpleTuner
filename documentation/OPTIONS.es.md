@@ -206,6 +206,13 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Qué**: Ruta al modelo preentrenado o su identificador en <https://huggingface.co/models>.
 - **Por qué**: Para especificar el modelo base desde el que comenzarás a entrenar. Usa `--revision` y `--variant` para especificar versiones concretas desde un repositorio. También admite rutas de un solo archivo `.safetensors` para SDXL, Flux y SD3.x.
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **Qué**: Ruta opcional a pesos transformer preentrenados o su identificador en <https://huggingface.co/models>.
+- **Predeterminado**: `None` (en los cargadores que admiten esta sobrescritura, el origen del transformer sigue ligado a `--pretrained_model_name_or_path`)
+- **Por qué**: Úsalo cuando el componente transformer vive en un repositorio, carpeta local o checkpoint separado del paquete del modelo base.
+- **Notas**: Combínalo con `--pretrained_transformer_subfolder` cuando los pesos transformer estén dentro de una subcarpeta de esa ruta.
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **Qué**: Ruta al modelo T5 preentrenado o su identificador en <https://huggingface.co/models>.

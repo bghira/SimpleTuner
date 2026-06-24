@@ -207,6 +207,13 @@ simpletuner configure config/foo/config.json
 - **内容**: 事前学習済みモデルのパス、または <https://huggingface.co/models> の識別子。
 - **理由**: 学習を開始するベースモデルを指定します。`--revision` と `--variant` でリポジトリ内の特定バージョンを指定できます。SDXL、Flux、SD3.x の単一ファイル `.safetensors` パスにも対応しています。
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **内容**: 事前学習済み transformer 重みの任意パス、または <https://huggingface.co/models> の識別子。
+- **既定**: `None`（この上書きをサポートするローダーでは、transformer の参照元は `--pretrained_model_name_or_path` に従います）
+- **理由**: transformer コンポーネントがベースモデルパッケージとは別のリポジトリ、ローカルフォルダー、またはチェックポイントにある場合に使用します。
+- **注記**: transformer 重みがそのパス内のサブフォルダーにある場合は、`--pretrained_transformer_subfolder` と組み合わせて使用します。
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **内容**: 事前学習済み T5 モデルのパス、または <https://huggingface.co/models> の識別子。
