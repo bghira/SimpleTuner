@@ -28,6 +28,12 @@ class DummyTransformer:
         return outputs, {}
 
 
+class EchoTransformer(DummyTransformer):
+    def __call__(self, latent_list, timestep, prompt_list, **kwargs):
+        self.received = (latent_list, timestep, prompt_list, kwargs)
+        return [lat.clone() for lat in latent_list], {}
+
+
 class ZImageModelTests(unittest.TestCase):
     def _build_model(self):
         model = ZImage.__new__(ZImage)
@@ -46,6 +52,36 @@ class ZImageModelTests(unittest.TestCase):
         model._new_hidden_state_buffer = lambda: {}
         model.crepa_regularizer = types.SimpleNamespace(enabled=True, block_index=2)
         return model
+
+    def test_ic_lora_capability_flags(self):
+        model = self._build_model()
+
+        self.assertTrue(model.supports_conditioning_dataset())
+        self.assertTrue(model.requires_conditioning_latents())
+        self.assertTrue(model.requires_conditioning_validation_inputs())
+
+    def test_update_pipeline_call_kwargs_maps_validation_image_to_reference_image(self):
+        model = self._build_model()
+
+        updated = model.update_pipeline_call_kwargs({"image": "reference"})
+
+        self.assertEqual(updated, {"reference_image": "reference"})
+
+    def test_update_pipeline_call_kwargs_preserves_explicit_reference_image(self):
+        model = self._build_model()
+
+        updated = model.update_pipeline_call_kwargs({"image": "validation", "reference_image": "explicit"})
+
+        self.assertEqual(updated, {"image": "validation", "reference_image": "explicit"})
+
+    def test_prepare_batch_conditions_accepts_reference_conditioning_only(self):
+        model = self._build_model()
+
+        with self.assertRaisesRegex(ValueError, "Unsupported conditioning_type"):
+            model.prepare_batch_conditions(
+                {"conditioning_latents": torch.zeros(1, 4, 8, 8), "conditioning_type": "mask"},
+                state={},
+            )
 
     def test_convert_text_embed_for_pipeline_masks_tokens(self):
         model = self._build_model()
@@ -85,6 +121,82 @@ class ZImageModelTests(unittest.TestCase):
         self.assertEqual(len(prompt_list[1]), attention_mask[1].sum().item())
         # Timesteps are normalized and flipped as in the pipeline: (1000 - t) / 1000
         self.assertTrue(torch.allclose(received_t, torch.tensor([0.9, 0.5])))
+
+    def test_model_predict_concats_ic_lora_reference_and_crops_prediction(self):
+        model = self._build_model()
+        model.model = EchoTransformer()
+        model.crepa_regularizer = None
+        latents = torch.ones(1, 4, 8, 8)
+        conditioning_latents = torch.full((1, 4, 8, 4), 2.0)
+        prompt_embeds = torch.randn(1, 5, 6)
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]], dtype=torch.bool)
+
+        output = model.model_predict(
+            {
+                "noisy_latents": latents,
+                "conditioning_latents": conditioning_latents,
+                "conditioning_type": "reference_strict",
+                "timesteps": torch.tensor([100.0]),
+                "encoder_hidden_states": prompt_embeds,
+                "encoder_attention_mask": attention_mask,
+            }
+        )
+
+        noise_pred = output["model_prediction"]
+        self.assertEqual(noise_pred.shape, latents.shape)
+        torch.testing.assert_close(noise_pred, -latents)
+
+        latent_list, received_t, _, _ = model.model.received
+        self.assertEqual(latent_list[0].shape, torch.Size([4, 1, 8, 12]))
+        self.assertTrue(torch.equal(latent_list[0][..., :4], conditioning_latents[0].unsqueeze(1)))
+        self.assertTrue(torch.equal(latent_list[0][..., 4:], latents[0].unsqueeze(1)))
+        self.assertEqual(received_t.shape, torch.Size([1, 24]))
+        torch.testing.assert_close(received_t[:, :8], torch.zeros(1, 8))
+        torch.testing.assert_close(received_t[:, 8:], torch.full((1, 16), 0.9))
+
+    def test_model_predict_preserves_target_tokenwise_timesteps_with_ic_lora_reference(self):
+        model = self._build_model()
+        model.model = EchoTransformer()
+        model.crepa_regularizer = None
+        latents = torch.ones(1, 4, 8, 8)
+        conditioning_latents = torch.full((1, 4, 8, 4), 2.0)
+        prompt_embeds = torch.randn(1, 5, 6)
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]], dtype=torch.bool)
+
+        model.model_predict(
+            {
+                "noisy_latents": latents,
+                "conditioning_latents": conditioning_latents,
+                "conditioning_type": "reference_strict",
+                "timesteps": torch.full((1, 16), 100.0),
+                "encoder_hidden_states": prompt_embeds,
+                "encoder_attention_mask": attention_mask,
+            }
+        )
+
+        _, received_t, _, _ = model.model.received
+        self.assertEqual(received_t.shape, torch.Size([1, 24]))
+        torch.testing.assert_close(received_t[:, :8], torch.zeros(1, 8))
+        torch.testing.assert_close(received_t[:, 8:], torch.full((1, 16), 0.9))
+
+    def test_model_predict_rejects_ic_lora_with_hidden_state_capture(self):
+        model = self._build_model()
+        model.model = EchoTransformer()
+        model.crepa_regularizer = types.SimpleNamespace(wants_hidden_states=lambda: True)
+        prompt_embeds = torch.randn(1, 5, 6)
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]], dtype=torch.bool)
+
+        with self.assertRaisesRegex(ValueError, "hidden-state capture"):
+            model.model_predict(
+                {
+                    "noisy_latents": torch.ones(1, 4, 8, 8),
+                    "conditioning_latents": torch.full((1, 4, 8, 4), 2.0),
+                    "conditioning_type": "reference_strict",
+                    "timesteps": torch.tensor([100.0]),
+                    "encoder_hidden_states": prompt_embeds,
+                    "encoder_attention_mask": attention_mask,
+                }
+            )
 
     def test_model_predict_accepts_tokenwise_timesteps_and_capture_override(self):
         model = self._build_model()

@@ -338,6 +338,32 @@ class ZImage(ImageModelFoundation):
     def supports_crepa_self_flow(self) -> bool:
         return True
 
+    def supports_conditioning_dataset(self) -> bool:
+        return True
+
+    def requires_conditioning_latents(self) -> bool:
+        return True
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        return True
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        if "image" in pipeline_kwargs and "reference_image" not in pipeline_kwargs:
+            pipeline_kwargs["reference_image"] = pipeline_kwargs.pop("image")
+        return pipeline_kwargs
+
+    def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
+        batch = super().prepare_batch_conditions(batch=batch, state=state)
+
+        conditioning_latents = batch.get("conditioning_latents")
+        conditioning_type = batch.get("conditioning_type")
+        if conditioning_latents is not None and conditioning_type not in (None, "reference_strict", "reference_loose"):
+            raise ValueError(
+                f"Unsupported conditioning_type '{conditioning_type}' for Z-Image IC-LoRA. "
+                "Use reference_strict or reference_loose."
+            )
+        return batch
+
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
         if transformer is None or not hasattr(transformer, "config"):
@@ -411,6 +437,141 @@ class ZImage(ImageModelFoundation):
         frame_patch_size = int(max(frame_patch_size, 1))
         return max((frames // frame_patch_size) * (height // patch_size) * (width // patch_size), 1)
 
+    def _normalize_zimage_conditioning_latents(
+        self,
+        conditioning_latents,
+        *,
+        batch_size: int,
+        target_channels: int,
+        target_device: torch.device,
+        target_dtype: torch.dtype,
+    ) -> list[torch.Tensor] | None:
+        if conditioning_latents is None:
+            return None
+
+        def _normalize_sample(sample: torch.Tensor) -> torch.Tensor:
+            if not torch.is_tensor(sample):
+                raise ValueError("Z-Image IC-LoRA conditioning_latents items must be tensors.")
+            if sample.dim() == 3:
+                sample = sample.unsqueeze(1)
+            elif sample.dim() == 4:
+                if sample.shape[0] == 1 and sample.shape[1] == target_channels:
+                    sample = sample[0].unsqueeze(1)
+                elif sample.shape[0] != target_channels:
+                    raise ValueError(
+                        "Z-Image IC-LoRA conditioning latents must be [C,H,W], [C,F,H,W], "
+                        f"or singleton [1,C,H,W] per sample; got {tuple(sample.shape)}."
+                    )
+            else:
+                raise ValueError(
+                    "Z-Image IC-LoRA conditioning latents must be 3D or 4D per sample; " f"got {tuple(sample.shape)}."
+                )
+            if sample.shape[0] != target_channels:
+                raise ValueError(
+                    "Z-Image IC-LoRA conditioning latents must match target latent channels. "
+                    f"Got {sample.shape[0]} vs {target_channels}."
+                )
+            return sample.to(device=target_device, dtype=target_dtype)
+
+        if torch.is_tensor(conditioning_latents):
+            if conditioning_latents.dim() == 4:
+                conditioning_latents = conditioning_latents.unsqueeze(2)
+            elif conditioning_latents.dim() != 5:
+                raise ValueError(
+                    "Z-Image IC-LoRA conditioning_latents tensor must be [B,C,H,W] or [B,C,F,H,W], "
+                    f"got {tuple(conditioning_latents.shape)}."
+                )
+            if conditioning_latents.shape[0] != batch_size:
+                raise ValueError(
+                    "Z-Image IC-LoRA conditioning batch "
+                    f"{conditioning_latents.shape[0]} does not match target batch {batch_size}."
+                )
+            if conditioning_latents.shape[1] != target_channels:
+                raise ValueError(
+                    "Z-Image IC-LoRA conditioning latents must match target latent channels. "
+                    f"Got {conditioning_latents.shape[1]} vs {target_channels}."
+                )
+            conditioning_latents = conditioning_latents.to(device=target_device, dtype=target_dtype)
+            return [conditioning_latents[idx] for idx in range(batch_size)]
+
+        if isinstance(conditioning_latents, list):
+            if (
+                len(conditioning_latents) == 1
+                and torch.is_tensor(conditioning_latents[0])
+                and conditioning_latents[0].dim() in (4, 5)
+                and conditioning_latents[0].shape[0] == batch_size
+            ):
+                return self._normalize_zimage_conditioning_latents(
+                    conditioning_latents[0],
+                    batch_size=batch_size,
+                    target_channels=target_channels,
+                    target_device=target_device,
+                    target_dtype=target_dtype,
+                )
+            if len(conditioning_latents) != batch_size:
+                raise ValueError(
+                    "Z-Image IC-LoRA conditioning list length "
+                    f"{len(conditioning_latents)} does not match target batch {batch_size}."
+                )
+            return [_normalize_sample(sample) for sample in conditioning_latents]
+
+        raise ValueError("Z-Image IC-LoRA conditioning_latents must be a tensor or list when provided.")
+
+    def _build_zimage_ic_lora_inputs(
+        self,
+        latent_list: list[torch.Tensor],
+        conditioning_list: list[torch.Tensor] | None,
+        normalized_t: torch.Tensor,
+    ) -> tuple[list[torch.Tensor], torch.Tensor, list[int] | None]:
+        if conditioning_list is None:
+            return latent_list, normalized_t, None
+
+        combined_latents = []
+        target_widths = []
+        combined_sequence_lengths = []
+        target_sequence_lengths = []
+        ref_sequence_lengths = []
+        for target, reference in zip(latent_list, conditioning_list):
+            if target.dim() != 4:
+                raise ValueError(f"Z-Image target latent samples must be [C,F,H,W], got {tuple(target.shape)}.")
+            if reference.dim() != 4:
+                raise ValueError(f"Z-Image reference latent samples must be [C,F,H,W], got {tuple(reference.shape)}.")
+            if reference.shape[:3] != target.shape[:3]:
+                raise ValueError(
+                    "Z-Image IC-LoRA reference latents must match target channels, frames, and height. "
+                    f"Got reference {tuple(reference.shape)} vs target {tuple(target.shape)}."
+                )
+            combined = torch.cat([reference, target], dim=-1)
+            combined_latents.append(combined)
+            target_widths.append(target.shape[-1])
+            ref_sequence_lengths.append(self._latent_sequence_length(reference.unsqueeze(0)))
+            target_sequence_lengths.append(self._latent_sequence_length(target.unsqueeze(0)))
+            combined_sequence_lengths.append(self._latent_sequence_length(combined.unsqueeze(0)))
+
+        if len(set(combined_sequence_lengths)) != 1:
+            raise ValueError("Z-Image IC-LoRA tokenwise timesteps require uniform combined reference+target token lengths.")
+        if len(set(target_sequence_lengths)) != 1:
+            raise ValueError("Z-Image IC-LoRA tokenwise timesteps require uniform target token lengths.")
+        if len(set(ref_sequence_lengths)) != 1:
+            raise ValueError("Z-Image IC-LoRA tokenwise timesteps require uniform reference token lengths.")
+
+        target_seq_len = target_sequence_lengths[0]
+        ref_seq_len = ref_sequence_lengths[0]
+        if normalized_t.ndim == 1:
+            target_timesteps = normalized_t[:, None].expand(normalized_t.shape[0], target_seq_len)
+        elif normalized_t.ndim == 2:
+            if normalized_t.shape != (len(latent_list), target_seq_len):
+                raise ValueError(
+                    f"Z-Image IC-LoRA expected target tokenwise timesteps shape ({len(latent_list)}, {target_seq_len}), "
+                    f"got {tuple(normalized_t.shape)}."
+                )
+            target_timesteps = normalized_t
+        else:
+            raise ValueError(f"Z-Image IC-LoRA expected 1D or 2D timesteps, got {tuple(normalized_t.shape)}.")
+
+        ref_timesteps = target_timesteps.new_zeros((len(latent_list), ref_seq_len))
+        return combined_latents, torch.cat([ref_timesteps, target_timesteps], dim=1), target_widths
+
     def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
         crepa = getattr(self, "crepa_regularizer", None)
         capture_layer = prepared_batch.get(
@@ -441,11 +602,28 @@ class ZImage(ImageModelFoundation):
 
         latent_list = [sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype) for sample in latents]
 
+        conditioning_list = self._normalize_zimage_conditioning_latents(
+            prepared_batch.get("conditioning_latents"),
+            batch_size=batch_size,
+            target_channels=latents.shape[1],
+            target_device=self.accelerator.device,
+            target_dtype=self.config.weight_dtype,
+        )
+
         normalized_t = self._prepare_model_predict_timesteps(
             prepared_batch["timesteps"],
             batch_size,
             sequence_length=self._latent_sequence_length(prepared_batch["noisy_latents"]),
         )
+        latent_list, normalized_t, target_widths = self._build_zimage_ic_lora_inputs(
+            latent_list,
+            conditioning_list,
+            normalized_t,
+        )
+        if conditioning_list is not None and self._needs_hidden_state_buffer():
+            raise ValueError(
+                "CREPA/LayerSync hidden-state capture is not supported with Z-Image IC-LoRA reference tokens enabled."
+            )
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         call_kwargs = {}
@@ -460,6 +638,9 @@ class ZImage(ImageModelFoundation):
             prompt_list,
             **call_kwargs,
         )[0]
+
+        if target_widths is not None:
+            model_out_list = [out[..., -target_width:] for out, target_width in zip(model_out_list, target_widths)]
 
         noise_pred = torch.stack([out.float() for out in model_out_list], dim=0)
         if noise_pred.dim() == 5 and noise_pred.shape[2] == 1:

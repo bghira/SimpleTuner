@@ -52,6 +52,38 @@ class TestTrainingSample(unittest.TestCase):
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
         self.assertEqual(sample.original_size, (1024, 768))
 
+    def test_training_sample_path_preserves_relative_source_key_for_empty_source_root(self):
+        class SourceBackend:
+            def get_abs_path(self, sample_path):
+                return sample_path if sample_path == "17.jpg" else None
+
+        source_backend_id = "source"
+        conditioning_backend_id = "conditioning"
+        conditioning_root = "/tmp/simpletuner-conditioning"
+        original_get_data_backend = StateTracker.get_data_backend
+        StateTracker.get_data_backend = MagicMock(
+            side_effect=lambda backend_id: {
+                source_backend_id: {
+                    "config": {"instance_data_dir": ""},
+                    "data_backend": SourceBackend(),
+                },
+                conditioning_backend_id: {
+                    "config": {"instance_data_dir": conditioning_root},
+                    "data_backend": MagicMock(),
+                },
+            }[backend_id]
+        )
+        self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+
+        sample = TrainingSample(
+            self.image,
+            conditioning_backend_id,
+            self.image_metadata,
+            image_path=f"{conditioning_root}/17.jpg",
+        )
+
+        self.assertEqual(sample.training_sample_path(source_backend_id), "17.jpg")
+
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
