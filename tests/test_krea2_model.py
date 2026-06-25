@@ -19,6 +19,14 @@ class FakeKrea2Transformer:
         return (torch.zeros_like(kwargs["hidden_states"]),)
 
 
+class FakeLatentDistribution:
+    def __init__(self, latents):
+        self.latents = latents
+
+    def sample(self):
+        return self.latents
+
+
 class Krea2VendoredModelTests(unittest.TestCase):
     def test_model_registry_resolves_krea2(self):
         registry_entry = ModelRegistry.get("krea2")
@@ -100,6 +108,52 @@ class Krea2VendoredModelTests(unittest.TestCase):
         self.assertFalse(model.requires_conditioning_latents())
         self.assertTrue(model.should_precompute_validation_negative_prompt())
         self.assertEqual(model.text_embed_cache_key(), TextEmbedCacheKey.CAPTION)
+
+    def test_vae_encode_hooks_use_qwen_image_vae_rank_and_normalization(self):
+        model = Krea2.__new__(Krea2)
+        vae = SimpleNamespace(config=SimpleNamespace(latents_mean=[1.0, 2.0], latents_std=[2.0, 4.0], z_dim=2))
+        model.get_vae = lambda: vae
+
+        image_batch = torch.zeros(1, 3, 64, 64)
+        preprocessed = model.pre_vae_encode_transform_sample(image_batch)
+        self.assertEqual(tuple(preprocessed.shape), (1, 3, 1, 64, 64))
+
+        vae_output = SimpleNamespace(latent_dist=FakeLatentDistribution(torch.ones(1, 2, 1, 8, 8) * 5.0))
+        latents = model.post_vae_encode_transform_sample(vae_output)
+
+        self.assertEqual(tuple(latents.shape), (1, 2, 8, 8))
+        self.assertTrue(torch.allclose(latents[:, 0], torch.full((1, 8, 8), 2.0)))
+        self.assertTrue(torch.allclose(latents[:, 1], torch.full((1, 8, 8), 0.75)))
+
+    def test_transformer_accepts_cached_int64_encoder_attention_mask(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=2,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=1,
+            axes_dims_rope=(2, 2, 2),
+        )
+
+        output = transformer(
+            hidden_states=torch.randn(1, 4, 4),
+            encoder_hidden_states=torch.randn(1, 3, 2, 6),
+            timestep=torch.tensor([0.5]),
+            position_ids=torch.zeros(7, 3, dtype=torch.long),
+            encoder_attention_mask=torch.ones(1, 3, dtype=torch.int64),
+            return_dict=False,
+        )
+
+        self.assertEqual(tuple(output[0].shape), (1, 4, 4))
 
     def test_model_predict_appends_reference_latent_tokens_and_crops_output(self):
         model = Krea2.__new__(Krea2)

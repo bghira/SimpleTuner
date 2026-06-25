@@ -105,6 +105,30 @@ class Krea2(ImageModelFoundation):
             pipeline_kwargs["reference_image"] = pipeline_kwargs.pop("image")
         return pipeline_kwargs
 
+    def pre_vae_encode_transform_sample(self, sample):
+        if sample.dim() == 4:
+            sample = sample.unsqueeze(2)
+        return sample
+
+    def post_vae_encode_transform_sample(self, sample):
+        vae = self.get_vae()
+        if vae is None:
+            raise ValueError("Cannot normalize Krea 2 latents without a loaded VAE.")
+
+        sample_latents = sample.latent_dist.sample()
+        if sample_latents.dim() == 5:
+            sample_latents = sample_latents.squeeze(2)
+
+        latents_mean = (
+            torch.tensor(vae.config.latents_mean)
+            .view(1, vae.config.z_dim, 1, 1)
+            .to(sample_latents.device, sample_latents.dtype)
+        )
+        latents_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, vae.config.z_dim, 1, 1).to(
+            sample_latents.device, sample_latents.dtype
+        )
+        return (sample_latents - latents_mean) * latents_std
+
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
             return self.processor

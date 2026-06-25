@@ -481,6 +481,7 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         text_attention_mask = None
         attention_mask = None
         if encoder_attention_mask is not None:
+            encoder_attention_mask = encoder_attention_mask.bool()
             # Key-padding masks of shape (B, 1, 1, L): padded text tokens are excluded as attention keys everywhere;
             # their own (garbage) lanes are never read back and are dropped at the output slice.
             text_attention_mask = encoder_attention_mask[:, None, None, :]
