@@ -889,6 +889,13 @@ Different models different conditioning data expect करते हैं:
 - **Note**: `combined` उपयोग करने पर आप conditioning datasets पर अलग `captions` परिभाषित नहीं कर सकते; source dataset के captions ही उपयोग होते हैं।
 - **See also**: multiple conditioning datasets कॉन्फ़िगर करने के लिए [DATALOADER.md](DATALOADER.md#conditioning_data) देखें।
 
+### `--krea2_reference_latents` {#--krea2_reference_latents}
+
+- **What**: Krea 2 reference dataset training enable करें।
+- **Why**: Enable होने पर Krea 2 Qwen3VL prompt embeddings cache करते समय paired conditioning image use करता है, और training के दौरान उस conditioning image के clean VAE latents को transformer token stream में append करता है।
+- **Dataset setup**: Main image dataset में `conditioning_data` को paired conditioning dataset की ओर point करें। Target और reference images के filenames match होने चाहिए।
+- **Scope**: यह Krea 2 model-side option है। यह conditioning datasets generate नहीं करता; उसके लिए normal dataloader reference-dataset settings use करें।
+
 ### LTX-2 conditioning options
 
 ये LTX-2 training के optional advanced settings हैं। इन्हें JSON/TOML config files में नीचे दिए गए names से सेट करें, या matching CLI flags जैसे `--ltx2_first_frame_conditioning_probability` से पास करें।
