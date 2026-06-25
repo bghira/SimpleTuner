@@ -6,6 +6,7 @@ import torch
 
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.krea2 import Krea2, Krea2LoraLoaderMixin, Krea2Pipeline, Krea2Transformer2DModel
+from simpletuner.helpers.models.krea2.transformer import Krea2Attention
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
@@ -108,6 +109,27 @@ class Krea2VendoredModelTests(unittest.TestCase):
         self.assertFalse(model.requires_conditioning_latents())
         self.assertTrue(model.should_precompute_validation_negative_prompt())
         self.assertEqual(model.text_embed_cache_key(), TextEmbedCacheKey.CAPTION)
+
+    def test_fused_qkv_lora_targets_use_fused_projection(self):
+        model = Krea2.__new__(Krea2)
+        model.config = SimpleNamespace(fuse_qkv_projections=True)
+
+        self.assertEqual(model.get_lora_target_layers(), ["to_qkv", "to_out.0"])
+
+    def test_krea2_attention_fused_projection_matches_unfused_path(self):
+        attention = Krea2Attention(hidden_size=8, num_heads=2, num_kv_heads=1)
+        hidden_states = torch.randn(2, 5, 8)
+
+        unfused = attention(hidden_states)
+        attention.fuse_projections()
+        fused = attention(hidden_states)
+
+        self.assertTrue(torch.allclose(fused, unfused, atol=1e-6, rtol=1e-6))
+        self.assertTrue(hasattr(attention, "to_qkv"))
+
+        attention.unfuse_projections()
+        self.assertFalse(hasattr(attention, "to_qkv"))
+        self.assertFalse(attention.fused_projections)
 
     def test_vae_encode_hooks_use_qwen_image_vae_rank_and_normalization(self):
         model = Krea2.__new__(Krea2)

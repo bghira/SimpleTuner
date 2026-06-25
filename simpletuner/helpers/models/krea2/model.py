@@ -61,6 +61,7 @@ class Krea2(ImageModelFoundation):
     PROCESSOR_PATH = "Qwen/Qwen3-VL-4B-Instruct"
     PROCESSOR_SUBFOLDER = None
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    FUSED_LORA_TARGET = ["to_qkv", "to_out.0"]
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -104,6 +105,11 @@ class Krea2(ImageModelFoundation):
         if self._uses_reference_latents() and "image" in pipeline_kwargs and "reference_image" not in pipeline_kwargs:
             pipeline_kwargs["reference_image"] = pipeline_kwargs.pop("image")
         return pipeline_kwargs
+
+    def get_lora_target_layers(self):
+        if getattr(self.config, "fuse_qkv_projections", False):
+            return self.FUSED_LORA_TARGET
+        return super().get_lora_target_layers()
 
     def pre_vae_encode_transform_sample(self, sample):
         if sample.dim() == 4:

@@ -61,9 +61,17 @@ class Krea2AttnProcessor:
         attention_mask: torch.Tensor | None = None,
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        query = attn.to_q(hidden_states).unflatten(-1, (attn.num_heads, attn.head_dim))
-        key = attn.to_k(hidden_states).unflatten(-1, (attn.num_kv_heads, attn.head_dim))
-        value = attn.to_v(hidden_states).unflatten(-1, (attn.num_kv_heads, attn.head_dim))
+        if getattr(attn, "fused_projections", False):
+            q_dim = attn.head_dim * attn.num_heads
+            kv_dim = attn.head_dim * attn.num_kv_heads
+            query, key, value = attn.to_qkv(hidden_states).split((q_dim, kv_dim, kv_dim), dim=-1)
+        else:
+            query = attn.to_q(hidden_states)
+            key = attn.to_k(hidden_states)
+            value = attn.to_v(hidden_states)
+        query = query.unflatten(-1, (attn.num_heads, attn.head_dim))
+        key = key.unflatten(-1, (attn.num_kv_heads, attn.head_dim))
+        value = value.unflatten(-1, (attn.num_kv_heads, attn.head_dim))
         gate = attn.to_gate(hidden_states)
 
         query = attn.norm_q(query)
@@ -116,6 +124,33 @@ class Krea2Attention(nn.Module, AttentionModuleMixin):
         if processor is None:
             processor = self._default_processor_cls()
         self.set_processor(processor)
+        self.fused_projections = False
+
+    @torch.no_grad()
+    def fuse_projections(self) -> None:
+        if self.fused_projections:
+            return
+
+        device = self.to_q.weight.device
+        dtype = self.to_q.weight.dtype
+        concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
+        self.to_qkv = nn.Linear(
+            concatenated_weights.shape[1],
+            concatenated_weights.shape[0],
+            bias=False,
+            device=device,
+            dtype=dtype,
+        )
+        self.to_qkv.weight.copy_(concatenated_weights)
+        self.fused_projections = True
+
+    @torch.no_grad()
+    def unfuse_projections(self) -> None:
+        if not self.fused_projections:
+            return
+        if hasattr(self, "to_qkv"):
+            delattr(self, "to_qkv")
+        self.fused_projections = False
 
     def forward(
         self,
@@ -432,6 +467,17 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         )
 
         self.final_layer = Krea2FinalLayer(hidden_size, out_channels=in_channels, eps=norm_eps)
+
+    def fuse_qkv_projections(self, preferred_backend: str | None = None) -> None:
+        del preferred_backend
+        for module in self.modules():
+            if isinstance(module, Krea2Attention):
+                module.fuse_projections()
+
+    def unfuse_qkv_projections(self) -> None:
+        for module in self.modules():
+            if isinstance(module, Krea2Attention):
+                module.unfuse_projections()
 
     @apply_lora_scale("attention_kwargs")
     def forward(

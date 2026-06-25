@@ -18,6 +18,7 @@ Para a matriz completa e mais precisa de recursos, consulte o [README principal]
 | Flux.2 | 32B | ✓ | ✓ | ✓* | int8/fp8/nf4 opcional | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ opt | ✗ | ✓ | [FLUX2.md](quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 opcional | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ req | ✓ | ✓ | [FLUX_KONTEXT.md](quickstart/FLUX_KONTEXT.md) |
 | Z-Image Turbo | 6B | ✓ | ✗ | ✓* | int8 opcional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | [ZIMAGE.md](quickstart/ZIMAGE.md) |
+| Krea2 | - | ✓ | ✗ | ✓* | int8 opcional | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✓ opt | ✗ | ✓ | [KREA2.md](quickstart/KREA2.pt-BR.md) |
 | Boogu-Image 0.1 | - | ✓ | ✓ | ✓* | fp8 opcional | bf16 | ✓ | ✓ | ✗ | ✗ | ✗ | ✓ edit | ✗ | ✓ | [BOOGU_IMAGE.md](quickstart/BOOGU_IMAGE.pt-BR.md) |
 | zlab i1 | 3B | ✓ | ✓ | ✓ | int8 opcional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | [ZLAB_i1.md](quickstart/ZLAB_i1.pt-BR.md) |
 | Ideogram 4 | 9B | ✓ | ✓ | ✓* | fp8 padrão, nf4 opcional | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | [IDEOGRAM4.md](quickstart/IDEOGRAM4.pt-BR.md) |
