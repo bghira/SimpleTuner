@@ -105,6 +105,7 @@ flow_matching_model_families = [
     "z_image_omni",
     "zlab_i1",
     "ideogram",
+    "krea2",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -121,6 +122,7 @@ upstream_config_sources = {
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
+    "krea2": "krea/Krea-2-Raw",
 }
 
 
