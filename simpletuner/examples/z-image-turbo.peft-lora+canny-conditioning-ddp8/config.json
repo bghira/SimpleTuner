@@ -19,7 +19,7 @@
     "lr_scheduler": "constant_with_warmup",
     "lr_warmup_steps": 50,
     "max_grad_norm": 0.01,
-    "max_train_steps": 500,
+    "max_train_steps": 1250,
     "minimum_image_size": 0,
     "mixed_precision": "bf16",
     "model_family": "z_image",
