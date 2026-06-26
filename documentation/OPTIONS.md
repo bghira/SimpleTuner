@@ -896,6 +896,13 @@ Different models expect different conditioning data:
 - **Note**: When using `combined`, you cannot define separate `captions` on conditioning datasets; the source dataset's captions are used instead.
 - **See also**: [DATALOADER.md](DATALOADER.md#conditioning_data) for configuring multiple conditioning datasets.
 
+### `--krea2_reference_latents` {#--krea2_reference_latents}
+
+- **What**: Enable Krea 2 reference-dataset training.
+- **Why**: When enabled, Krea 2 uses the paired conditioning image while caching Qwen3VL prompt embeddings, and appends the clean VAE latents from that conditioning image to the transformer token stream during training.
+- **Dataset setup**: Configure the main image dataset with `conditioning_data` pointing at a paired conditioning dataset. Filenames must match between target and reference images.
+- **Scope**: This is a Krea 2 model-side option. It does not generate conditioning datasets; use the normal dataloader reference-dataset settings for that.
+
 ### LTX-2 conditioning options
 
 These are optional advanced settings for LTX-2 training. Set them in JSON/TOML config files with the names below, or pass the matching CLI flags such as `--ltx2_first_frame_conditioning_probability`.

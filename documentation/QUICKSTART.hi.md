@@ -18,6 +18,7 @@
 | Flux.2 | 32B | ✓ | ✓ | ✓* | int8/fp8/nf4 वैकल्पिक | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ opt | ✗ | ✓ | [FLUX2.md](quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 वैकल्पिक | bf16 | ✓+ | ✓ | ✓ | ✓ | ✓ | ✓ req | ✓ | ✓ | [FLUX_KONTEXT.md](quickstart/FLUX_KONTEXT.md) |
 | Z-Image Turbo | 6B | ✓ | ✗ | ✓* | int8 वैकल्पिक | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | [ZIMAGE.md](quickstart/ZIMAGE.md) |
+| Krea2 | - | ✓ | ✗ | ✓* | int8 वैकल्पिक | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✓ opt | ✗ | ✓ | [KREA2.md](quickstart/KREA2.hi.md) |
 | Boogu-Image 0.1 | - | ✓ | ✓ | ✓* | fp8 वैकल्पिक | bf16 | ✓ | ✓ | ✗ | ✗ | ✗ | ✓ edit | ✗ | ✓ | [BOOGU_IMAGE.md](quickstart/BOOGU_IMAGE.hi.md) |
 | zlab i1 | 3B | ✓ | ✓ | ✓ | int8 वैकल्पिक | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | [ZLAB_i1.md](quickstart/ZLAB_i1.hi.md) |
 | Ideogram 4 | 9B | ✓ | ✓ | ✓* | fp8 डिफ़ॉल्ट, nf4 वैकल्पिक | bf16 | ✓+ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | [IDEOGRAM4.md](quickstart/IDEOGRAM4.hi.md) |

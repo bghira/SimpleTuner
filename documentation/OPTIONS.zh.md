@@ -893,6 +893,13 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **说明**：使用 `combined` 时不能在条件数据集中定义单独的 `captions`，会使用源数据集的字幕。
 - **另见**：[DATALOADER.md](DATALOADER.md#conditioning_data) 获取多条件数据集配置说明。
 
+### `--krea2_reference_latents` {#--krea2_reference_latents}
+
+- **内容**：启用 Krea 2 reference dataset 训练。
+- **原因**：启用后，Krea 2 在缓存 Qwen3VL prompt embeddings 时使用配对的条件图像，并在训练时把该条件图像的 clean VAE latents 追加到 transformer token 序列中。
+- **数据集设置**：主 image dataset 的 `conditioning_data` 应指向配对的 conditioning dataset。目标图像和参考图像的文件名必须匹配。
+- **范围**：这是 Krea 2 的模型侧选项。它不会生成 conditioning datasets；请使用常规 dataloader reference-dataset 设置。
+
 ### LTX-2 条件选项
 
 这些是 LTX-2 训练的可选高级设置。可以在 JSON/TOML 配置中使用下面的名称，也可以使用对应的 CLI flag，例如 `--ltx2_first_frame_conditioning_probability`。
