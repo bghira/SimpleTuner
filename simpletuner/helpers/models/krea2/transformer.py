@@ -29,11 +29,31 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import apply_lora_scale, logging
 
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+    register_flowmap_config,
+    set_flowmap_gate,
+    validate_flowmap_deltatime_type,
+)
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.tread import TREADRouter
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
 def _krea2_rope_freqs_dtype(device: torch.device) -> torch.dtype:
     return torch.float32 if device.type in {"mps", "neuron", "npu"} else torch.float64
+
+
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None) -> None:
+    if buffer is None:
+        return
+    capture = hidden_states
+    if image_tokens_start is not None:
+        capture = capture[:, image_tokens_start:]
+    buffer[key] = capture
 
 
 class Krea2RMSNorm(nn.Module):
@@ -281,18 +301,75 @@ class Krea2TimestepEmbedding(nn.Module):
     Keeps the sequence dimension at size 1 so the per-block modulations broadcast over tokens.
     """
 
-    def __init__(self, embed_dim: int, hidden_size: int) -> None:
+    def __init__(self, embed_dim: int, hidden_size: int, enable_time_sign_embed: bool = False) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.linear_1 = nn.Linear(embed_dim, hidden_size, bias=True)
         self.linear_2 = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.delta_timestep_embedder: nn.Module | None = None
+        self.flowmap_deltatime_type: str | None = None
+        self.register_buffer("flowmap_delta_emb_gate", torch.tensor([0.25], dtype=torch.float32), persistent=False)
+        self.time_sign_embed: nn.Embedding | None = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, hidden_size)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
-    def forward(self, timestep: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+    def _embed_timestep(self, timestep: torch.Tensor, dtype: torch.dtype, embedder: nn.Module | None = None) -> torch.Tensor:
+        embedder = embedder or self
         half = self.embed_dim // 2
         freqs = torch.exp(-math.log(1e4) * torch.arange(half, dtype=torch.float32, device=timestep.device) / half)
         args = (timestep.float() * 1e3)[:, None, None] * freqs
         emb = torch.cat([torch.cos(args), torch.sin(args)], dim=-1).to(dtype)
-        return self.linear_2(F.gelu(self.linear_1(emb), approximate="tanh"))
+        return embedder.linear_2(F.gelu(embedder.linear_1(emb), approximate="tanh"))
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Krea 2")
+        if self.delta_timestep_embedder is None:
+            self.delta_timestep_embedder = clone_flowmap_embedder(self)
+        set_flowmap_gate(self, gate_value)
+
+    def forward(
+        self,
+        timestep: torch.Tensor,
+        dtype: torch.dtype,
+        timestep_sign: torch.Tensor | None = None,
+        r_timestep: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        temb = self._embed_timestep(timestep, dtype)
+        if r_timestep is not None:
+            if self.delta_timestep_embedder is None or self.flowmap_deltatime_type is None:
+                raise ValueError(
+                    "Krea 2 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                )
+            delta_timestep = prepare_flowmap_delta_timestep(
+                timestep,
+                r_timestep,
+                self.flowmap_deltatime_type,
+                model_name="Krea 2",
+            )
+            delta_emb = self._embed_timestep(delta_timestep, dtype, embedder=self.delta_timestep_embedder)
+            temb = blend_flowmap_embeddings(temb, delta_emb, self.flowmap_delta_emb_gate)
+        if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
+            sign_tensor = timestep_sign.to(device=temb.device)
+            if sign_tensor.ndim == 0:
+                sign_tensor = sign_tensor.expand(temb.shape[0])
+            elif sign_tensor.ndim == 1:
+                if sign_tensor.shape[0] == 1:
+                    sign_tensor = sign_tensor.expand(temb.shape[0])
+                elif sign_tensor.shape[0] != temb.shape[0]:
+                    raise ValueError(
+                        f"Krea 2 timestep_sign expected 1 or {temb.shape[0]} batch values, got {sign_tensor.shape[0]}."
+                    )
+            else:
+                raise ValueError(f"Krea 2 timestep_sign expected scalar or 1D batch tensor, got {tuple(sign_tensor.shape)}.")
+            sign_idx = (sign_tensor.view(-1) < 0).long().to(device=temb.device)
+            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)[:, None, :]
+        return temb
 
 
 class Krea2TextProjection(nn.Module):
@@ -428,6 +505,11 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         axes_dims_rope: tuple[int, int, int] = (32, 48, 48),
         rope_theta: float = 1000.0,
         norm_eps: float = 1e-5,
+        enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
+        gate_value: float | None = None,
+        deltatime_type: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -441,7 +523,14 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         self.gradient_checkpointing = False
 
         self.img_in = nn.Linear(in_channels, hidden_size, bias=True)
-        self.time_embed = Krea2TimestepEmbedding(timestep_embed_dim, hidden_size)
+        self.time_embed = Krea2TimestepEmbedding(
+            timestep_embed_dim, hidden_size, enable_time_sign_embed=enable_time_sign_embed
+        )
+        if deltatime_type is not None:
+            self.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type=deltatime_type,
+            )
         self.time_mod_proj = nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         self.text_fusion = Krea2TextFusion(
             num_text_layers=num_text_layers,
@@ -470,6 +559,22 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         )
 
         self.final_layer = Krea2FinalLayer(hidden_size, out_channels=in_channels, eps=norm_eps)
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=len(self.transformer_blocks),
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
+        self._tread_router: TREADRouter | None = None
+        self._tread_routes: list[dict[str, Any]] | None = None
+
+    def set_router(self, router: TREADRouter, routes: list[dict[str, Any]] | None = None) -> None:
+        self._tread_router = router
+        self._tread_routes = routes
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
+        register_flowmap_config(self, gate_value, deltatime_type)
 
     def fuse_qkv_projections(self, preferred_backend: str | None = None) -> None:
         del preferred_backend
@@ -491,6 +596,10 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         position_ids: torch.Tensor,
         encoder_attention_mask: torch.Tensor | None = None,
         attention_kwargs: dict[str, Any] | None = None,
+        hidden_states_buffer: dict | None = None,
+        timestep_sign: torch.Tensor | None = None,
+        r_timestep: torch.Tensor | None = None,
+        skip_layers: list[int] | None = None,
         return_dict: bool = True,
     ) -> Transformer2DModelOutput | tuple[torch.Tensor]:
         r"""
@@ -524,7 +633,7 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         batch_size, image_seq_len, _ = hidden_states.shape
         text_seq_len = encoder_hidden_states.shape[1]
 
-        temb = self.time_embed(timestep, dtype=hidden_states.dtype)
+        temb = self.time_embed(timestep, dtype=hidden_states.dtype, timestep_sign=timestep_sign, r_timestep=r_timestep)
         temb_mod = self.time_mod_proj(F.gelu(temb, approximate="tanh"))
 
         text_attention_mask = None
@@ -545,13 +654,89 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
 
         image_rotary_emb = self.rotary_emb(position_ids)
 
-        for block in self.transformer_blocks:
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(
-                    block, hidden_states, temb_mod, image_rotary_emb, attention_mask
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        if use_routing and router is None:
+            raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
+        if routes:
+            total_layers = len(self.transformer_blocks)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **route,
+                    "start_layer_idx": _to_pos(route["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(route["end_layer_idx"]),
+                }
+                for route in routes
+            ]
+
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        saved_attention_mask = None
+        saved_rotary_cos = None
+        saved_rotary_sin = None
+
+        skip_set = set(skip_layers) if skip_layers is not None else set()
+        combined_blocks = list(self.transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, torch.is_grad_enabled())
+
+        for idx, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                musubi_manager.stream_in(block, hidden_states.device)
+
+            if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                force_keep = torch.zeros(
+                    (batch_size, hidden_states.shape[1]),
+                    dtype=torch.bool,
+                    device=hidden_states.device,
                 )
+                force_keep[:, :text_seq_len] = True
+                tread_mask_info = router.get_mask(hidden_states, mask_ratio=mask_ratio, force_keep=force_keep)
+                saved_tokens = hidden_states.clone()
+                saved_attention_mask = attention_mask
+                saved_rotary_cos, saved_rotary_sin = image_rotary_emb
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                image_rotary_emb = (
+                    router.start_route(saved_rotary_cos.unsqueeze(0).expand(batch_size, -1, -1), tread_mask_info)[0],
+                    router.start_route(saved_rotary_sin.unsqueeze(0).expand(batch_size, -1, -1), tread_mask_info)[0],
+                )
+                attention_mask = None
+                routing_now = True
+
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                if idx in skip_set:
+                    block_output = hidden_states
+                else:
+                    block_output = self._gradient_checkpointing_func(
+                        block, hidden_states, temb_mod, image_rotary_emb, attention_mask
+                    )
             else:
-                hidden_states = block(hidden_states, temb_mod, image_rotary_emb, attention_mask)
+                block_output = (
+                    hidden_states if idx in skip_set else block(hidden_states, temb_mod, image_rotary_emb, attention_mask)
+                )
+            hidden_states = block_output
+
+            if routing_now and route_ptr < len(routes) and idx == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(hidden_states, tread_mask_info, original_x=saved_tokens)
+                image_rotary_emb = (saved_rotary_cos, saved_rotary_sin)
+                attention_mask = saved_attention_mask
+                routing_now = False
+                route_ptr += 1
+
+            _store_hidden_state(hidden_states_buffer, f"layer_{idx}", hidden_states, image_tokens_start=text_seq_len)
+
+            if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                musubi_manager.stream_out(block)
 
         hidden_states = hidden_states[:, text_seq_len:]
         output = self.final_layer(hidden_states, temb)

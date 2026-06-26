@@ -129,7 +129,7 @@ simpletuner configure config/foo/config.json
 
 ### `--musubi_blocks_to_swap`
 
-- **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
+- **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo、Krea 2 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
 - **默认**：`0`（禁用）
 - **说明**：Musubi 风格权重卸载，会降低吞吐以换取显存节省，且在启用梯度时会跳过。
 - **说明**：Musubi 风格权重卸载，通过降低吞吐换取显存节省；启用梯度时会跳过。

@@ -18,6 +18,7 @@ from simpletuner.helpers.models.krea2.pipeline import Krea2Pipeline
 from simpletuner.helpers.models.krea2.transformer import Krea2Transformer2DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.tae.types import VideoTAESpec
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,26 @@ class Krea2(ImageModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     FUSED_LORA_TARGET = ["to_qkv", "to_out.0"]
 
+    def tread_init(self):
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        tread_cfg = getattr(self.config, "tread_config", None)
+        if not isinstance(tread_cfg, dict) or tread_cfg == {} or tread_cfg.get("routes") is None:
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            tread_cfg["routes"],
+        )
+
+        logger.info("TREAD training is enabled for Krea 2")
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         return 27
@@ -77,6 +98,24 @@ class Krea2(ImageModelFoundation):
 
     def supports_conditioning_dataset(self) -> bool:
         return True
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=self._patch_size())
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        if hidden_states_buffer is None:
+            return None
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_layer = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if capture_layer is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
     def requires_conditioning_dataset(self) -> bool:
         return self._uses_reference_latents()
@@ -419,6 +458,11 @@ class Krea2(ImageModelFoundation):
             raise ValueError(f"Krea 2 expected scalar or 1D timesteps, got shape {tuple(timesteps.shape)}.")
         return timesteps / 1000.0
 
+    def _apply_krea2_experimental_timestep_kwargs(self, call_kwargs: dict, prepared_batch: dict) -> None:
+        if getattr(self.config, "twinflow_enabled", False):
+            call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+        self._apply_flowmap_r_timestep_kwargs(call_kwargs, prepared_batch)
+
     def _prepare_reference_latents(self, prepared_batch: dict, batch_size: int, channels: int, height: int, width: int):
         reference_latents = prepared_batch.get("conditioning_latents")
         if isinstance(reference_latents, list):
@@ -477,12 +521,19 @@ class Krea2(ImageModelFoundation):
         timesteps = self._prepare_model_predict_timesteps(prepared_batch["timesteps"], batch_size)
         position_ids = self._position_ids_for_grids(prompt_embeds.shape[1], grids, self.accelerator.device)
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        call_kwargs = {}
+        if hidden_states_buffer is not None:
+            call_kwargs["hidden_states_buffer"] = hidden_states_buffer
+        self._apply_krea2_experimental_timestep_kwargs(call_kwargs, prepared_batch)
+
         noise_pred = self.model(
             hidden_states=hidden_states,
             encoder_hidden_states=prompt_embeds,
             timestep=timesteps,
             position_ids=position_ids,
             encoder_attention_mask=prompt_embeds_mask,
+            **call_kwargs,
             return_dict=False,
         )[0]
         noise_pred = noise_pred[:, :target_token_count]
@@ -490,7 +541,15 @@ class Krea2(ImageModelFoundation):
 
         if target_ndim == 5:
             noise_pred = noise_pred.unsqueeze(2)
-        return {"model_prediction": noise_pred}
+        return {
+            "model_prediction": noise_pred,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
+            "hidden_states_buffer": hidden_states_buffer,
+        }
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
 
 ModelRegistry.register("krea2", Krea2)
