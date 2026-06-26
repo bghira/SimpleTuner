@@ -28,9 +28,12 @@ from diffusers.models.embeddings import apply_rotary_emb, get_1d_rotary_pos_embe
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import apply_lora_scale, logging
-from diffusers.utils.torch_utils import maybe_adjust_dtype_for_device
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+def _krea2_rope_freqs_dtype(device: torch.device) -> torch.dtype:
+    return torch.float32 if device.type in {"mps", "neuron", "npu"} else torch.float64
 
 
 class Krea2RMSNorm(nn.Module):
@@ -336,7 +339,7 @@ class Krea2RotaryPosEmbed(nn.Module):
         cos_out = []
         sin_out = []
         pos = ids.float()
-        freqs_dtype = maybe_adjust_dtype_for_device(torch.float64, ids.device)
+        freqs_dtype = _krea2_rope_freqs_dtype(ids.device)
         for i in range(n_axes):
             cos, sin = get_1d_rotary_pos_embed(
                 self.axes_dim[i],

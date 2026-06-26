@@ -6,7 +6,7 @@ import torch
 
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.krea2 import Krea2, Krea2LoraLoaderMixin, Krea2Pipeline, Krea2Transformer2DModel
-from simpletuner.helpers.models.krea2.transformer import Krea2Attention
+from simpletuner.helpers.models.krea2.transformer import Krea2Attention, _krea2_rope_freqs_dtype
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
@@ -63,6 +63,11 @@ class Krea2VendoredModelTests(unittest.TestCase):
         self.assertEqual(Krea2LoraLoaderMixin.__module__, "simpletuner.helpers.models.krea2.lora_pipeline")
         self.assertEqual(Krea2.PROCESSOR_PATH, "Qwen/Qwen3-VL-4B-Instruct")
         self.assertIsNone(Krea2.PROCESSOR_SUBFOLDER)
+
+    def test_rope_frequency_dtype_matches_pypi_diffusers_device_support(self):
+        self.assertEqual(_krea2_rope_freqs_dtype(torch.device("cpu")), torch.float64)
+        self.assertEqual(_krea2_rope_freqs_dtype(torch.device("cuda")), torch.float64)
+        self.assertEqual(_krea2_rope_freqs_dtype(torch.device("mps")), torch.float32)
 
     def test_lora_loader_targets_transformer(self):
         self.assertEqual(Krea2LoraLoaderMixin._lora_loadable_modules, ["transformer"])
