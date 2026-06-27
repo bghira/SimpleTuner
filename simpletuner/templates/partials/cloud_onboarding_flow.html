@@ -133,10 +133,10 @@
                                 Replicate uploads the model back here. Requires exposing your server via ngrok or cloudflare tunnel.
                             </p>
                             <div class="option-status">
-                                <template x-if="webhookUrl && webhookUrl.trim().length > 0">
+                                <template x-if="savedWebhookUrl && savedWebhookUrl.trim().length > 0">
                                     <span class="text-success small"><i class="fas fa-check-circle me-1"></i>Webhook configured</span>
                                 </template>
-                                <template x-if="!webhookUrl || webhookUrl.trim().length === 0">
+                                <template x-if="!savedWebhookUrl || savedWebhookUrl.trim().length === 0">
                                     <button type="button"
                                             class="btn btn-sm btn-outline-secondary"
                                             @click="showSettingsPanel = true">

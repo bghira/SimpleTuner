@@ -1972,6 +1972,71 @@ class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_uploading_job_visible_in_cloud_list", scenario)
 
 
+class CloudWebhookDraftInputTestCase(_TrainerPageMixin, WebUITestCase):
+    """Ensure the Cloud checklist webhook input remains editable before save."""
+
+    MAX_BROWSERS = 1
+
+    def test_webhook_hint_input_stays_visible_while_typing_unsaved_draft(self) -> None:
+        self.with_sample_environment()
+        secrets_path = self.home_path / ".simpletuner" / "secrets.json"
+        secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        secrets_path.write_text(json.dumps({"REPLICATE_API_TOKEN": "r8_test_dummy"}), encoding="utf-8")
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+
+            driver.execute_script(
+                "localStorage.removeItem('cloud_hints');"
+                "localStorage.setItem('cloud_onboarding', JSON.stringify({"
+                "data_understood: true, results_understood: true, cost_understood: true}));"
+            )
+
+            cloud_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+            )
+            cloud_tab.click()
+
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
+            trainer_page.wait_for_htmx()
+
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script(
+                    "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
+                )
+            )
+
+            input_selector = ".cloud-setup-checklist .webhook-setup input[type='url']"
+            webhook_input = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, input_selector))
+            )
+            webhook_input.send_keys("h")
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.find_element(By.CSS_SELECTOR, input_selector).get_attribute("value") == "h"
+            )
+
+            input_count = driver.execute_script(
+                "return document.querySelectorAll(arguments[0]).length;",
+                input_selector,
+            )
+            self.assertEqual(input_count, 1)
+
+            has_output_destination = driver.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "if (!el) { throw new Error('Cloud tab content not found'); }"
+                "if (!window.Alpine || !window.Alpine.$data) { throw new Error('Alpine is not initialized'); }"
+                "const comp = window.Alpine.$data(el);"
+                "if (!comp) { throw new Error('Cloud Alpine component not found'); }"
+                "return comp.hasOutputDestination;"
+            )
+            self.assertIs(has_output_destination, False)
+
+        self.for_each_browser("test_webhook_hint_input_stays_visible_while_typing_unsaved_draft", scenario)
+
+
 class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
     """Test that Easy Mode field changes correctly enable the save button.
 

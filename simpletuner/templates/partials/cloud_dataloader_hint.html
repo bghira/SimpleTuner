@@ -141,7 +141,7 @@
                                     <template x-if="publishingStatus.s3_configured && !publishingStatus.push_to_hub">
                                         <span class="text-warning"><i class="fab fa-aws me-1"></i>S3/Cloud Storage</span>
                                     </template>
-                                    <template x-if="webhookUrl && webhookUrl.trim().length > 0 && !publishingStatus.push_to_hub && !publishingStatus.s3_configured">
+                                    <template x-if="savedWebhookUrl && savedWebhookUrl.trim().length > 0 && !publishingStatus.push_to_hub && !publishingStatus.s3_configured">
                                         <span class="text-info"><i class="fas fa-link me-1"></i>Webhook to local machine</span>
                                     </template>
                                 </div>

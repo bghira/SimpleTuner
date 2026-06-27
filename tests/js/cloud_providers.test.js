@@ -37,6 +37,7 @@ describe('cloudProviderMethods', () => {
             activeProvider: 'replicate',
             providerConfig: {},
             webhookUrl: '',
+            savedWebhookUrl: '',
             costLimit: {
                 loading: false,
                 saving: false,
@@ -155,6 +156,28 @@ describe('cloudProviderMethods', () => {
 
             expect(fetch).toHaveBeenCalledWith('/api/cloud/providers/replicate/config');
             expect(context.webhookUrl).toBe('https://webhook.example.com');
+            expect(context.savedWebhookUrl).toBe('https://webhook.example.com');
+        });
+
+        test('loads webhook URL from wrapped provider config response', async () => {
+            fetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    provider: 'replicate',
+                    config: {
+                        webhook_url: 'https://wrapped-webhook.example.com',
+                        version_override: 'v2.0.0',
+                    },
+                }),
+            });
+
+            context.loadCostLimitStatus = jest.fn();
+
+            await window.cloudProviderMethods.loadProviderConfig.call(context);
+
+            expect(context.providerConfig.webhook_url).toBe('https://wrapped-webhook.example.com');
+            expect(context.webhookUrl).toBe('https://wrapped-webhook.example.com');
+            expect(context.savedWebhookUrl).toBe('https://wrapped-webhook.example.com');
         });
 
         test('calls loadCostLimitStatus after loading config', async () => {

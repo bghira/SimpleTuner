@@ -413,7 +413,8 @@ if (!window.cloudDashboardComponent) {
                 this.setupStatus.outputConfigured =
                     this.publishingStatus.push_to_hub ||
                     this.publishingStatus.s3_configured ||
-                    (this.webhookUrl && this.webhookUrl.trim().length > 0);
+                    (this.savedWebhookUrl && this.savedWebhookUrl.trim().length > 0) ||
+                    this.publishingStatus.local_upload_available;
             },
 
             // Note: hasDatasets getter moved to final return object
@@ -677,7 +678,8 @@ if (!window.cloudDashboardComponent) {
                 if (!this.publishingStatus) return false;
                 return this.publishingStatus.push_to_hub ||
                        this.publishingStatus.s3_configured ||
-                       (this.webhookUrl && this.webhookUrl.trim().length > 0);
+                       (this.savedWebhookUrl && this.savedWebhookUrl.trim().length > 0) ||
+                       this.publishingStatus.local_upload_available;
             },
             get allSetupComplete() {
                 return this.hasDatasets && this.hasActiveConfig && this.hasOutputDestination;

@@ -331,12 +331,13 @@ class WebUIStateStore:
         payload = self._read_json("defaults")
         if not payload:
             return WebUIDefaults()
+        base_defaults = WebUIDefaults()
         data: Dict[str, Any] = {}
-        for key in WebUIDefaults().__dict__.keys():
+        for key, default_value in base_defaults.__dict__.items():
             if key == "accelerate_overrides":
                 data[key] = _normalise_accelerate_overrides(payload.get(key))
             else:
-                data[key] = payload.get(key)
+                data[key] = payload.get(key, default_value)
         defaults = WebUIDefaults(**data)
 
         # Normalise theme selection
@@ -428,6 +429,17 @@ class WebUIStateStore:
         # Normalise cloud hint dismissal booleans
         defaults.cloud_dataloader_hint_dismissed = bool(payload.get("cloud_dataloader_hint_dismissed", False))
         defaults.cloud_git_hint_dismissed = bool(payload.get("cloud_git_hint_dismissed", False))
+
+        # Normalise cloud tab enabled (default True)
+        cloud_tab_value = payload.get("cloud_tab_enabled")
+        if cloud_tab_value is None:
+            defaults.cloud_tab_enabled = True
+        elif isinstance(cloud_tab_value, bool):
+            defaults.cloud_tab_enabled = cloud_tab_value
+        elif isinstance(cloud_tab_value, str):
+            defaults.cloud_tab_enabled = cloud_tab_value.strip().lower() not in {"0", "false", "no", "off"}
+        else:
+            defaults.cloud_tab_enabled = bool(cloud_tab_value)
 
         # Normalise cloud data consent
         consent_value = payload.get("cloud_data_consent")
