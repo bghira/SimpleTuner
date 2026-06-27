@@ -39,6 +39,9 @@ window.cloudSubmissionMethods = {
         this.preSubmitModal.trackerRunName = data.tracker_run_name || '';
         this.preSubmitModal.configName = data.config_name || '';
         this.preSubmitModal.snapshotName = '';
+        if (!this.preSubmitModal.hardwareProfile) {
+            this.preSubmitModal.hardwareProfile = this.getDefaultReplicateHardwareProfile();
+        }
     },
 
     async openPreSubmitModal() {
@@ -234,6 +237,51 @@ window.cloudSubmissionMethods = {
         localStorage.setItem('cloud_quick_submit_mode', enabled ? 'true' : 'false');
     },
 
+    getReplicateHardwareProfiles() {
+        const provider = (this.providers || []).find((p) => p.id === 'replicate');
+        const profiles = provider?.hardware_profiles || [];
+        if (profiles.length > 0) {
+            return profiles;
+        }
+        return [
+            { id: 'h100', label: 'H100', hardware_type: 'H100' },
+            { id: 'h100-x2', label: '2x H100', hardware_type: '2x H100' },
+            { id: 'h100-x4', label: '4x H100', hardware_type: '4x H100' },
+            { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100' },
+            { id: 'l40s', label: 'L40S', hardware_type: 'L40S' },
+            { id: 'l40s-x2', label: '2x L40S', hardware_type: '2x L40S' },
+            { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S' },
+            { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S' },
+        ];
+    },
+
+    getDefaultReplicateHardwareProfile() {
+        const storedProfile = localStorage.getItem('cloud_replicate_hardware_profile');
+        if (storedProfile) {
+            return storedProfile;
+        }
+
+        const provider = (this.providers || []).find((p) => p.id === 'replicate');
+        const providerDefault = provider?.hardware_profile;
+        if (providerDefault) {
+            return providerDefault;
+        }
+
+        const configuredDefault = this.providerConfig?.config?.hardware_profile ||
+                                  this.providerConfig?.hardware_profile;
+        if (configuredDefault) {
+            return configuredDefault;
+        }
+
+        return 'h100';
+    },
+
+    saveHardwareProfile(profile) {
+        if (profile) {
+            localStorage.setItem('cloud_replicate_hardware_profile', profile);
+        }
+    },
+
     startUploadProgress(uploadId) {
         this.uploadProgress.active = true;
         this.uploadProgress.stage = 'scanning';
@@ -310,11 +358,14 @@ window.cloudSubmissionMethods = {
     },
 
     buildBasePayload(uploadId) {
+        const hardwareProfile = this.preSubmitModal.hardwareProfile ||
+                                this.getDefaultReplicateHardwareProfile();
         return {
             webhook_url: this.webhookUrl || null,
             snapshot_name: this.preSubmitModal.snapshotName || null,
             snapshot_message: this.preSubmitModal.snapshotMessage || null,
             tracker_run_name: this.preSubmitModal.trackerRunName || null,
+            hardware_profile: hardwareProfile,
             upload_id: uploadId,
         };
     },

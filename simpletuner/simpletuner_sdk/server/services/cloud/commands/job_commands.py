@@ -55,6 +55,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
         snapshot_message: Optional[str] = None,
         upload_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        hardware_profile: Optional[str] = None,
         user: Optional["User"] = None,
     ):
         super().__init__()
@@ -68,6 +69,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
         self.snapshot_message = snapshot_message
         self.upload_id = upload_id
         self.idempotency_key = idempotency_key
+        self.hardware_profile = hardware_profile
         self.user = user
 
         # For rollback
@@ -92,6 +94,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
         snapshot_message: Optional[str] = None,
         upload_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        hardware_profile: Optional[str] = None,
         config_name: Optional[str] = None,
     ) -> "SubmitJobCommand":
         """Factory method to create command from request, loading config if needed."""
@@ -137,6 +140,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
             snapshot_message=snapshot_message,
             upload_id=upload_id,
             idempotency_key=idempotency_key,
+            hardware_profile=hardware_profile,
             user=user,
         )
 
@@ -147,6 +151,14 @@ class SubmitJobCommand(Command[SubmitJobData]):
 
         if not ctx.has_permission("job.submit"):
             return "Permission denied: job.submit"
+
+        if self.provider == "replicate" and self.hardware_profile:
+            try:
+                from ..replicate_profiles import normalize_replicate_hardware_profile
+
+                self.hardware_profile = normalize_replicate_hardware_profile(self.hardware_profile)
+            except ValueError as exc:
+                return str(exc)
 
         # Resource-based access check
         if self.user and self.config_name:
@@ -351,6 +363,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
                 snapshot_message=self.snapshot_message,
                 upload_id=self.upload_id,
                 quota_warnings=self._quota_warnings,
+                hardware_profile=self.hardware_profile,
             )
 
             # Execute via service
@@ -379,6 +392,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
                 details={
                     "data_uploaded": result.data_uploaded,
                     "tracker_run_name": self.tracker_run_name,
+                    "hardware_profile": self.hardware_profile,
                 },
             )
 
@@ -441,6 +455,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
                 "config_name": self.config_name,
                 "has_config": bool(self.config),
                 "dataloader_count": len(self.dataloader_config) if self.dataloader_config else 0,
+                "hardware_profile": self.hardware_profile,
             }
         )
         return base

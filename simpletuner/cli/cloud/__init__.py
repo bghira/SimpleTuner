@@ -7,6 +7,8 @@ for all cloud-related subcommands.
 
 import argparse
 
+from simpletuner.simpletuner_sdk.server.services.cloud.replicate_profiles import REPLICATE_HARDWARE_PROFILES
+
 from . import config, cost_limit, jobs
 
 
@@ -144,6 +146,11 @@ def _add_jobs_parser(subparsers):
     submit_parser.add_argument(
         "--idempotency-key",
         help="Idempotency key to prevent duplicate submissions",
+    )
+    submit_parser.add_argument(
+        "--hardware-profile",
+        choices=list(REPLICATE_HARDWARE_PROFILES),
+        help="Replicate hardware profile/model to use, e.g. h100, h100-x4, l40s-x2",
     )
     submit_parser.add_argument(
         "--dry-run",

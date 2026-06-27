@@ -10,7 +10,7 @@ import requests
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from tests.pages.trainer_page import BasicConfigTab, DatasetsTab, ModelConfigTab, TrainerPage, TrainingConfigTab
 from tests.webui_test_base import WebUITestCase
@@ -1735,6 +1735,156 @@ class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
         self.for_each_browser("test_upload_progress_uses_webhooks_endpoint", scenario)
+
+
+class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test Replicate hardware profile modal persistence and submission."""
+
+    MAX_BROWSERS = 1
+
+    def _open_cloud_tab(self, driver) -> None:
+        trainer_page = self._trainer_page(driver)
+        trainer_page.navigate_to_trainer()
+        self.dismiss_onboarding(driver)
+
+        cloud_tab = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+        )
+        cloud_tab.click()
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
+        trainer_page.wait_for_htmx()
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return !!(window.Alpine && document.querySelector('#cloud-tab-content'));")
+        )
+
+    def _install_cloud_modal_harness(self, driver) -> bool:
+        return driver.execute_script(
+            """
+            const el = document.querySelector('#cloud-tab-content');
+            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            if (!comp) { return false; }
+
+            comp.activeProvider = 'replicate';
+            comp.providers = [{
+                id: 'replicate',
+                name: 'Replicate',
+                hardware_profile: 'l40s-x4',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', hardware_type: 'H100' },
+                    { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100' },
+                    { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S' }
+                ]
+            }];
+            comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
+            comp.selectedConfigName = 'default';
+            comp.webhookUrl = '';
+            comp.quickSubmitMode = false;
+            comp.isActiveProviderConfigured = () => true;
+            comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate' });
+            comp.loadDataUploadPreview = async () => {
+                comp.preSubmitModal.dataUploadPreview = {
+                    requires_upload: false,
+                    datasets: [],
+                    total_files: 0,
+                    total_size_mb: 0
+                };
+                comp.preSubmitModal.dataConsentConfirmed = true;
+            };
+            comp.loadCostEstimate = async () => {
+                comp.preSubmitModal.costEstimate = {
+                    has_estimate: true,
+                    estimated_cost_usd: 1.23,
+                    hardware_cost_per_hour: 4.0
+                };
+            };
+            comp.loadConfigPreview = async () => {
+                comp.preSubmitModal.configPreview = {};
+                comp.preSubmitModal.dataloaderPreview = [];
+            };
+            comp.checkWebhookReachability = async () => {
+                comp.preSubmitModal.webhookCheck = {
+                    tested: true,
+                    testing: false,
+                    success: true,
+                    error: null,
+                    skipped: false
+                };
+            };
+            comp.loadJobs = () => {};
+            comp.loadCostLimitStatus = () => {};
+            comp.submitJobToProvider = async (payload) => {
+                window.__lastCloudSubmitPayload = payload;
+                return { success: true, job_id: 'cloud-hardware-e2e' };
+            };
+            window.__cloudHardwareComponentReady = true;
+            return true;
+            """
+        )
+
+    def _open_modal(self, driver) -> None:
+        opened = driver.execute_async_script(
+            """
+            const done = arguments[0];
+            const el = document.querySelector('#cloud-tab-content');
+            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            if (!comp || typeof comp.openPreSubmitModal !== 'function') { done(false); return; }
+            comp.openPreSubmitModal().then(() => done(true)).catch((err) => {
+                console.error('openPreSubmitModal failed', err);
+                done(false);
+            });
+            """
+        )
+        self.assertTrue(opened)
+        WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".cloud-submit-modal.show")))
+        WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']"))
+        )
+
+    def test_replicate_hardware_profile_persists_and_submits(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            self._open_cloud_tab(driver)
+            driver.execute_script("localStorage.removeItem('cloud_replicate_hardware_profile');")
+            self.assertTrue(self._install_cloud_modal_harness(driver))
+
+            self._open_modal(driver)
+            select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
+            self.assertEqual(select_el.get_attribute("value"), "l40s-x4")
+
+            Select(select_el).select_by_value("h100-x8")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return localStorage.getItem('cloud_replicate_hardware_profile');") == "h100-x8"
+            )
+
+            driver.execute_script(
+                "const comp = Alpine.$data(document.querySelector('#cloud-tab-content')); comp.closePreSubmitModal();"
+            )
+            self._open_modal(driver)
+            select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
+            self.assertEqual(select_el.get_attribute("value"), "h100-x8")
+
+            driver.refresh()
+            self._open_cloud_tab(driver)
+            self.assertTrue(self._install_cloud_modal_harness(driver))
+            self._open_modal(driver)
+            select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
+            self.assertEqual(select_el.get_attribute("value"), "h100-x8")
+
+            next_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='cloud-submit-next-button']"))
+            )
+            next_button.click()
+            submit_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='cloud-submit-final-button']"))
+            )
+            submit_button.click()
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return window.__lastCloudSubmitPayload?.hardware_profile;") == "h100-x8"
+            )
+
+        self.for_each_browser("test_replicate_hardware_profile_persists_and_submits", scenario)
 
 
 class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):

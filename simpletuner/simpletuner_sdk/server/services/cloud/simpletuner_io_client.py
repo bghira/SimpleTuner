@@ -311,6 +311,7 @@ class SimpleTunerIOClient(CloudTrainerService):
         hub_model_id: Optional[str] = None,
         user_id: Optional[int] = None,
         lycoris_config: Optional[Dict[str, Any]] = None,
+        hardware_profile: Optional[str] = None,
     ) -> CloudJobInfo:
         """Submit a new training job to SimpleTuner.io."""
         provider_config = await self._config_store.get(PROVIDER_NAME)
