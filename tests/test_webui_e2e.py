@@ -1770,9 +1770,11 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
                 name: 'Replicate',
                 hardware_profile: 'l40s-x4',
                 hardware_profiles: [
-                    { id: 'h100', label: 'H100', hardware_type: 'H100' },
-                    { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100' },
-                    { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S' }
+                    { id: 'h100', label: 'H100', hardware_type: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
+                    { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100', cost_per_hour: 43.92, cost_per_second: 0.0122 },
+                    { id: 'l40s', label: 'L40S', hardware_type: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
+                    { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S', cost_per_hour: 14.00, cost_per_second: 0.003888888 },
+                    { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S', cost_per_hour: 28.00, cost_per_second: 0.007777776 }
                 ]
             }];
             comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
@@ -1885,6 +1887,80 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
         self.for_each_browser("test_replicate_hardware_profile_persists_and_submits", scenario)
+
+    def test_replicate_settings_hardware_buttons_update_cost_and_persist(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            self._open_cloud_tab(driver)
+            driver.execute_script("localStorage.setItem('cloud_replicate_hardware_profile', 'h100-x8');")
+            self.assertTrue(self._install_cloud_modal_harness(driver))
+
+            driver.execute_script(
+                """
+                const comp = Alpine.$data(document.querySelector('#cloud-tab-content'));
+                comp.preSubmitModal.hardwareProfile = 'h100-x8';
+                comp.showSettingsPanel = true;
+                """
+            )
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "return Array.from(document.querySelectorAll('[data-testid=\"cloud-settings-hardware-profile\"]'))"
+                    ".filter((button) => button.offsetParent !== null).length === 2;"
+                )
+            )
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const panel = document.querySelector('.cloud-settings-panel');"
+                    "return panel && panel.innerText.includes('$43.92/hr') && "
+                    "panel.innerText.includes('$0.012200/sec');"
+                )
+            )
+
+            pressed_before = driver.execute_script(
+                """
+                return Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
+                    .filter((button) => button.offsetParent !== null)
+                    .map((button) => ({ text: button.innerText.trim(), pressed: button.getAttribute('aria-pressed') }));
+                """
+            )
+            self.assertIn({"text": "H100", "pressed": "true"}, pressed_before)
+            self.assertIn({"text": "L40S", "pressed": "false"}, pressed_before)
+
+            clicked = driver.execute_script(
+                """
+                const button = Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
+                    .find((candidate) => candidate.offsetParent !== null && candidate.innerText.trim() === 'L40S');
+                if (!button) { return false; }
+                button.click();
+                return true;
+                """
+            )
+            self.assertTrue(clicked)
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return localStorage.getItem('cloud_replicate_hardware_profile');") == "l40s-x8"
+            )
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const panel = document.querySelector('.cloud-settings-panel');"
+                    "return panel && panel.innerText.includes('$28.00/hr') && "
+                    "panel.innerText.includes('$0.007778/sec');"
+                )
+            )
+
+            pressed_after = driver.execute_script(
+                """
+                return Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
+                    .filter((button) => button.offsetParent !== null)
+                    .map((button) => ({ text: button.innerText.trim(), pressed: button.getAttribute('aria-pressed') }));
+                """
+            )
+            self.assertIn({"text": "H100", "pressed": "false"}, pressed_after)
+            self.assertIn({"text": "L40S", "pressed": "true"}, pressed_after)
+
+        self.for_each_browser("test_replicate_settings_hardware_buttons_update_cost_and_persist", scenario)
 
 
 class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):

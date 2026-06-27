@@ -143,7 +143,7 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
                     except (TypeError, ValueError):
                         multiplier = 1
                 option["cost_per_hour"] = round(base_costs[base_profile] * multiplier, 2)
-                option["cost_per_second"] = round((base_costs[base_profile] / 3600) * multiplier, 6)
+                option["cost_per_second"] = (base_costs[base_profile] / 3600) * multiplier
 
             provider_data.update(
                 {

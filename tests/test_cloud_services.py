@@ -410,7 +410,7 @@ class TestHardwarePricingConfig(unittest.IsolatedAsyncioTestCase):
         hardware = await get_hardware_info_async(self.store)
         self.assertEqual(hardware, DEFAULT_HARDWARE_INFO)
         self.assertIn("gpu-l40s", hardware)
-        self.assertIn("gpu-a100-large", hardware)
+        self.assertIn("gpu-h100", hardware)
 
     async def test_configured_hardware_info(self) -> None:
         """Test that configured hardware info overrides defaults."""
@@ -421,9 +421,8 @@ class TestHardwarePricingConfig(unittest.IsolatedAsyncioTestCase):
 
         # Configure custom hardware info
         custom_hardware = {
-            "gpu-a100-large": {"cost_per_second": 0.0014, "name": "A100 (80GB)"},
-            "gpu-h100": {"name": "H100 (80GB)", "cost_per_second": 0.0014},
-            "gpu-l40s": {"name": "L40S (48GB)", "cost_per_second": 0.000975},
+            "gpu-h100": {"name": "H100 (80GB)", "cost_per_second": 0.001525},
+            "gpu-l40s": {"name": "L40S (48GB)", "cost_per_second": 0.000972222},
         }
         await self.store.save_provider_config("replicate", {"hardware_info": custom_hardware})
 
@@ -445,8 +444,8 @@ class TestHardwarePricingConfig(unittest.IsolatedAsyncioTestCase):
         clear_hardware_info_cache()
 
         cost = await get_default_hardware_cost_per_hour(self.store)
-        # L40S at $0.000975/sec = $3.51/hr
-        self.assertAlmostEqual(cost, 3.51, places=2)
+        # L40S at $0.000972222/sec = $3.50/hr
+        self.assertAlmostEqual(cost, 3.50, places=2)
 
     async def test_configured_hardware_cost_per_hour(self) -> None:
         """Test that configured hardware cost is used."""

@@ -231,6 +231,7 @@
                                                 class="btn btn-sm rounded-pill"
                                                 data-testid="cloud-onboarding-hardware-profile"
                                                 :class="getSelectedReplicateBaseHardware() === profile.id ? 'btn-info text-dark' : 'btn-outline-secondary'"
+                                                :aria-pressed="getSelectedReplicateBaseHardware() === profile.id ? 'true' : 'false'"
                                                 @click="setReplicateBaseHardwareProfile(profile.id)">
                                             <span x-text="profile.label || profile.id.toUpperCase()"></span>
                                         </button>
