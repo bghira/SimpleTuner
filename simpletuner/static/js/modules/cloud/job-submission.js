@@ -255,6 +255,66 @@ window.cloudSubmissionMethods = {
         ];
     },
 
+    getReplicateBaseHardwareOptions() {
+        return this.getReplicateHardwareProfiles()
+            .filter((profile) => profile.id === 'l40s' || profile.id === 'h100')
+            .sort((a, b) => (a.id === 'l40s' ? -1 : 1));
+    },
+
+    getSelectedReplicateBaseHardware() {
+        const selected = this.preSubmitModal?.hardwareProfile || this.getDefaultReplicateHardwareProfile();
+        return String(selected || '').startsWith('l40s') ? 'l40s' : 'h100';
+    },
+
+    getSelectedReplicateHardwareProfile() {
+        const selected = this.preSubmitModal?.hardwareProfile || this.getDefaultReplicateHardwareProfile();
+        const profiles = this.getReplicateHardwareProfiles();
+        return profiles.find((profile) => profile.id === selected) ||
+               profiles.find((profile) => profile.id === this.getSelectedReplicateBaseHardware()) ||
+               null;
+    },
+
+    setReplicateBaseHardwareProfile(profileId) {
+        if (!profileId) {
+            return;
+        }
+        const currentProfile = this.preSubmitModal?.hardwareProfile || this.getDefaultReplicateHardwareProfile();
+        const multiplier = String(currentProfile || '').match(/-x\d+$/)?.[0] || '';
+        const candidateProfile = `${profileId}${multiplier}`;
+        const profiles = this.getReplicateHardwareProfiles();
+        const nextProfile = profiles.some((profile) => profile.id === candidateProfile)
+            ? candidateProfile
+            : profileId;
+        this.preSubmitModal.hardwareProfile = nextProfile;
+        this.saveHardwareProfile(nextProfile);
+    },
+
+    getReplicateBaseHardwareCostDisplay() {
+        const selected = this.getSelectedReplicateBaseHardware();
+        const profile = this.getSelectedReplicateHardwareProfile() ||
+                        this.getReplicateBaseHardwareOptions().find((option) => option.id === selected);
+        if (typeof profile?.cost_per_hour === 'number') {
+            return '$' + profile.cost_per_hour.toFixed(2) + '/hr';
+        }
+        if (selected === 'h100') {
+            return '$5.49/hr';
+        }
+        return '$3.50/hr';
+    },
+
+    getReplicateBaseHardwareCostDetail() {
+        const selected = this.getSelectedReplicateBaseHardware();
+        const profile = this.getSelectedReplicateHardwareProfile() ||
+                        this.getReplicateBaseHardwareOptions().find((option) => option.id === selected);
+        if (typeof profile?.cost_per_second === 'number') {
+            return '$' + profile.cost_per_second.toFixed(6) + '/sec';
+        }
+        if (selected === 'h100') {
+            return '$0.001525/sec';
+        }
+        return '$0.000972/sec';
+    },
+
     getDefaultReplicateHardwareProfile() {
         const storedProfile = localStorage.getItem('cloud_replicate_hardware_profile');
         if (storedProfile) {

@@ -41,10 +41,10 @@ def _get_credential_resolver():
 DEFAULT_MODEL = get_replicate_hardware_profile(DEFAULT_REPLICATE_HARDWARE_PROFILE).model
 
 # Default hardware info for cost estimation (fallback values if not configured)
-# These are based on Replicate's published pricing as of 2024
+# These are based on Replicate's published pricing.
 DEFAULT_HARDWARE_INFO: Dict[str, Dict[str, Any]] = {
-    "gpu-l40s": {"name": "L40S (48GB)", "cost_per_second": 0.000975},
-    "gpu-a100-large": {"name": "A100 (80GB)", "cost_per_second": 0.001400},
+    "gpu-l40s": {"name": "L40S (48GB)", "cost_per_second": 0.000972222},
+    "gpu-h100": {"name": "H100 (80GB)", "cost_per_second": 0.001525},
 }
 
 # Cached hardware info (loaded from config or defaults)
@@ -112,7 +112,7 @@ async def get_default_hardware_cost_per_hour(store: Optional[Any] = None) -> flo
     """
     hardware = await get_hardware_info_async(store)
     l40s = hardware.get("gpu-l40s", DEFAULT_HARDWARE_INFO["gpu-l40s"])
-    return l40s.get("cost_per_second", 0.000975) * 3600
+    return l40s.get("cost_per_second", 0.000972222) * 3600
 
 
 def update_hardware_info_cache(hardware_info: Dict[str, Dict[str, Any]]) -> None:

@@ -245,12 +245,12 @@ class ConfigurablePricingProvider(GPUPricingProvider):
 REPLICATE_DEFAULT_HARDWARE = {
     "gpu-l40s": {
         "name": "L40S (48GB)",
-        "cost_per_second": 0.000975,
+        "cost_per_second": 0.000972222,
         "memory_gb": 48,
     },
-    "gpu-a100-large": {
-        "name": "A100 (80GB)",
-        "cost_per_second": 0.001400,
+    "gpu-h100": {
+        "name": "H100 (80GB)",
+        "cost_per_second": 0.001525,
         "memory_gb": 80,
     },
 }

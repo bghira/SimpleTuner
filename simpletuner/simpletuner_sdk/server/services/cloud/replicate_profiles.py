@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List
 
 DEFAULT_REPLICATE_HARDWARE_PROFILE = "h100"
 
@@ -70,7 +70,7 @@ REPLICATE_HARDWARE_PROFILES: Dict[str, ReplicateHardwareProfile] = {
 }
 
 
-def list_replicate_hardware_profiles() -> List[Dict[str, str]]:
+def list_replicate_hardware_profiles() -> List[Dict[str, Any]]:
     """Return profile metadata suitable for API/UI responses."""
     return [
         {

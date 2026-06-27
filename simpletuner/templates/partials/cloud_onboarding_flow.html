@@ -224,11 +224,28 @@
                     <div class="cost-breakdown">
                         <div class="cost-row">
                             <span class="cost-label">Hardware</span>
-                            <span class="cost-value">L40S (48GB VRAM)</span>
+                            <span class="cost-value">
+                                <span class="d-flex gap-2 justify-content-end">
+                                    <template x-for="profile in getReplicateBaseHardwareOptions()" :key="profile.id">
+                                        <button type="button"
+                                                class="btn btn-sm rounded-pill"
+                                                data-testid="cloud-onboarding-hardware-profile"
+                                                :class="getSelectedReplicateBaseHardware() === profile.id ? 'btn-info text-dark' : 'btn-outline-secondary'"
+                                                :aria-pressed="getSelectedReplicateBaseHardware() === profile.id ? 'true' : 'false'"
+                                                @click="setReplicateBaseHardwareProfile(profile.id)">
+                                            <span x-text="profile.label || profile.id.toUpperCase()"></span>
+                                        </button>
+                                    </template>
+                                </span>
+                            </span>
                         </div>
                         <div class="cost-row">
-                            <span class="cost-label">Rate</span>
-                            <span class="cost-value">~$3.50/hour</span>
+                            <span class="cost-label">Cost (per hour)</span>
+                            <span class="cost-value">
+                                <span x-text="getReplicateBaseHardwareCostDisplay()"></span>
+                                <span class="d-block text-muted" style="font-size: 0.7rem;"
+                                      x-text="getReplicateBaseHardwareCostDetail()"></span>
+                            </span>
                         </div>
                         <div class="cost-row">
                             <span class="cost-label">Typical LoRA (2000 steps)</span>

@@ -421,6 +421,76 @@ describe('cloudSubmissionMethods', () => {
                 'l40s-x8',
             ]);
         });
+
+        test('base hardware options expose l40s and h100 buttons', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
+                    { id: 'h100-x2', label: '2x H100', cost_per_hour: 10.98, cost_per_second: 0.00305 },
+                    { id: 'l40s', label: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
+                    { id: 'l40s-x2', label: '2x L40S', cost_per_hour: 7.00, cost_per_second: 0.001944444 },
+                ],
+            }];
+
+            const options = context.getReplicateBaseHardwareOptions();
+
+            expect(options.map((option) => option.id)).toEqual(['l40s', 'h100']);
+        });
+
+        test('settings hardware selector preserves existing gpu count multiplier', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100' },
+                    { id: 'h100-x4', label: '4x H100' },
+                    { id: 'l40s', label: 'L40S' },
+                    { id: 'l40s-x4', label: '4x L40S' },
+                ],
+            }];
+            context.preSubmitModal.hardwareProfile = 'h100-x4';
+
+            context.setReplicateBaseHardwareProfile('l40s');
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s-x4');
+            expect(localStorage.getItem('cloud_replicate_hardware_profile')).toBe('l40s-x4');
+        });
+
+        test('settings hardware selector falls back to base profile when matching multiplier is unavailable', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100' },
+                    { id: 'h100-x4', label: '4x H100' },
+                    { id: 'l40s', label: 'L40S' },
+                ],
+            }];
+            context.preSubmitModal.hardwareProfile = 'h100-x4';
+
+            context.setReplicateBaseHardwareProfile('l40s');
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s');
+            expect(localStorage.getItem('cloud_replicate_hardware_profile')).toBe('l40s');
+        });
+
+        test('hardware cost display uses provider supplied pricing', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', cost_per_hour: 6.66, cost_per_second: 0.001851852 },
+                    { id: 'h100-x4', label: '4x H100', cost_per_hour: 26.64, cost_per_second: 0.007407408 },
+                    { id: 'l40s', label: 'L40S', cost_per_hour: 4.44, cost_per_second: 0.001233333 },
+                ],
+            }];
+
+            context.preSubmitModal.hardwareProfile = 'h100-x4';
+            expect(context.getReplicateBaseHardwareCostDisplay()).toBe('$26.64/hr');
+            expect(context.getReplicateBaseHardwareCostDetail()).toBe('$0.007407/sec');
+
+            context.preSubmitModal.hardwareProfile = 'l40s';
+            expect(context.getReplicateBaseHardwareCostDisplay()).toBe('$4.44/hr');
+            expect(context.getReplicateBaseHardwareCostDetail()).toBe('$0.001233/sec');
+        });
     });
 
     describe('prepareJobPayload', () => {
