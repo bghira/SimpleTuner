@@ -1,5 +1,6 @@
 """unittest-based coverage for WebUI backend state management."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -106,6 +107,33 @@ class WebUIStateStoreTests(unittest.TestCase):
         self.assertIsNone(loaded.configs_dir)
         self.assertIsNone(loaded.output_dir)
         self.assertIsNone(loaded.active_config)
+        self.assertTrue(loaded.cloud_tab_enabled)
+
+    def test_legacy_defaults_without_cloud_tab_enabled_keeps_cloud_enabled(self) -> None:
+        defaults_file = self.store.base_dir / "defaults.json"
+        defaults_file.write_text(json.dumps({"theme": "dark"}))
+
+        loaded = self.store.load_defaults()
+        bundle = self.store.resolve_defaults(loaded)
+
+        self.assertTrue(loaded.cloud_tab_enabled)
+        self.assertTrue(bundle["resolved"]["cloud_tab_enabled"])
+
+    def test_null_cloud_tab_enabled_keeps_default_enabled(self) -> None:
+        defaults_file = self.store.base_dir / "defaults.json"
+        defaults_file.write_text(json.dumps({"cloud_tab_enabled": None}))
+
+        loaded = self.store.load_defaults()
+
+        self.assertTrue(loaded.cloud_tab_enabled)
+
+    def test_false_cloud_tab_enabled_is_preserved(self) -> None:
+        defaults_file = self.store.base_dir / "defaults.json"
+        defaults_file.write_text(json.dumps({"cloud_tab_enabled": False}))
+
+        loaded = self.store.load_defaults()
+
+        self.assertFalse(loaded.cloud_tab_enabled)
 
     def test_load_onboarding_returns_empty_when_missing(self) -> None:
         loaded = self.store.load_onboarding()

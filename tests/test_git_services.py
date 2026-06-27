@@ -139,6 +139,34 @@ class TabServiceGitGatingTests(unittest.TestCase):
             self.assertIsNotNone(config)
 
 
+class TabServiceCloudGatingTests(unittest.TestCase):
+    def test_cloud_tab_enabled_when_setting_is_missing_or_null(self) -> None:
+        dummy_templates = SimpleNamespace(TemplateResponse=lambda request, name, context: {"name": name, "context": context})
+        with patch("simpletuner.simpletuner_sdk.server.services.tab_service.WebUIStateStore") as mock_store_cls:
+            defaults = SimpleNamespace(cloud_tab_enabled=None)
+            mock_store = mock_store_cls.return_value
+            mock_store.load_defaults.return_value = defaults
+            service = TabService(dummy_templates)  # type: ignore[arg-type]
+
+            tabs = service.get_all_tabs()
+            self.assertTrue(any(tab["name"] == "cloud" for tab in tabs))
+            config = service.get_tab_config("cloud")
+            self.assertIsNotNone(config)
+
+    def test_cloud_tab_disabled_when_setting_is_false(self) -> None:
+        dummy_templates = SimpleNamespace(TemplateResponse=lambda request, name, context: {"name": name, "context": context})
+        with patch("simpletuner.simpletuner_sdk.server.services.tab_service.WebUIStateStore") as mock_store_cls:
+            defaults = SimpleNamespace(cloud_tab_enabled=False)
+            mock_store = mock_store_cls.return_value
+            mock_store.load_defaults.return_value = defaults
+            service = TabService(dummy_templates)  # type: ignore[arg-type]
+
+            tabs = service.get_all_tabs()
+            self.assertFalse(any(tab["name"] == "cloud" for tab in tabs))
+            with self.assertRaises(HTTPException):
+                service.get_tab_config("cloud")
+
+
 class GitRepoServiceBranchTests(unittest.TestCase):
     def setUp(self) -> None:
         self._config_store_instances = ConfigStore._instances.copy()

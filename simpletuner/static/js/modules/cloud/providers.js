@@ -27,8 +27,9 @@ window.cloudProviderMethods = {
             const response = await fetch(`/api/cloud/providers/${this.activeProvider}/config`);
             if (response.ok) {
                 const data = await response.json();
-                this.providerConfig = data || {};
-                this.webhookUrl = data.webhook_url || '';
+                this.providerConfig = data.config || data || {};
+                this.savedWebhookUrl = this.providerConfig.webhook_url || '';
+                this.webhookUrl = this.savedWebhookUrl;
                 this.loadCostLimitStatus();
             }
         } catch (error) {

@@ -59,19 +59,42 @@ window.cloudMetricsMethods = {
 
     async saveWebhookConfig() {
         this.configSaving = true;
+        const webhookUrl = typeof this.webhookUrl === 'string' ? this.webhookUrl.trim() : '';
         try {
             const response = await fetch('/api/cloud/providers/replicate/config', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ webhook_url: this.webhookUrl || null }),
+                body: JSON.stringify({ webhook_url: webhookUrl }),
             });
-            if (response.ok && window.showToast) {
+
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (_) {}
+
+            if (!response.ok) {
+                throw new Error(data.detail || 'Failed to save webhook config');
+            }
+
+            const savedUrl = (data.config && data.config.webhook_url) || data.webhook_url || webhookUrl || '';
+            this.savedWebhookUrl = savedUrl;
+            this.webhookUrl = savedUrl;
+            if (this.publishingStatus) {
+                this.publishingStatus.local_upload_available = savedUrl.length > 0;
+                if (!savedUrl) {
+                    this.publishingStatus.local_upload_dir = null;
+                }
+            }
+
+            if (window.showToast) {
                 window.showToast('Webhook configuration saved', 'success');
             }
+            return true;
         } catch (error) {
             if (window.showToast) {
-                window.showToast('Failed to save webhook config', 'error');
+                window.showToast(error.message || 'Failed to save webhook config', 'error');
             }
+            return false;
         } finally {
             this.configSaving = false;
         }
