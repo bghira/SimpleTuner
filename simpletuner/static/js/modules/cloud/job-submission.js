@@ -255,6 +255,45 @@ window.cloudSubmissionMethods = {
         ];
     },
 
+    getReplicateBaseHardwareOptions() {
+        return this.getReplicateHardwareProfiles()
+            .filter((profile) => profile.id === 'l40s' || profile.id === 'h100')
+            .sort((a, b) => (a.id === 'l40s' ? -1 : 1));
+    },
+
+    getSelectedReplicateBaseHardware() {
+        const selected = this.preSubmitModal?.hardwareProfile || this.getDefaultReplicateHardwareProfile();
+        return String(selected || '').startsWith('l40s') ? 'l40s' : 'h100';
+    },
+
+    setReplicateBaseHardwareProfile(profileId) {
+        if (!profileId) {
+            return;
+        }
+        this.preSubmitModal.hardwareProfile = profileId;
+        this.saveHardwareProfile(profileId);
+    },
+
+    getReplicateBaseHardwareCostDisplay() {
+        const selected = this.getSelectedReplicateBaseHardware();
+        const profile = this.getReplicateBaseHardwareOptions().find((option) => option.id === selected);
+        if (typeof profile?.cost_per_hour === 'number') {
+            return '$' + profile.cost_per_hour.toFixed(2) + '/hr';
+        }
+        if (selected === 'h100') {
+            return '$5.49/hr';
+        }
+        return '$3.50/hr';
+    },
+
+    getReplicateBaseHardwareCostDetail() {
+        const selected = this.getSelectedReplicateBaseHardware();
+        if (selected === 'h100') {
+            return '$0.001525/sec';
+        }
+        return '$0.000972/sec';
+    },
+
     getDefaultReplicateHardwareProfile() {
         const storedProfile = localStorage.getItem('cloud_replicate_hardware_profile');
         if (storedProfile) {

@@ -25,6 +25,12 @@ class ReplicateHardwareProfileTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             normalize_replicate_hardware_profile("a10g")
 
+    def test_default_hardware_info_includes_h100_and_l40s_pricing(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.replicate_client import DEFAULT_HARDWARE_INFO
+
+        self.assertEqual(DEFAULT_HARDWARE_INFO["gpu-l40s"]["cost_per_second"], 0.000972222)
+        self.assertEqual(DEFAULT_HARDWARE_INFO["gpu-h100"]["cost_per_second"], 0.001525)
+
     async def test_replicate_client_uses_profile_model_for_latest_version(self):
         from simpletuner.simpletuner_sdk.server.services.cloud.replicate_client import ReplicateCogClient
 

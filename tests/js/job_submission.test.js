@@ -421,6 +421,49 @@ describe('cloudSubmissionMethods', () => {
                 'l40s-x8',
             ]);
         });
+
+        test('base hardware options expose l40s and h100 buttons', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', cost_per_hour: 5.49 },
+                    { id: 'h100-x2', label: '2x H100', cost_per_hour: 10.98 },
+                    { id: 'l40s', label: 'L40S', cost_per_hour: 3.50 },
+                    { id: 'l40s-x2', label: '2x L40S', cost_per_hour: 7.00 },
+                ],
+            }];
+
+            const options = context.getReplicateBaseHardwareOptions();
+
+            expect(options.map((option) => option.id)).toEqual(['l40s', 'h100']);
+        });
+
+        test('settings hardware selector persists selected base profile', () => {
+            context.preSubmitModal.hardwareProfile = 'h100';
+
+            context.setReplicateBaseHardwareProfile('l40s');
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s');
+            expect(localStorage.getItem('cloud_replicate_hardware_profile')).toBe('l40s');
+        });
+
+        test('hardware hourly cost display follows selected base hardware', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', cost_per_hour: 5.49 },
+                    { id: 'l40s', label: 'L40S', cost_per_hour: 3.50 },
+                ],
+            }];
+
+            context.preSubmitModal.hardwareProfile = 'h100';
+            expect(context.getReplicateBaseHardwareCostDisplay()).toBe('$5.49/hr');
+            expect(context.getReplicateBaseHardwareCostDetail()).toBe('$0.001525/sec');
+
+            context.preSubmitModal.hardwareProfile = 'l40s';
+            expect(context.getReplicateBaseHardwareCostDisplay()).toBe('$3.50/hr');
+            expect(context.getReplicateBaseHardwareCostDetail()).toBe('$0.000972/sec');
+        });
     });
 
     describe('prepareJobPayload', () => {
