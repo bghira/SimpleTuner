@@ -2026,10 +2026,13 @@ class CloudWebhookDraftInputTestCase(_TrainerPageMixin, WebUITestCase):
 
             has_output_destination = driver.execute_script(
                 "const el = document.querySelector('#cloud-tab-content');"
-                "const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;"
-                "return comp ? comp.hasOutputDestination : null;"
+                "if (!el) { throw new Error('Cloud tab content not found'); }"
+                "if (!window.Alpine || !window.Alpine.$data) { throw new Error('Alpine is not initialized'); }"
+                "const comp = window.Alpine.$data(el);"
+                "if (!comp) { throw new Error('Cloud Alpine component not found'); }"
+                "return comp.hasOutputDestination;"
             )
-            self.assertFalse(has_output_destination)
+            self.assertIs(has_output_destination, False)
 
         self.for_each_browser("test_webhook_hint_input_stays_visible_while_typing_unsaved_draft", scenario)
 
