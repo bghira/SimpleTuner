@@ -83,6 +83,7 @@ class ProviderClientProtocol(Protocol):
         hf_token: Optional[str] = None,
         hub_model_id: Optional[str] = None,
         lycoris_config: Optional[Dict[str, Any]] = None,
+        hardware_profile: Optional[str] = None,
     ) -> CloudJobInfo:
         """Submit a job to the provider."""
         ...

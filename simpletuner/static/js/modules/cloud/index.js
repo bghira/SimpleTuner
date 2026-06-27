@@ -720,8 +720,13 @@ if (!window.cloudDashboardComponent) {
                 return '~$' + estimate.estimated_cost_usd.toFixed(2);
             },
             get wizardHardwareCostDisplay() {
+                const selected = this.preSubmitModal?.hardwareProfile;
+                const profile = this.getReplicateHardwareProfiles?.().find((p) => p.id === selected);
+                const label = profile?.label || selected;
                 const costPerHour = this.preSubmitModal?.costEstimate?.hardware_cost_per_hour;
-                return costPerHour ? ('$' + costPerHour.toFixed(2) + '/hr') : 'N/A';
+                const cost = costPerHour ? ('$' + costPerHour.toFixed(2) + '/hr') : null;
+                if (label && cost) return `${label} (${cost})`;
+                return label || cost || 'N/A';
             },
             // From queue.js - queue getters
             get visiblePendingJobs() {

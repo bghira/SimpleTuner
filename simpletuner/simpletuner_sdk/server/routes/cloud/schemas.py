@@ -48,6 +48,7 @@ class ProviderConfigUpdate(BaseModel):
     cost_limit_period: Optional[str] = None
     cost_limit_action: Optional[str] = None
     hardware_info: Optional[Dict[str, Dict[str, Any]]] = None
+    hardware_profile: Optional[str] = None
     webhook_require_signature: Optional[bool] = None
     webhook_allowed_ips: Optional[List[str]] = None
     ssl_verify: Optional[bool] = None
@@ -91,6 +92,10 @@ class SubmitJobRequest(BaseModel):
     snapshot_message: Optional[str] = None
     tracker_run_name: Optional[str] = None
     upload_id: Optional[str] = None
+    hardware_profile: Optional[str] = Field(
+        None,
+        description="Replicate SimpleTuner hardware profile, e.g. h100, h100-x2, l40s, l40s-x4.",
+    )
     idempotency_key: Optional[str] = Field(
         None,
         description="Client-generated unique key for deduplication. "

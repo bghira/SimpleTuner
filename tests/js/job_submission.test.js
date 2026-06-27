@@ -58,6 +58,7 @@ describe('cloudSubmissionMethods', () => {
                 snapshotMessage: '',
                 snapshotName: '',
                 trackerRunName: '',
+                hardwareProfile: 'h100',
                 configName: '',
                 dataUploadPreview: null,
                 dataConsentConfirmed: false,
@@ -342,6 +343,7 @@ describe('cloudSubmissionMethods', () => {
             expect(payload.snapshot_name).toBeNull();
             expect(payload.snapshot_message).toBeNull();
             expect(payload.tracker_run_name).toBeNull();
+            expect(payload.hardware_profile).toBe('h100');
         });
 
         test('includes optional fields when present', () => {
@@ -349,6 +351,7 @@ describe('cloudSubmissionMethods', () => {
             context.preSubmitModal.snapshotName = 'v1.0';
             context.preSubmitModal.snapshotMessage = 'First release';
             context.preSubmitModal.trackerRunName = 'experiment-1';
+            context.preSubmitModal.hardwareProfile = 'l40s-x2';
 
             const payload = context.buildBasePayload('upload-123');
 
@@ -356,6 +359,24 @@ describe('cloudSubmissionMethods', () => {
             expect(payload.snapshot_name).toBe('v1.0');
             expect(payload.snapshot_message).toBe('First release');
             expect(payload.tracker_run_name).toBe('experiment-1');
+            expect(payload.hardware_profile).toBe('l40s-x2');
+        });
+
+        test('returns fallback hardware profiles when provider metadata is unavailable', () => {
+            context.providers = [];
+
+            const profiles = context.getReplicateHardwareProfiles();
+
+            expect(profiles.map((p) => p.id)).toEqual([
+                'h100',
+                'h100-x2',
+                'h100-x4',
+                'h100-x8',
+                'l40s',
+                'l40s-x2',
+                'l40s-x4',
+                'l40s-x8',
+            ]);
         });
     });
 

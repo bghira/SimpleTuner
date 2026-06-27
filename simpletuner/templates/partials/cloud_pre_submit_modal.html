@@ -54,6 +54,19 @@
                                            @change.stop>
                                 </div>
 
+                                <div class="mb-4" x-show="activeProvider === 'replicate'">
+                                    <label class="form-label">
+                                        <i class="fas fa-microchip me-1 text-info"></i>Hardware
+                                    </label>
+                                    <select class="form-select bg-dark text-light border-secondary"
+                                            x-model="preSubmitModal.hardwareProfile"
+                                            @change.stop="saveHardwareProfile(preSubmitModal.hardwareProfile)">
+                                        <template x-for="profile in getReplicateHardwareProfiles()" :key="profile.id">
+                                            <option :value="profile.id" x-text="profile.label || profile.id"></option>
+                                        </template>
+                                    </select>
+                                </div>
+
                                 <!-- Summary row -->
                                 <div class="quick-submit-summary p-3 rounded mb-4" style="background: rgba(129, 140, 248, 0.1); border: 1px solid rgba(129, 140, 248, 0.2);">
                                     <div class="row g-3 text-center">
@@ -137,6 +150,17 @@
                                                    x-model="preSubmitModal.trackerRunName"
                                                    @input.stop
                                                    @change.stop>
+
+                                            <div class="mt-4" x-show="activeProvider === 'replicate'">
+                                                <label class="form-label small text-muted">Hardware</label>
+                                                <select class="form-select bg-dark text-light border-secondary"
+                                                        x-model="preSubmitModal.hardwareProfile"
+                                                        @change.stop="saveHardwareProfile(preSubmitModal.hardwareProfile)">
+                                                    <template x-for="profile in getReplicateHardwareProfiles()" :key="profile.id">
+                                                        <option :value="profile.id" x-text="profile.label || profile.id"></option>
+                                                    </template>
+                                                </select>
+                                            </div>
 
                                             <!-- Cost preview -->
                                             <div class="wizard-cost-preview mt-4 p-3 rounded" style="background: rgba(129, 140, 248, 0.08);">

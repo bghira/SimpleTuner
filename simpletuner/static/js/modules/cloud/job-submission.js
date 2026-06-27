@@ -39,6 +39,9 @@ window.cloudSubmissionMethods = {
         this.preSubmitModal.trackerRunName = data.tracker_run_name || '';
         this.preSubmitModal.configName = data.config_name || '';
         this.preSubmitModal.snapshotName = '';
+        if (!this.preSubmitModal.hardwareProfile) {
+            this.preSubmitModal.hardwareProfile = localStorage.getItem('cloud_replicate_hardware_profile') || 'h100';
+        }
     },
 
     async openPreSubmitModal() {
@@ -234,6 +237,30 @@ window.cloudSubmissionMethods = {
         localStorage.setItem('cloud_quick_submit_mode', enabled ? 'true' : 'false');
     },
 
+    getReplicateHardwareProfiles() {
+        const provider = (this.providers || []).find((p) => p.id === 'replicate');
+        const profiles = provider?.hardware_profiles || [];
+        if (profiles.length > 0) {
+            return profiles;
+        }
+        return [
+            { id: 'h100', label: 'H100', hardware_type: 'H100' },
+            { id: 'h100-x2', label: '2x H100', hardware_type: '2x H100' },
+            { id: 'h100-x4', label: '4x H100', hardware_type: '4x H100' },
+            { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100' },
+            { id: 'l40s', label: 'L40S', hardware_type: 'L40S' },
+            { id: 'l40s-x2', label: '2x L40S', hardware_type: '2x L40S' },
+            { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S' },
+            { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S' },
+        ];
+    },
+
+    saveHardwareProfile(profile) {
+        if (profile) {
+            localStorage.setItem('cloud_replicate_hardware_profile', profile);
+        }
+    },
+
     startUploadProgress(uploadId) {
         this.uploadProgress.active = true;
         this.uploadProgress.stage = 'scanning';
@@ -315,6 +342,7 @@ window.cloudSubmissionMethods = {
             snapshot_name: this.preSubmitModal.snapshotName || null,
             snapshot_message: this.preSubmitModal.snapshotMessage || null,
             tracker_run_name: this.preSubmitModal.trackerRunName || null,
+            hardware_profile: this.preSubmitModal.hardwareProfile || 'h100',
             upload_id: uploadId,
         };
     },

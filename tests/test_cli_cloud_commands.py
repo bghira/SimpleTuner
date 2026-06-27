@@ -41,6 +41,7 @@ class TestCloudSubmitCommand(unittest.TestCase):
             config="my-config",
             provider="replicate",
             idempotency_key=None,
+            hardware_profile=None,
             dry_run=False,
         )
 
@@ -68,6 +69,7 @@ class TestCloudSubmitCommand(unittest.TestCase):
             config="my-config",
             provider="replicate",
             idempotency_key="unique-key-123",
+            hardware_profile=None,
             dry_run=False,
         )
 
@@ -76,6 +78,36 @@ class TestCloudSubmitCommand(unittest.TestCase):
         self.assertEqual(result, 0)
         output = mock_stdout.getvalue()
         self.assertIn("idempotency", output.lower())
+
+    @patch("simpletuner.cli.cloud.jobs.cloud_api_request")
+    @patch("sys.stdout", new_callable=StringIO)
+    def test_submit_with_hardware_profile(self, mock_stdout, mock_api):
+        """Test submission forwards a Replicate hardware profile."""
+        from simpletuner.cli.cloud.jobs import cmd_cloud_submit
+
+        mock_api.return_value = {
+            "success": True,
+            "job_id": "job-123",
+            "status": "pending",
+        }
+
+        args = MockArgs(
+            config="my-config",
+            provider="replicate",
+            idempotency_key=None,
+            hardware_profile="h100-x4",
+            dry_run=False,
+        )
+
+        result = cmd_cloud_submit(args)
+
+        self.assertEqual(result, 0)
+        mock_api.assert_called_once_with(
+            "POST",
+            "/api/cloud/jobs/submit?provider=replicate",
+            data={"config_name_to_load": "my-config", "hardware_profile": "h100-x4"},
+        )
+        self.assertIn("h100-x4", mock_stdout.getvalue())
 
     @patch("simpletuner.cli.cloud.jobs.cloud_api_request")
     @patch("sys.stdout", new_callable=StringIO)
@@ -92,6 +124,7 @@ class TestCloudSubmitCommand(unittest.TestCase):
             config="my-config",
             provider="replicate",
             idempotency_key=None,
+            hardware_profile=None,
             dry_run=False,
         )
 
@@ -110,6 +143,7 @@ class TestCloudSubmitCommand(unittest.TestCase):
             config=None,
             provider="replicate",
             idempotency_key=None,
+            hardware_profile=None,
             dry_run=False,
         )
 

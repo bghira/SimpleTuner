@@ -466,6 +466,7 @@ class CloudTrainerService(ABC):
         dataloader: List[Dict[str, Any]],
         data_archive_url: Optional[str] = None,
         webhook_url: Optional[str] = None,
+        hardware_profile: Optional[str] = None,
     ) -> CloudJobInfo:
         """Submit a new training job."""
         ...

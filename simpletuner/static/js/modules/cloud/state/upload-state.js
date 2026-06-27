@@ -36,6 +36,7 @@ window.cloudUploadStateFactory = function() {
             snapshotMessage: '',
             trackerRunName: '',
             configName: '',
+            hardwareProfile: localStorage.getItem('cloud_replicate_hardware_profile') || 'h100',
             dataConsent: 'ask',
             dataUploadPreview: null,
             dataConsentConfirmed: false,

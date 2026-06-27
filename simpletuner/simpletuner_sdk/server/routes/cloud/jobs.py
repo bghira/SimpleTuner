@@ -497,6 +497,7 @@ async def _build_submit_command(
         snapshot_message=request.snapshot_message,
         upload_id=request.upload_id,
         idempotency_key=request.idempotency_key,
+        hardware_profile=request.hardware_profile,
     )
 
 

@@ -94,6 +94,11 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
     """
     from ...routes.cloud._shared import get_job_store
     from .replicate_client import DEFAULT_MODEL, get_default_hardware_cost_per_hour, get_hardware_info_async
+    from .replicate_profiles import (
+        DEFAULT_REPLICATE_HARDWARE_PROFILE,
+        get_replicate_hardware_profile,
+        list_replicate_hardware_profiles,
+    )
     from .secrets import get_secrets_manager
 
     store = get_job_store()
@@ -106,6 +111,11 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
             # Enrich with Replicate-specific data
             replicate_config = await store.get_provider_config("replicate")
             version_override = replicate_config.get("version_override")
+            default_profile_id = replicate_config.get("hardware_profile") or DEFAULT_REPLICATE_HARDWARE_PROFILE
+            try:
+                default_profile = get_replicate_hardware_profile(default_profile_id)
+            except ValueError:
+                default_profile = get_replicate_hardware_profile(DEFAULT_REPLICATE_HARDWARE_PROFILE)
 
             hardware_info = await get_hardware_info_async(store)
             l40s_info = hardware_info.get(definition.default_hardware_id, {})
@@ -113,11 +123,13 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
 
             provider_data.update(
                 {
-                    "model": DEFAULT_MODEL,
+                    "model": default_profile.model or DEFAULT_MODEL,
                     "version": version_override,
                     "hardware": l40s_info.get("name", definition.default_hardware),
                     "cost_per_hour": round(cost_per_hour, 2),
                     "configured": bool(get_secrets_manager().get_replicate_token()),
+                    "hardware_profile": default_profile.id,
+                    "hardware_profiles": list_replicate_hardware_profiles(),
                 }
             )
 

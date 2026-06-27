@@ -113,6 +113,19 @@ async def update_provider_config(provider: str, update: ProviderConfigUpdate) ->
 
         clear_hardware_info_cache()
 
+    if update.hardware_profile is not None:
+        if provider != "replicate":
+            config["hardware_profile"] = update.hardware_profile or None
+        elif update.hardware_profile:
+            from ...services.cloud.replicate_profiles import normalize_replicate_hardware_profile
+
+            try:
+                config["hardware_profile"] = normalize_replicate_hardware_profile(update.hardware_profile)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        else:
+            config.pop("hardware_profile", None)
+
     # Security settings
     if update.webhook_require_signature is not None:
         config["webhook_require_signature"] = update.webhook_require_signature
