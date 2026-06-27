@@ -129,7 +129,7 @@ simpletuner configure config/foo/config.json
 
 ### `--musubi_blocks_to_swap`
 
-- **内容**: LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo の Musubi ブロックスワップ。最後の N 個の Transformer ブロックを CPU に置き、forward 中にブロック単位で重みをストリーミングします。
+- **内容**: LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo、Krea 2 の Musubi ブロックスワップ。最後の N 個の Transformer ブロックを CPU に置き、forward 中にブロック単位で重みをストリーミングします。
 - **既定**: `0`（無効）
 - **注記**: Musubi 方式の重みオフロードで、スループット低下と引き換えに VRAM を削減します。勾配が有効な場合はスキップされます。
 - **注記**: Musubi 方式の重みオフロードで、スループット低下と引き換えに VRAM を削減します。勾配が有効な場合はスキップされます。

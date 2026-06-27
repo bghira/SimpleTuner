@@ -8,6 +8,7 @@ from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.krea2 import Krea2, Krea2LoraLoaderMixin, Krea2Pipeline, Krea2Transformer2DModel
 from simpletuner.helpers.models.krea2.transformer import Krea2Attention, _krea2_rope_freqs_dtype
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.tread import TREADRouter
 
 
 class FakeKrea2Transformer:
@@ -81,6 +82,12 @@ class Krea2VendoredModelTests(unittest.TestCase):
         parameters = inspect.signature(Krea2Pipeline.__call__).parameters
         self.assertIn("reference_image", parameters)
 
+    def test_pipeline_accepts_cfg_zero_star_and_skip_layer_guidance(self):
+        parameters = inspect.signature(Krea2Pipeline.__call__).parameters
+        self.assertIn("use_cfg_zero_star", parameters)
+        self.assertIn("skip_guidance_layers", parameters)
+        self.assertIn("skip_layer_guidance_scale", parameters)
+
     def test_reference_latents_enable_reference_dataset_hooks(self):
         model = Krea2.__new__(Krea2)
         model.config = SimpleNamespace(krea2_reference_latents=True)
@@ -135,6 +142,162 @@ class Krea2VendoredModelTests(unittest.TestCase):
         attention.unfuse_projections()
         self.assertFalse(hasattr(attention, "to_qkv"))
         self.assertFalse(attention.fused_projections)
+
+    def test_model_supports_crepa_self_flow(self):
+        model = Krea2.__new__(Krea2)
+
+        self.assertTrue(model.supports_crepa_self_flow())
+
+    def test_pretrained_load_args_enable_twinflow_and_musubi(self):
+        model = Krea2.__new__(Krea2)
+        model.config = SimpleNamespace(
+            twinflow_enabled=True,
+            musubi_blocks_to_swap=3,
+            musubi_block_swap_device="cpu",
+        )
+
+        args = model.pretrained_load_args({})
+
+        self.assertTrue(args["enable_time_sign_embed"])
+        self.assertEqual(args["musubi_blocks_to_swap"], 3)
+        self.assertEqual(args["musubi_block_swap_device"], "cpu")
+
+    def test_transformer_captures_hidden_states_and_accepts_skip_layers(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=2,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=2,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=1,
+            axes_dims_rope=(2, 2, 2),
+        )
+        hidden_states_buffer = {}
+
+        output = transformer(
+            hidden_states=torch.randn(1, 4, 4),
+            encoder_hidden_states=torch.randn(1, 3, 2, 6),
+            timestep=torch.tensor([0.5]),
+            position_ids=torch.zeros(7, 3, dtype=torch.long),
+            encoder_attention_mask=torch.ones(1, 3, dtype=torch.int64),
+            skip_layers=[1],
+            hidden_states_buffer=hidden_states_buffer,
+            return_dict=False,
+        )
+
+        self.assertEqual(tuple(output[0].shape), (1, 4, 4))
+        self.assertIn("layer_0", hidden_states_buffer)
+        self.assertIn("layer_1", hidden_states_buffer)
+        self.assertEqual(tuple(hidden_states_buffer["layer_0"].shape[:2]), (1, 4))
+
+    def test_transformer_accepts_tread_routing(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=2,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=2,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=1,
+            axes_dims_rope=(2, 2, 2),
+        )
+        transformer.train()
+        transformer.set_router(
+            TREADRouter(seed=1, device=torch.device("cpu")),
+            [{"start_layer_idx": 0, "end_layer_idx": 0, "selection_ratio": 0.5}],
+        )
+
+        with torch.enable_grad():
+            output = transformer(
+                hidden_states=torch.randn(1, 4, 4),
+                encoder_hidden_states=torch.randn(1, 3, 2, 6),
+                timestep=torch.tensor([0.5]),
+                position_ids=torch.zeros(7, 3, dtype=torch.long),
+                encoder_attention_mask=torch.ones(1, 3, dtype=torch.int64),
+                return_dict=False,
+            )
+
+        self.assertEqual(tuple(output[0].shape), (1, 4, 4))
+
+    def test_transformer_supports_twinflow_and_anyflow_timestep_conditioning(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=2,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=1,
+            axes_dims_rope=(2, 2, 2),
+            enable_time_sign_embed=True,
+        )
+        transformer.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        kwargs = {
+            "hidden_states": torch.randn(1, 4, 4),
+            "encoder_hidden_states": torch.randn(1, 3, 2, 6),
+            "timestep": torch.tensor([0.5]),
+            "position_ids": torch.zeros(7, 3, dtype=torch.long),
+            "encoder_attention_mask": torch.ones(1, 3, dtype=torch.int64),
+            "return_dict": False,
+        }
+
+        output = transformer(**kwargs, timestep_sign=torch.ones(1), r_timestep=torch.zeros(1))
+
+        self.assertEqual(tuple(output[0].shape), (1, 4, 4))
+
+    def test_transformer_requires_initialization_for_timestep_conditioning(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=2,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=1,
+            axes_dims_rope=(2, 2, 2),
+        )
+        kwargs = {
+            "hidden_states": torch.randn(1, 4, 4),
+            "encoder_hidden_states": torch.randn(1, 3, 2, 6),
+            "timestep": torch.tensor([0.5]),
+            "position_ids": torch.zeros(7, 3, dtype=torch.long),
+            "encoder_attention_mask": torch.ones(1, 3, dtype=torch.int64),
+            "return_dict": False,
+        }
+
+        with self.assertRaisesRegex(ValueError, "enable_time_sign_embed"):
+            transformer(**kwargs, timestep_sign=torch.ones(1))
+        with self.assertRaisesRegex(ValueError, "FlowMap"):
+            transformer(**kwargs, r_timestep=torch.zeros(1))
 
     def test_vae_encode_hooks_use_qwen_image_vae_rank_and_normalization(self):
         model = Krea2.__new__(Krea2)

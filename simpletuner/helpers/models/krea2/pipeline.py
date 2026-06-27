@@ -59,6 +59,16 @@ EXAMPLE_DOC_STRING = """
 """
 
 
+@torch.amp.autocast(
+    "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
+    dtype=torch.float32,
+)
+def optimized_scale(positive_flat: torch.Tensor, negative_flat: torch.Tensor):
+    dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
+    squared_norm = torch.sum(negative_flat**2, dim=1, keepdim=True) + 1e-8
+    return dot_product / squared_norm
+
+
 # Copied from diffusers.pipelines.flux.pipeline_flux.calculate_shift
 def calculate_shift(
     image_seq_len,
@@ -578,6 +588,13 @@ class Krea2Pipeline(DiffusionPipeline, Krea2LoraLoaderMixin):
         callback_on_step_end_tensor_inputs: list[str] = ["latents"],
         attention_kwargs: dict[str, Any] | None = None,
         max_sequence_length: int = 512,
+        skip_guidance_layers: list[int] | None = None,
+        skip_layer_guidance_start: float = 0.01,
+        skip_layer_guidance_stop: float = 0.2,
+        skip_layer_guidance_scale: float = 2.8,
+        use_cfg_zero_star: bool = True,
+        zero_steps: int = 1,
+        use_zero_init: bool = True,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -796,7 +813,39 @@ class Krea2Pipeline(DiffusionPipeline, Krea2LoraLoaderMixin):
                         return_dict=False,
                     )[0]
                     neg_noise_pred = neg_noise_pred[:, :target_image_seq_len]
-                    noise_pred = noise_pred + guidance_scale * (noise_pred - neg_noise_pred)
+                    pos_noise_pred = noise_pred
+                    if use_cfg_zero_star:
+                        pos_flat = pos_noise_pred.view(pos_noise_pred.shape[0], -1)
+                        neg_flat = neg_noise_pred.view(neg_noise_pred.shape[0], -1)
+                        alpha = optimized_scale(pos_flat, neg_flat).view(
+                            pos_noise_pred.shape[0], *([1] * (pos_noise_pred.dim() - 1))
+                        )
+                        if i <= zero_steps and use_zero_init:
+                            noise_pred = pos_noise_pred * 0.0
+                        else:
+                            noise_pred = neg_noise_pred * alpha + guidance_scale * (pos_noise_pred - neg_noise_pred * alpha)
+                    else:
+                        noise_pred = pos_noise_pred + guidance_scale * (pos_noise_pred - neg_noise_pred)
+
+                    should_skip_layers = (
+                        skip_guidance_layers is not None
+                        and len(skip_guidance_layers) > 0
+                        and i > num_inference_steps * skip_layer_guidance_start
+                        and i < num_inference_steps * skip_layer_guidance_stop
+                    )
+                    if should_skip_layers:
+                        skip_noise_pred = self.transformer(
+                            hidden_states=transformer_latents,
+                            encoder_hidden_states=prompt_embeds,
+                            timestep=timestep,
+                            position_ids=position_ids,
+                            encoder_attention_mask=prompt_embeds_mask,
+                            attention_kwargs=self.attention_kwargs,
+                            skip_layers=skip_guidance_layers,
+                            return_dict=False,
+                        )[0]
+                        skip_noise_pred = skip_noise_pred[:, :target_image_seq_len]
+                        noise_pred = noise_pred + (pos_noise_pred - skip_noise_pred) * skip_layer_guidance_scale
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype

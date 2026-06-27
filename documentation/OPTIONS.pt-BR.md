@@ -129,7 +129,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 ### `--musubi_blocks_to_swap`
 
-- **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image e HunyuanVideo — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
+- **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo e Krea 2 — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
 - **Padrao**: `0` (desabilitado)
 - **Notas**: Offload de pesos estilo Musubi; reduz VRAM com custo de throughput e e ignorado quando gradientes estao habilitados.
 
