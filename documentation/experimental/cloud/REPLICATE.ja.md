@@ -2,8 +2,9 @@
 
 Replicate は ML モデルを実行するクラウドプラットフォームです。SimpleTuner は Replicate の Cog コンテナシステムを使ってクラウド GPU 上で学習ジョブを実行します。
 
-- **モデル:** `simpletuner/advanced-trainer`
-- **既定 GPU:** L40S（48GB VRAM）
+- **既定モデル:** `simpletuner/advanced-trainer-h100`
+- **既定 GPU:** H100
+- **選択可能なプロファイル:** `h100`, `h100-x2`, `h100-x4`, `h100-x8`, `l40s`, `l40s-x2`, `l40s-x4`, `l40s-x8`
 
 ## クイックスタート
 
@@ -43,8 +44,14 @@ Replicate は ML モデルを実行するクラウドプラットフォームで
 
 | ハードウェア | VRAM | コスト | 最適用途 |
 |----------|------|------|----------|
-| L40S | 48GB | ~$3.50/hr | ほとんどの LoRA 学習 |
-| A100 (80GB) | 80GB | ~$5.00/hr | 大規模モデル、フル微調整 |
+| H100 | 80GB | Replicate の料金を参照 | 大規模モデル、フル微調整 |
+| L40S | 48GB | Replicate の料金を参照 | 小規模な LoRA 学習 |
+
+WebUI の送信モーダルでは、ジョブごとにハードウェアプロファイルを選択できます。CLI では次のように指定します:
+
+```bash
+simpletuner cloud jobs submit my-config --hardware-profile h100-x4
+```
 
 ### 典型的な学習コスト
 
@@ -297,6 +304,6 @@ env | grep -i proxy
 ## 链接
 
 - [Replicate Documentation](https://replicate.com/docs)
-- [SimpleTuner on Replicate](https://replicate.com/simpletuner/advanced-trainer)
+- [SimpleTuner on Replicate](https://replicate.com/simpletuner/advanced-trainer-h100)
 - [Replicate API Tokens](https://replicate.com/account/api-tokens)
 - [Replicate Status Page](https://replicate.statuspage.io/)

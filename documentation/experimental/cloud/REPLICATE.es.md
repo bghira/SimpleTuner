@@ -2,8 +2,9 @@
 
 Replicate es una plataforma en la nube para ejecutar modelos de ML. SimpleTuner usa el sistema de contenedores Cog de Replicate para ejecutar trabajos de entrenamiento en GPUs en la nube.
 
-- **Modelo:** `simpletuner/advanced-trainer`
-- **GPU predeterminada:** L40S (48GB VRAM)
+- **Modelo predeterminado:** `simpletuner/advanced-trainer-h100`
+- **GPU predeterminada:** H100
+- **Perfiles seleccionables:** `h100`, `h100-x2`, `h100-x4`, `h100-x8`, `l40s`, `l40s-x2`, `l40s-x4`, `l40s-x8`
 
 ## Inicio rápido
 
@@ -43,8 +44,14 @@ Consulta la [documentación de seguridad de Replicate](https://replicate.com/doc
 
 | Hardware | VRAM | Costo | Mejor para |
 |----------|------|-------|------------|
-| L40S | 48GB | ~$3.50/hr | La mayoría del entrenamiento LoRA |
-| A100 (80GB) | 80GB | ~$5.00/hr | Modelos grandes, fine-tuning completo |
+| H100 | 80GB | Consulta los precios de Replicate | Modelos grandes, fine-tuning completo |
+| L40S | 48GB | Consulta los precios de Replicate | Entrenamiento LoRA más pequeño |
+
+El modal de envío de la WebUI permite elegir un perfil de hardware por trabajo. Desde la CLI:
+
+```bash
+simpletuner cloud jobs submit my-config --hardware-profile h100-x4
+```
 
 ### Costos típicos de entrenamiento
 
@@ -297,6 +304,6 @@ env | grep -i proxy
 ## Enlaces
 
 - [Documentación de Replicate](https://replicate.com/docs)
-- [SimpleTuner en Replicate](https://replicate.com/simpletuner/advanced-trainer)
+- [SimpleTuner en Replicate](https://replicate.com/simpletuner/advanced-trainer-h100)
 - [Tokens de API de Replicate](https://replicate.com/account/api-tokens)
 - [Página de estado de Replicate](https://replicate.statuspage.io/)

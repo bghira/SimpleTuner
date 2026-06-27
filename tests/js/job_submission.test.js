@@ -42,6 +42,7 @@ describe('cloudSubmissionMethods', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        localStorage.clear();
         global.showToast = jest.fn();
 
         // Create context with required state
@@ -96,6 +97,7 @@ describe('cloudSubmissionMethods', () => {
             providerConfig: {
                 cost_limit_enabled: false,
             },
+            providers: [],
             jobs: [],
 
             // Mock methods that would be provided by other modules
@@ -206,6 +208,25 @@ describe('cloudSubmissionMethods', () => {
             context.applyPreSubmitData({ git_available: false });
 
             expect(context.preSubmitModal.snapshotName).toBe('');
+        });
+
+        test('uses provider metadata default hardware profile when no user preference exists', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providers = [{ id: 'replicate', hardware_profile: 'l40s-x4' }];
+
+            context.applyPreSubmitData({ git_available: false });
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s-x4');
+        });
+
+        test('stored hardware profile takes precedence over provider default', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providers = [{ id: 'replicate', hardware_profile: 'l40s-x4' }];
+            localStorage.setItem('cloud_replicate_hardware_profile', 'h100-x8');
+
+            context.applyPreSubmitData({ git_available: false });
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('h100-x8');
         });
     });
 
@@ -360,6 +381,28 @@ describe('cloudSubmissionMethods', () => {
             expect(payload.snapshot_message).toBe('First release');
             expect(payload.tracker_run_name).toBe('experiment-1');
             expect(payload.hardware_profile).toBe('l40s-x2');
+        });
+
+        test('falls back to provider config hardware profile when modal has no selection', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providerConfig = {
+                cost_limit_enabled: false,
+                config: { hardware_profile: 'h100-x4' },
+            };
+
+            const payload = context.buildBasePayload('upload-123');
+
+            expect(payload.hardware_profile).toBe('h100-x4');
+        });
+
+        test('falls back to h100 only after stored and configured defaults are unavailable', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providers = [];
+            context.providerConfig = {};
+
+            const payload = context.buildBasePayload('upload-123');
+
+            expect(payload.hardware_profile).toBe('h100');
         });
 
         test('returns fallback hardware profiles when provider metadata is unavailable', () => {
