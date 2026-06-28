@@ -88,6 +88,70 @@ def _infer_krea2_lora_target_modules(state_dict: dict[str, torch.Tensor]) -> lis
     return list(target_modules)
 
 
+def _align_krea2_lora_state_dict_to_transformer(
+    state_dict: dict[str, torch.Tensor],
+    target_modules: list[str],
+    transformer,
+) -> tuple[dict[str, torch.Tensor], list[str]]:
+    """Rewrite LoRA keys to the live transformer module names PEFT will inspect.
+
+    PEFT 0.19 uses state-dict module names, not only ``target_modules``, when a
+    state dict is passed to ``inject_adapter_in_model``. Accelerate/DDP wrappers
+    can expose modules as ``module.transformer_blocks.*`` while external KREA2
+    LoRAs are serialized as ``transformer_blocks.*``. Aligning here keeps the
+    adapter exact without broad leaf-name targeting.
+    """
+    try:
+        live_module_names = [name for name, _ in transformer.named_modules() if name]
+    except Exception:
+        return state_dict, target_modules
+
+    live_module_set = set(live_module_names)
+    if target_modules and all(target in live_module_set for target in target_modules):
+        return state_dict, target_modules
+
+    remap: dict[str, str] = {}
+    ambiguous: dict[str, list[str]] = {}
+    for target in target_modules:
+        if target in live_module_set:
+            remap[target] = target
+            continue
+        suffix = f".{target}"
+        matches = [name for name in live_module_names if name.endswith(suffix)]
+        if len(matches) == 1:
+            remap[target] = matches[0]
+        elif len(matches) > 1:
+            ambiguous[target] = matches[:5]
+
+    if ambiguous:
+        preview = ", ".join(f"{target}: {matches}" for target, matches in list(ambiguous.items())[:3])
+        raise ValueError(f"Ambiguous KREA2 LoRA targets in wrapped transformer: {preview}")
+
+    missing = [target for target in target_modules if target not in remap]
+    if missing:
+        sample_modules = ", ".join(live_module_names[:12])
+        sample_missing = ", ".join(missing[:12])
+        raise ValueError(
+            "KREA2 LoRA target modules do not match the live transformer. "
+            f"Missing targets: {sample_missing}. Live module sample: {sample_modules}"
+        )
+
+    if all(remap[target] == target for target in target_modules):
+        return state_dict, target_modules
+
+    aligned_state_dict: dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        rewritten = key
+        for target, live_target in remap.items():
+            prefix = f"{target}."
+            if key.startswith(prefix):
+                rewritten = f"{live_target}.{key[len(prefix):]}"
+                break
+        aligned_state_dict[rewritten] = value
+
+    return aligned_state_dict, list(dict.fromkeys(remap[target] for target in target_modules))
+
+
 class Krea2LoraLoaderMixin(LoraBaseMixin):
     r"""
     Load LoRA layers into [`Krea2Transformer2DModel`]. Specific to [`Krea2Pipeline`].
@@ -244,17 +308,22 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
                 f"Adapter name {adapter_name} already in use in the transformer - please select a new adapter name."
             )
 
-        rank = {}
-        for key, val in state_dict.items():
-            if "lora_B" in key and getattr(val, "ndim", 0) > 1:
-                rank[key] = val.shape[1]
-
         target_modules = _infer_krea2_lora_target_modules(state_dict)
         if not target_modules:
             raise ValueError(
                 "Could not infer KREA2 LoRA target modules from the adapter state dict. "
                 "Expected keys ending in .lora_A.weight and .lora_B.weight."
             )
+        state_dict, target_modules = _align_krea2_lora_state_dict_to_transformer(
+            state_dict,
+            target_modules,
+            transformer,
+        )
+
+        rank = {}
+        for key, val in state_dict.items():
+            if "lora_B" in key and getattr(val, "ndim", 0) > 1:
+                rank[key] = val.shape[1]
 
         lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=None, peft_state_dict=state_dict)
         lora_config_kwargs["target_modules"] = target_modules

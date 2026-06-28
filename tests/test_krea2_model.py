@@ -156,7 +156,23 @@ class Krea2VendoredModelTests(unittest.TestCase):
         self.assertIn("transformer_blocks.0.attn.to_q", transformer.peft_config["krea2_turbo"].target_modules)
 
     def test_lora_loader_injects_without_state_dict_argument(self):
-        transformer = torch.nn.Module()
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=1,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=0,
+            axes_dims_rope=(2, 2, 2),
+        )
         state_dict = {
             "transformer.blocks.0.attn.wq.lora_A.weight": torch.ones(2, 6),
             "transformer.blocks.0.attn.wq.lora_B.weight": torch.ones(6, 2),
@@ -178,7 +194,23 @@ class Krea2VendoredModelTests(unittest.TestCase):
         self.assertNotIn("state_dict", mock_inject.call_args.kwargs)
 
     def test_lora_loader_restores_offload_state_when_injection_fails(self):
-        transformer = torch.nn.Module()
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=1,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=0,
+            axes_dims_rope=(2, 2, 2),
+        )
         pipeline = Mock()
         state_dict = {
             "transformer.blocks.0.attn.wq.lora_A.weight": torch.ones(2, 6),
@@ -200,6 +232,109 @@ class Krea2VendoredModelTests(unittest.TestCase):
                 )
 
         mock_restore.assert_called_once_with(pipeline, True, False, True)
+
+    def test_lora_loader_aligns_external_krea2_adapter_for_wrapped_transformer(self):
+        class WrappedTransformer(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.module = Krea2Transformer2DModel(
+                    in_channels=4,
+                    num_layers=1,
+                    attention_head_dim=6,
+                    num_attention_heads=1,
+                    num_key_value_heads=1,
+                    intermediate_size=8,
+                    timestep_embed_dim=8,
+                    text_hidden_dim=6,
+                    num_text_layers=1,
+                    text_num_attention_heads=1,
+                    text_num_key_value_heads=1,
+                    text_intermediate_size=8,
+                    num_layerwise_text_blocks=1,
+                    num_refiner_text_blocks=0,
+                    axes_dims_rope=(2, 2, 2),
+                )
+
+        transformer = WrappedTransformer()
+        state_dict = {
+            "transformer.blocks.0.attn.wq.lora_A.weight": torch.ones(2, 6),
+            "transformer.blocks.0.attn.wq.lora_B.weight": torch.ones(6, 2),
+        }
+
+        Krea2LoraLoaderMixin.load_lora_into_transformer(
+            state_dict,
+            transformer=transformer,
+            adapter_name="krea2_turbo",
+        )
+
+        self.assertIn("krea2_turbo", transformer.peft_config)
+        self.assertIn("module.transformer_blocks.0.attn.to_q", transformer.peft_config["krea2_turbo"].target_modules)
+        self.assertTrue(hasattr(transformer.module.transformer_blocks[0].attn.to_q, "lora_A"))
+
+    def test_lora_loader_computes_rank_after_wrapped_transformer_alignment(self):
+        class DummyLoraConfig:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class WrappedTransformer(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.module = Krea2Transformer2DModel(
+                    in_channels=4,
+                    num_layers=1,
+                    attention_head_dim=6,
+                    num_attention_heads=1,
+                    num_key_value_heads=1,
+                    intermediate_size=8,
+                    timestep_embed_dim=8,
+                    text_hidden_dim=6,
+                    num_text_layers=1,
+                    text_num_attention_heads=1,
+                    text_num_key_value_heads=1,
+                    text_intermediate_size=8,
+                    num_layerwise_text_blocks=1,
+                    num_refiner_text_blocks=0,
+                    axes_dims_rope=(2, 2, 2),
+                )
+
+        captured = {}
+
+        def capture_peft_kwargs(rank, network_alpha_dict, peft_state_dict):
+            captured["rank"] = dict(rank)
+            captured["peft_state_dict"] = dict(peft_state_dict)
+            return {"r": 2, "lora_alpha": 2}
+
+        transformer = WrappedTransformer()
+        state_dict = {
+            "transformer.blocks.0.attn.wq.lora_A.weight": torch.ones(2, 6),
+            "transformer.blocks.0.attn.wq.lora_B.weight": torch.ones(6, 2),
+        }
+
+        with (
+            patch("peft.LoraConfig", DummyLoraConfig),
+            patch("peft.inject_adapter_in_model"),
+            patch("peft.set_peft_model_state_dict", return_value=None),
+            patch(
+                "simpletuner.helpers.models.krea2.lora_pipeline.get_peft_kwargs",
+                side_effect=capture_peft_kwargs,
+            ),
+            patch.object(Krea2LoraLoaderMixin, "_optionally_disable_offloading", return_value=False),
+            patch("simpletuner.helpers.models.krea2.lora_pipeline.restore_offload_state"),
+        ):
+            Krea2LoraLoaderMixin.load_lora_into_transformer(
+                state_dict,
+                transformer=transformer,
+                adapter_name="krea2_turbo",
+            )
+
+        self.assertEqual(captured["rank"], {"module.transformer_blocks.0.attn.to_q.lora_B.weight": 2})
+        self.assertEqual(
+            set(captured["peft_state_dict"]),
+            {
+                "module.transformer_blocks.0.attn.to_q.lora_A.weight",
+                "module.transformer_blocks.0.attn.to_q.lora_B.weight",
+            },
+        )
 
     def test_pipeline_accepts_reference_image_for_validation(self):
         parameters = inspect.signature(Krea2Pipeline.__call__).parameters
