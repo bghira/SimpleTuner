@@ -11,9 +11,12 @@ Tests cover:
 from __future__ import annotations
 
 import unittest
-from typing import Any, Dict, List, Optional, Tuple
 
-from simpletuner.simpletuner_sdk.server.services.training_service import TrainingJobResult, get_gpu_requirements
+from simpletuner.simpletuner_sdk.server.services.training_service import (
+    TrainingJobResult,
+    _queued_preferred_gpus,
+    get_gpu_requirements,
+)
 
 
 class TestGetGPURequirements(unittest.TestCase):
@@ -221,6 +224,18 @@ class TestQueueTrainingJob(unittest.TestCase):
         # 1. test_queue_store_gpu.py - tests add_to_queue with GPU fields
         # 2. local_gpu.test.js - tests API submission behavior
         pass
+
+    def test_incomplete_preferred_gpus_are_not_persisted(self):
+        """A queued 2-GPU job should not hard-pin itself to one GPU forever."""
+        self.assertIsNone(_queued_preferred_gpus([0], num_processes=2, any_gpu=False))
+
+    def test_complete_preferred_gpus_are_persisted(self):
+        """Complete preferences remain hard preferences for queued jobs."""
+        self.assertEqual(_queued_preferred_gpus([0, 1], num_processes=2, any_gpu=False), [0, 1])
+
+    def test_any_gpu_drops_preferred_gpus(self):
+        """The any-GPU mode should let the allocator choose later."""
+        self.assertIsNone(_queued_preferred_gpus([0, 1], num_processes=2, any_gpu=True))
 
 
 class TestReleaseJobGPUs(unittest.TestCase):

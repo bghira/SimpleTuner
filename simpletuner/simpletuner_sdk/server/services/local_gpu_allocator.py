@@ -460,10 +460,20 @@ class LocalGPUAllocator:
             # Get any_gpu setting from metadata
             metadata = job.metadata or {}
             any_gpu = metadata.get("any_gpu", False)
+            preferred_gpus = job.allocated_gpus if not any_gpu else None
+            if preferred_gpus and len(preferred_gpus) < job.num_processes:
+                logger.warning(
+                    "Queued job %s needs %d GPU(s), but only has preferred GPUs %s; "
+                    "falling back to any available GPUs",
+                    job.job_id,
+                    job.num_processes,
+                    preferred_gpus,
+                )
+                preferred_gpus = None
 
             can_start, gpus, reason = await self.can_allocate(
                 required_count=job.num_processes,
-                preferred_gpus=job.allocated_gpus if not any_gpu else None,
+                preferred_gpus=preferred_gpus,
                 any_gpu=any_gpu,
             )
 
