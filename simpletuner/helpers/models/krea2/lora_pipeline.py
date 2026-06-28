@@ -88,6 +88,11 @@ def _infer_krea2_lora_target_modules(state_dict: dict[str, torch.Tensor]) -> lis
     return list(target_modules)
 
 
+def _unwrap_krea2_lora_transformer(transformer):
+    """Return the real KREA2 module when validation hands us a compiled wrapper."""
+    return getattr(transformer, "_orig_mod", transformer)
+
+
 def _align_krea2_lora_state_dict_to_transformer(
     state_dict: dict[str, torch.Tensor],
     target_modules: list[str],
@@ -302,6 +307,8 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
         first_key = next(iter(state_dict.keys()))
         if "lora_A" not in first_key:
             state_dict = convert_unet_state_dict_to_peft(state_dict)
+
+        transformer = _unwrap_krea2_lora_transformer(transformer)
 
         if adapter_name in getattr(transformer, "peft_config", {}):
             raise ValueError(
