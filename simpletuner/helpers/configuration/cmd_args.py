@@ -101,12 +101,6 @@ def _configure_tf32(disable_tf32: bool) -> None:
             for cudnn_op_backend in (cudnn_conv_backend, cudnn_rnn_backend):
                 if cudnn_op_backend is not None and hasattr(cudnn_op_backend, "fp32_precision"):
                     cudnn_op_backend.fp32_precision = precision
-            if (
-                cudnn_backend is not None
-                and hasattr(cudnn_backend, "allow_tf32")
-                and not hasattr(cudnn_backend, "fp32_precision")
-            ):
-                cudnn_backend.allow_tf32 = enabled
         else:
             if matmul_backend is not None and hasattr(matmul_backend, "allow_tf32"):
                 matmul_backend.allow_tf32 = enabled
