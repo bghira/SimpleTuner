@@ -434,6 +434,7 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - `xformers` Meta के [xformers](https://github.com/facebookresearch/xformers) attention kernel (training + inference) सक्षम करता है, जब underlying मॉडल `enable_xformers_memory_efficient_attention` expose करता है।
 - `flash-attn`, `flash-attn-2`, `flash-attn-3`, और `flash-attn-3-varlen` Diffusers के नए `attention_backend` helper के जरिए FlashAttention v1/2/3 kernels में route करते हैं। संबंधित `flash-attn` / `flash-attn-interface` wheels install करें और ध्यान दें कि FA3 फिलहाल Hopper GPUs की मांग करता है।
 - `flex` PyTorch 2.5 का FlexAttention backend चुनता है (CUDA पर FP16/BF16)। आपको Flex kernels अलग से compile/install करने होंगे — देखें [documentation/attention/FLEX.md](attention/FLEX.md)।
+- `metal-flash-attention` Apple Silicon पर Universal Metal Flash Attention के PyTorch custom-op backend का उपयोग करता है। पहले UMFA का `examples/pytorch-custom-op-ffi` package install करें; eligible MPS FP16/FP32 SDPA calls `metal_sdpa_extension` पर dispatch होते हैं। SimpleTuner startup पर PyTorch SDPA के विरुद्ध parity check चलाता है और numerically match न करने वाले UMFA builds को reject करता है।
 - `cudnn`, `native-efficient`, `native-flash`, `native-math`, `native-npu`, और `native-xla` `torch.nn.attention.sdpa_kernel` द्वारा expose किए गए matching SDPA backend चुनते हैं। ये तब उपयोगी हैं जब आपको determinism (`native-math`), CuDNN SDPA kernel, या vendor‑native accelerators (NPU/XLA) चाहिए।
 - `sla` [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA) सक्षम करता है, जो fine‑tunable sparse/linear hybrid kernel देता है और training तथा validation दोनों में बिना अतिरिक्त gating के उपयोग किया जा सकता है।
   - SLA package install करें (उदा. `pip install -e ~/src/SLA`) इस backend को चुनने से पहले।
@@ -1704,7 +1705,7 @@ usage: train.py [-h] --model_family
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--mixed_precision {no,fp16,bf16,fp8}]
-                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,metal-flash-attention,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--disable_tf32 [DISABLE_TF32]]
                 [--set_grads_to_none [SET_GRADS_TO_NONE]]
@@ -2182,7 +2183,7 @@ options:
                         Sigma data for soft min SNR weighting
   --mixed_precision {no,fp16,bf16,fp8}
                         Precision for training computations
-  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,metal-flash-attention,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         Attention computation backend
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention
