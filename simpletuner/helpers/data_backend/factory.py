@@ -417,6 +417,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["probability"] = 1.0
         else:
             output["config"]["probability"] = float(probability)
+    if "timestep_bias" in backend:
+        timestep_bias = backend["timestep_bias"]
+        output["config"]["timestep_bias"] = float(timestep_bias) if timestep_bias else 0.0
     if "ignore_epochs" in backend:
         logger.error("ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration.")
     if "repeats" in backend:

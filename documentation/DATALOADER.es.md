@@ -604,6 +604,13 @@ Por defecto, SimpleTuner escalará hacia arriba imágenes pequeñas para cumplir
 
 - Además de `prepend_instance_prompt`, reemplaza todos los captions del dataset con una sola frase o palabra trigger.
 
+### `timestep_bias`
+
+- Desplaza el muestreo de timesteps de flow-matching de este dataset hacia niveles de ruido más altos o más bajos. Se aplica al programa por defecto logit-normal (sigmoid).
+- Un valor **negativo** sesga el muestreo hacia timesteps de menor ruido, centrando el entrenamiento en el detalle fino (por ejemplo, primeros planos o datos con mucha textura). Un valor **positivo** sesga hacia timesteps de mayor ruido, centrándose en la estructura general (por ejemplo, cuerpo entero o datos centrados en la composición).
+- El valor se suma a la muestra normal previa al sigmoid; las magnitudes útiles suelen estar entre `-1.0` y `1.0`. Por defecto es `0.0` (sin sesgo, idéntico al comportamiento original).
+- Como cada lote (batch) proviene de un único dataset, agrupa las imágenes por granularidad semántica en datasets separados y define un `timestep_bias` para cada uno.
+
 ### `repeats`
 
 - Especifica cuántas veces se ven todas las muestras del dataset durante una época. Útil para dar más impacto a datasets pequeños o maximizar el uso de objetos de caché VAE.

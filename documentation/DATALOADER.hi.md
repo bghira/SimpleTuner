@@ -604,6 +604,13 @@ Images cropping से पहले resize नहीं होतीं **जब
 
 - `prepend_instance_prompt` के अतिरिक्त, पूरे dataset के सभी captions को एक ही phrase या trigger word से बदल देता है।
 
+### `timestep_bias`
+
+- इस dataset के flow-matching timestep sampling को अधिक या कम noise स्तरों की ओर स्थानांतरित करता है। यह डिफ़ॉल्ट logit-normal (sigmoid) schedule पर लागू होता है।
+- **ऋणात्मक** मान sampling को कम-noise timesteps की ओर झुकाता है, जिससे प्रशिक्षण बारीक विवरण (जैसे क्लोज़-अप या texture-प्रधान data) पर केंद्रित होता है। **धनात्मक** मान अधिक-noise timesteps की ओर झुकाता है, जिससे समग्र संरचना (जैसे फ़ुल-बॉडी या रचना-प्रधान data) पर ध्यान केंद्रित होता है।
+- यह मान sigmoid से पहले के normal sample में जोड़ा जाता है; उपयोगी मात्राएँ आमतौर पर `-1.0` से `1.0` के बीच होती हैं। डिफ़ॉल्ट `0.0` है (कोई bias नहीं, मूल व्यवहार के समान)।
+- चूँकि प्रत्येक batch एकल dataset से लिया जाता है, images को semantic granularity के अनुसार अलग-अलग datasets में समूहित करें और प्रत्येक पर `timestep_bias` सेट करें।
+
 ### `repeats`
 
 - यह बताता है कि epoch के दौरान dataset के सभी samples कितनी बार देखे जाते हैं। छोटे datasets का प्रभाव बढ़ाने या VAE cache objects का अधिकतम उपयोग करने के लिए उपयोगी।
