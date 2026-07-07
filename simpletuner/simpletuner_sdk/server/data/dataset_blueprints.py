@@ -61,7 +61,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 "resolution": 1024,
                 "resolution_type": "pixel_area",
                 "probability": 1,
-                "timestep_bias": 0,
+                "timestep_sampling_offset": 0,
                 "repeats": 0,
                 "cache_dir_vae": "cache/vae",
             },
@@ -170,7 +170,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "step": 0.05,
                 },
                 {
-                    "id": "timestep_bias",
+                    "id": "timestep_sampling_offset",
                     "label": "timestep bias",
                     "description": "shift this dataset's flow-matching timestep sampling: negative favours low-noise (detail) steps, positive favours high-noise (structure) steps",
                     "type": "number",

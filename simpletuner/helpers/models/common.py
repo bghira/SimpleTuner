@@ -4263,10 +4263,10 @@ class ModelFoundation(ABC):
         self.reset_flow_custom_timestep_cursor(fallback_global_step)
         return False
 
-    def _get_dataset_timestep_bias(self, batch: dict) -> float:
-        """Per-dataset flow timestep sampling bias (see DATALOADER.md ``timestep_bias``)."""
+    def _get_dataset_timestep_sampling_offset(self, batch: dict) -> float:
+        """Per-dataset flow timestep sampling bias (see DATALOADER.md ``timestep_sampling_offset``)."""
         config = StateTracker.get_data_backend_config(batch.get("data_backend_id"))
-        return float(config.get("timestep_bias", 0.0))
+        return float(config.get("timestep_sampling_offset", 0.0))
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -4332,9 +4332,9 @@ class ModelFoundation(ABC):
             ]
         ):
             normal = torch.randn((bsz,), device=self.accelerator.device)
-            timestep_bias = self._get_dataset_timestep_bias(batch)
-            if timestep_bias:
-                normal = normal + timestep_bias
+            timestep_offset = self._get_dataset_timestep_sampling_offset(batch)
+            if timestep_offset:
+                normal = normal + timestep_offset
             sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * normal)
             sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
         elif self.config.flow_use_uniform_schedule:
