@@ -604,6 +604,13 @@ Por padrão, o SimpleTuner fará upscaling de imagens pequenas para atender à r
 
 - Além de `prepend_instance_prompt`, substitui todas as captions do dataset por uma única frase ou palavra de ativação.
 
+### `timestep_sampling_offset`
+
+- Desloca a amostragem de timesteps de flow-matching deste dataset para níveis de ruído mais altos ou mais baixos. Aplica-se ao cronograma padrão logit-normal (sigmoid).
+- Um valor **negativo** enviesa a amostragem para timesteps de menor ruído, focando o treinamento em detalhes finos (por exemplo, close-ups ou dados com muita textura). Um valor **positivo** enviesa para timesteps de maior ruído, focando na estrutura geral (por exemplo, corpo inteiro ou dados voltados à composição).
+- O valor é somado à amostra normal antes do sigmoid; magnitudes úteis costumam ficar entre `-1.0` e `1.0`. O padrão é `0.0` (sem viés, idêntico ao comportamento original).
+- Como cada lote (batch) vem de um único dataset, agrupe as imagens por granularidade semântica em datasets separados e defina um `timestep_sampling_offset` para cada um.
+
 ### `repeats`
 
 - Especifica quantas vezes todas as amostras do dataset são vistas durante uma época. Útil para dar mais impacto a datasets menores ou maximizar o uso de objetos de cache do VAE.

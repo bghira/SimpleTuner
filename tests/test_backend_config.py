@@ -238,6 +238,7 @@ class TestImageBackendConfig(unittest.TestCase):
             "parquet": {"config": "test"},
             "repeats": 5,
             "probability": 0.8,
+            "timestep_sampling_offset": -0.5,
             "minimum_image_size": 0.5,
             "maximum_image_size": 10.0,
             "target_downsample_size": 5.0,
@@ -253,6 +254,7 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.caption_strategy, "parquet")
         self.assertEqual(config.repeats, 5)
         self.assertEqual(config.probability, 0.8)
+        self.assertEqual(config.timestep_sampling_offset, -0.5)
         self.assertEqual(config.minimum_image_size, 0.5)
         self.assertEqual(config.maximum_image_size, 10.0)
         self.assertEqual(config.target_downsample_size, 5.0)
@@ -307,6 +309,7 @@ class TestImageBackendConfig(unittest.TestCase):
             "crop_aspect": "preserve",
             "repeats": 3,
             "probability": 0.7,
+            "timestep_sampling_offset": 0.5,
         }
 
         config = ImageBackendConfig.from_dict(backend_dict, self.args)
@@ -316,6 +319,16 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(output["config"]["crop_aspect"], "preserve")
         self.assertEqual(output["config"]["repeats"], 3)
         self.assertEqual(output["config"]["probability"], 0.7)
+        self.assertEqual(output["config"]["timestep_sampling_offset"], 0.5)
+
+    def test_timestep_sampling_offset_defaults_to_zero(self):
+        """timestep_sampling_offset is optional and defaults to 0.0 (no sampling bias)"""
+        backend_dict = {"id": "image_test", "type": "local"}
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+
+        self.assertEqual(config.timestep_sampling_offset, 0.0)
+        self.assertEqual(config.to_dict()["config"]["timestep_sampling_offset"], 0.0)
 
     def test_validate_success(self):
         """Test successful validation"""

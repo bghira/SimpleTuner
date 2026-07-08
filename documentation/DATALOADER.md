@@ -605,6 +605,13 @@ By default, SimpleTuner will upscale small images to meet the target resolution,
 
 - In addition to `prepend_instance_prompt`, replaces all captions in the dataset with a single phrase or trigger word.
 
+### `timestep_sampling_offset`
+
+- Shifts this dataset's flow-matching timestep sampling toward higher or lower noise levels. Applies to the default logit-normal (sigmoid) schedule.
+- A **negative** value biases sampling toward lower-noise timesteps, focusing training on fine detail (e.g. close-up or texture-heavy data). A **positive** value biases toward higher-noise timesteps, focusing on overall structure (e.g. full-body or composition-heavy data).
+- The value is added to the pre-sigmoid normal sample; useful magnitudes are typically around `-1.0` to `1.0`. Defaults to `0.0` (no bias, identical to stock behaviour).
+- Because each batch is drawn from a single dataset, group images by semantic granularity into separate datasets and set a per-dataset `timestep_sampling_offset` on each.
+
 ### `repeats`
 
 - Specifies the number of times all samples in the dataset are seen during an epoch. Useful for giving more impact to smaller datasets or maximizing the usage of VAE cache objects.
