@@ -49,7 +49,9 @@ class TestAttentionBackendPersistence(unittest.TestCase):
 
     def test_metal_flash_attention_availability_false_when_runtime_parity_fails(self):
         package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
-        extension = SimpleNamespace(metal_scaled_dot_product_attention=lambda query, key, value, **kwargs: query)
+        extension = SimpleNamespace(
+            metal_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query
+        )
 
         def fake_import(name):
             if name == "pytorch_custom_op_ffi":
@@ -71,11 +73,11 @@ class TestAttentionBackendPersistence(unittest.TestCase):
     def test_metal_flash_attention_installs_sdpa_wrapper(self):
         calls = []
 
-        def fake_metal_sdpa(query, key, value, **kwargs):
-            calls.append((query, key, value, kwargs))
+        def fake_metal_sdpa(query, key, value, is_causal=False, scale=0.0):
+            calls.append((query, key, value, is_causal, scale))
             return query + 1
 
-        extension = SimpleNamespace(metal_scaled_dot_product_attention=fake_metal_sdpa)
+        extension = SimpleNamespace(metal_flash_attention_autograd=fake_metal_sdpa)
         config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention"})()
 
         with (
@@ -91,20 +93,20 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertEqual(AttentionBackendController._active_backend, "metal-flash-attention")
         self.assertTrue(torch.equal(output, torch.ones_like(query)))
         self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0][3]["is_causal"])
-        self.assertEqual(calls[0][3]["scale"], 0.5)
+        self.assertTrue(calls[0][3])
+        self.assertEqual(calls[0][4], 0.5)
 
     def test_metal_flash_attention_wrapper_falls_back_when_unsupported(self):
         calls = []
 
-        def fake_metal_sdpa(query, key, value, **kwargs):
-            calls.append((query, key, value, kwargs))
+        def fake_metal_sdpa(query, key, value, is_causal=False, scale=0.0):
+            calls.append((query, key, value, is_causal, scale))
             return query + 1
 
         def fake_original(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False):
             return query + 2
 
-        extension = SimpleNamespace(metal_scaled_dot_product_attention=fake_metal_sdpa)
+        extension = SimpleNamespace(metal_flash_attention_autograd=fake_metal_sdpa)
         config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention"})()
 
         with (
@@ -157,6 +159,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
                 None,
                 0.0,
                 False,
+                False,
             )
         )
         self.assertTrue(
@@ -166,6 +169,97 @@ class TestAttentionBackendPersistence(unittest.TestCase):
                 query,
                 None,
                 0.1,
+                False,
+                False,
+            )
+        )
+
+    @unittest.skipUnless(
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available(),
+        "Requires MPS.",
+    )
+    def test_metal_flash_attention_dispatches_only_verified_fp32_mps_shape(self):
+        query = torch.zeros(1, 4, 64, 64, device="mps", dtype=torch.float32)
+        transposed_query = torch.zeros(1, 64, 4, 64, device="mps", dtype=torch.float32).transpose(1, 2)
+        single_head_query = torch.zeros(1, 1, 8, 16, device="mps", dtype=torch.float32)
+        fp16_query = torch.zeros_like(query, dtype=torch.float16)
+        mask = torch.zeros(1, 1, 64, 64, device="mps", dtype=torch.bool)
+        two_dimensional_query = torch.zeros(2, 4, device="mps", dtype=torch.float32)
+
+        self.assertFalse(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertFalse(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                transposed_query,
+                transposed_query,
+                transposed_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                single_head_query,
+                single_head_query,
+                single_head_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                fp16_query,
+                fp16_query,
+                fp16_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                mask,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                None,
+                0.0,
+                True,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                two_dimensional_query,
+                two_dimensional_query,
+                two_dimensional_query,
+                None,
+                0.0,
+                False,
                 False,
             )
         )

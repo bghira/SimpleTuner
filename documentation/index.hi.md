@@ -72,9 +72,9 @@
 
     ---
 
-    AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow और Video CREPA जैसी research features
+    AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention और Video CREPA जैसी research features
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Prompt2Effect](experimental/PROMPT2EFFECT.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 

@@ -135,17 +135,19 @@ if (!window.cloudDashboardComponent) {
                 };
                 document.addEventListener('trainer-connection-status', this._sseEventHandler);
 
-                // Also hook into the global updateConnectionStatus if we can
-                this._originalUpdateConnectionStatus = window.updateConnectionStatus;
+                if (!window.__cloudOriginalUpdateConnectionStatus) {
+                    window.__cloudOriginalUpdateConnectionStatus = window.updateConnectionStatus;
+                }
                 const self = this;
                 window.updateConnectionStatus = function(status, message) {
                     self.sseConnection.status = status || 'unknown';
                     self.sseConnection.message = message || '';
                     self.sseConnection.lastUpdated = new Date();
-                    if (self._originalUpdateConnectionStatus) {
-                        self._originalUpdateConnectionStatus(status, message);
+                    if (typeof window.__cloudOriginalUpdateConnectionStatus === 'function') {
+                        window.__cloudOriginalUpdateConnectionStatus(status, message);
                     }
                 };
+                window.__cloudUpdateConnectionStatusOwner = this;
             },
 
             // Note: sseStatusColor, sseStatusIcon getters moved to final return object to avoid spread evaluation issue
@@ -339,9 +341,9 @@ if (!window.cloudDashboardComponent) {
                     document.removeEventListener('trainer-connection-status', this._sseEventHandler);
                     this._sseEventHandler = null;
                 }
-                if (this._originalUpdateConnectionStatus) {
-                    window.updateConnectionStatus = this._originalUpdateConnectionStatus;
-                    this._originalUpdateConnectionStatus = null;
+                if (window.__cloudUpdateConnectionStatusOwner === this) {
+                    window.updateConnectionStatus = window.__cloudOriginalUpdateConnectionStatus;
+                    window.__cloudUpdateConnectionStatusOwner = null;
                 }
             },
 

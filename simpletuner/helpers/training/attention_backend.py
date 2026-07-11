@@ -434,8 +434,8 @@ def get_metal_flash_attention_unavailable_reason() -> Optional[str]:
     except ImportError:
         return "Could not import metal_sdpa_extension from the UMFA PyTorch custom-op package."
 
-    if not callable(getattr(extension, "metal_scaled_dot_product_attention", None)):
-        return "metal_sdpa_extension does not expose metal_scaled_dot_product_attention()."
+    if not callable(getattr(extension, "metal_flash_attention_autograd", None)):
+        return "metal_sdpa_extension does not expose metal_flash_attention_autograd()."
 
     return _metal_flash_attention_runtime_error()
 
@@ -448,54 +448,136 @@ def is_metal_flash_attention_available() -> bool:
 @lru_cache(maxsize=1)
 def _metal_flash_attention_runtime_error() -> Optional[str]:
     script = """
+import math
 import torch
-import torch.nn.functional as F
 import metal_sdpa_extension
 
 if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
     raise SystemExit("MPS is not available")
 
 
-def check(shape, dtype, rtol, atol):
-    torch.manual_seed(42)
-    query = torch.randn(shape, dtype=dtype, device="mps")
-    key = torch.randn(shape, dtype=dtype, device="mps")
-    value = torch.randn(shape, dtype=dtype, device="mps")
-    torch.mps.synchronize()
+def reference_attention_cpu(query, key, value, scale=None):
+    if scale is None:
+        scale = 1.0 / math.sqrt(query.shape[-1])
+    scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+    probs = torch.softmax(scores, dim=-1)
+    return torch.matmul(probs, value)
 
-    expected = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
-    torch.mps.synchronize()
-    observed = metal_sdpa_extension.metal_scaled_dot_product_attention(
+
+def reference_attention(query, key, value, scale=None):
+    query = query.detach().cpu().float()
+    key = key.detach().cpu().float()
+    value = value.detach().cpu().float()
+    return reference_attention_cpu(query, key, value, scale)
+
+
+def reference_attention_grads(query, key, value):
+    ref_query = query.detach().cpu().float().requires_grad_(True)
+    ref_key = key.detach().cpu().float().requires_grad_(True)
+    ref_value = value.detach().cpu().float().requires_grad_(True)
+    ref_output = reference_attention_cpu(ref_query, ref_key, ref_value)
+    ref_loss = ref_output.square().mean()
+    ref_loss.backward()
+    return ref_query.grad, ref_key.grad, ref_value.grad
+
+
+def check(shape, rtol, atol, transposed=False, queued_producer=False):
+    torch.manual_seed(42)
+    if transposed:
+        batch, heads, seq, dim = shape
+        query = torch.randn((batch, seq, heads, dim), dtype=torch.float32, device="mps").transpose(1, 2)
+        key = torch.randn((batch, seq, heads, dim), dtype=torch.float32, device="mps").transpose(1, 2)
+        value = torch.randn((batch, seq, heads, dim), dtype=torch.float32, device="mps").transpose(1, 2)
+    else:
+        query = torch.randn(shape, dtype=torch.float32, device="mps")
+        key = torch.randn(shape, dtype=torch.float32, device="mps")
+        value = torch.randn(shape, dtype=torch.float32, device="mps")
+
+    if queued_producer:
+        query = query.mul(1.0)
+        key = key.mul(1.0)
+        value = value.mul(1.0)
+    else:
+        torch.mps.synchronize()
+        expected = reference_attention(query, key, value)
+
+    observed = metal_sdpa_extension.metal_flash_attention_autograd(
         query,
         key,
         value,
-        dropout_p=0.0,
-        is_causal=False,
+        False,
+        0.0,
     )
     torch.mps.synchronize()
+    if queued_producer:
+        expected = reference_attention(query, key, value)
 
     if observed.shape != query.shape:
-        raise SystemExit(f"Unexpected output shape for {shape} {dtype}: {tuple(observed.shape)}")
+        raise SystemExit(f"Unexpected output shape for {shape}: {tuple(observed.shape)}")
     if observed.dtype != expected.dtype:
-        raise SystemExit(f"Unexpected output dtype for {shape} {dtype}: {observed.dtype}")
+        raise SystemExit(f"Unexpected output dtype for {shape}: {observed.dtype}")
     if not torch.isfinite(observed).all().item():
-        raise SystemExit(f"UMFA Metal SDPA produced non-finite values for {shape} {dtype}")
+        raise SystemExit(f"UMFA Metal SDPA produced non-finite values for {shape}")
 
-    expected_cpu = expected.float().cpu()
+    expected_cpu = expected.float()
     observed_cpu = observed.float().cpu()
     if not torch.allclose(observed_cpu, expected_cpu, rtol=rtol, atol=atol):
         diff = (observed_cpu - expected_cpu).abs()
         raise SystemExit(
             "UMFA Metal SDPA parity failed for "
-            f"shape={shape} dtype={dtype}: "
+            f"shape={shape} dtype=torch.float32: "
             f"max_abs={diff.max().item():.6g}, mean_abs={diff.mean().item():.6g}"
         )
 
 
-check((1, 1, 8, 16), torch.float16, 2e-2, 2e-2)
-check((1, 1, 8, 16), torch.float32, 1e-4, 1e-4)
-check((1, 4, 64, 64), torch.float32, 1e-3, 1e-3)
-check((1, 24, 512, 128), torch.float32, 2e-3, 2e-3)
+def check_autograd(shape, rtol, atol):
+    torch.manual_seed(43)
+    query = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=True)
+    key = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=True)
+    value = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=True)
+    torch.mps.synchronize()
+    expected_grads = reference_attention_grads(query, key, value)
+
+    observed = metal_sdpa_extension.metal_flash_attention_autograd(
+        query,
+        key,
+        value,
+        False,
+        0.0,
+    )
+    torch.mps.synchronize()
+
+    if not observed.requires_grad or observed.grad_fn is None:
+        raise SystemExit("UMFA Metal SDPA output is detached; autograd is required for training.")
+
+    loss = observed.square().mean()
+    loss.backward()
+    torch.mps.synchronize()
+
+    for name, tensor, expected in (
+        ("query", query, expected_grads[0]),
+        ("key", key, expected_grads[1]),
+        ("value", value, expected_grads[2]),
+    ):
+        if tensor.grad is None:
+            raise SystemExit(f"UMFA Metal SDPA did not produce a {name} gradient.")
+        if not torch.isfinite(tensor.grad).all().item():
+            raise SystemExit(f"UMFA Metal SDPA produced non-finite {name} gradients.")
+        observed_grad = tensor.grad.detach().cpu().float()
+        if not torch.allclose(observed_grad, expected, rtol=rtol, atol=atol):
+            diff = (observed_grad - expected).abs()
+            raise SystemExit(
+                "UMFA Metal SDPA gradient parity failed for "
+                f"shape={shape} tensor={name}: "
+                f"max_abs={diff.max().item():.6g}, mean_abs={diff.mean().item():.6g}"
+            )
+
+
+check((1, 4, 64, 64), 1e-4, 1e-4)
+check_autograd((1, 4, 64, 64), 1e-3, 1e-3)
+check((1, 24, 512, 128), 1e-4, 1e-4)
+check((1, 24, 512, 128), 1e-4, 1e-4, transposed=True)
+check((1, 24, 512, 128), 1e-4, 1e-4, queued_producer=True)
 """
     try:
         result = subprocess.run(
@@ -669,9 +751,9 @@ class AttentionBackendController:
             logger.error(message)
             raise RuntimeError(message) from exc
 
-        selected_impl = getattr(extension, "metal_scaled_dot_product_attention", None)
+        selected_impl = getattr(extension, "metal_flash_attention_autograd", None)
         if not callable(selected_impl):
-            message = "metal_sdpa_extension does not expose metal_scaled_dot_product_attention()."
+            message = "metal_sdpa_extension does not expose metal_flash_attention_autograd()."
             logger.error(message)
             raise RuntimeError(message)
 
@@ -701,7 +783,7 @@ class AttentionBackendController:
 
         cls._disable_diffusers_backend()
         extension = cls._load_metal_flash_attention_extension()
-        selected_impl = extension.metal_scaled_dot_product_attention
+        selected_impl = extension.metal_flash_attention_autograd
         cls._store_sdpa_reference()
 
         def wrapper(
@@ -714,7 +796,7 @@ class AttentionBackendController:
             scale=None,
             enable_gqa=False,
         ):
-            if cls._metal_flash_attention_should_fallback(query, key, value, attn_mask, dropout_p, enable_gqa):
+            if cls._metal_flash_attention_should_fallback(query, key, value, attn_mask, dropout_p, is_causal, enable_gqa):
                 return cls._call_original_sdpa(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
 
             try:
@@ -722,11 +804,8 @@ class AttentionBackendController:
                     query,
                     key,
                     value,
-                    attn_mask=attn_mask,
-                    dropout_p=dropout_p,
-                    is_causal=is_causal,
-                    scale=scale,
-                    enable_gqa=enable_gqa,
+                    is_causal,
+                    0.0 if scale is None else scale,
                 )
             except Exception as exc:
                 logger.error(
@@ -741,8 +820,10 @@ class AttentionBackendController:
         cls._active_backend = backend
 
     @staticmethod
-    def _metal_flash_attention_should_fallback(query, key, value, attn_mask, dropout_p, enable_gqa) -> bool:
+    def _metal_flash_attention_should_fallback(query, key, value, attn_mask, dropout_p, is_causal, enable_gqa) -> bool:
         if dropout_p not in (0, 0.0, None):
+            return True
+        if is_causal:
             return True
         if enable_gqa:
             return True
@@ -750,19 +831,16 @@ class AttentionBackendController:
             return True
         if query.device.type != "mps" or key.device.type != "mps" or value.device.type != "mps":
             return True
-        if query.ndim not in (2, 4):
+        if query.ndim != 4:
             return True
-        if query.dtype not in (torch.float16, torch.float32):
+        if query.shape[1] < 4 or query.shape[2] < 64:
+            return True
+        if query.dtype != torch.float32:
             return True
         if key.dtype != query.dtype or value.dtype != query.dtype:
             return True
         if attn_mask is not None:
-            if not isinstance(attn_mask, torch.Tensor):
-                return True
-            if attn_mask.device.type not in ("cpu", "mps"):
-                return True
-            if attn_mask.dtype not in (torch.bool, torch.float16, torch.float32):
-                return True
+            return True
         return False
 
     @classmethod

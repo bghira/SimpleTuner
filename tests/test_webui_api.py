@@ -221,6 +221,26 @@ class WebUIRoutesTestCase(_WebUIBaseTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("SimpleTuner", response.text)
 
+    def test_cloud_tab_visible_by_default(self) -> None:
+        response = self.client.get("/web/trainer")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-tab="cloud"', response.text)
+
+    def test_cloud_tab_hidden_only_when_explicitly_disabled(self) -> None:
+        defaults = WebUIDefaults(cloud_tab_enabled=False)
+        self.state_store.save_defaults(defaults)
+
+        response = self.client.get("/web/trainer")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('data-tab="cloud"', response.text)
+
+        defaults.cloud_tab_enabled = True
+        self.state_store.save_defaults(defaults)
+
+        response = self.client.get("/web/trainer")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-tab="cloud"', response.text)
+
     def test_trainer_tabs_basic(self) -> None:
         defaults = WebUIDefaults(configs_dir="/test/configs", output_dir="/test/output")
         self.state_store.save_defaults(defaults)
