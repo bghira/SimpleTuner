@@ -82,6 +82,13 @@ Set the attention mechanism:
 
 `mixed_precision=no` and FP32 model defaults are important for the current integration. SimpleTuner falls back rather than sending BF16/FP16 attention to UMFA.
 
+Quantized aliases are also available:
+
+- `metal-flash-attention-int8`
+- `metal-flash-attention-int4`
+
+These call UMFA's `metal_quantized_flash_attention_autograd` with blockwise quantization (`quant_mode=2`). SimpleTuner runs an additional startup check that verifies attached autograd outputs and finite multi-head gradients before enabling either alias.
+
 ## FLUX Sequence Lengths
 
 For the tested FLUX.1 square-image LoRA path, the attention shape is `B,H,S,D = 1,24,S,128`. Sequence length scales with image area:

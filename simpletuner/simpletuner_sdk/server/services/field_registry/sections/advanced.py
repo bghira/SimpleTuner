@@ -802,6 +802,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         "flash-attn-4-hub",
         "flex",
         "metal-flash-attention",
+        "metal-flash-attention-int8",
+        "metal-flash-attention-int4",
         "native",
         "cudnn",
         "native-efficient",

@@ -82,6 +82,13 @@ Config में attention mechanism set करें:
 
 Current integration के लिए `mixed_precision=no` और FP32 defaults important हैं। SimpleTuner BF16/FP16 attention को UMFA पर भेजने के बजाय fallback करता है।
 
+Quantized aliases भी उपलब्ध हैं:
+
+- `metal-flash-attention-int8`
+- `metal-flash-attention-int4`
+
+ये UMFA के `metal_quantized_flash_attention_autograd` को blockwise quantization (`quant_mode=2`) के साथ call करते हैं। SimpleTuner किसी भी alias को enable करने से पहले autograd से जुड़े outputs और finite multi-head gradients verify करने वाला अतिरिक्त startup check चलाता है।
+
 ## FLUX Sequence Lengths
 
 Tested square-image FLUX.1 LoRA path में attention shape `B,H,S,D = 1,24,S,128` है। Sequence length image area के साथ scale करता है:

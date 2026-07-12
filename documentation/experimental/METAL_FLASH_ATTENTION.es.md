@@ -82,6 +82,13 @@ Configura el mecanismo de atencion:
 
 `mixed_precision=no` y defaults FP32 son importantes para la integracion actual. SimpleTuner hace fallback en lugar de enviar atencion BF16/FP16 a UMFA.
 
+Tambien hay aliases cuantizados:
+
+- `metal-flash-attention-int8`
+- `metal-flash-attention-int4`
+
+Estos llaman `metal_quantized_flash_attention_autograd` de UMFA con cuantizacion blockwise (`quant_mode=2`). SimpleTuner ejecuta un check inicial adicional que verifica salidas conectadas a autograd y gradientes multi-head finitos antes de habilitar cualquiera de los aliases.
+
 ## Sequence Lengths De FLUX
 
 Para la ruta LoRA FLUX.1 cuadrada probada, la forma de atencion es `B,H,S,D = 1,24,S,128`. El sequence length escala con el area de imagen:

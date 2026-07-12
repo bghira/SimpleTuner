@@ -33,10 +33,11 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._sla_state_store = {}
         AttentionBackendController._diffusers_backend_context = None
         AttentionBackendController._diffusers_backend_name = None
-        AttentionBackendController._metal_flash_attention_health_checked = False
+        AttentionBackendController._metal_flash_attention_health_checked = set()
         attention_backend_module.get_packed_attention_backend.cache_clear()
         attention_backend_module.get_metal_flash_attention_unavailable_reason.cache_clear()
         attention_backend_module._metal_flash_attention_runtime_error.cache_clear()
+        attention_backend_module._metal_quantized_flash_attention_runtime_error.cache_clear()
 
     def test_metal_flash_attention_availability_false_when_package_missing(self):
         def fake_import(name):
@@ -96,6 +97,40 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertTrue(calls[0][3])
         self.assertEqual(calls[0][4], 0.5)
 
+    def test_metal_flash_attention_int8_installs_quantized_wrapper(self):
+        calls = []
+
+        def fake_quantized_sdpa(query, key, value, is_causal=False, scale=0.0, target_precision=0, quant_mode=0):
+            calls.append((query, key, value, is_causal, scale, target_precision, quant_mode))
+            return query + 1
+
+        extension = SimpleNamespace(metal_quantized_flash_attention_autograd=fake_quantized_sdpa)
+        config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention-int8"})()
+
+        with (
+            patch.object(AttentionBackendController, "_load_metal_flash_attention_extension", return_value=extension),
+            patch.object(AttentionBackendController, "_metal_flash_attention_should_fallback", return_value=False),
+        ):
+            AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+            query = torch.zeros(1, 1, 2, 4)
+            key = torch.zeros_like(query)
+            value = torch.zeros_like(query)
+            output = torch.nn.functional.scaled_dot_product_attention(query, key, value, is_causal=True, scale=0.5)
+
+        self.assertEqual(AttentionBackendController._active_backend, "metal-flash-attention-int8")
+        self.assertTrue(torch.equal(output, torch.ones_like(query)))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0][3])
+        self.assertEqual(calls[0][4], 0.5)
+        self.assertEqual(calls[0][5], 3)
+        self.assertEqual(calls[0][6], 2)
+
+    def test_metal_flash_attention_int4_profile_uses_target_precision_4(self):
+        profile = attention_backend_module._METAL_FLASH_ATTENTION_PROFILES["metal-flash-attention-int4"]
+
+        self.assertEqual(profile.target_precision, 4)
+        self.assertEqual(profile.quant_mode, 2)
+
     def test_metal_flash_attention_wrapper_falls_back_when_unsupported(self):
         calls = []
 
@@ -146,7 +181,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "runtime check failed"):
                 AttentionBackendController._check_metal_flash_attention_runtime()
 
-        self.assertFalse(AttentionBackendController._metal_flash_attention_health_checked)
+        self.assertEqual(AttentionBackendController._metal_flash_attention_health_checked, set())
 
     def test_metal_flash_attention_fallback_conditions(self):
         query = torch.zeros(1, 1, 2, 4)

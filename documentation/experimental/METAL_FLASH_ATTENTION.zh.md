@@ -82,6 +82,13 @@ reason None
 
 当前 integration 需要 `mixed_precision=no` 和 FP32 defaults。SimpleTuner 会 fallback，而不会把 BF16/FP16 attention 发送给 UMFA。
 
+也可以使用量化 aliases:
+
+- `metal-flash-attention-int8`
+- `metal-flash-attention-int4`
+
+这些 aliases 会以 blockwise quantization（`quant_mode=2`）调用 UMFA 的 `metal_quantized_flash_attention_autograd`。SimpleTuner 会在启用任一 alias 前执行额外的启动检查，确认输出连接到 autograd 且 multi-head gradients 都是有限值。
+
 ## FLUX Sequence Lengths
 
 在测试的 square-image FLUX.1 LoRA path 中，attention shape 是 `B,H,S,D = 1,24,S,128`。Sequence length 会随 image area 缩放:
