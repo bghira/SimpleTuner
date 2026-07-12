@@ -1331,7 +1331,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         "metal-flash-attention",
     }
     if normalized_attention_mech not in non_cuda_supported_mechanisms and not torch.cuda.is_available():
-        warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
+        warning_log(
+            "For non-CUDA systems, only the following attention mechanisms are officially supported: "
+            f"{', '.join(sorted(non_cuda_supported_mechanisms))}."
+        )
 
     if hasattr(args, "sageattention_usage"):
         args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
