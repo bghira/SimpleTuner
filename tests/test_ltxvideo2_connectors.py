@@ -7,12 +7,17 @@ from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 
 
 class _IdentityConnector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_attention_mask = None
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         attn_mask_binarize_threshold: float = -9000.0,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        self.last_attention_mask = attention_mask
         return hidden_states, attention_mask
 
 
@@ -49,6 +54,8 @@ class TestLTX2TextConnectors(unittest.TestCase):
         self.assertTrue(torch.equal(returned_binary_mask, binary_mask))
         self.assertTrue(torch.count_nonzero(video_binary[:, -1, :]) == 0)
         self.assertTrue(torch.count_nonzero(audio_binary[:, -1, :]) == 0)
+        self.assertEqual(connectors.video_connector.last_attention_mask.dtype, torch.bool)
+        self.assertEqual(connectors.audio_connector.last_attention_mask.dtype, torch.bool)
 
     def test_forward_accepts_broadcastable_4d_additive_mask(self):
         connectors = LTX2TextConnectors(

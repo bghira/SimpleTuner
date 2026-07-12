@@ -11,6 +11,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .base import CloudJobInfo, CloudJobStatus, CloudTrainerService
+from .replicate_profiles import (
+    DEFAULT_REPLICATE_HARDWARE_PROFILE,
+    get_replicate_hardware_profile,
+    normalize_replicate_hardware_profile,
+)
 from .secrets import get_secrets_manager
 
 logger = logging.getLogger(__name__)
@@ -33,13 +38,13 @@ def _get_credential_resolver():
 
 
 # Default model for SimpleTuner on Replicate (version fetched dynamically)
-DEFAULT_MODEL = "simpletuner/advanced-trainer"
+DEFAULT_MODEL = get_replicate_hardware_profile(DEFAULT_REPLICATE_HARDWARE_PROFILE).model
 
 # Default hardware info for cost estimation (fallback values if not configured)
-# These are based on Replicate's published pricing as of 2024
+# These are based on Replicate's published pricing.
 DEFAULT_HARDWARE_INFO: Dict[str, Dict[str, Any]] = {
-    "gpu-l40s": {"name": "L40S (48GB)", "cost_per_second": 0.000975},
-    "gpu-a100-large": {"name": "A100 (80GB)", "cost_per_second": 0.001400},
+    "gpu-l40s": {"name": "L40S (48GB)", "cost_per_second": 0.000972222},
+    "gpu-h100": {"name": "H100 (80GB)", "cost_per_second": 0.001525},
 }
 
 # Cached hardware info (loaded from config or defaults)
@@ -107,7 +112,7 @@ async def get_default_hardware_cost_per_hour(store: Optional[Any] = None) -> flo
     """
     hardware = await get_hardware_info_async(store)
     l40s = hardware.get("gpu-l40s", DEFAULT_HARDWARE_INFO["gpu-l40s"])
-    return l40s.get("cost_per_second", 0.000975) * 3600
+    return l40s.get("cost_per_second", 0.000972222) * 3600
 
 
 def update_hardware_info_cache(hardware_info: Dict[str, Dict[str, Any]]) -> None:
@@ -134,15 +139,17 @@ def clear_hardware_info_cache() -> None:
 class ReplicateCogClient(CloudTrainerService):
     """Client for Replicate's Cog-based training API."""
 
-    def __init__(self, version_override: Optional[str] = None):
+    def __init__(self, version_override: Optional[str] = None, hardware_profile: Optional[str] = None):
         """
         Initialize the Replicate client.
 
         Args:
             version_override: Custom Cog deployment version (e.g., "username/model:hash")
+            hardware_profile: SimpleTuner Replicate hardware profile to use by default
         """
         self._version = version_override  # None means fetch latest
-        self._model = DEFAULT_MODEL
+        self._hardware_profile = normalize_replicate_hardware_profile(hardware_profile)
+        self._model = get_replicate_hardware_profile(self._hardware_profile).model
         self._secrets = get_secrets_manager()
         self._http_client: Optional[httpx.AsyncClient] = None
 
@@ -232,11 +239,11 @@ class ReplicateCogClient(CloudTrainerService):
         # versions are sorted newest first
         return versions[0]["full_version"]
 
-    async def get_effective_version(self) -> str:
+    async def get_effective_version(self, model_id: Optional[str] = None) -> str:
         """Get the version to use - either the override or fetch latest."""
         if self._version:
             return self._version
-        return await self.get_latest_version()
+        return await self.get_latest_version(model_id or self._model)
 
     async def validate_credentials(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """Validate credentials and return user info or error.
@@ -339,6 +346,7 @@ class ReplicateCogClient(CloudTrainerService):
         hub_model_id: Optional[str] = None,
         user_id: Optional[int] = None,
         lycoris_config: Optional[Dict[str, Any]] = None,
+        hardware_profile: Optional[str] = None,
     ) -> CloudJobInfo:
         """Submit a new training job to Replicate.
 
@@ -351,6 +359,7 @@ class ReplicateCogClient(CloudTrainerService):
             hub_model_id: Optional HuggingFace Hub model ID
             user_id: Optional user ID for per-user API key delegation
             lycoris_config: Optional LyCORIS configuration dict
+            hardware_profile: SimpleTuner Replicate hardware profile/model to submit to
         """
         # Get effective token for this user
         token = await self.get_token_for_user(user_id)
@@ -360,8 +369,10 @@ class ReplicateCogClient(CloudTrainerService):
         try:
             client = await self._get_http_client()
 
+            profile = get_replicate_hardware_profile(hardware_profile or self._hardware_profile)
+
             # Get effective version (override or fetch latest)
-            effective_version = await self.get_effective_version()
+            effective_version = await self.get_effective_version(profile.model)
             logger.info("Using Replicate model version: %s", effective_version)
 
             # Prepare input for the Cog predictor
@@ -417,10 +428,12 @@ class ReplicateCogClient(CloudTrainerService):
                 provider="replicate",
                 status=status,
                 created_at=self._format_datetime(prediction.get("created_at")) or datetime.now(timezone.utc).isoformat(),
-                hardware_type="L40S (48GB)",
+                hardware_type=profile.hardware_type,
                 metadata={
                     "prediction_id": prediction["id"],
                     "webhook_url": webhook_url,
+                    "hardware_profile": profile.id,
+                    "model": profile.model,
                 },
             )
         except httpx.HTTPStatusError as exc:

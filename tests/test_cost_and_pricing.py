@@ -60,7 +60,7 @@ class TestHardwarePricingConfig(unittest.IsolatedAsyncioTestCase):
         hardware = await get_hardware_info_async(self.store)
         self.assertEqual(hardware, DEFAULT_HARDWARE_INFO)
         self.assertIn("gpu-l40s", hardware)
-        self.assertIn("gpu-a100-large", hardware)
+        self.assertIn("gpu-h100", hardware)
 
     async def test_configured_hardware_info(self) -> None:
         """Test that configured hardware info overrides defaults."""
@@ -88,8 +88,8 @@ class TestHardwarePricingConfig(unittest.IsolatedAsyncioTestCase):
         from simpletuner.simpletuner_sdk.server.services.cloud.replicate_client import get_default_hardware_cost_per_hour
 
         cost = await get_default_hardware_cost_per_hour(self.store)
-        # L40S at $0.000975/sec = $3.51/hr
-        self.assertAlmostEqual(cost, 3.51, places=2)
+        # L40S at $0.000972222/sec = $3.50/hr
+        self.assertAlmostEqual(cost, 3.50, places=2)
 
     async def test_configured_hardware_cost_per_hour(self) -> None:
         """Test that configured hardware cost is used."""

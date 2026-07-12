@@ -67,9 +67,7 @@ class ZlabI1Pipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         **kwargs,
     ):
         transformer_kwargs = {
-            key: kwargs.pop(key)
-            for key in ("musubi_blocks_to_swap", "musubi_block_swap_device")
-            if key in kwargs
+            key: kwargs.pop(key) for key in ("musubi_blocks_to_swap", "musubi_block_swap_device") if key in kwargs
         }
         del kwargs
         if transformer is None:

@@ -42,6 +42,7 @@ describe('cloudSubmissionMethods', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        localStorage.clear();
         global.showToast = jest.fn();
 
         // Create context with required state
@@ -58,6 +59,7 @@ describe('cloudSubmissionMethods', () => {
                 snapshotMessage: '',
                 snapshotName: '',
                 trackerRunName: '',
+                hardwareProfile: 'h100',
                 configName: '',
                 dataUploadPreview: null,
                 dataConsentConfirmed: false,
@@ -95,6 +97,7 @@ describe('cloudSubmissionMethods', () => {
             providerConfig: {
                 cost_limit_enabled: false,
             },
+            providers: [],
             jobs: [],
 
             // Mock methods that would be provided by other modules
@@ -205,6 +208,25 @@ describe('cloudSubmissionMethods', () => {
             context.applyPreSubmitData({ git_available: false });
 
             expect(context.preSubmitModal.snapshotName).toBe('');
+        });
+
+        test('uses provider metadata default hardware profile when no user preference exists', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providers = [{ id: 'replicate', hardware_profile: 'l40s-x4' }];
+
+            context.applyPreSubmitData({ git_available: false });
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s-x4');
+        });
+
+        test('stored hardware profile takes precedence over provider default', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providers = [{ id: 'replicate', hardware_profile: 'l40s-x4' }];
+            localStorage.setItem('cloud_replicate_hardware_profile', 'h100-x8');
+
+            context.applyPreSubmitData({ git_available: false });
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('h100-x8');
         });
     });
 
@@ -342,6 +364,7 @@ describe('cloudSubmissionMethods', () => {
             expect(payload.snapshot_name).toBeNull();
             expect(payload.snapshot_message).toBeNull();
             expect(payload.tracker_run_name).toBeNull();
+            expect(payload.hardware_profile).toBe('h100');
         });
 
         test('includes optional fields when present', () => {
@@ -349,6 +372,7 @@ describe('cloudSubmissionMethods', () => {
             context.preSubmitModal.snapshotName = 'v1.0';
             context.preSubmitModal.snapshotMessage = 'First release';
             context.preSubmitModal.trackerRunName = 'experiment-1';
+            context.preSubmitModal.hardwareProfile = 'l40s-x2';
 
             const payload = context.buildBasePayload('upload-123');
 
@@ -356,6 +380,116 @@ describe('cloudSubmissionMethods', () => {
             expect(payload.snapshot_name).toBe('v1.0');
             expect(payload.snapshot_message).toBe('First release');
             expect(payload.tracker_run_name).toBe('experiment-1');
+            expect(payload.hardware_profile).toBe('l40s-x2');
+        });
+
+        test('falls back to provider config hardware profile when modal has no selection', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providerConfig = {
+                cost_limit_enabled: false,
+                config: { hardware_profile: 'h100-x4' },
+            };
+
+            const payload = context.buildBasePayload('upload-123');
+
+            expect(payload.hardware_profile).toBe('h100-x4');
+        });
+
+        test('falls back to h100 only after stored and configured defaults are unavailable', () => {
+            context.preSubmitModal.hardwareProfile = '';
+            context.providers = [];
+            context.providerConfig = {};
+
+            const payload = context.buildBasePayload('upload-123');
+
+            expect(payload.hardware_profile).toBe('h100');
+        });
+
+        test('returns fallback hardware profiles when provider metadata is unavailable', () => {
+            context.providers = [];
+
+            const profiles = context.getReplicateHardwareProfiles();
+
+            expect(profiles.map((p) => p.id)).toEqual([
+                'h100',
+                'h100-x2',
+                'h100-x4',
+                'h100-x8',
+                'l40s',
+                'l40s-x2',
+                'l40s-x4',
+                'l40s-x8',
+            ]);
+        });
+
+        test('base hardware options expose l40s and h100 buttons', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
+                    { id: 'h100-x2', label: '2x H100', cost_per_hour: 10.98, cost_per_second: 0.00305 },
+                    { id: 'l40s', label: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
+                    { id: 'l40s-x2', label: '2x L40S', cost_per_hour: 7.00, cost_per_second: 0.001944444 },
+                ],
+            }];
+
+            const options = context.getReplicateBaseHardwareOptions();
+
+            expect(options.map((option) => option.id)).toEqual(['l40s', 'h100']);
+        });
+
+        test('settings hardware selector preserves existing gpu count multiplier', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100' },
+                    { id: 'h100-x4', label: '4x H100' },
+                    { id: 'l40s', label: 'L40S' },
+                    { id: 'l40s-x4', label: '4x L40S' },
+                ],
+            }];
+            context.preSubmitModal.hardwareProfile = 'h100-x4';
+
+            context.setReplicateBaseHardwareProfile('l40s');
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s-x4');
+            expect(localStorage.getItem('cloud_replicate_hardware_profile')).toBe('l40s-x4');
+        });
+
+        test('settings hardware selector falls back to base profile when matching multiplier is unavailable', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100' },
+                    { id: 'h100-x4', label: '4x H100' },
+                    { id: 'l40s', label: 'L40S' },
+                ],
+            }];
+            context.preSubmitModal.hardwareProfile = 'h100-x4';
+
+            context.setReplicateBaseHardwareProfile('l40s');
+
+            expect(context.preSubmitModal.hardwareProfile).toBe('l40s');
+            expect(localStorage.getItem('cloud_replicate_hardware_profile')).toBe('l40s');
+        });
+
+        test('hardware cost display uses provider supplied pricing', () => {
+            context.providers = [{
+                id: 'replicate',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', cost_per_hour: 6.66, cost_per_second: 0.001851852 },
+                    { id: 'h100-x4', label: '4x H100', cost_per_hour: 26.64, cost_per_second: 0.007407408 },
+                    { id: 'l40s', label: 'L40S', cost_per_hour: 4.44, cost_per_second: 0.001233333 },
+                ],
+            }];
+
+            context.preSubmitModal.hardwareProfile = 'h100-x4';
+            expect(context.getReplicateBaseHardwareCostDisplay()).toBe('$26.64/hr');
+            expect(context.getReplicateBaseHardwareCostDetail()).toBe('$0.007407/sec');
+
+            context.preSubmitModal.hardwareProfile = 'l40s';
+            expect(context.getReplicateBaseHardwareCostDisplay()).toBe('$4.44/hr');
+            expect(context.getReplicateBaseHardwareCostDetail()).toBe('$0.001233/sec');
         });
     });
 

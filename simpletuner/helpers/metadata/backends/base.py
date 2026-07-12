@@ -56,9 +56,9 @@ def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
     """
     Get context-parallel-aware data parallelism information.
 
-    When context parallelism is enabled, the effective data parallelism degree
-    is reduced because multiple ranks share the same data (which is then split
-    along the sequence dimension).
+    With FSDP2 + context parallelism, only the replicated data-parallel axis
+    represents unique data shards. The FSDP shard axis and context-parallel axis
+    are model-parallel dimensions and must receive the same samples.
 
     Returns:
         Tuple of (effective_dp_size, dp_rank, cp_size):
@@ -78,18 +78,12 @@ def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
         return world_size, global_rank, 1
 
     dp_replicate_size = _normalize_parallel_size(getattr(parallelism_config, "dp_replicate_size", 1), "dp_replicate_size")
-    dp_shard_size = _normalize_parallel_size(getattr(parallelism_config, "dp_shard_size", 1), "dp_shard_size")
-
     dp_replicate_rank = 0
     if dp_replicate_size > 1:
         dp_replicate_rank = _normalize_parallel_rank(accelerator.data_parallel_rank, "data_parallel_rank")
 
-    dp_shard_rank = 0
-    if dp_shard_size > 1:
-        dp_shard_rank = _normalize_parallel_rank(accelerator.data_parallel_shard_rank, "data_parallel_shard_rank")
-
-    effective_dp_size = dp_replicate_size * dp_shard_size
-    dp_rank = (dp_replicate_rank * dp_shard_size) + dp_shard_rank
+    effective_dp_size = dp_replicate_size
+    dp_rank = dp_replicate_rank
 
     logger.debug(
         f"Context parallel data splitting: world_size={world_size}, cp_size={cp_size}, "
@@ -752,8 +746,8 @@ class MetadataBackend:
         logger.debug(f"Count of items before split: {total_samples}")
 
         # Get context-parallel-aware data parallelism info
-        # When CP is enabled, multiple ranks share the same data shard, so we split
-        # by effective_dp_size (world_size / cp_size) instead of world_size
+        # When CP/FSDP model-parallel axes are enabled, multiple ranks share the
+        # same data shard, so only replicated DP groups split the dataset.
         effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)
         num_processes = effective_dp_size  # Use effective DP size for batch calculations
 

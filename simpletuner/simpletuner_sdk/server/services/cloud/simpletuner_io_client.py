@@ -91,7 +91,9 @@ class SimpleTunerIOClient(CloudTrainerService):
                 return None
         return None
 
-    def _is_token_valid(self, token: str, expires_at: Optional[datetime], org_id: Optional[str], token_org: Optional[str]) -> bool:
+    def _is_token_valid(
+        self, token: str, expires_at: Optional[datetime], org_id: Optional[str], token_org: Optional[str]
+    ) -> bool:
         if not token or not expires_at:
             return False
         if token_org and org_id and token_org != org_id:
@@ -309,6 +311,7 @@ class SimpleTunerIOClient(CloudTrainerService):
         hub_model_id: Optional[str] = None,
         user_id: Optional[int] = None,
         lycoris_config: Optional[Dict[str, Any]] = None,
+        hardware_profile: Optional[str] = None,
     ) -> CloudJobInfo:
         """Submit a new training job to SimpleTuner.io."""
         provider_config = await self._config_store.get(PROVIDER_NAME)
@@ -389,9 +392,7 @@ class SimpleTunerIOClient(CloudTrainerService):
         completed_at = None
         error_message = None
         if latest_attempt:
-            started_at = self._parse_datetime(
-                latest_attempt.get("training_started_at") or latest_attempt.get("started_at")
-            )
+            started_at = self._parse_datetime(latest_attempt.get("training_started_at") or latest_attempt.get("started_at"))
             completed_at = self._parse_datetime(latest_attempt.get("ended_at"))
             error_message = latest_attempt.get("failure_reason")
 

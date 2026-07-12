@@ -40,9 +40,7 @@ def get_device_validator(additional_types: Optional[List[str]] = None):
         if additional_types:
             allowed_msg += f", or one of {additional_types}"
 
-        raise argparse.ArgumentTypeError(
-            f"Invalid device format: '{value}'. Must be {allowed_msg}."
-        )
+        raise argparse.ArgumentTypeError(f"Invalid device format: '{value}'. Must be {allowed_msg}.")
 
     return validate_device_format
 

@@ -7,6 +7,20 @@ from simpletuner.helpers.configuration import cmd_args
 
 
 class ConfigureTF32Tests(unittest.TestCase):
+    class _CudnnBackendWithLegacyGuard:
+        def __init__(self):
+            self.fp32_precision = "ieee"
+            self.conv = SimpleNamespace(fp32_precision="ieee")
+            self.rnn = SimpleNamespace(fp32_precision="ieee")
+
+        @property
+        def allow_tf32(self):
+            raise RuntimeError("legacy cuDNN TF32 flag should not be read when fp32_precision is available")
+
+        @allow_tf32.setter
+        def allow_tf32(self, _value):
+            raise RuntimeError("legacy cuDNN TF32 flag should not be set when fp32_precision is available")
+
     def test_new_precision_api_is_used_when_available(self):
         matmul_backend = SimpleNamespace(fp32_precision="ieee")
         cudnn_conv_backend = SimpleNamespace(fp32_precision="ieee")
@@ -32,6 +46,30 @@ class ConfigureTF32Tests(unittest.TestCase):
             self.assertEqual(cudnn_backend.fp32_precision, "ieee")
             self.assertEqual(cudnn_conv_backend.fp32_precision, "ieee")
             self.assertEqual(cudnn_rnn_backend.fp32_precision, "ieee")
+
+    def test_new_precision_api_does_not_probe_legacy_cudnn_allow_tf32(self):
+        matmul_backend = SimpleNamespace(fp32_precision="ieee")
+        cudnn_backend = self._CudnnBackendWithLegacyGuard()
+        backends = SimpleNamespace(
+            fp32_precision="ieee",
+            cuda=SimpleNamespace(matmul=matmul_backend),
+            cudnn=cudnn_backend,
+        )
+        torch_stub = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True),
+            backends=backends,
+            set_float32_matmul_precision=lambda _precision: None,
+        )
+
+        with patch.object(cmd_args, "torch", torch_stub):
+            cmd_args._configure_tf32(disable_tf32=False)
+            cmd_args._configure_tf32(disable_tf32=True)
+
+        self.assertEqual(backends.fp32_precision, "ieee")
+        self.assertEqual(matmul_backend.fp32_precision, "ieee")
+        self.assertEqual(cudnn_backend.fp32_precision, "ieee")
+        self.assertEqual(cudnn_backend.conv.fp32_precision, "ieee")
+        self.assertEqual(cudnn_backend.rnn.fp32_precision, "ieee")
 
     def test_legacy_allow_tf32_is_used_when_new_api_missing(self):
         matmul_backend = SimpleNamespace(allow_tf32=False)

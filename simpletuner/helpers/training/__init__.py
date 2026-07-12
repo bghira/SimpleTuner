@@ -6,6 +6,8 @@ quantised_precision_levels = [
     "int4-quanto",
     "int2-quanto",
     "int8-torchao",
+    "int8dq-torchao",
+    "int8dq-int4-torchao",
     # SDNQ: Works on AMD, Apple, and NVIDIA
     # Full finetune recommended: uint8, uint16, fp16 (int16 also available)
     "int8-sdnq",
@@ -13,6 +15,7 @@ quantised_precision_levels = [
     "int16-sdnq",
     "uint16-sdnq",
     "fp16-sdnq",
+    "fp8-sdnq",
     # LoRA-only (frozen weights): lower precision options
     "int6-sdnq",
     "int5-sdnq",
@@ -38,9 +41,13 @@ if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "ye
             ]
         )
         primary_device = torch.cuda.get_device_properties(0)
-        if primary_device.major >= 8:
-            # Hopper! Or blackwell+.
+        if primary_device.major > 8 or (primary_device.major == 8 and primary_device.minor >= 9):
+            # Ada Lovelace (RTX 40/L40S), Hopper, or newer.
+            quantised_precision_levels.append("fp8-native")
             quantised_precision_levels.append("fp8-torchao")
+            quantised_precision_levels.append("fp8wo-torchao")
+            quantised_precision_levels.append("fp8-int4-torchao")
+            quantised_precision_levels.append("fp8-transformerengine")
 
 try:
     import pillow_jxl

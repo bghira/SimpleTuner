@@ -3,7 +3,6 @@ import os
 
 import torch
 from diffusers import AutoencoderKL, Lumina2Pipeline
-from diffusers.models.attention_processor import Attention
 from transformers import Gemma2Model, PreTrainedTokenizerFast
 
 from simpletuner.helpers.acceleration import (
@@ -71,41 +70,26 @@ class Lumina2(ImageModelFoundation):
     SYSTEM_PROMPT = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts."
 
     def fuse_qkv_projections(self):
-        """Lumina2 may support QKV fusion similar to Flux"""
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
-            return
-
-        try:
-            # Try to use fused attention if available
-            from diffusers.models.attention_processor import FusedAttnProcessor2_0
-
-            attn_processor = FusedAttnProcessor2_0()
-        except:
-            logger.debug("Fused attention not available for Lumina2, using default")
             return
 
         if self.model is not None:
             logger.debug("Fusing QKV projections in the model..")
-            for module in self.model.modules():
-                if isinstance(module, Attention):
-                    module.fuse_projections(fuse=True)
+            self.unwrap_model(model=self.model).fuse_qkv_projections(
+                preferred_backend=getattr(self.config, "attention_mechanism", None)
+            )
+            self._qkv_projections_fused = True
         else:
             logger.warning("Model does not support QKV projection fusing. Skipping.")
 
-        self.unwrap_model(model=self.model).set_attn_processor(attn_processor)
-        self._qkv_projections_fused = True
-
     def unfuse_qkv_projections(self):
-        """Unfuse QKV projections if they were fused."""
         if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
             return
         self._qkv_projections_fused = False
 
         if self.model is not None:
             logger.debug("Temporarily unfusing QKV projections in the model..")
-            for module in self.model.modules():
-                if isinstance(module, Attention):
-                    module.fuse_projections(fuse=False)
+            self.unwrap_model(model=self.model).unfuse_qkv_projections()
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """

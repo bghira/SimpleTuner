@@ -10,6 +10,7 @@ window.cloudPublishingStateFactory = function(initial) {
         availableConfigs: [],
         selectedConfigName: null,
         webhookUrl: initialData.webhook_url || '',
+        savedWebhookUrl: initialData.webhook_url || '',
         webhookTesting: false,
         webhookTestMode: null,
         webhookTestResult: null,

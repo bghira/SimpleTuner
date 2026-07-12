@@ -339,14 +339,7 @@ class Flux(ImageModelFoundation):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
             return
 
-        try:
-            from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
-
-            attn_processor = FluxFusedFlashAttnProcessor3()
-        except:
-            from simpletuner.helpers.models.flux.attention import FluxFusedSDPAProcessor
-
-            attn_processor = FluxFusedSDPAProcessor()
+        attn_processor = self._get_fused_qkv_attention_processor()
 
         if self.model is not None:
             logger.debug("Fusing QKV projections in the model..")
@@ -362,11 +355,24 @@ class Flux(ImageModelFoundation):
             for module in self.controlnet.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=True)
-            logger.debug("Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3")
+            logger.debug("Setting ControlNet attention processor to fused QKV processor")
             self.unwrap_model(model=self.controlnet).set_attn_processor(attn_processor)
         elif self.config.controlnet:
             logger.warning("ControlNet does not support QKV projection fusing. Skipping.")
         self._qkv_projections_fused = True
+
+    def _get_fused_qkv_attention_processor(self):
+        from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3, FluxFusedSDPAProcessor
+
+        attention_mechanism = getattr(self.config, "attention_mechanism", None)
+        if attention_mechanism is None:
+            return FluxFusedSDPAProcessor()
+
+        normalized_attention_mechanism = str(attention_mechanism).strip().lower().replace("_", "-")
+        if normalized_attention_mechanism.startswith("flash"):
+            return FluxFusedFlashAttnProcessor3(preferred_backend=attention_mechanism)
+
+        return FluxFusedSDPAProcessor()
 
     def unfuse_qkv_projections(self):
         """
@@ -380,12 +386,12 @@ class Flux(ImageModelFoundation):
             logger.debug("Temporarily unfusing QKV projections in the model..")
             for module in self.model.modules():
                 if isinstance(module, Attention):
-                    module.fuse_projections(fuse=False)
+                    module.unfuse_projections()
             if self.controlnet is not None:
                 logger.debug("Tempoarily unfusing QKV projections in the ControlNet..")
                 for module in self.controlnet.modules():
                     if isinstance(module, Attention):
-                        module.fuse_projections(fuse=False)
+                        module.unfuse_projections()
 
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
@@ -1033,8 +1039,9 @@ class Flux(ImageModelFoundation):
                 logger.warning("LibreFlux requires attention masking. Enabling it.")
                 self.config.flux_attention_masked_training = True
             if self.config.fuse_qkv_projections:
-                logger.warning("LibreFlux does not support fused QKV projections. Disabling it.")
-                self.config.fuse_qkv_projections = False
+                logger.info(
+                    "LibreFlux fused QKV projections require a packed attention backend with varlen qkvpacked mask support."
+                )
         if self.config.model_flavour == "fluxbooru":
             # FluxBooru requires some special settings, we'll just override them here.
             if self.config.validation_num_inference_steps < 28:

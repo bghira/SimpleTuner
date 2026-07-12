@@ -767,6 +767,8 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
         mock_parallelism_config = MagicMock()
         mock_parallelism_config.cp_size = 2
         mock_parallelism_config.cp_enabled = True
+        mock_parallelism_config.dp_replicate_size = 1
+        mock_parallelism_config.dp_shard_size = 1
 
         mock_mesh = MagicMock()
         mock_mesh.get_group.return_value = MagicMock()
@@ -800,6 +802,8 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
         mock_parallelism_config = MagicMock()
         mock_parallelism_config.cp_size = 2
         mock_parallelism_config.cp_enabled = True
+        mock_parallelism_config.dp_replicate_size = 1
+        mock_parallelism_config.dp_shard_size = 1
 
         mock_mesh = MagicMock()
         mock_mesh.get_group.return_value = MagicMock()
@@ -825,6 +829,41 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
             result = synchronizer.fetch_batch(mock_iterator, 10)
             mock_iterator.assert_not_called()
             self.assertEqual(result, {"broadcasted": True})
+
+    def test_fetch_batch_fsdp_shard_rank_skips_iterator(self):
+        """FSDP shard ranks are model-parallel ranks, not independent samplers."""
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        mock_parallelism_config = MagicMock()
+        mock_parallelism_config.cp_size = 2
+        mock_parallelism_config.cp_enabled = True
+        mock_parallelism_config.dp_replicate_size = 1
+        mock_parallelism_config.dp_shard_size = 4
+
+        mock_mesh = MagicMock()
+        mock_mesh.get_group.return_value = MagicMock()
+        mock_mesh.get_local_rank.return_value = 0
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.parallelism_config = mock_parallelism_config
+        mock_accelerator.torch_device_mesh = mock_mesh
+        mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 2
+
+        synchronizer = ContextParallelBatchSynchronizer(mock_accelerator)
+        mock_iterator = MagicMock(return_value={"data": [1, 2, 3]})
+
+        with patch("simpletuner.helpers.data_backend.runtime.context_parallel_sync.dist") as mock_dist:
+
+            def mock_broadcast(batch_list, **kwargs):
+                self.assertEqual(kwargs["src"], 0)
+                batch_list[0] = {"broadcasted": True}
+
+            mock_dist.broadcast_object_list = mock_broadcast
+            result = synchronizer.fetch_batch(mock_iterator, 10)
+
+        mock_iterator.assert_not_called()
+        self.assertEqual(result, {"broadcasted": True})
 
 
 class TestContextParallelDataParallelInfo(unittest.TestCase):
@@ -854,8 +893,8 @@ class TestContextParallelDataParallelInfo(unittest.TestCase):
 
         effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(mock_accelerator)
 
-        self.assertEqual(effective_dp_size, 4)
-        self.assertEqual(dp_rank, 2)
+        self.assertEqual(effective_dp_size, 2)
+        self.assertEqual(dp_rank, 1)
         self.assertEqual(cp_size, 2)
 
     def test_get_cp_aware_dp_info_disables_without_mesh(self):

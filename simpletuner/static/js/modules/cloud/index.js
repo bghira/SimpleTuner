@@ -135,17 +135,19 @@ if (!window.cloudDashboardComponent) {
                 };
                 document.addEventListener('trainer-connection-status', this._sseEventHandler);
 
-                // Also hook into the global updateConnectionStatus if we can
-                this._originalUpdateConnectionStatus = window.updateConnectionStatus;
+                if (!window.__cloudOriginalUpdateConnectionStatus) {
+                    window.__cloudOriginalUpdateConnectionStatus = window.updateConnectionStatus;
+                }
                 const self = this;
                 window.updateConnectionStatus = function(status, message) {
                     self.sseConnection.status = status || 'unknown';
                     self.sseConnection.message = message || '';
                     self.sseConnection.lastUpdated = new Date();
-                    if (self._originalUpdateConnectionStatus) {
-                        self._originalUpdateConnectionStatus(status, message);
+                    if (typeof window.__cloudOriginalUpdateConnectionStatus === 'function') {
+                        window.__cloudOriginalUpdateConnectionStatus(status, message);
                     }
                 };
+                window.__cloudUpdateConnectionStatusOwner = this;
             },
 
             // Note: sseStatusColor, sseStatusIcon getters moved to final return object to avoid spread evaluation issue
@@ -339,9 +341,9 @@ if (!window.cloudDashboardComponent) {
                     document.removeEventListener('trainer-connection-status', this._sseEventHandler);
                     this._sseEventHandler = null;
                 }
-                if (this._originalUpdateConnectionStatus) {
-                    window.updateConnectionStatus = this._originalUpdateConnectionStatus;
-                    this._originalUpdateConnectionStatus = null;
+                if (window.__cloudUpdateConnectionStatusOwner === this) {
+                    window.updateConnectionStatus = window.__cloudOriginalUpdateConnectionStatus;
+                    window.__cloudUpdateConnectionStatusOwner = null;
                 }
             },
 
@@ -413,7 +415,8 @@ if (!window.cloudDashboardComponent) {
                 this.setupStatus.outputConfigured =
                     this.publishingStatus.push_to_hub ||
                     this.publishingStatus.s3_configured ||
-                    (this.webhookUrl && this.webhookUrl.trim().length > 0);
+                    (this.savedWebhookUrl && this.savedWebhookUrl.trim().length > 0) ||
+                    this.publishingStatus.local_upload_available;
             },
 
             // Note: hasDatasets getter moved to final return object
@@ -677,7 +680,8 @@ if (!window.cloudDashboardComponent) {
                 if (!this.publishingStatus) return false;
                 return this.publishingStatus.push_to_hub ||
                        this.publishingStatus.s3_configured ||
-                       (this.webhookUrl && this.webhookUrl.trim().length > 0);
+                       (this.savedWebhookUrl && this.savedWebhookUrl.trim().length > 0) ||
+                       this.publishingStatus.local_upload_available;
             },
             get allSetupComplete() {
                 return this.hasDatasets && this.hasActiveConfig && this.hasOutputDestination;
@@ -720,8 +724,13 @@ if (!window.cloudDashboardComponent) {
                 return '~$' + estimate.estimated_cost_usd.toFixed(2);
             },
             get wizardHardwareCostDisplay() {
+                const selected = this.preSubmitModal?.hardwareProfile;
+                const profile = this.getReplicateHardwareProfiles?.().find((p) => p.id === selected);
+                const label = profile?.label || selected;
                 const costPerHour = this.preSubmitModal?.costEstimate?.hardware_cost_per_hour;
-                return costPerHour ? ('$' + costPerHour.toFixed(2) + '/hr') : 'N/A';
+                const cost = costPerHour ? ('$' + costPerHour.toFixed(2) + '/hr') : null;
+                if (label && cost) return `${label} (${cost})`;
+                return label || cost || 'N/A';
             },
             // From queue.js - queue getters
             get visiblePendingJobs() {

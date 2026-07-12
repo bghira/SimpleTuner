@@ -19,13 +19,8 @@ import os
 from typing import Callable, Dict, List, Optional, Union
 
 import torch
-from diffusers.loaders.lora_base import (  # noqa
-    LoraBaseMixin,
-    _fetch_state_dict,
-)
-from diffusers.loaders.lora_conversion_utils import (
-    _convert_non_diffusers_lumina2_lora_to_diffusers,
-)
+from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict  # noqa
+from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_lumina2_lora_to_diffusers
 from diffusers.utils import (
     USE_PEFT_BACKEND,
     is_peft_available,
@@ -197,9 +192,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop(
-            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
-        )
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -207,14 +200,10 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = (
-                pretrained_model_name_or_path_or_dict.copy()
-            )
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
-        state_dict = self.lora_state_dict(
-            pretrained_model_name_or_path_or_dict, **kwargs
-        )
+        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
@@ -222,9 +211,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
 
         self.load_lora_into_transformer(
             state_dict,
-            transformer=getattr(self, self.transformer_name)
-            if not hasattr(self, "transformer")
-            else self.transformer,
+            transformer=getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer,
             adapter_name=adapter_name,
             _pipeline=self,
             low_cpu_mem_usage=low_cpu_mem_usage,
@@ -258,9 +245,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop(
-            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
-        )
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -268,14 +253,10 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = (
-                pretrained_model_name_or_path_or_dict.copy()
-            )
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
-        state_dict = self.lora_state_dict(
-            pretrained_model_name_or_path_or_dict, **kwargs
-        )
+        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
@@ -283,9 +264,9 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
 
         self.load_lora_into_prompt_embedding(
             state_dict,
-            prompt_embedding=getattr(self, self.prompt_embedding_name)
-            if hasattr(self, "prompt_embedding")
-            else self.prompt_embedding,
+            prompt_embedding=(
+                getattr(self, self.prompt_embedding_name) if hasattr(self, "prompt_embedding") else self.prompt_embedding
+            ),
             adapter_name=adapter_name,
             _pipeline=self,
             low_cpu_mem_usage=low_cpu_mem_usage,
@@ -463,9 +444,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
             raise ValueError("You must pass `transformer_lora_layers`.")
 
         if transformer_lora_layers:
-            state_dict.update(
-                cls.pack_weights(transformer_lora_layers, cls.transformer_name)
-            )
+            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
         lora_adapter_metadata = {}
         transformer_lora_adapter_metadata = metadata_kwargs.get("transformer_lora_adapter_metadata")
         if transformer_lora_adapter_metadata:
@@ -489,9 +468,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
     def save_lora_prompt_embedding_weights(
         cls,
         save_directory: Union[str, os.PathLike],
-        prompt_embedding_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
+        prompt_embedding_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         is_main_process: bool = True,
         weight_name: str = None,
         save_function: Callable = None,
@@ -522,11 +499,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
             raise ValueError("You must pass `prompt_embedding_lora_layers`.")
 
         if prompt_embedding_lora_layers:
-            state_dict.update(
-                cls.pack_weights(
-                    prompt_embedding_lora_layers, cls.prompt_embedding_name
-                )
-            )
+            state_dict.update(cls.pack_weights(prompt_embedding_lora_layers, cls.prompt_embedding_name))
 
         # Save the model
         cls.write_lora_layers(
@@ -587,9 +560,7 @@ class BooguImageLoraLoaderMixin(LoraBaseMixin):
         )
 
     # Copied from diffusers.loaders.lora_pipeline.SanaLoraLoaderMixin.unfuse_lora
-    def unfuse_lora(
-        self, components: List[str] = ["transformer", "prompt_embedding"], **kwargs
-    ):
+    def unfuse_lora(self, components: List[str] = ["transformer", "prompt_embedding"], **kwargs):
         r"""
         Reverses the effect of
         [`pipe.fuse_lora()`](https://huggingface.co/docs/diffusers/main/en/api/loaders#diffusers.loaders.LoraBaseMixin.fuse_lora).

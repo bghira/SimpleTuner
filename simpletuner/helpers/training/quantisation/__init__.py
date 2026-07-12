@@ -1,11 +1,15 @@
 import logging
 import os
+import sys
+from contextlib import nullcontext
 from functools import partial
+from inspect import Parameter, signature
 from typing import Any, Callable, Mapping, Optional
 
 import torch
 
 from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.quantisation.fp8_native import mark_fp8_native_ddp_ignore_params
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -14,10 +18,48 @@ if should_log():
 else:
     logger.setLevel(logging.ERROR)
 
+
+def _wrap_transformerengine_debug_forward(module: torch.nn.Module, fqn: str) -> None:
+    if os.environ.get("SIMPLETUNER_TE_DEBUG_BACKWARD", "") != "1":
+        return
+    if hasattr(module, "_simpletuner_te_debug_original_forward"):
+        return
+
+    module._simpletuner_te_debug_original_forward = module.forward
+    original_forward = module.forward
+
+    def _simpletuner_te_debug_forward(*args, **kwargs):
+        output = original_forward(*args, **kwargs)
+        if not torch.is_tensor(output) or not output.requires_grad:
+            return output
+        input_tensor = next((arg for arg in args if torch.is_tensor(arg)), None)
+        input_shape = tuple(input_tensor.shape) if input_tensor is not None else None
+        input_stride = tuple(input_tensor.stride()) if input_tensor is not None else None
+
+        def _log_backward_entry(grad):
+            print(
+                f"[SimpleTuner TE debug] backward {fqn} "
+                f"input_shape={input_shape} input_stride={input_stride} "
+                f"output_shape={tuple(output.shape)} grad_shape={tuple(grad.shape)} "
+                f"grad_stride={tuple(grad.stride())}",
+                flush=True,
+            )
+            return grad
+
+        output.register_hook(_log_backward_entry)
+        return output
+
+    module.forward = _simpletuner_te_debug_forward
+
+
 PIPELINE_ONLY_PRESETS = {"nf4-bnb", "int4-torchao"}
 PIPELINE_QUANTIZATION_PRESETS = PIPELINE_ONLY_PRESETS | {
     "int8-torchao",
+    "int8dq-torchao",
+    "int8dq-int4-torchao",
     "fp8-torchao",
+    "fp8wo-torchao",
+    "fp8-int4-torchao",
     "int8-quanto",
     "int4-quanto",
     "int2-quanto",
@@ -25,13 +67,23 @@ PIPELINE_QUANTIZATION_PRESETS = PIPELINE_ONLY_PRESETS | {
     "fp8uz-quanto",
 }
 MANUAL_QUANTO_PRESETS = {"int2-quanto", "int4-quanto", "int8-quanto", "fp8-quanto", "fp8uz-quanto"}
-MANUAL_TORCHAO_PRESETS = {"int8-torchao", "fp8-torchao"}
+MANUAL_TORCHAO_PRESETS = {
+    "int8-torchao",
+    "int8dq-torchao",
+    "int8dq-int4-torchao",
+    "fp8-torchao",
+    "fp8wo-torchao",
+    "fp8-int4-torchao",
+}
+MANUAL_FP8_NATIVE_PRESETS = {"fp8-native"}
+MANUAL_TRANSFORMERENGINE_PRESETS = {"fp8-transformerengine"}
 MANUAL_SDNQ_PRESETS = {
     "int8-sdnq",
     "uint8-sdnq",
     "int16-sdnq",
     "uint16-sdnq",
     "fp16-sdnq",
+    "fp8-sdnq",
     "int6-sdnq",
     "int5-sdnq",
     "uint5-sdnq",
@@ -39,7 +91,13 @@ MANUAL_SDNQ_PRESETS = {
     "uint3-sdnq",
     "uint2-sdnq",
 }
-MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS | MANUAL_SDNQ_PRESETS
+MANUAL_QUANTIZATION_PRESETS = (
+    MANUAL_QUANTO_PRESETS
+    | MANUAL_TORCHAO_PRESETS
+    | MANUAL_SDNQ_PRESETS
+    | MANUAL_FP8_NATIVE_PRESETS
+    | MANUAL_TRANSFORMERENGINE_PRESETS
+)
 
 
 def _normalize_dtype(weight_dtype: Any):
@@ -112,6 +170,60 @@ def _get_torchao_config_cls(component_type: str):
     return TorchAoConfig
 
 
+TORCHAO_QUANT_TYPE_CONFIG_MAP = {
+    "float8_dynamic_activation_float8_weight": "Float8DynamicActivationFloat8WeightConfig",
+    "float8_dynamic_activation_int4_weight": "Float8DynamicActivationInt4WeightConfig",
+    "int4_weight_only": "Int4WeightOnlyConfig",
+    "int8_dynamic_activation_int8_weight": "Int8DynamicActivationInt8WeightConfig",
+    "int8_dynamic_activation_intx_weight": "Int8DynamicActivationIntxWeightConfig",
+    "int8_weight_only": "Int8WeightOnlyConfig",
+    "float8_weight_only": "Float8WeightOnlyConfig",
+}
+
+
+def _normalize_torchao_quant_type_kwargs(quant_type_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(quant_type_kwargs)
+    for key, value in list(normalized.items()):
+        if key.endswith("_dtype"):
+            normalized[key] = _normalize_dtype(value)
+    return normalized
+
+
+def _build_torchao_quant_type(quant_type: Any, quant_type_kwargs: Mapping[str, Any]):
+    from torchao.quantization import quant_api
+    from torchao.quantization.quant_api import AOBaseConfig
+
+    if isinstance(quant_type, AOBaseConfig):
+        if quant_type_kwargs:
+            raise ValueError("quant_type_kwargs cannot be used when quant_type is already a TorchAO config instance.")
+        return quant_type
+    if not isinstance(quant_type, str):
+        raise TypeError(
+            "quant_type must be a TorchAO quantization name or AOBaseConfig instance, " f"got {type(quant_type).__name__}"
+        )
+
+    config_cls_name = TORCHAO_QUANT_TYPE_CONFIG_MAP.get(quant_type)
+    if config_cls_name is None:
+        raise ValueError(
+            f"Unsupported TorchAO quant_type '{quant_type}'. Supported values: "
+            f"{', '.join(sorted(TORCHAO_QUANT_TYPE_CONFIG_MAP))}."
+        )
+    config_cls = getattr(quant_api, config_cls_name)
+    return config_cls(**_normalize_torchao_quant_type_kwargs(quant_type_kwargs))
+
+
+def _split_torchao_config_kwargs(torchao_cls, override_dict: dict[str, Any], quant_type_kwargs: Mapping[str, Any]):
+    outer_keys = {
+        name
+        for name, parameter in signature(torchao_cls.__init__).parameters.items()
+        if name not in {"self", "quant_type"} and parameter.kind is not Parameter.VAR_KEYWORD
+    }
+    outer_kwargs = {key: override_dict.pop(key) for key in list(override_dict) if key in outer_keys}
+    inner_kwargs = dict(override_dict)
+    inner_kwargs.update(quant_type_kwargs)
+    return outer_kwargs, inner_kwargs
+
+
 def _build_torchao_config(
     weight_dtype=None,
     overrides: Optional[Mapping[str, Any]] = None,
@@ -129,11 +241,34 @@ def _build_torchao_config(
 
     override_dict = dict(overrides) if isinstance(overrides, Mapping) else {}
     quant_type_override = override_dict.pop("quant_type", None)
-    quant_type_kwargs = override_dict.pop("quant_type_kwargs", None)
-    if isinstance(quant_type_kwargs, Mapping):
-        override_dict.update(quant_type_kwargs)
+    quant_type_kwargs = override_dict.pop("quant_type_kwargs", {})
+    if quant_type_kwargs is None:
+        quant_type_kwargs = {}
+    if not isinstance(quant_type_kwargs, Mapping):
+        raise TypeError(f"quant_type_kwargs must be a mapping, got {type(quant_type_kwargs).__name__}")
     quant_type_override = quant_type_override or default_quant_type
-    return torchao_cls(quant_type=quant_type_override, **override_dict)
+    if quant_type_override == "int8_dynamic_activation_int8_weight" and "version" not in quant_type_kwargs:
+        quant_type_kwargs = {**quant_type_kwargs, "version": 2}
+    if quant_type_override == "int8_dynamic_activation_intx_weight" and "weight_dtype" not in quant_type_kwargs:
+        quant_type_kwargs = {**quant_type_kwargs, "weight_dtype": "int4"}
+    outer_kwargs, inner_kwargs = _split_torchao_config_kwargs(
+        torchao_cls,
+        override_dict,
+        quant_type_kwargs,
+    )
+    quant_type = _build_torchao_quant_type(quant_type_override, inner_kwargs)
+    return torchao_cls(quant_type=quant_type, **outer_kwargs)
+
+
+TORCHAO_PIPELINE_PRESET_MAP = {
+    "int4-torchao": "int4_weight_only",
+    "int8-torchao": "int8_weight_only",
+    "int8dq-torchao": "int8_dynamic_activation_int8_weight",
+    "int8dq-int4-torchao": "int8_dynamic_activation_intx_weight",
+    "fp8-torchao": "float8_dynamic_activation_float8_weight",
+    "fp8wo-torchao": "float8_weight_only",
+    "fp8-int4-torchao": "float8_dynamic_activation_int4_weight",
+}
 
 
 def _get_quanto_config_cls(component_type: str):
@@ -197,11 +332,6 @@ def _build_quanto_fp8uz_config(
     )
 
 
-TORCHAO_PIPELINE_PRESET_MAP = {
-    "int4-torchao": "int4_weight_only",
-    "int8-torchao": "int8_weight_only",
-    "fp8-torchao": "float8_weight_only",
-}
 QUANTO_PIPELINE_PRESET_MAP = {
     "int8-quanto": "int8",
     "int4-quanto": "int4",
@@ -415,18 +545,95 @@ def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
     # Skip RamTorch-offloaded modules; TorchAO expects GPU-resident weights.
     if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
         return False
+    if not isinstance(mod, torch.nn.Linear):
+        return False
     # Boogu T2I sends empty tensors through reference-image modules; TorchAO fp8
     # cannot dynamically scale empty activations.
     if fqn.startswith("ref_image_"):
         return False
-    # don't convert the output module
-    if fqn == "proj_out":
-        return False
     # don't convert linear modules with weight dimensions not divisible by 16
-    if isinstance(mod, torch.nn.Linear):
-        if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
-            return False
+    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+        return False
     return True
+
+
+def mark_torchao_ddp_ignore_params(module: torch.nn.Module) -> int:
+    try:
+        from torchao.utils import TorchAOBaseTensor
+    except ImportError:
+        return 0
+
+    def _is_torchao_tensor(value: torch.Tensor) -> bool:
+        return isinstance(value, TorchAOBaseTensor) or isinstance(getattr(value, "data", None), TorchAOBaseTensor)
+
+    ignored_names = [name for name, param in module.named_parameters() if _is_torchao_tensor(param)]
+    ignored_names.extend(name for name, buffer in module.named_buffers() if _is_torchao_tensor(buffer))
+    if not ignored_names:
+        return 0
+
+    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
+    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ignored_names)
+    return len(ignored_names)
+
+
+def _is_transformerengine_float8_tensor(value: Any) -> bool:
+    for candidate in (value, getattr(value, "data", None)):
+        tensor_type = type(candidate)
+        if (
+            tensor_type.__name__ == "Float8Tensor"
+            and tensor_type.__module__ == "transformer_engine.pytorch.tensor.float8_tensor"
+        ):
+            return True
+    return False
+
+
+def mark_transformerengine_ddp_ignore_params(module: torch.nn.Module) -> int:
+    ignored_names = [
+        name
+        for name, param in module.named_parameters()
+        if not param.requires_grad and _is_transformerengine_float8_tensor(param)
+    ]
+    ignored_names.extend(name for name, buffer in module.named_buffers() if _is_transformerengine_float8_tensor(buffer))
+    if os.environ.get("SIMPLETUNER_TE_DEBUG_DDP_IGNORE", "") == "1":
+        print(
+            "[SimpleTuner TE debug] DDP ignore candidates " f"count={len(ignored_names)} names={ignored_names[:8]}",
+            flush=True,
+        )
+    if not ignored_names:
+        return 0
+
+    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
+    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ignored_names)
+    return len(ignored_names)
+
+
+def _log_torchao_storage_summary(model: torch.nn.Module, model_precision: str) -> None:
+    try:
+        from torchao.utils import TorchAOBaseTensor
+    except ImportError:
+        return
+
+    torchao_params = 0
+    logical_bytes = 0
+    payload_bytes = 0
+    for param in model.parameters():
+        tensor = param.detach()
+        logical_bytes += tensor.numel() * tensor.element_size()
+        if not isinstance(tensor, TorchAOBaseTensor):
+            continue
+        torchao_params += 1
+        for attr_name in getattr(tensor, "tensor_data_names", ()):
+            payload = getattr(tensor, attr_name, None)
+            if torch.is_tensor(payload):
+                payload_bytes += payload.numel() * payload.element_size()
+
+    logger.info(
+        "TorchAO storage summary for %s: tensor_subclass_params=%s, logical_param_size=%.2f GB, payload_size=%.2f GB",
+        model_precision,
+        torchao_params,
+        logical_bytes / (1024**3),
+        payload_bytes / (1024**3),
+    )
 
 
 def _torchao_model(
@@ -455,9 +662,15 @@ def _torchao_model(
 
     try:
         import torchao
-        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
         from torchao.prototype.quantized_training import int8_weight_only_quantized_training
         from torchao.quantization import quantize_
+        from torchao.quantization.quant_api import (
+            Float8DynamicActivationFloat8WeightConfig,
+            Float8DynamicActivationInt4WeightConfig,
+            Float8WeightOnlyConfig,
+            Int8DynamicActivationInt8WeightConfig,
+            Int8DynamicActivationIntxWeightConfig,
+        )
 
         from simpletuner.helpers.training.quantisation import torchao_workarounds
     except ImportError as e:
@@ -471,11 +684,35 @@ def _torchao_model(
             model,
             int8_weight_only_quantized_training(),  # , filter_fn=_torchao_filter_fn
         )
-    elif model_precision == "fp8-torchao":
-        model = convert_to_float8_training(
+    elif model_precision == "int8dq-torchao":
+        quantize_(
             model,
-            module_filter_fn=_torchao_filter_fn,
-            config=Float8LinearConfig(pad_inner_dim=True),
+            Int8DynamicActivationInt8WeightConfig(version=2),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "int8dq-int4-torchao":
+        quantize_(
+            model,
+            Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "fp8-torchao":
+        quantize_(
+            model,
+            Float8DynamicActivationFloat8WeightConfig(),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "fp8wo-torchao":
+        quantize_(
+            model,
+            Float8WeightOnlyConfig(),
+            filter_fn=_torchao_filter_fn,
+        )
+    elif model_precision == "fp8-int4-torchao":
+        quantize_(
+            model,
+            Float8DynamicActivationInt4WeightConfig(),
+            filter_fn=_torchao_filter_fn,
         )
 
     else:
@@ -483,7 +720,266 @@ def _torchao_model(
             f"Invalid quantisation level. model_precision={model_precision}, base_model_precision={base_model_precision}"
         )
 
+    _log_torchao_storage_summary(model, model_precision)
     return model
+
+
+def _fp8_native_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
+    if model_precision is None:
+        model_precision = base_model_precision
+    if model is None:
+        return model
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+    if model_precision != "fp8-native":
+        raise ValueError(
+            f"Invalid native FP8 quantisation level. model_precision={model_precision}, "
+            f"base_model_precision={base_model_precision}"
+        )
+    if quantize_activations:
+        logger.warning("Activation quantisation flag is ignored for fp8-native; activations are scaled inside _scaled_mm.")
+
+    from simpletuner.helpers.training.quantisation.fp8_native import (
+        log_fp8_native_storage_summary,
+        patch_peft_fp8_native_dispatcher,
+        replace_linear_with_fp8_native,
+    )
+
+    compute_dtype = next((param.dtype for param in model.parameters() if torch.is_floating_point(param)), torch.bfloat16)
+    logger.info("Quantising %s using fp8-native.", model.__class__.__name__)
+    patch_peft_fp8_native_dispatcher()
+    converted = replace_linear_with_fp8_native(model, _torchao_filter_fn, compute_dtype)
+    logger.info("Converted %s Linear layer(s) to native FP8.", converted)
+    log_fp8_native_storage_summary(model, model_precision)
+    return model
+
+
+def _transformerengine_autocast_context(te, recipe):
+    autocast = getattr(te, "fp8_autocast", None) or getattr(te, "autocast", None)
+    if autocast is None:
+        raise RuntimeError("TransformerEngine does not expose an FP8 autocast context.")
+    parameters = signature(autocast).parameters
+    recipe_kwarg = "fp8_recipe" if "fp8_recipe" in parameters else "recipe"
+    if recipe_kwarg == "recipe":
+        return autocast(enabled=True, recipe=recipe)
+    return autocast(enabled=True, fp8_recipe=recipe)
+
+
+def _make_transformerengine_checkpoint_context_fn(te, recipe):
+    def _simpletuner_te_checkpoint_context_fn():
+        return (
+            _transformerengine_autocast_context(te, recipe),
+            _transformerengine_autocast_context(te, recipe),
+        )
+
+    return _simpletuner_te_checkpoint_context_fn
+
+
+def _attach_transformerengine_checkpoint_context(model: torch.nn.Module, te, recipe) -> None:
+    context_fn = _make_transformerengine_checkpoint_context_fn(te, recipe)
+    for module in model.modules():
+        module._simpletuner_te_checkpoint_context_fn = context_fn
+
+
+def _transformerengine_fp8_output_filter_fn(fqn: str) -> bool:
+    if os.environ.get("SIMPLETUNER_TE_FP8_ATTENTION_OUTPUT", "").lower() not in ("1", "true", "yes"):
+        return False
+    return any(fqn.endswith(f".{target}") for target in ("to_q", "to_k", "to_v"))
+
+
+def _wrap_transformerengine_fp8_output_forward(module: torch.nn.Module) -> None:
+    if hasattr(module, "_simpletuner_te_fp8_output_original_forward"):
+        return
+    module._simpletuner_te_fp8_output_original_forward = module.forward
+    module.forward = partial(module.forward, fp8_output=True)
+
+
+def _wrap_transformerengine_frozen_weight_cache_forward(module: torch.nn.Module) -> None:
+    if hasattr(module, "_simpletuner_te_weight_cache_original_forward"):
+        return
+
+    module._simpletuner_te_weight_cache_original_forward = module.forward
+    module._simpletuner_te_weight_cache_initialized = False
+    original_forward = module.forward
+
+    def _simpletuner_te_weight_cache_forward(*args, **kwargs):
+        if "is_first_microbatch" not in kwargs:
+            kwargs["is_first_microbatch"] = not module._simpletuner_te_weight_cache_initialized
+            module._simpletuner_te_weight_cache_initialized = True
+        return original_forward(*args, **kwargs)
+
+    module.forward = _simpletuner_te_weight_cache_forward
+
+
+def _replace_linears_with_transformerengine(
+    module: torch.nn.Module,
+    te,
+    compute_dtype: torch.dtype,
+    recipe=None,
+    fp8_model_init_enabled: bool = False,
+    prefix: str = "",
+) -> int:
+    converted = 0
+    for name, child in list(module.named_children()):
+        fqn = f"{prefix}.{name}" if prefix else name
+        if _transformerengine_filter_fn(child, fqn):
+            fp8_model_init = getattr(te, "fp8_model_init", None)
+            if fp8_model_init_enabled and fp8_model_init is None:
+                raise RuntimeError("TransformerEngine does not expose fp8_model_init for FP8 weight storage.")
+            context = fp8_model_init(enabled=True) if fp8_model_init_enabled else nullcontext()
+            with context:
+                te_linear = te.Linear(
+                    child.in_features,
+                    child.out_features,
+                    bias=child.bias is not None,
+                    params_dtype=compute_dtype,
+                    device=child.weight.device,
+                )
+            te_linear.train(child.training)
+            with torch.no_grad():
+                te_linear.weight.copy_(
+                    child.weight.detach().to(dtype=te_linear.weight.dtype, device=te_linear.weight.device)
+                )
+                te_linear.weight.requires_grad_(child.weight.requires_grad)
+                if child.bias is not None:
+                    te_linear.bias.copy_(child.bias.detach().to(dtype=te_linear.bias.dtype, device=te_linear.bias.device))
+                    te_linear.bias.requires_grad_(child.bias.requires_grad)
+            if _transformerengine_fp8_output_filter_fn(fqn):
+                _wrap_transformerengine_fp8_output_forward(te_linear)
+            if not te_linear.weight.requires_grad and os.environ.get("SIMPLETUNER_TE_FROZEN_WEIGHT_CACHE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                _wrap_transformerengine_frozen_weight_cache_forward(te_linear)
+            _wrap_transformerengine_debug_forward(te_linear, fqn)
+            setattr(module, name, te_linear)
+            converted += 1
+            continue
+        converted += _replace_linears_with_transformerengine(child, te, compute_dtype, recipe, fp8_model_init_enabled, fqn)
+    return converted
+
+
+def _transformerengine_filter_fn(mod: torch.nn.Module, fqn: str):
+    if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
+        return False
+    if not isinstance(mod, torch.nn.Linear):
+        return False
+    if fqn.startswith("ref_image_"):
+        return False
+    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+        return False
+    if "audio" in fqn or "timestep_embedder" in fqn or "_adaln" in fqn:
+        return False
+    args = StateTracker.get_args()
+    if "lora" in str(getattr(args, "model_type", "")):
+        if fqn == "proj_in":
+            return False
+        if os.environ.get("SIMPLETUNER_TE_LORA_CONVERT_ALL", "").lower() in ("1", "true", "yes"):
+            return True
+        if fqn == "proj_out":
+            return False
+        return any(
+            fqn.endswith(f".{target}")
+            for target in (
+                "to_q",
+                "to_k",
+                "to_v",
+                "to_qkv",
+                "to_kv",
+                "to_added_qkv",
+                "to_out.0",
+            )
+        )
+    return True
+
+
+def _wrap_transformerengine_fp8_forward(model: torch.nn.Module, te, recipe) -> None:
+    if hasattr(model, "_simpletuner_te_original_forward"):
+        return
+    model._simpletuner_te_original_forward = model.forward
+    model._simpletuner_te_fp8_recipe = recipe
+    original_forward = model.forward
+
+    def _simpletuner_te_fp8_forward(*args, **kwargs):
+        with _transformerengine_autocast_context(te, recipe):
+            return original_forward(*args, **kwargs)
+
+    model.forward = _simpletuner_te_fp8_forward
+
+
+def _transformerengine_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
+    if model_precision is None:
+        model_precision = base_model_precision
+    if model is None:
+        return model
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+    if model_precision != "fp8-transformerengine":
+        raise ValueError(
+            f"Invalid TransformerEngine FP8 quantisation level. model_precision={model_precision}, "
+            f"base_model_precision={base_model_precision}"
+        )
+    if quantize_activations:
+        logger.warning(
+            "Activation quantisation flag is ignored for fp8-transformerengine; TE autocast owns FP8 activation scaling."
+        )
+
+    try:
+        import transformer_engine.pytorch as te
+        from transformer_engine.common.recipe import DelayedScaling, Format
+    except ImportError as e:
+        raise ImportError(
+            "fp8-transformerengine requires TransformerEngine. Install it with "
+            "`pip install 'simpletuner[transformerengine]'`."
+        ) from e
+
+    fp8_available = te.is_fp8_available(return_reason=True)
+    if isinstance(fp8_available, tuple):
+        available, reason = fp8_available
+    else:
+        available, reason = bool(fp8_available), ""
+    if not available:
+        raise RuntimeError(f"TransformerEngine FP8 is not available on this system. {reason}".strip())
+
+    compute_dtype = next((param.dtype for param in model.parameters() if torch.is_floating_point(param)), torch.bfloat16)
+    recipe = DelayedScaling(fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="max")
+    args = StateTracker.get_args()
+    fp8_model_init_enabled = getattr(args, "model_type", None) != "full"
+    logger.info(
+        "Quantising %s using TransformerEngine FP8. fp8_model_init=%s.",
+        model.__class__.__name__,
+        fp8_model_init_enabled,
+    )
+    converted = _replace_linears_with_transformerengine(model, te, compute_dtype, recipe, fp8_model_init_enabled)
+    if converted == 0:
+        raise RuntimeError(f"TransformerEngine FP8 did not find any eligible Linear layers in {model.__class__.__name__}.")
+    _attach_transformerengine_checkpoint_context(model, te, recipe)
+    _wrap_transformerengine_fp8_forward(model, te, recipe)
+    logger.info("Converted %s Linear layer(s) to TransformerEngine FP8.", converted)
+    return model
+
+
+def _default_sdnq_use_quantized_matmul(
+    model_precision: str,
+    sdnq_use_torch_compile: bool,
+    sdnq_fp8_mm_supported: bool,
+) -> bool:
+    if model_precision == "fp8-sdnq":
+        return sdnq_use_torch_compile and sdnq_fp8_mm_supported
+    return sdnq_use_torch_compile
 
 
 def _sdnq_model(
@@ -510,10 +1006,24 @@ def _sdnq_model(
         logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
         return model
 
+    args = StateTracker.get_args()
+    sdnq_compile_mode = getattr(args, "sdnq_compile_mode", "auto")
+    if sdnq_compile_mode not in (None, "auto"):
+        if "sdnq.common" in sys.modules:
+            logger.warning(
+                "SDNQ was already imported before --sdnq_compile_mode=%s could be applied. "
+                "Set SDNQ_USE_TORCH_COMPILE before process startup to force this mode.",
+                sdnq_compile_mode,
+            )
+        else:
+            os.environ["SDNQ_USE_TORCH_COMPILE"] = "1" if sdnq_compile_mode == "compile" else "0"
+
     try:
         # Silence sdnq startup logs
         logging.getLogger("sdnq").setLevel(logging.WARNING)
-        from sdnq.common import use_torch_compile as sdnq_triton_available
+        from sdnq.common import is_fp8_mm_supported as sdnq_fp8_mm_supported
+        from sdnq.common import use_tensorwise_fp8_matmul as sdnq_tensorwise_fp8_matmul
+        from sdnq.common import use_torch_compile as sdnq_use_torch_compile
         from sdnq.training import sdnq_training_post_load_quant
     except ImportError as e:
         raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
@@ -527,6 +1037,7 @@ def _sdnq_model(
         "int16-sdnq": "int16",
         "uint16-sdnq": "uint16",
         "fp16-sdnq": "fp16",
+        "fp8-sdnq": "float8_e4m3fn",
         "int6-sdnq": "int6",
         "int5-sdnq": "int5",
         "uint5-sdnq": "uint5",
@@ -537,14 +1048,16 @@ def _sdnq_model(
     weights_dtype = sdnq_dtype_map.get(model_precision)
     if weights_dtype is None:
         raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
+    weights_dtype = getattr(args, "sdnq_weights_dtype", None) or weights_dtype
 
     # Determine bit depth for SVD recommendation
     # Below 5 bits: use SVD with 8 steps (per Disty0's recommendation)
     low_bit_dtypes = {"int5", "uint5", "uint4", "uint3", "uint2", "int4", "int3", "int2"}
     use_svd = weights_dtype in low_bit_dtypes
     svd_steps = 8 if use_svd else 2
-
-    args = StateTracker.get_args()
+    use_svd = getattr(args, "sdnq_use_svd", None) if getattr(args, "sdnq_use_svd", None) is not None else use_svd
+    svd_rank = getattr(args, "sdnq_svd_rank", None) or 32
+    svd_steps = getattr(args, "sdnq_svd_steps", None) or svd_steps
 
     # Determine quantization device
     # Use GPU for faster quantization: load to CPU, quantize on CUDA, return to CPU
@@ -567,10 +1080,34 @@ def _sdnq_model(
     if args.model_family == "flux":
         # Use ".proj_out" for root level proj_out in Flux (inner layers also have proj_out)
         modules_to_not_convert.append(".proj_out")
+    if getattr(args, "sdnq_modules_to_not_convert", None):
+        modules_to_not_convert.extend(args.sdnq_modules_to_not_convert)
 
     # Determine matmul dtype: INT8 preferred for consumer GPUs, FP8 for datacenter
-    # For now, default to INT8 as it works on more hardware
-    quantized_matmul_dtype = "int8"
+    quantized_matmul_dtype = getattr(args, "sdnq_quantized_matmul_dtype", None)
+    if quantized_matmul_dtype in (None, "auto"):
+        quantized_matmul_dtype = "float8_e4m3fn" if model_precision == "fp8-sdnq" else "int8"
+    group_size = getattr(args, "sdnq_group_size", None)
+    if group_size is None:
+        group_size = -1 if model_precision == "fp8-sdnq" else 32
+    use_quantized_matmul = getattr(args, "sdnq_use_quantized_matmul", None)
+    if use_quantized_matmul is None:
+        use_quantized_matmul = _default_sdnq_use_quantized_matmul(
+            model_precision,
+            sdnq_use_torch_compile,
+            sdnq_fp8_mm_supported,
+        )
+    use_hadamard = bool(getattr(args, "sdnq_use_hadamard", False))
+    hadamard_group_size = getattr(args, "sdnq_hadamard_group_size", None) or 128
+    use_static_quantization = getattr(args, "sdnq_use_static_quantization", None)
+    if use_static_quantization is None:
+        use_static_quantization = True
+    use_stochastic_rounding = getattr(args, "sdnq_use_stochastic_rounding", None)
+    if use_stochastic_rounding is None:
+        use_stochastic_rounding = True
+    dequantize_fp32 = getattr(args, "sdnq_dequantize_fp32", None)
+    if dequantize_fp32 is None:
+        dequantize_fp32 = True
 
     # Warn about low-bit precision for full finetune
     if args.model_type == "full" and weights_dtype in low_bit_dtypes:
@@ -584,20 +1121,37 @@ def _sdnq_model(
             model,
             weights_dtype=weights_dtype,
             quantized_matmul_dtype=quantized_matmul_dtype,
-            group_size=32,
-            svd_rank=32,
+            group_size=group_size,
+            hadamard_group_size=hadamard_group_size,
+            svd_rank=svd_rank,
             svd_steps=svd_steps,
             use_svd=use_svd,
+            use_hadamard=use_hadamard,
             use_grad_ckpt=getattr(args, "gradient_checkpointing", True),
-            use_quantized_matmul=sdnq_triton_available,
-            use_static_quantization=True,
-            use_stochastic_rounding=True,
-            dequantize_fp32=True,
+            use_quantized_matmul=use_quantized_matmul,
+            use_static_quantization=use_static_quantization,
+            use_stochastic_rounding=use_stochastic_rounding,
+            dequantize_fp32=dequantize_fp32,
             non_blocking=False,
             add_skip_keys=True,  # Let SDNQ handle module exclusions
             quantization_device=quantization_device,
             return_device=return_device,
             modules_to_not_convert=modules_to_not_convert,
+            modules_to_not_use_matmul=getattr(args, "sdnq_modules_to_not_use_matmul", None),
+            modules_dtype_dict=getattr(args, "sdnq_modules_dtype_dict", None),
+            modules_quant_config=getattr(args, "sdnq_modules_quant_config", None),
+        )
+        logger.info(
+            "SDNQ config: weights_dtype=%s, matmul_dtype=%s, group_size=%s, qmm=%s, compile=%s, fp8_mm=%s, tensorwise_fp8=%s, svd=%s, hadamard=%s.",
+            weights_dtype,
+            quantized_matmul_dtype,
+            group_size,
+            use_quantized_matmul,
+            sdnq_use_torch_compile,
+            sdnq_fp8_mm_supported,
+            sdnq_tensorwise_fp8_matmul,
+            use_svd,
+            use_hadamard,
         )
         if use_svd:
             logger.info(f"SDNQ: Using SVD with {svd_steps} steps for {weights_dtype} precision.")
@@ -627,6 +1181,10 @@ def get_quant_fn(base_model_precision):
         return None
     if "quanto" in precision:
         return _quanto_model
+    elif precision in MANUAL_FP8_NATIVE_PRESETS:
+        return _fp8_native_model
+    elif precision in MANUAL_TRANSFORMERENGINE_PRESETS:
+        return _transformerengine_model
     elif "torchao" in precision:
         return _torchao_model
     elif "sdnq" in precision:

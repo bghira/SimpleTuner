@@ -54,6 +54,20 @@
                                            @change.stop>
                                 </div>
 
+                                <div class="mb-4" x-show="activeProvider === 'replicate'">
+                                    <label class="form-label">
+                                        <i class="fas fa-microchip me-1 text-info"></i>Hardware
+                                    </label>
+                                    <select class="form-select bg-dark text-light border-secondary"
+                                            data-testid="replicate-hardware-profile-select"
+                                            x-model="preSubmitModal.hardwareProfile"
+                                            @change.stop="saveHardwareProfile(preSubmitModal.hardwareProfile)">
+                                        <template x-for="profile in getReplicateHardwareProfiles()" :key="profile.id">
+                                            <option :value="profile.id" x-text="profile.label || profile.id"></option>
+                                        </template>
+                                    </select>
+                                </div>
+
                                 <!-- Summary row -->
                                 <div class="quick-submit-summary p-3 rounded mb-4" style="background: rgba(129, 140, 248, 0.1); border: 1px solid rgba(129, 140, 248, 0.2);">
                                     <div class="row g-3 text-center">
@@ -137,6 +151,18 @@
                                                    x-model="preSubmitModal.trackerRunName"
                                                    @input.stop
                                                    @change.stop>
+
+                                            <div class="mt-4" x-show="activeProvider === 'replicate'">
+                                                <label class="form-label small text-muted">Hardware</label>
+                                                <select class="form-select bg-dark text-light border-secondary"
+                                                        data-testid="replicate-hardware-profile-select"
+                                                        x-model="preSubmitModal.hardwareProfile"
+                                                        @change.stop="saveHardwareProfile(preSubmitModal.hardwareProfile)">
+                                                    <template x-for="profile in getReplicateHardwareProfiles()" :key="profile.id">
+                                                        <option :value="profile.id" x-text="profile.label || profile.id"></option>
+                                                    </template>
+                                                </select>
+                                            </div>
 
                                             <!-- Cost preview -->
                                             <div class="wizard-cost-preview mt-4 p-3 rounded" style="background: rgba(129, 140, 248, 0.08);">
@@ -450,6 +476,7 @@
                             <button type="button"
                                     class="btn btn-primary flex-grow-1 flex-sm-grow-0"
                                     :disabled="!wizardCanSubmit"
+                                    data-testid="cloud-quick-submit-button"
                                     @click="submitCloudJob()">
                                 <i class="fas me-1" :class="submitting ? 'fa-spinner fa-spin' : 'fa-rocket'"></i>
                                 <span x-text="submitting ? 'Submitting...' : 'Submit'"></span>
@@ -481,6 +508,7 @@
                                     class="btn btn-primary flex-grow-1 flex-sm-grow-0"
                                     x-show="!wizardIsFinalStep(preSubmitModal.wizardStep)"
                                     :disabled="wizardIsDataStep(preSubmitModal.wizardStep) && wizardDataConsentBlocked"
+                                    data-testid="cloud-submit-next-button"
                                     @click="preSubmitModal.wizardStep++">
                                 Continue<i class="fas fa-chevron-right ms-1"></i>
                             </button>
@@ -490,6 +518,7 @@
                                     class="btn btn-success flex-grow-1 flex-sm-grow-0"
                                     x-show="wizardIsFinalStep(preSubmitModal.wizardStep)"
                                     :disabled="!wizardCanSubmit"
+                                    data-testid="cloud-submit-final-button"
                                     @click="submitCloudJob()">
                                 <i class="fas me-1" :class="submitting ? 'fa-spinner fa-spin' : 'fa-rocket'"></i>
                                 <span x-text="submitting ? 'Submitting...' : 'Submit Job'"></span>

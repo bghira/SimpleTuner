@@ -352,6 +352,20 @@ Genera versiones de baja calidad de las imágenes para entrenamiento de super-re
 }
 ```
 
+##### `sdr` / `logc3_sdr`
+Genera imágenes SDR/de referencia de condicionamiento para datasets de condicionamiento emparejados. El transform `rec709` predeterminado normaliza y recorta entradas Rec.709 SDR ya existentes, igual que la ruta de acondicionamiento de referencia HDR IC-LoRA de LTX-2:
+```json
+{
+  "type": "sdr",
+  "conditioning_type": "reference_strict",
+  "transform": "rec709",
+  "input_scale": 1.0,
+  "exposure": 0.0,
+  "captions": false
+}
+```
+Usa `transform: "srgb"` cuando los valores decodificados sean lineales y quieras un proxy SDR de pantalla. Usa `transform: "logc3"` (o el alias `logc3_sdr`) solo cuando quieras muestras codificadas en LogC3. `input_scale` se aplica antes de exposure y sirve cuando los valores decodificados necesitan normalización. Este generador actualmente opera sobre muestras de imagen que el backend de imágenes de SimpleTuner puede decodificar.
+
 ##### `jpeg_artifacts`
 Crea artefactos de compresión JPEG para entrenamiento de eliminación de artefactos:
 ```json
@@ -589,6 +603,13 @@ Por defecto, SimpleTuner escalará hacia arriba imágenes pequeñas para cumplir
 ### `only_instance_prompt`
 
 - Además de `prepend_instance_prompt`, reemplaza todos los captions del dataset con una sola frase o palabra trigger.
+
+### `timestep_sampling_offset`
+
+- Desplaza el muestreo de timesteps de flow-matching de este dataset hacia niveles de ruido más altos o más bajos. Se aplica al programa por defecto logit-normal (sigmoid).
+- Un valor **negativo** sesga el muestreo hacia timesteps de menor ruido, centrando el entrenamiento en el detalle fino (por ejemplo, primeros planos o datos con mucha textura). Un valor **positivo** sesga hacia timesteps de mayor ruido, centrándose en la estructura general (por ejemplo, cuerpo entero o datos centrados en la composición).
+- El valor se suma a la muestra normal previa al sigmoid; las magnitudes útiles suelen estar entre `-1.0` y `1.0`. Por defecto es `0.0` (sin sesgo, idéntico al comportamiento original).
+- Como cada lote (batch) proviene de un único dataset, agrupa las imágenes por granularidad semántica en datasets separados y define un `timestep_sampling_offset` para cada uno.
 
 ### `repeats`
 

@@ -93,7 +93,17 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
     - Hardware info and costs
     """
     from ...routes.cloud._shared import get_job_store
-    from .replicate_client import DEFAULT_MODEL, get_default_hardware_cost_per_hour, get_hardware_info_async
+    from .replicate_client import (
+        DEFAULT_HARDWARE_INFO,
+        DEFAULT_MODEL,
+        get_default_hardware_cost_per_hour,
+        get_hardware_info_async,
+    )
+    from .replicate_profiles import (
+        DEFAULT_REPLICATE_HARDWARE_PROFILE,
+        get_replicate_hardware_profile,
+        list_replicate_hardware_profiles,
+    )
     from .secrets import get_secrets_manager
 
     store = get_job_store()
@@ -106,18 +116,44 @@ async def get_enriched_providers() -> List[Dict[str, Any]]:
             # Enrich with Replicate-specific data
             replicate_config = await store.get_provider_config("replicate")
             version_override = replicate_config.get("version_override")
+            default_profile_id = replicate_config.get("hardware_profile") or DEFAULT_REPLICATE_HARDWARE_PROFILE
+            try:
+                default_profile = get_replicate_hardware_profile(default_profile_id)
+            except ValueError:
+                default_profile = get_replicate_hardware_profile(DEFAULT_REPLICATE_HARDWARE_PROFILE)
 
             hardware_info = await get_hardware_info_async(store)
             l40s_info = hardware_info.get(definition.default_hardware_id, {})
             cost_per_hour = await get_default_hardware_cost_per_hour(store)
+            profile_options = list_replicate_hardware_profiles()
+            base_costs = {
+                "h100": (hardware_info.get("gpu-h100") or DEFAULT_HARDWARE_INFO["gpu-h100"]).get("cost_per_second", 0.001525)
+                * 3600,
+                "l40s": (hardware_info.get("gpu-l40s") or DEFAULT_HARDWARE_INFO["gpu-l40s"]).get(
+                    "cost_per_second", 0.000972222
+                )
+                * 3600,
+            }
+            for option in profile_options:
+                base_profile = "h100" if option["id"].startswith("h100") else "l40s"
+                multiplier = 1
+                if "-x" in option["id"]:
+                    try:
+                        multiplier = int(option["id"].rsplit("-x", 1)[1])
+                    except (TypeError, ValueError):
+                        multiplier = 1
+                option["cost_per_hour"] = round(base_costs[base_profile] * multiplier, 2)
+                option["cost_per_second"] = (base_costs[base_profile] / 3600) * multiplier
 
             provider_data.update(
                 {
-                    "model": DEFAULT_MODEL,
+                    "model": default_profile.model or DEFAULT_MODEL,
                     "version": version_override,
                     "hardware": l40s_info.get("name", definition.default_hardware),
                     "cost_per_hour": round(cost_per_hour, 2),
                     "configured": bool(get_secrets_manager().get_replicate_token()),
+                    "hardware_profile": default_profile.id,
+                    "hardware_profiles": profile_options,
                 }
             )
 

@@ -18,6 +18,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 | **Lumina2** | 2B | [Guía de Lumina2](LUMINA2.md) |
 | **HiDream** | 17B MoE | [Guía de HiDream](HIDREAM.md) |
 | **Z-Image** | - | [Guía de Z-Image](ZIMAGE.md) |
+| **Krea2** | - | [Guía de Krea2](KREA2.es.md) |
 | **Boogu-Image** | - | [Guía de Boogu-Image](BOOGU_IMAGE.es.md) |
 | **zlab i1** | 3B | [Guía de zlab i1](ZLAB_i1.es.md) |
 | **Ideogram 4** | 9B | [Guía de Ideogram 4](IDEOGRAM4.es.md) |

@@ -22,6 +22,7 @@ from simpletuner.helpers.distillation.common import validate_distillation_text_e
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import (
     AttentionBackendMode,
+    get_metal_flash_attention_unavailable_reason,
     is_sageattention_available,
     xformers_compute_capability_error,
 )
@@ -101,12 +102,6 @@ def _configure_tf32(disable_tf32: bool) -> None:
             for cudnn_op_backend in (cudnn_conv_backend, cudnn_rnn_backend):
                 if cudnn_op_backend is not None and hasattr(cudnn_op_backend, "fp32_precision"):
                     cudnn_op_backend.fp32_precision = precision
-            if (
-                cudnn_backend is not None
-                and hasattr(cudnn_backend, "allow_tf32")
-                and not hasattr(cudnn_backend, "fp32_precision")
-            ):
-                cudnn_backend.allow_tf32 = enabled
         else:
             if matmul_backend is not None and hasattr(matmul_backend, "allow_tf32"):
                 matmul_backend.allow_tf32 = enabled
@@ -742,6 +737,31 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 f"Received a raw string instead: {args.quantization_config}"
             )
 
+    sdnq_list_options = ("sdnq_modules_to_not_convert", "sdnq_modules_to_not_use_matmul")
+    for option_name in sdnq_list_options:
+        if hasattr(args, option_name):
+            value = getattr(args, option_name)
+            parsed = _parse_json_like_option(value, option_name)
+            if parsed in (None, "", "None"):
+                setattr(args, option_name, None)
+            elif isinstance(parsed, str):
+                setattr(args, option_name, [entry.strip() for entry in parsed.split(",") if entry.strip()])
+            elif isinstance(parsed, list) and all(isinstance(entry, str) for entry in parsed):
+                setattr(args, option_name, parsed)
+            else:
+                raise ValueError(f"{option_name} must be a JSON array of strings or a comma-separated string.")
+
+    sdnq_dict_options = ("sdnq_modules_dtype_dict", "sdnq_modules_quant_config")
+    for option_name in sdnq_dict_options:
+        if hasattr(args, option_name):
+            parsed = _parse_json_like_option(getattr(args, option_name), option_name)
+            if parsed in (None, "", "None"):
+                setattr(args, option_name, None)
+            elif isinstance(parsed, dict):
+                setattr(args, option_name, parsed)
+            else:
+                raise ValueError(f"{option_name} must be a JSON object or a path to a JSON object.")
+
     manual_quant_precisions = set(MANUAL_QUANTIZATION_PRESETS)
     pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
     manual_only_precisions = manual_quant_precisions - pipeline_quant_precisions
@@ -1164,6 +1184,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             filtered_values = [entry for entry in values if entry]
             args.fsdp_transformer_layer_cls_to_wrap = filtered_values or None
             info_log(f"FSDP transformer layer classes to wrap: {args.fsdp_transformer_layer_cls_to_wrap}")
+
+        fsdp_quantized_precision_fields = ["base_model_precision"] + [f"text_encoder_{idx}_precision" for idx in range(1, 5)]
+        fsdp_quanto_fields = [
+            field for field in fsdp_quantized_precision_fields if "quanto" in str(getattr(args, field, "") or "").lower()
+        ]
+        if args.fsdp_version == 2 and fsdp_quanto_fields:
+            field_list = ", ".join(fsdp_quanto_fields)
+            raise ValueError(
+                "FSDP v2 uses DTensor-sharded parameters, but Quanto kernels do not register DTensor sharding "
+                f"strategies. Disable Quanto precision for FSDP v2 runs ({field_list}), or use non-FSDP LoRA training."
+            )
     else:
         # When FSDP is disabled, normalise auxiliary options so downstream logic can rely on None/False.
         args.fsdp_transformer_layer_cls_to_wrap = None
@@ -1287,13 +1318,27 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise ValueError("--validation_external_script is required when --validation_method=external-script.")
         args.validation_external_script = str(script_value).strip()
 
-    if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
-        warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
+    attention_mech = getattr(args, "attention_mechanism", "diffusers")
+    normalized_attention_mech = str(attention_mech or "diffusers").strip().lower().replace("_", "-")
+    non_cuda_supported_mechanisms = {
+        "diffusers",
+        "native",
+        "native-math",
+        "native-efficient",
+        "native-flash",
+        "native-npu",
+        "native-xla",
+        "metal-flash-attention",
+    }
+    if normalized_attention_mech not in non_cuda_supported_mechanisms and not torch.cuda.is_available():
+        warning_log(
+            "For non-CUDA systems, only the following attention mechanisms are officially supported: "
+            f"{', '.join(sorted(non_cuda_supported_mechanisms))}."
+        )
 
     if hasattr(args, "sageattention_usage"):
         args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
 
-    attention_mech = getattr(args, "attention_mechanism", "diffusers")
     if attention_mech == "xformers":
         xformers_error = xformers_compute_capability_error()
         if xformers_error:
@@ -1303,6 +1348,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"SageAttention is not installed but --attention_mechanism={attention_mech} was requested. "
             "Install it with: pip install sageattention"
+        )
+
+    if normalized_attention_mech == "metal-flash-attention":
+        metal_unavailable_reason = get_metal_flash_attention_unavailable_reason()
+    else:
+        metal_unavailable_reason = None
+    if metal_unavailable_reason:
+        raise ValueError(
+            "Metal Flash Attention was requested, but the UMFA PyTorch custom-op backend is not installed "
+            f"or is not usable: {metal_unavailable_reason}"
         )
 
     # Disk low space detection validation

@@ -7,7 +7,7 @@ Handles submit, list, cancel, delete, retry, logs, get, and status commands.
 import json
 import sys
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..common import format_cost, format_duration
 from .api import cloud_api_request, format_job_status
@@ -18,6 +18,7 @@ def cmd_cloud_submit(args) -> int:
     config_name = getattr(args, "config", None)
     provider = getattr(args, "provider", "replicate")
     idempotency_key = getattr(args, "idempotency_key", None)
+    hardware_profile = getattr(args, "hardware_profile", None)
     dry_run = getattr(args, "dry_run", False)
 
     if not config_name:
@@ -26,15 +27,18 @@ def cmd_cloud_submit(args) -> int:
         return 1
 
     if dry_run:
-        return _cloud_submit_dry_run(config_name, provider)
+        return _cloud_submit_dry_run(config_name, provider, hardware_profile)
 
     request_data: Dict[str, Any] = {
         "config_name_to_load": config_name,
     }
     if idempotency_key:
         request_data["idempotency_key"] = idempotency_key
+    if hardware_profile:
+        request_data["hardware_profile"] = hardware_profile
 
-    print(f"Submitting job with config '{config_name}' to {provider}...")
+    profile_note = f" ({hardware_profile})" if hardware_profile else ""
+    print(f"Submitting job with config '{config_name}' to {provider}{profile_note}...")
 
     result = cloud_api_request(
         "POST",
@@ -67,10 +71,12 @@ def cmd_cloud_submit(args) -> int:
         return 1
 
 
-def _cloud_submit_dry_run(config_name: str, provider: str) -> int:
+def _cloud_submit_dry_run(config_name: str, provider: str, hardware_profile: Optional[str] = None) -> int:
     """Preview cloud job submission without actually submitting."""
     print(f"[DRY RUN] Previewing cloud job submission for config '{config_name}'...")
     print(f"          Provider: {provider}")
+    if hardware_profile:
+        print(f"          Hardware Profile: {hardware_profile}")
     print()
 
     # Get config details
@@ -196,7 +202,8 @@ def _cloud_submit_dry_run(config_name: str, provider: str) -> int:
 
     print("-" * 50)
     print("To submit this job, run without --dry-run:")
-    print(f"  simpletuner cloud jobs submit {config_name} --provider {provider}")
+    hardware_flag = f" --hardware-profile {hardware_profile}" if hardware_profile else ""
+    print(f"  simpletuner cloud jobs submit {config_name} --provider {provider}{hardware_flag}")
 
     return 0
 

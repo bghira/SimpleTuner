@@ -1680,9 +1680,13 @@ class FieldService:
             except (TypeError, ValueError):
                 fsdp_version = 2
 
-            if not fsdp_enabled:
-                disable_reason = "Enable FSDP v2 to configure context parallelism."
-            elif fsdp_version != 2:
+            if field.name == "context_parallel_comm_strategy" and not fsdp_enabled:
+                field_dict["options"] = [{"value": "allgather", "label": "All-Gather (recommended)"}]
+                if field_dict.get("value") == "alltoall":
+                    field_dict["value"] = "allgather"
+                _append_hint("Standalone context parallelism currently supports all-gather rotation.")
+
+            if fsdp_enabled and fsdp_version != 2:
                 disable_reason = "Context parallelism requires FSDP Version set to 2."
 
             if disable_reason:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Direct comparison test between factory.py and factory.py"""
+
 import json
 import os
 import sys

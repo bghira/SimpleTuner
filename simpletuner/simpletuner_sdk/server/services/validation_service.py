@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from simpletuner.helpers.configuration.cli_utils import normalize_lr_scheduler_value
-from simpletuner.helpers.training.attention_backend import is_sageattention_available, xformers_compute_capability_error
+from simpletuner.helpers.training.attention_backend import (
+    get_metal_flash_attention_unavailable_reason,
+    is_sageattention_available,
+    xformers_compute_capability_error,
+)
 
 from ..services.field_registry_wrapper import lazy_field_registry
 
@@ -420,6 +424,17 @@ class ValidationService:
                 "attention_mechanism",
                 f"SageAttention is not installed but '{attention_mech}' was selected. "
                 "Install it with: pip install sageattention",
+            )
+
+        if attention_mech.replace("_", "-") == "metal-flash-attention":
+            metal_unavailable_reason = get_metal_flash_attention_unavailable_reason()
+        else:
+            metal_unavailable_reason = None
+        if metal_unavailable_reason:
+            result.add_error(
+                "attention_mechanism",
+                "Metal Flash Attention was selected, but the UMFA PyTorch custom-op backend is not installed "
+                f"or is not usable: {metal_unavailable_reason}",
             )
 
         # Disk low space detection validation

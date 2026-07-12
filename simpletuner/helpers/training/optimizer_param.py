@@ -3,6 +3,7 @@ import importlib.util
 import inspect
 import logging
 import os
+import types
 from functools import lru_cache
 
 import accelerate
@@ -916,6 +917,13 @@ def optimizer_parameters(optimizer, args):
         optimizer_class = optimizer_choice_entry.get("class")
         optimizer_params = copy.deepcopy(optimizer_choice_entry.get("default_settings", {}))
         optimizer_params.update(convert_arg_to_parameters(args))
+        if optimizer == "prodigy" and _is_fsdp2_enabled(args) and optimizer_params.get("factored", False):
+            logger.warning(
+                "Disabling Prodigy factored second-moment state for FSDP2. "
+                "ProdigyPlus creates factored row/column buffers as local tensors, which cannot be updated with "
+                "DTensor gradients."
+            )
+            optimizer_params["factored"] = False
         if args.optimizer_release_gradients and "optimi-" in optimizer:
             optimizer_params["gradient_release"] = True
 
@@ -978,17 +986,96 @@ def _requires_fsdp2_safe_fallback(args, optimizer_name: str | None) -> bool:
     """
     if optimizer_name is None:
         return False
-    if not getattr(args, "use_fsdp", False):
+    if not _is_fsdp2_enabled(args):
+        return False
+
+    return _is_optimizer_fsdp2_incompatible(optimizer_name)
+
+
+def _is_fsdp2_enabled(args) -> bool:
+    if not (getattr(args, "use_fsdp", False) or getattr(args, "fsdp_enable", False)):
         return False
     fsdp_version_raw = getattr(args, "fsdp_version", 2)
     try:
         fsdp_version = int(fsdp_version_raw)
     except (TypeError, ValueError):
         fsdp_version = 2
-    if fsdp_version != 2:
-        return False
+    return fsdp_version == 2
 
-    return _is_optimizer_fsdp2_incompatible(optimizer_name)
+
+def patch_prodigy_for_fsdp2_dtensor(optimizer, args) -> None:
+    if getattr(args, "optimizer", None) != "prodigy" or not _is_fsdp2_enabled(args):
+        return
+
+    target_optimizer = getattr(optimizer, "optimizer", optimizer)
+    if getattr(target_optimizer, "_simpletuner_fsdp2_dtensor_patch", False):
+        return
+    if target_optimizer.__class__.__module__.split(".", 1)[0] != "prodigyplus":
+        return
+
+    def _local_scalar(value, like: torch.Tensor) -> torch.Tensor:
+        full_tensor = getattr(value, "full_tensor", None)
+        if callable(full_tensor):
+            value = full_tensor()
+        if not torch.is_tensor(value):
+            value = torch.as_tensor(value, device=like.device, dtype=like.dtype)
+        return value.detach().to(device=like.device, dtype=like.dtype)
+
+    def update_prodigy_fsdp2(self, state, group, grad, data):
+        k = group["k"]
+        prodigy_steps = group["prodigy_steps"]
+
+        if prodigy_steps <= 0 or k < prodigy_steps:
+            d_update = (group["d"] ** 2) / (group["d0"] ** 0.5)
+
+            sliced_grad = self.get_sliced_tensor(grad)
+            sliced_data = self.get_sliced_tensor(data)
+            running_d_numerator, running_d_denom = self.get_running_values_for_group(group)
+
+            x0_minus = state["p0"] - sliced_data
+            x0_dot = torch.dot(sliced_grad, x0_minus)
+
+            if group["use_speed"]:
+                beta = 1 - (k**-0.75)
+                previous_x0_dot = state.get("exp_avg_x0_dot", None)
+                if previous_x0_dot is not None:
+                    x0_dot = x0_dot * (1 - beta) + previous_x0_dot * beta
+
+                x0_minus_l1_norm = x0_minus.abs().sum()
+                x0_minus_l1_norm = _local_scalar(x0_minus_l1_norm, running_d_denom).clamp_min(
+                    state.get("max_x0_minus_l1_norm", 1e-8)
+                )
+                state["max_x0_minus_l1_norm"] = x0_minus_l1_norm.item()
+
+                x0_minus_l2_norm = x0_minus.norm()
+                x0_minus_l2_norm = _local_scalar(x0_minus_l2_norm, running_d_denom).clamp_min(
+                    state.get("max_x0_minus_l2_norm", 1e-8)
+                )
+                state["max_x0_minus_l2_norm"] = x0_minus_l2_norm.item()
+
+                d_update /= x0_minus_l2_norm.add(1).square()
+                running_d_denom.add_(x0_minus_l2_norm)
+                x0_dot = _local_scalar(x0_dot, running_d_numerator).div_(x0_minus_l1_norm)
+                state["exp_avg_x0_dot"] = x0_dot.item()
+            else:
+                _, _, beta3 = self.get_betas(group)
+                denom_update = state["s"].mul_(beta3).add_(sliced_grad, alpha=d_update).abs().sum()
+                running_d_denom.add_(_local_scalar(denom_update, running_d_denom))
+                x0_dot = _local_scalar(x0_dot, running_d_numerator)
+
+            running_d_numerator.add_(x0_dot, alpha=d_update)
+
+            del x0_minus
+        else:
+            if "s" in state:
+                s = state.pop("s")
+                del s
+            if "p0" in state:
+                p0 = state.pop("p0")
+                del p0
+
+    target_optimizer.update_prodigy = types.MethodType(update_prodigy_fsdp2, target_optimizer)
+    target_optimizer._simpletuner_fsdp2_dtensor_patch = True
 
 
 def _is_optimizer_fsdp2_incompatible(optimizer_name: str | None) -> bool:

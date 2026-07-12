@@ -10,7 +10,7 @@ import requests
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from tests.pages.trainer_page import BasicConfigTab, DatasetsTab, ModelConfigTab, TrainerPage, TrainingConfigTab
 from tests.webui_test_base import WebUITestCase
@@ -19,6 +19,78 @@ from tests.webui_test_base import WebUITestCase
 class _TrainerPageMixin:
     def _trainer_page(self, driver):
         return TrainerPage(driver, base_url=self.base_url)
+
+    def _show_configured_cloud_dashboard(self, driver, *, load_jobs: bool = False) -> list[str]:
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "return !!(el && window.Alpine && window.Alpine.$data && window.Alpine.$data(el));"
+            )
+        )
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script(
+                "const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));"
+                "return comp && comp.providersLoading === false;"
+            )
+        )
+        driver.execute_script(
+            """
+            const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));
+            comp.providers = [{ id: 'replicate', name: 'Replicate', configured: true }];
+            comp.isActiveProviderConfigured = () => true;
+            comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate', configured: true });
+            comp.activeProvider = 'replicate';
+            comp.onboarding = {
+                data_understood: true,
+                results_understood: true,
+                cost_understood: true,
+            };
+            comp.hints = { dataloader_dismissed: false, git_dismissed: true };
+            comp.webhookUrl = '';
+            comp.savedWebhookUrl = '';
+            comp.publishingStatus = {
+                loading: false,
+                hf_configured: false,
+                hf_token_valid: false,
+                hf_username: null,
+                hub_model_id: null,
+                push_to_hub: false,
+                s3_configured: false,
+                local_upload_available: false,
+                local_upload_dir: null,
+                message: null,
+            };
+            """,
+        )
+
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script(
+                "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
+            )
+        )
+        if not load_jobs:
+            return []
+
+        result = driver.execute_async_script(
+            """
+            const done = arguments[0];
+            const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));
+            if (!comp || typeof comp.loadJobs !== 'function') {
+                done({ error: 'Cloud jobs loader is not available' });
+                return;
+            }
+            Promise.resolve(comp.loadJobs())
+                .then(() => done({
+                    names: (comp.jobs || []).map((job) => job.metadata?.tracker_run_name || null),
+                }))
+                .catch((error) => done({ error: String(error) }));
+            """
+        )
+        if not isinstance(result, dict):
+            raise AssertionError(f"Unexpected Cloud jobs loader result: {result!r}")
+        if result.get("error"):
+            raise AssertionError(result["error"])
+        return result.get("names") or []
 
 
 class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
@@ -570,6 +642,96 @@ class TrainingEpochsStepsValidationTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
         self.for_each_browser("test_epochs_steps_cross_validation", scenario)
+
+
+class ValidationPromptLibraryLayoutTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test full-mode Validation prompt library modal layout."""
+
+    MAX_BROWSERS = 1
+
+    def test_full_mode_prompt_library_modal_contains_prompt_row(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            driver.set_window_size(1280, 900)
+            trainer_page = self._trainer_page(driver)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            driver.execute_script("localStorage.setItem('st_validation_hints', JSON.stringify({ ez_mode: false }));")
+            trainer_page.wait_for_tab("validation")
+            trainer_page.wait_for_htmx()
+
+            trigger_selector = "#prompt-library-button-user_prompt_library"
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const button = document.querySelector(arguments[0]);"
+                    "return Boolean(button && button.offsetParent !== null && button.dataset.promptLibraryInit === 'true');",
+                    trigger_selector,
+                ),
+                message="Prompt library trigger was not visible and initialised in Validation full mode",
+            )
+
+            driver.execute_script(
+                "const button = document.querySelector(arguments[0]);"
+                "button.scrollIntoView({ block: 'center', inline: 'nearest' });"
+                "button.click();",
+                trigger_selector,
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "const modal = document.querySelector('#promptLibraryModal');"
+                    "const prompt = modal && modal.querySelector('.prompt-library-prompt');"
+                    "return Boolean(modal && prompt && getComputedStyle(modal).display !== 'none');"
+                ),
+                message="Prompt library modal did not open with an editable prompt row",
+            )
+
+            metrics = driver.execute_script(
+                """
+                const rect = (element) => {
+                    const r = element.getBoundingClientRect();
+                    return {
+                        left: r.left,
+                        right: r.right,
+                        top: r.top,
+                        bottom: r.bottom,
+                        width: r.width,
+                        height: r.height
+                    };
+                };
+                const modal = document.querySelector('#promptLibraryModal');
+                const dialog = modal.querySelector('.modal-dialog');
+                const body = modal.querySelector('.modal-body');
+                const rows = modal.querySelector('#prompt-library-rows');
+                const row = modal.querySelector('.prompt-library-row');
+                const prompt = modal.querySelector('.prompt-library-prompt');
+                const modalStyle = getComputedStyle(modal);
+                return {
+                    modalDisplay: modalStyle.display,
+                    modalPosition: modalStyle.position,
+                    dialog: rect(dialog),
+                    body: rect(body),
+                    rows: rect(rows),
+                    row: rect(row),
+                    prompt: rect(prompt),
+                    rowsClientWidth: rows.clientWidth,
+                    rowsScrollWidth: rows.scrollWidth
+                };
+                """
+            )
+
+            tolerance = 1.5
+            self.assertEqual(metrics["modalDisplay"], "flex")
+            self.assertEqual(metrics["modalPosition"], "fixed")
+            self.assertLessEqual(metrics["rowsScrollWidth"], metrics["rowsClientWidth"] + tolerance, metrics)
+            self.assertGreaterEqual(metrics["row"]["left"], metrics["body"]["left"] - tolerance, metrics)
+            self.assertLessEqual(metrics["row"]["right"], metrics["body"]["right"] + tolerance, metrics)
+            self.assertGreaterEqual(metrics["prompt"]["left"], metrics["body"]["left"] - tolerance, metrics)
+            self.assertLessEqual(metrics["prompt"]["right"], metrics["body"]["right"] + tolerance, metrics)
+
+        self.for_each_browser("test_full_mode_prompt_library_modal_contains_prompt_row", scenario)
 
 
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
@@ -1565,6 +1727,37 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_dataset_wizard_name_step_enables_next_after_typing", scenario)
 
 
+class CloudTabVisibilityTestCase(_TrainerPageMixin, WebUITestCase):
+    """Ensure the Cloud tab default matches UI Settings."""
+
+    MAX_BROWSERS = 1
+
+    def test_cloud_tab_visible_when_default_setting_omitted(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            cloud_tab = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+            )
+            self.assertTrue(cloud_tab.is_displayed())
+
+            settings_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='ui_settings']"))
+            )
+            settings_tab.click()
+            trainer_page.wait_for_tab("ui_settings")
+
+            checkbox = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ui-cloud-tab-enabled")))
+            self.assertTrue(checkbox.is_selected())
+
+        self.for_each_browser("test_cloud_tab_visible_when_default_setting_omitted", scenario)
+
+
 class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
     """Test cloud upload progress wiring for SSE updates."""
 
@@ -1647,6 +1840,232 @@ class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_upload_progress_uses_webhooks_endpoint", scenario)
 
 
+class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test Replicate hardware profile modal persistence and submission."""
+
+    MAX_BROWSERS = 1
+
+    def _open_cloud_tab(self, driver) -> None:
+        trainer_page = self._trainer_page(driver)
+        trainer_page.navigate_to_trainer()
+        self.dismiss_onboarding(driver)
+
+        cloud_tab = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+        )
+        cloud_tab.click()
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
+        trainer_page.wait_for_htmx()
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return !!(window.Alpine && document.querySelector('#cloud-tab-content'));")
+        )
+
+    def _install_cloud_modal_harness(self, driver) -> bool:
+        return driver.execute_script(
+            """
+            const el = document.querySelector('#cloud-tab-content');
+            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            if (!comp) { return false; }
+
+            comp.activeProvider = 'replicate';
+            comp.providers = [{
+                id: 'replicate',
+                name: 'Replicate',
+                hardware_profile: 'l40s-x4',
+                hardware_profiles: [
+                    { id: 'h100', label: 'H100', hardware_type: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
+                    { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100', cost_per_hour: 43.92, cost_per_second: 0.0122 },
+                    { id: 'l40s', label: 'L40S', hardware_type: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
+                    { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S', cost_per_hour: 14.00, cost_per_second: 0.003888888 },
+                    { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S', cost_per_hour: 28.00, cost_per_second: 0.007777776 }
+                ]
+            }];
+            comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
+            comp.selectedConfigName = 'default';
+            comp.webhookUrl = '';
+            comp.quickSubmitMode = false;
+            comp.isActiveProviderConfigured = () => true;
+            comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate' });
+            comp.loadDataUploadPreview = async () => {
+                comp.preSubmitModal.dataUploadPreview = {
+                    requires_upload: false,
+                    datasets: [],
+                    total_files: 0,
+                    total_size_mb: 0
+                };
+                comp.preSubmitModal.dataConsentConfirmed = true;
+            };
+            comp.loadCostEstimate = async () => {
+                comp.preSubmitModal.costEstimate = {
+                    has_estimate: true,
+                    estimated_cost_usd: 1.23,
+                    hardware_cost_per_hour: 4.0
+                };
+            };
+            comp.loadConfigPreview = async () => {
+                comp.preSubmitModal.configPreview = {};
+                comp.preSubmitModal.dataloaderPreview = [];
+            };
+            comp.checkWebhookReachability = async () => {
+                comp.preSubmitModal.webhookCheck = {
+                    tested: true,
+                    testing: false,
+                    success: true,
+                    error: null,
+                    skipped: false
+                };
+            };
+            comp.loadJobs = () => {};
+            comp.loadCostLimitStatus = () => {};
+            comp.submitJobToProvider = async (payload) => {
+                window.__lastCloudSubmitPayload = payload;
+                return { success: true, job_id: 'cloud-hardware-e2e' };
+            };
+            window.__cloudHardwareComponentReady = true;
+            return true;
+            """
+        )
+
+    def _open_modal(self, driver) -> None:
+        opened = driver.execute_async_script(
+            """
+            const done = arguments[0];
+            const el = document.querySelector('#cloud-tab-content');
+            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            if (!comp || typeof comp.openPreSubmitModal !== 'function') { done(false); return; }
+            comp.openPreSubmitModal().then(() => done(true)).catch((err) => {
+                console.error('openPreSubmitModal failed', err);
+                done(false);
+            });
+            """
+        )
+        self.assertTrue(opened)
+        WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".cloud-submit-modal.show")))
+        WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']"))
+        )
+
+    def test_replicate_hardware_profile_persists_and_submits(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            self._open_cloud_tab(driver)
+            driver.execute_script("localStorage.removeItem('cloud_replicate_hardware_profile');")
+            self.assertTrue(self._install_cloud_modal_harness(driver))
+
+            self._open_modal(driver)
+            select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
+            self.assertEqual(select_el.get_attribute("value"), "l40s-x4")
+
+            Select(select_el).select_by_value("h100-x8")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return localStorage.getItem('cloud_replicate_hardware_profile');") == "h100-x8"
+            )
+
+            driver.execute_script(
+                "const comp = Alpine.$data(document.querySelector('#cloud-tab-content')); comp.closePreSubmitModal();"
+            )
+            self._open_modal(driver)
+            select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
+            self.assertEqual(select_el.get_attribute("value"), "h100-x8")
+
+            driver.refresh()
+            self._open_cloud_tab(driver)
+            self.assertTrue(self._install_cloud_modal_harness(driver))
+            self._open_modal(driver)
+            select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
+            self.assertEqual(select_el.get_attribute("value"), "h100-x8")
+
+            next_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='cloud-submit-next-button']"))
+            )
+            next_button.click()
+            submit_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='cloud-submit-final-button']"))
+            )
+            submit_button.click()
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return window.__lastCloudSubmitPayload?.hardware_profile;") == "h100-x8"
+            )
+
+        self.for_each_browser("test_replicate_hardware_profile_persists_and_submits", scenario)
+
+    def test_replicate_settings_hardware_buttons_update_cost_and_persist(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            self._open_cloud_tab(driver)
+            driver.execute_script("localStorage.setItem('cloud_replicate_hardware_profile', 'h100-x8');")
+            self.assertTrue(self._install_cloud_modal_harness(driver))
+
+            driver.execute_script(
+                """
+                const comp = Alpine.$data(document.querySelector('#cloud-tab-content'));
+                comp.preSubmitModal.hardwareProfile = 'h100-x8';
+                comp.showSettingsPanel = true;
+                """
+            )
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "return Array.from(document.querySelectorAll('[data-testid=\"cloud-settings-hardware-profile\"]'))"
+                    ".filter((button) => button.offsetParent !== null).length === 2;"
+                )
+            )
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const panel = document.querySelector('.cloud-settings-panel');"
+                    "return panel && panel.innerText.includes('$43.92/hr') && "
+                    "panel.innerText.includes('$0.012200/sec');"
+                )
+            )
+
+            pressed_before = driver.execute_script(
+                """
+                return Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
+                    .filter((button) => button.offsetParent !== null)
+                    .map((button) => ({ text: button.innerText.trim(), pressed: button.getAttribute('aria-pressed') }));
+                """
+            )
+            self.assertIn({"text": "H100", "pressed": "true"}, pressed_before)
+            self.assertIn({"text": "L40S", "pressed": "false"}, pressed_before)
+
+            clicked = driver.execute_script(
+                """
+                const button = Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
+                    .find((candidate) => candidate.offsetParent !== null && candidate.innerText.trim() === 'L40S');
+                if (!button) { return false; }
+                button.click();
+                return true;
+                """
+            )
+            self.assertTrue(clicked)
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return localStorage.getItem('cloud_replicate_hardware_profile');") == "l40s-x8"
+            )
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const panel = document.querySelector('.cloud-settings-panel');"
+                    "return panel && panel.innerText.includes('$28.00/hr') && "
+                    "panel.innerText.includes('$0.007778/sec');"
+                )
+            )
+
+            pressed_after = driver.execute_script(
+                """
+                return Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
+                    .filter((button) => button.offsetParent !== null)
+                    .map((button) => ({ text: button.innerText.trim(), pressed: button.getAttribute('aria-pressed') }));
+                """
+            )
+            self.assertIn({"text": "H100", "pressed": "false"}, pressed_after)
+            self.assertIn({"text": "L40S", "pressed": "true"}, pressed_after)
+
+        self.for_each_browser("test_replicate_settings_hardware_buttons_update_cost_and_persist", scenario)
+
+
 class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
     """Ensure uploading jobs appear in the cloud job list."""
 
@@ -1657,22 +2076,26 @@ class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
 
         from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
         from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import get_default_config_dir
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
 
         async def _seed() -> None:
-            config_dir = self.home_path / ".simpletuner"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            store = await AsyncJobStore.get_instance(config_dir=config_dir)
-            job = UnifiedJob(
-                job_id=job_id,
-                job_type=JobType.CLOUD,
-                provider="replicate",
-                status=status,
-                config_name="test-config",
-                created_at=datetime.now(timezone.utc).isoformat(),
-                error_message=error_message,
-                metadata={"tracker_run_name": run_name},
-            )
-            await store.add_job(job)
+            for config_dir in {self.home_path / ".simpletuner", self.config_dir, get_default_config_dir()}:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                await AsyncJobStore.reset_instance()
+                JobRepository.reset_instance()
+                store = await AsyncJobStore.get_instance(config_dir=config_dir)
+                job = UnifiedJob(
+                    job_id=job_id,
+                    job_type=JobType.CLOUD,
+                    provider="replicate",
+                    status=status,
+                    config_name="test-config",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    error_message=error_message,
+                    metadata={"tracker_run_name": run_name},
+                )
+                await store.add_job(job)
 
         import asyncio
 
@@ -1705,11 +2128,9 @@ class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
             trainer_page.wait_for_htmx()
 
-            WebDriverWait(driver, 15).until(
-                lambda d: d.execute_script(
-                    "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
-                )
-            )
+            loaded_job_names = self._show_configured_cloud_dashboard(driver, load_jobs=True)
+            self.assertIn("Upload Smoke", loaded_job_names)
+            self.assertIn("Upload Failed", loaded_job_names)
 
             WebDriverWait(driver, 10).until(
                 lambda d: d.execute_script(
@@ -1730,6 +2151,67 @@ class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(upload_status, "uploading")
 
         self.for_each_browser("test_uploading_job_visible_in_cloud_list", scenario)
+
+
+class CloudWebhookDraftInputTestCase(_TrainerPageMixin, WebUITestCase):
+    """Ensure the Cloud checklist webhook input remains editable before save."""
+
+    MAX_BROWSERS = 1
+
+    def test_webhook_hint_input_stays_visible_while_typing_unsaved_draft(self) -> None:
+        self.with_sample_environment()
+        secrets_path = self.home_path / ".simpletuner" / "secrets.json"
+        secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        secrets_path.write_text(json.dumps({"REPLICATE_API_TOKEN": "r8_test_dummy"}), encoding="utf-8")
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+
+            driver.execute_script(
+                "localStorage.removeItem('cloud_hints');"
+                "localStorage.setItem('cloud_onboarding', JSON.stringify({"
+                "data_understood: true, results_understood: true, cost_understood: true}));"
+            )
+
+            cloud_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+            )
+            cloud_tab.click()
+
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
+            trainer_page.wait_for_htmx()
+
+            self._show_configured_cloud_dashboard(driver)
+
+            input_selector = ".cloud-setup-checklist .webhook-setup input[type='url']"
+            webhook_input = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, input_selector))
+            )
+            webhook_input.send_keys("h")
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.find_element(By.CSS_SELECTOR, input_selector).get_attribute("value") == "h"
+            )
+
+            input_count = driver.execute_script(
+                "return document.querySelectorAll(arguments[0]).length;",
+                input_selector,
+            )
+            self.assertEqual(input_count, 1)
+
+            has_output_destination = driver.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "if (!el) { throw new Error('Cloud tab content not found'); }"
+                "if (!window.Alpine || !window.Alpine.$data) { throw new Error('Alpine is not initialized'); }"
+                "const comp = window.Alpine.$data(el);"
+                "if (!comp) { throw new Error('Cloud Alpine component not found'); }"
+                "return comp.hasOutputDestination;"
+            )
+            self.assertIs(has_output_destination, False)
+
+        self.for_each_browser("test_webhook_hint_input_stays_visible_while_typing_unsaved_draft", scenario)
 
 
 class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):

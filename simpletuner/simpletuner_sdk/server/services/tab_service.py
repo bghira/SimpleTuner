@@ -508,7 +508,12 @@ class TabService:
     def _cloud_tab_enabled(self) -> bool:
         try:
             defaults = WebUIStateStore().load_defaults()
-            return bool(getattr(defaults, "cloud_tab_enabled", True))
+            value = getattr(defaults, "cloud_tab_enabled", True)
+            if value is None:
+                return True
+            if isinstance(value, str):
+                return value.strip().lower() not in {"0", "false", "no", "off"}
+            return bool(value)
         except Exception as exc:
             logger.debug("Failed to evaluate cloud tab enabled flag: %s", exc, exc_info=True)
             return True

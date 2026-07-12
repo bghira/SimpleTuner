@@ -9,6 +9,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 
 
 class RMSNorm(nn.Module):
@@ -260,6 +261,13 @@ class ProjectLayer(nn.Module):
 
 
 class LlamaTransformer(nn.Module):
+    _cp_plan = {
+        "": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
+
     def __init__(
         self,
         num_attention_heads: int,

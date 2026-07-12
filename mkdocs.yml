@@ -253,6 +253,7 @@ nav:
       - Cosmos2: quickstart/COSMOS2IMAGE.md
       - OmniGen: quickstart/OMNIGEN.md
       - Z-Image: quickstart/ZIMAGE.md
+      - Krea2: quickstart/KREA2.md
       - Boogu-Image: quickstart/BOOGU_IMAGE.md
       - zlab i1: quickstart/ZLAB_i1.md
       - Ideogram 4: quickstart/IDEOGRAM4.md
@@ -345,6 +346,7 @@ nav:
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - LayerSync: experimental/LAYERSYNC.md
+      - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md

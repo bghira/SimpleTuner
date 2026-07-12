@@ -62,6 +62,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
     vae_cache_clear_each_epoch: Optional[bool] = None
     probability: float = 1.0
+    timestep_sampling_offset: float = 0.0
     repeats: int = 0
     disable_validation: bool = False
     hash_filenames: Optional[bool] = None
@@ -180,6 +181,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
+        config.timestep_sampling_offset = float(backend_dict.get("timestep_sampling_offset", 0.0)) if backend_dict.get("timestep_sampling_offset") else 0.0
         config.repeats = int(backend_dict.get("repeats", 0)) if backend_dict.get("repeats") else 0
         config.disable_validation = backend_dict.get("disable_validation", False)
         if "hash_filenames" in backend_dict and config.backend_type != "csv":
@@ -417,6 +419,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config["crop_style"] = self.crop_style
         config["disable_validation"] = self.disable_validation
         config["probability"] = self.probability
+        config["timestep_sampling_offset"] = self.timestep_sampling_offset
         config["repeats"] = self.repeats
         config["instance_data_dir"] = self.instance_data_dir
 

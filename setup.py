@@ -75,7 +75,19 @@ PYTORCH_DEPENDENCIES = [
     "torchaudio>=2.11.0",
 ]
 
+APPLE_PYTORCH_DEPENDENCIES = [
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "torchaudio>=2.11.0",
+]
+
 TORCHAO_DEPENDENCY = "torchao>=0.17.0,<0.18.0"
+TRANSFORMERENGINE_DEPENDENCY = "transformer_engine[pytorch]>=2.16.0,<2.17.0"
+CUDA13_RUNTIME_DEPENDENCIES = [
+    "nvidia-cublas>=13.3.0.5",
+    "nvidia-cuda-nvrtc>=13.3.33",
+    "nvidia-cuda-runtime>=13.3.29",
+]
 
 
 def _cuda_nightly_base_url() -> str:
@@ -139,6 +151,7 @@ def get_cuda13_dependencies():
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
+        *CUDA13_RUNTIME_DEPENDENCIES,
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
@@ -190,6 +203,7 @@ def get_cuda13_nightly_dependencies():
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
+        *CUDA13_RUNTIME_DEPENDENCIES,
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
@@ -226,7 +240,7 @@ def get_rocm_dependencies():
 
 def get_apple_dependencies():
     return [
-        *PYTORCH_DEPENDENCIES,
+        *APPLE_PYTORCH_DEPENDENCIES,
         TORCHAO_DEPENDENCY,
     ]
 
@@ -368,6 +382,15 @@ extras_require = {
     "captioning": ["caption-flow[vllm]>=0.5.2"],
     "captioning-cuda13": get_captioning_cuda13_dependencies(),
     "cuda13-captioning": get_captioning_cuda13_dependencies(),
+    "transformerengine": [TRANSFORMERENGINE_DEPENDENCY],
+    "transformerengine-cuda13": [
+        TRANSFORMERENGINE_DEPENDENCY,
+        *CUDA13_RUNTIME_DEPENDENCIES,
+    ],
+    "cuda13-transformerengine": [
+        TRANSFORMERENGINE_DEPENDENCY,
+        *CUDA13_RUNTIME_DEPENDENCIES,
+    ],
     "dev": [
         "selenium>=4.0.0",
         "coverage>=7.0.0",
@@ -472,6 +495,9 @@ if __name__ == "__main__":
     print("\nInstall with a platform extra:")
     print("  pip install '.[cuda]'                                                              # CUDA 12")
     print("  pip install '.[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130   # CUDA 13")
+    print(
+        "  pip install '.[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130  # CUDA 13 + TransformerEngine"
+    )
     print("  pip install '.[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1   # ROCm")
     print("  pip install '.[apple]'                                                              # macOS")
     print("  pip install '.[cpu]'                                                                # CPU only")

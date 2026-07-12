@@ -456,6 +456,81 @@ class ErnieModelTests(unittest.TestCase):
         kwargs = model.model.received[-1]
         self.assertIs(kwargs["timestep_sign"], time_sign)
 
+    def test_transformer_declares_manual_context_parallel_plan(self):
+        self.assertEqual(ErnieImageTransformer2DModel._cp_plan, {})
+
+    def test_transformer_context_parallel_path_shards_internal_tensors(self):
+        transformer = ErnieImageTransformer2DModel(
+            hidden_size=12,
+            num_attention_heads=2,
+            num_layers=1,
+            ffn_hidden_size=24,
+            in_channels=4,
+            out_channels=4,
+            text_in_dim=12,
+            rope_axes_dim=(2, 2, 2),
+        )
+        transformer._parallel_config = types.SimpleNamespace(context_parallel_config=types.SimpleNamespace(ulysses_degree=1))
+
+        with (
+            patch(
+                "simpletuner.helpers.models.ernie.transformer.shard_cp_tensor",
+                side_effect=lambda tensor, *_args, **_kwargs: tensor,
+            ) as shard,
+            patch(
+                "simpletuner.helpers.models.ernie.transformer.unshard_cp_tensor",
+                side_effect=lambda tensor, *_args, **_kwargs: tensor,
+            ) as unshard,
+            patch(
+                "simpletuner.helpers.models.ernie.transformer.prepare_cp_attention_mask",
+                side_effect=lambda mask, *_args, **_kwargs: mask,
+            ) as prepare_mask,
+        ):
+            output = transformer(
+                hidden_states=torch.randn(1, 4, 2, 2),
+                timestep=torch.tensor([0.5]),
+                text_bth=torch.randn(1, 1, 12),
+                text_lens=torch.tensor([1]),
+                return_dict=False,
+            )[0]
+
+        self.assertEqual(tuple(output.shape), (1, 4, 2, 2))
+        self.assertGreaterEqual(shard.call_count, 4)
+        unshard.assert_called()
+        prepare_mask.assert_called_once()
+
+    def test_transformer_context_parallel_rejects_tread_before_sharding(self):
+        transformer = ErnieImageTransformer2DModel(
+            hidden_size=12,
+            num_attention_heads=2,
+            num_layers=1,
+            ffn_hidden_size=24,
+            in_channels=4,
+            out_channels=4,
+            text_in_dim=12,
+            rope_axes_dim=(2, 2, 2),
+        )
+        transformer._parallel_config = types.SimpleNamespace(context_parallel_config=types.SimpleNamespace(ulysses_degree=2))
+        transformer.set_router(
+            TREADRouter(seed=1, device=torch.device("cpu")),
+            [{"start_layer_idx": 0, "end_layer_idx": 0, "selection_ratio": 0.5}],
+        )
+
+        with (
+            torch.enable_grad(),
+            patch("simpletuner.helpers.models.ernie.transformer.shard_cp_tensor") as shard,
+            self.assertRaisesRegex(ValueError, "TREAD routing is not supported"),
+        ):
+            transformer(
+                hidden_states=torch.randn(1, 4, 2, 2),
+                timestep=torch.tensor([0.5]),
+                text_bth=torch.randn(1, 1, 12),
+                text_lens=torch.tensor([1]),
+                return_dict=False,
+            )
+
+        shard.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

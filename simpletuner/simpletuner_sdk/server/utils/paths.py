@@ -6,6 +6,29 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
+_WORKSPACE_ENV = "SIMPLETUNER_WORKSPACE"
+
+
+def get_simpletuner_data_roots() -> list[Path]:
+    """Return candidate roots for user-managed SimpleTuner data."""
+    candidate_roots: list[Path] = []
+
+    workspace_override = os.environ.get(_WORKSPACE_ENV)
+    if workspace_override:
+        candidate_roots.append(Path(workspace_override).expanduser())
+
+    if Path("/workspace").exists():
+        candidate_roots.append(Path("/workspace/simpletuner"))
+    if Path("/notebooks").exists():
+        candidate_roots.append(Path("/notebooks/simpletuner"))
+    candidate_roots.append(Path.home() / ".simpletuner")
+
+    roots: list[Path] = []
+    for root in candidate_roots:
+        if root not in roots:
+            roots.append(root)
+    return roots
+
 
 def get_simpletuner_root() -> Path:
     """Get the root directory of SimpleTuner installation.
@@ -38,12 +61,7 @@ def get_config_directory() -> Path:
     if env_override:
         return Path(env_override).expanduser()
 
-    candidate_roots = []
-    if Path("/workspace").exists():
-        candidate_roots.append(Path("/workspace/simpletuner"))
-    if Path("/notebooks").exists():
-        candidate_roots.append(Path("/notebooks/simpletuner"))
-    candidate_roots.append(Path.home() / ".simpletuner")
+    candidate_roots = get_simpletuner_data_roots()
 
     for root in candidate_roots:
         candidate = root / "config"
@@ -100,13 +118,7 @@ def get_avatars_directory() -> Path:
         avatars_dir.mkdir(parents=True, exist_ok=True)
         return avatars_dir
 
-    # Check standard SimpleTuner data directories
-    candidate_roots = []
-    if Path("/workspace").exists():
-        candidate_roots.append(Path("/workspace/simpletuner"))
-    if Path("/notebooks").exists():
-        candidate_roots.append(Path("/notebooks/simpletuner"))
-    candidate_roots.append(Path.home() / ".simpletuner")
+    candidate_roots = get_simpletuner_data_roots()
 
     for root in candidate_roots:
         if root.exists():

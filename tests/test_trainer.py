@@ -610,6 +610,37 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_resolve_ddp_find_unused_parameters_uses_explicit_config(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(find_unused_parameters=False, model_family="ltxvideo2")
+
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get") as mock_get:
+            self.assertFalse(trainer._resolve_ddp_find_unused_parameters())
+
+        mock_get.assert_not_called()
+
+        trainer.config.find_unused_parameters = True
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get") as mock_get:
+            self.assertTrue(trainer._resolve_ddp_find_unused_parameters())
+
+        mock_get.assert_not_called()
+
+    def test_resolve_ddp_find_unused_parameters_uses_model_opt_in(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(find_unused_parameters=None, model_family="needs_unused")
+        model_cls = type("NeedsUnusedParameters", (), {"DDP_FIND_UNUSED_PARAMETERS": True})
+
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get", return_value=model_cls):
+            self.assertTrue(trainer._resolve_ddp_find_unused_parameters())
+
+    def test_resolve_ddp_find_unused_parameters_defaults_to_accelerate(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(find_unused_parameters=None, model_family="ltxvideo2")
+        model_cls = type("DoesNotNeedUnusedParameters", (), {"DDP_FIND_UNUSED_PARAMETERS": False})
+
+        with patch("simpletuner.helpers.training.trainer.ModelRegistry.get", return_value=model_cls):
+            self.assertIsNone(trainer._resolve_ddp_find_unused_parameters())
+
     def _build_trainer_for_grad_logging(self, grad_clip_method: str, use_deepspeed: bool, grad_value):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(
@@ -2278,6 +2309,66 @@ class TestTrainer(unittest.TestCase):
                 "resume": "allow",
             },
         )
+
+    def test_disable_dynamo_lru_cache_for_checkpointing_calls_private_api(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        trainer = object.__new__(Trainer)
+        set_lru_cache = Mock()
+
+        with patch.object(
+            trainer_module.torch,
+            "_C",
+            SimpleNamespace(_dynamo=SimpleNamespace(eval_frame=SimpleNamespace(_set_lru_cache=set_lru_cache))),
+        ):
+            trainer._disable_dynamo_lru_cache_for_checkpointing()
+
+        set_lru_cache.assert_called_once_with(False)
+
+    def test_enable_dynamo_dynamic_output_capture_updates_config(self):
+        import torch._dynamo as torch_dynamo
+
+        trainer = object.__new__(Trainer)
+        original_dynamic_output = torch_dynamo.config.capture_dynamic_output_shape_ops
+        original_parameter_static_shapes = torch_dynamo.config.force_parameter_static_shapes
+
+        try:
+            torch_dynamo.config.capture_dynamic_output_shape_ops = False
+            torch_dynamo.config.force_parameter_static_shapes = True
+
+            trainer._enable_dynamo_dynamic_output_capture()
+
+            self.assertTrue(torch_dynamo.config.capture_dynamic_output_shape_ops)
+            self.assertFalse(torch_dynamo.config.force_parameter_static_shapes)
+        finally:
+            torch_dynamo.config.capture_dynamic_output_shape_ops = original_dynamic_output
+            torch_dynamo.config.force_parameter_static_shapes = original_parameter_static_shapes
+
+    def test_configure_inductor_dynamic_training_passes_preserves_existing_disables(self):
+        import torch._inductor.config as inductor_config
+
+        trainer = object.__new__(Trainer)
+        original_env = os.environ.get("TORCHINDUCTOR_DISABLED_PASSES")
+        original_config = inductor_config.disabled_passes
+
+        try:
+            os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = "EXISTING_PASS"
+            inductor_config.disabled_passes = "EXISTING_PASS"
+
+            trainer._configure_inductor_dynamic_training_passes("inductor")
+
+            self.assertEqual(os.environ["TORCHINDUCTOR_DISABLED_PASSES"], "EXISTING_PASS,PASS_PATTERN_1")
+            self.assertEqual(inductor_config.disabled_passes, "EXISTING_PASS,PASS_PATTERN_1")
+
+            trainer._configure_inductor_dynamic_training_passes("no")
+
+            self.assertEqual(os.environ["TORCHINDUCTOR_DISABLED_PASSES"], "EXISTING_PASS,PASS_PATTERN_1")
+        finally:
+            if original_env is None:
+                os.environ.pop("TORCHINDUCTOR_DISABLED_PASSES", None)
+            else:
+                os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = original_env
+            inductor_config.disabled_passes = original_config
 
     @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
     @patch("simpletuner.helpers.training.trainer.Accelerator")

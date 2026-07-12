@@ -897,6 +897,24 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="validation_ltx2_video_conditioning",
+            arg_name="--validation_ltx2_video_conditioning",
+            ui_label="LTX-2 Validation Video Conditioning",
+            field_type=FieldType.TEXT_JSON,
+            tab="validation",
+            section="validation_options",
+            default_value=None,
+            help_text="JSON list of IC-LoRA reference videos for LTX-2 validation",
+            tooltip="LTX-2 only: pass reference videos as paths, [path, strength] pairs, or objects with path/video_path and optional strength.",
+            importance=ImportanceLevel.ADVANCED,
+            order=18,
+            model_specific=["ltxvideo2"],
+            documentation="OPTIONS.md#ltx-2-conditioning-options",
+        )
+    )
+
     # Validation Resolution
     registry._add_field(
         ConfigField(
@@ -910,7 +928,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Override resolution for validation images (pixels or megapixels)",
             tooltip="Enter a pixel size like 512 or a megapixel value like 0.5 to auto-convert.",
             importance=ImportanceLevel.ADVANCED,
-            order=18,
+            order=19,
             documentation="OPTIONS.md#--validation_resolution",
         )
     )
@@ -932,7 +950,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Source device used to generate validation seeds",
             tooltip="Use CPU-based or GPU-based RNG when deriving validation seeds.",
             importance=ImportanceLevel.ADVANCED,
-            order=19,
+            order=20,
             subsection="advanced",
         )
     )

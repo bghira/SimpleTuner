@@ -13,9 +13,7 @@ if is_flash_attn_available():
     from flash_attn import flash_attn_varlen_func
     from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input
 else:
-    warnings.warn(
-        "Cannot import flash_attn, install flash_attn to use Flash2Varlen attention for better performance"
-    )
+    warnings.warn("Cannot import flash_attn, install flash_attn to use Flash2Varlen attention for better performance")
 
 
 from diffusers.models.attention_processor import Attention
@@ -51,8 +49,7 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
         super().__init__()
         if not is_flash_attn_available():
             raise ImportError(
-                "BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen requires flash_attn. "
-                "Please install flash_attn."
+                "BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen requires flash_attn. " "Please install flash_attn."
             )
 
         # Calculate dimensions
@@ -140,9 +137,7 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
             seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
             indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
             max_seqlen_in_batch = seqlens_in_batch.max().item()
-            cu_seqlens = F.pad(
-                torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
-            )
+            cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
             return indices, cu_seqlens, max_seqlen_in_batch
 
         indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(attention_mask)
@@ -169,16 +164,12 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
             indices_q = indices_k
         elif query_length == 1:
             max_seqlen_in_batch_q = 1
-            cu_seqlens_q = torch.arange(
-                batch_size + 1, dtype=torch.int32, device=query_layer.device
-            )
+            cu_seqlens_q = torch.arange(batch_size + 1, dtype=torch.int32, device=query_layer.device)
             indices_q = cu_seqlens_q[:-1]
             query_layer = query_layer.squeeze(1)
         else:
             attention_mask = attention_mask[:, -query_length:]
-            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(
-                query_layer, attention_mask
-            )
+            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
 
         return (
             query_layer,
@@ -208,18 +199,16 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
         Returns:
             List of concatenated tensors [query, key, value]
         """
-        assert len(img_hidden_states_list) == len(instruct_hidden_states_list), (
-            f"Length mismatch: img_list={len(img_hidden_states_list)}, instruct_list={len(instruct_hidden_states_list)}"
-        )
+        assert len(img_hidden_states_list) == len(
+            instruct_hidden_states_list
+        ), f"Length mismatch: img_list={len(img_hidden_states_list)}, instruct_list={len(instruct_hidden_states_list)}"
 
         batch_size = img_hidden_states_list[0].shape[0]
         max_seq_len = max(seq_lengths)
 
         concatenated_list = []
 
-        for img_tensor, instruct_tensor in zip(
-            img_hidden_states_list, instruct_hidden_states_list
-        ):
+        for img_tensor, instruct_tensor in zip(img_hidden_states_list, instruct_hidden_states_list):
             # Ensure tensors are on the same device
             device = img_tensor.device
             if instruct_tensor.device != device:
@@ -230,15 +219,11 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
             concatenated = img_tensor.new_zeros(batch_size, max_seq_len, feature_dim)
 
             # Concatenate instruction first, then image for each sample
-            for i, (encoder_seq_len, seq_len) in enumerate(
-                zip(encoder_seq_lengths, seq_lengths)
-            ):
+            for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
                 # Place instruction tokens first
                 concatenated[i, :encoder_seq_len] = instruct_tensor[i, :encoder_seq_len]
                 # Place image tokens after instruction
-                concatenated[i, encoder_seq_len:seq_len] = img_tensor[
-                    i, : seq_len - encoder_seq_len
-                ]
+                concatenated[i, encoder_seq_len:seq_len] = img_tensor[i, : seq_len - encoder_seq_len]
 
             concatenated_list.append(concatenated)
 
@@ -271,32 +256,21 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
             # Get maximum lengths for instruction and image
             max_instruct_len = max(encoder_seq_lengths)
             max_img_len = max(
-                seq_len - encoder_seq_len
-                for seq_len, encoder_seq_len in zip(seq_lengths, encoder_seq_lengths)
+                seq_len - encoder_seq_len for seq_len, encoder_seq_len in zip(seq_lengths, encoder_seq_lengths)
             )
 
             # Create output tensors [B, max_len, feature_dim]
-            instruct_hidden_states = hidden_states.new_zeros(
-                batch_size, max_instruct_len, feature_dim
-            )
-            img_hidden_states = hidden_states.new_zeros(
-                batch_size, max_img_len, feature_dim
-            )
+            instruct_hidden_states = hidden_states.new_zeros(batch_size, max_instruct_len, feature_dim)
+            img_hidden_states = hidden_states.new_zeros(batch_size, max_img_len, feature_dim)
 
             # Split each sample back to instruction and image
-            for i, (encoder_seq_len, seq_len) in enumerate(
-                zip(encoder_seq_lengths, seq_lengths)
-            ):
+            for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
                 img_len = seq_len - encoder_seq_len
 
                 # Extract instruction portion
-                instruct_hidden_states[i, :encoder_seq_len] = hidden_states[
-                    i, :encoder_seq_len
-                ]
+                instruct_hidden_states[i, :encoder_seq_len] = hidden_states[i, :encoder_seq_len]
                 # Extract image portion
-                img_hidden_states[i, :img_len] = hidden_states[
-                    i, encoder_seq_len:seq_len
-                ]
+                img_hidden_states[i, :img_len] = hidden_states[i, encoder_seq_len:seq_len]
 
             result_list.append((instruct_hidden_states, img_hidden_states))
 
@@ -309,9 +283,7 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
         instruct_hidden_states: torch.Tensor,
         joint_attention_mask: Optional[torch.Tensor] = None,
         rotary_emb: Optional[torch.Tensor] = None,
-        encoder_seq_lengths: List[
-            int
-        ] = None,  # [B] - Instruction sequence lengths for each sample
+        encoder_seq_lengths: List[int] = None,  # [B] - Instruction sequence lengths for each sample
         seq_lengths: List[int] = None,  # [B] - Total sequence lengths for each sample
         base_sequence_length: Optional[int] = None,
     ) -> torch.Tensor:
@@ -359,15 +331,9 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
         img_key = self.img_to_k(img_hidden_states)  # [B, L_img, kv_dim]
         img_value = self.img_to_v(img_hidden_states)  # [B, L_img, kv_dim]
 
-        instruct_query = self.instruct_to_q(
-            instruct_hidden_states
-        )  # [B, L_instruct, query_dim]
-        instruct_key = self.instruct_to_k(
-            instruct_hidden_states
-        )  # [B, L_instruct, kv_dim]
-        instruct_value = self.instruct_to_v(
-            instruct_hidden_states
-        )  # [B, L_instruct, kv_dim]
+        instruct_query = self.instruct_to_q(instruct_hidden_states)  # [B, L_instruct, query_dim]
+        instruct_key = self.instruct_to_k(instruct_hidden_states)  # [B, L_instruct, kv_dim]
+        instruct_value = self.instruct_to_v(instruct_hidden_states)  # [B, L_instruct, kv_dim]
 
         # Use helper function to concatenate QKV (instruction first, then image)
         img_list = [img_query, img_key, img_value]  # [B, L_img, feature_dim] each
@@ -412,9 +378,7 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
 
         # Calculate attention scale
         if base_sequence_length is not None:
-            softmax_scale = (
-                math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
-            )
+            softmax_scale = math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
         else:
             softmax_scale = attn.scale
 
@@ -424,9 +388,7 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
             # Check if it's a lower triangular causal mask
             # For efficiency, we only check the first sample
             mask_sample = joint_attention_mask[0]  # [seq_len, seq_len]
-            is_causal = torch.allclose(
-                mask_sample, torch.tril(torch.ones_like(mask_sample))
-            )
+            is_causal = torch.allclose(mask_sample, torch.tril(torch.ones_like(mask_sample)))
 
         # Unpad input for flash attention
         (
@@ -436,21 +398,15 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
             indices_q,
             cu_seq_lens,
             max_seq_lens,
-        ) = self._upad_input(
-            query, key, value, joint_attention_mask, sequence_length, attn.heads
-        )
+        ) = self._upad_input(query, key, value, joint_attention_mask, sequence_length, attn.heads)
 
         cu_seqlens_q, cu_seqlens_k = cu_seq_lens
         max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
 
         # Handle different number of heads
         if kv_heads < attn.heads:
-            key_states = repeat(
-                key_states, "l h c -> l (h k) c", k=attn.heads // kv_heads
-            )
-            value_states = repeat(
-                value_states, "l h c -> l (h k) c", k=attn.heads // kv_heads
-            )
+            key_states = repeat(key_states, "l h c -> l (h k) c", k=attn.heads // kv_heads)
+            value_states = repeat(value_states, "l h c -> l (h k) c", k=attn.heads // kv_heads)
 
         # Apply flash attention with causal parameter
         attn_output_unpad = flash_attn_varlen_func(
@@ -467,24 +423,18 @@ class BooguImageDoubleStreamSelfAttnProcessorFlash2Varlen(nn.Module):
         )
 
         # Pad output and apply final transformations
-        hidden_states = pad_input(
-            attn_output_unpad, indices_q, batch_size, sequence_length
-        )
+        hidden_states = pad_input(attn_output_unpad, indices_q, batch_size, sequence_length)
         hidden_states = hidden_states.flatten(-2)
         hidden_states = hidden_states.type_as(query)
 
         # Split hidden_states back to instruction and image, apply separate output projections, then merge
-        split_results = self._split_instruction_image_features(
-            [hidden_states], encoder_seq_lengths, seq_lengths
-        )
+        split_results = self._split_instruction_image_features([hidden_states], encoder_seq_lengths, seq_lengths)
         instruct_hidden_states, img_hidden_states = split_results[
             0
         ]  # [B, max_instruct_len, feature_dim], [B, max_img_len, feature_dim]
 
         # Apply separate output projections for instruction and image
-        instruct_projected = self.instruct_out(
-            instruct_hidden_states
-        )  # [B, max_instruct_len, feature_dim]
+        instruct_projected = self.instruct_out(instruct_hidden_states)  # [B, max_instruct_len, feature_dim]
         img_projected = self.img_out(img_hidden_states)  # [B, max_img_len, feature_dim]
 
         # Merge back to joint representation
@@ -609,18 +559,16 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
         Returns:
             List of concatenated tensors [query, key, value]
         """
-        assert len(img_hidden_states_list) == len(instruct_hidden_states_list), (
-            f"Length mismatch: img_list={len(img_hidden_states_list)}, instruct_list={len(instruct_hidden_states_list)}"
-        )
+        assert len(img_hidden_states_list) == len(
+            instruct_hidden_states_list
+        ), f"Length mismatch: img_list={len(img_hidden_states_list)}, instruct_list={len(instruct_hidden_states_list)}"
 
         batch_size = img_hidden_states_list[0].shape[0]
         max_seq_len = max(seq_lengths)
 
         concatenated_list = []
 
-        for img_tensor, instruct_tensor in zip(
-            img_hidden_states_list, instruct_hidden_states_list
-        ):
+        for img_tensor, instruct_tensor in zip(img_hidden_states_list, instruct_hidden_states_list):
             # Ensure tensors are on the same device
             device = img_tensor.device
             if instruct_tensor.device != device:
@@ -631,15 +579,11 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
             concatenated = img_tensor.new_zeros(batch_size, max_seq_len, feature_dim)
 
             # Concatenate instruction first, then image for each sample
-            for i, (encoder_seq_len, seq_len) in enumerate(
-                zip(encoder_seq_lengths, seq_lengths)
-            ):
+            for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
                 # Place instruction tokens first
                 concatenated[i, :encoder_seq_len] = instruct_tensor[i, :encoder_seq_len]
                 # Place image tokens after instruction
-                concatenated[i, encoder_seq_len:seq_len] = img_tensor[
-                    i, : seq_len - encoder_seq_len
-                ]
+                concatenated[i, encoder_seq_len:seq_len] = img_tensor[i, : seq_len - encoder_seq_len]
 
             concatenated_list.append(concatenated)
 
@@ -672,32 +616,21 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
             # Get maximum lengths for instruction and image
             max_instruct_len = max(encoder_seq_lengths)
             max_img_len = max(
-                seq_len - encoder_seq_len
-                for seq_len, encoder_seq_len in zip(seq_lengths, encoder_seq_lengths)
+                seq_len - encoder_seq_len for seq_len, encoder_seq_len in zip(seq_lengths, encoder_seq_lengths)
             )
 
             # Create output tensors [B, max_len, feature_dim]
-            instruct_hidden_states = hidden_states.new_zeros(
-                batch_size, max_instruct_len, feature_dim
-            )
-            img_hidden_states = hidden_states.new_zeros(
-                batch_size, max_img_len, feature_dim
-            )
+            instruct_hidden_states = hidden_states.new_zeros(batch_size, max_instruct_len, feature_dim)
+            img_hidden_states = hidden_states.new_zeros(batch_size, max_img_len, feature_dim)
 
             # Split each sample back to instruction and image
-            for i, (encoder_seq_len, seq_len) in enumerate(
-                zip(encoder_seq_lengths, seq_lengths)
-            ):
+            for i, (encoder_seq_len, seq_len) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
                 img_len = seq_len - encoder_seq_len
 
                 # Extract instruction portion
-                instruct_hidden_states[i, :encoder_seq_len] = hidden_states[
-                    i, :encoder_seq_len
-                ]
+                instruct_hidden_states[i, :encoder_seq_len] = hidden_states[i, :encoder_seq_len]
                 # Extract image portion
-                img_hidden_states[i, :img_len] = hidden_states[
-                    i, encoder_seq_len:seq_len
-                ]
+                img_hidden_states[i, :img_len] = hidden_states[i, encoder_seq_len:seq_len]
 
             result_list.append((instruct_hidden_states, img_hidden_states))
 
@@ -710,9 +643,7 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
         instruct_hidden_states: torch.Tensor,
         joint_attention_mask: Optional[torch.Tensor] = None,
         rotary_emb: Optional[torch.Tensor] = None,
-        encoder_seq_lengths: List[
-            int
-        ] = None,  # [B] - Instruction sequence lengths for each sample
+        encoder_seq_lengths: List[int] = None,  # [B] - Instruction sequence lengths for each sample
         seq_lengths: List[int] = None,  # [B] - Total sequence lengths for each sample
         base_sequence_length: Optional[int] = None,
     ) -> torch.Tensor:
@@ -760,15 +691,9 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
         img_key = self.img_to_k(img_hidden_states)  # [B, L_img, kv_dim]
         img_value = self.img_to_v(img_hidden_states)  # [B, L_img, kv_dim]
 
-        instruct_query = self.instruct_to_q(
-            instruct_hidden_states
-        )  # [B, L_instruct, query_dim]
-        instruct_key = self.instruct_to_k(
-            instruct_hidden_states
-        )  # [B, L_instruct, kv_dim]
-        instruct_value = self.instruct_to_v(
-            instruct_hidden_states
-        )  # [B, L_instruct, kv_dim]
+        instruct_query = self.instruct_to_q(instruct_hidden_states)  # [B, L_instruct, query_dim]
+        instruct_key = self.instruct_to_k(instruct_hidden_states)  # [B, L_instruct, kv_dim]
+        instruct_value = self.instruct_to_v(instruct_hidden_states)  # [B, L_instruct, kv_dim]
 
         # Use helper function to concatenate QKV (instruction first, then image)
         img_list = [img_query, img_key, img_value]  # [B, L_img, feature_dim] each
@@ -813,9 +738,7 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
 
         # Calculate attention scale
         if base_sequence_length is not None:
-            softmax_scale = (
-                math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
-            )
+            softmax_scale = math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
         else:
             softmax_scale = attn.scale
 
@@ -830,9 +753,7 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
                 # Causal mask [B, seq_len, seq_len] -> [B, 1, seq_len, seq_len]
                 joint_attention_mask = joint_attention_mask.unsqueeze(1)
             else:
-                raise ValueError(
-                    f"Unsupported joint_attention_mask shape: {joint_attention_mask.shape}"
-                )
+                raise ValueError(f"Unsupported joint_attention_mask shape: {joint_attention_mask.shape}")
 
         query = query.transpose(1, 2)
         key = key.transpose(1, 2)
@@ -845,23 +766,17 @@ class BooguImageDoubleStreamSelfAttnProcessor(nn.Module):
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=joint_attention_mask, scale=softmax_scale
         )
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, attn.heads * head_dim
-        )
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.type_as(query)
 
         # Split hidden_states back to instruction and image, apply separate output projections, then merge
-        split_results = self._split_instruction_image_features(
-            [hidden_states], encoder_seq_lengths, seq_lengths
-        )
+        split_results = self._split_instruction_image_features([hidden_states], encoder_seq_lengths, seq_lengths)
         instruct_hidden_states, img_hidden_states = split_results[
             0
         ]  # [B, max_instruct_len, feature_dim], [B, max_img_len, feature_dim]
 
         # Apply separate output projections for instruction and image
-        instruct_projected = self.instruct_out(
-            instruct_hidden_states
-        )  # [B, max_instruct_len, feature_dim]
+        instruct_projected = self.instruct_out(instruct_hidden_states)  # [B, max_instruct_len, feature_dim]
         img_projected = self.img_out(img_hidden_states)  # [B, max_img_len, feature_dim]
 
         # Merge back to joint representation
@@ -894,10 +809,7 @@ class BooguImageAttnProcessorFlash2Varlen:
     def __init__(self) -> None:
         """Initialize the attention processor."""
         if not is_flash_attn_available():
-            raise ImportError(
-                "BooguImageAttnProcessorFlash2Varlen requires flash_attn. "
-                "Please install flash_attn."
-            )
+            raise ImportError("BooguImageAttnProcessorFlash2Varlen requires flash_attn. " "Please install flash_attn.")
 
     def _upad_input(
         self,
@@ -943,9 +855,7 @@ class BooguImageAttnProcessorFlash2Varlen:
             seqlens_in_batch = mask_2d.sum(dim=-1, dtype=torch.int32)
             indices = torch.nonzero(mask_2d.flatten(), as_tuple=False).flatten()
             max_seqlen_in_batch = seqlens_in_batch.max().item()
-            cu_seqlens = F.pad(
-                torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
-            )
+            cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
             return indices, cu_seqlens, max_seqlen_in_batch
 
         # Normalize attention mask: if a causal 3D mask is provided [B, L, L],
@@ -987,17 +897,13 @@ class BooguImageAttnProcessorFlash2Varlen:
             indices_q = indices_k
         elif query_length == 1:
             max_seqlen_in_batch_q = 1
-            cu_seqlens_q = torch.arange(
-                batch_size + 1, dtype=torch.int32, device=query_layer.device
-            )
+            cu_seqlens_q = torch.arange(batch_size + 1, dtype=torch.int32, device=query_layer.device)
             indices_q = cu_seqlens_q[:-1]
             query_layer = query_layer.squeeze(1)
         else:
             # Use the last query_length positions of the 2D mask
             q_mask = mask_2d[:, -query_length:]
-            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(
-                query_layer, q_mask
-            )
+            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, q_mask)
 
         return (
             query_layer,
@@ -1067,9 +973,7 @@ class BooguImageAttnProcessorFlash2Varlen:
 
         # Calculate attention scale
         if base_sequence_length is not None:
-            softmax_scale = (
-                math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
-            )
+            softmax_scale = math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
         else:
             softmax_scale = attn.scale
 
@@ -1079,9 +983,7 @@ class BooguImageAttnProcessorFlash2Varlen:
             # Check if it's a lower triangular causal mask
             # For efficiency, we only check the first sample
             mask_sample = attention_mask[0]  # [seq_len, seq_len]
-            is_causal = torch.allclose(
-                mask_sample, torch.tril(torch.ones_like(mask_sample))
-            )
+            is_causal = torch.allclose(mask_sample, torch.tril(torch.ones_like(mask_sample)))
 
         # Unpad input for flash attention
         (
@@ -1091,21 +993,15 @@ class BooguImageAttnProcessorFlash2Varlen:
             indices_q,
             cu_seq_lens,
             max_seq_lens,
-        ) = self._upad_input(
-            query, key, value, attention_mask, sequence_length, attn.heads
-        )
+        ) = self._upad_input(query, key, value, attention_mask, sequence_length, attn.heads)
 
         cu_seqlens_q, cu_seqlens_k = cu_seq_lens
         max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
 
         # Handle different number of heads
         if kv_heads < attn.heads:
-            key_states = repeat(
-                key_states, "l h c -> l (h k) c", k=attn.heads // kv_heads
-            )
-            value_states = repeat(
-                value_states, "l h c -> l (h k) c", k=attn.heads // kv_heads
-            )
+            key_states = repeat(key_states, "l h c -> l (h k) c", k=attn.heads // kv_heads)
+            value_states = repeat(value_states, "l h c -> l (h k) c", k=attn.heads // kv_heads)
 
         # Apply flash attention with causal parameter
         attn_output_unpad = flash_attn_varlen_func(
@@ -1122,9 +1018,7 @@ class BooguImageAttnProcessorFlash2Varlen:
         )
 
         # Pad output and apply final transformations
-        hidden_states = pad_input(
-            attn_output_unpad, indices_q, batch_size, sequence_length
-        )
+        hidden_states = pad_input(attn_output_unpad, indices_q, batch_size, sequence_length)
         hidden_states = hidden_states.flatten(-2)
         hidden_states = hidden_states.type_as(query)
 
@@ -1218,9 +1112,7 @@ class BooguImageAttnProcessor:
 
         # Calculate attention scale
         if base_sequence_length is not None:
-            softmax_scale = (
-                math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
-            )
+            softmax_scale = math.sqrt(math.log(sequence_length, base_sequence_length)) * attn.scale
         else:
             softmax_scale = attn.scale
 
@@ -1241,16 +1133,12 @@ class BooguImageAttnProcessor:
                 q_valid = arange_L.unsqueeze(0) < lengths.unsqueeze(1)
                 k_valid = q_valid  # same lengths assumed
                 # Lower-triangular causal mask [L, L]
-                causal = torch.tril(
-                    torch.ones(L, L, dtype=torch.bool, device=attention_mask.device)
-                )
+                causal = torch.tril(torch.ones(L, L, dtype=torch.bool, device=attention_mask.device))
                 # Combine: [B, L, L]
                 combined = causal & q_valid.unsqueeze(-1) & k_valid.unsqueeze(-2)
                 attention_mask = combined.unsqueeze(1)  # [B, 1, L, L]
             else:
-                raise ValueError(
-                    f"Unsupported attention_mask shape: {attention_mask.shape}"
-                )
+                raise ValueError(f"Unsupported attention_mask shape: {attention_mask.shape}")
 
         query = query.transpose(1, 2)
         key = key.transpose(1, 2)
@@ -1260,12 +1148,8 @@ class BooguImageAttnProcessor:
         key = key.repeat_interleave(query.size(-3) // key.size(-3), -3)
         value = value.repeat_interleave(query.size(-3) // value.size(-3), -3)
 
-        hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, scale=softmax_scale
-        )
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, attn.heads * head_dim
-        )
+        hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=attention_mask, scale=softmax_scale)
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.type_as(query)
 
         # Apply output projection

@@ -114,9 +114,7 @@ class SimpleRMSNorm(torch.nn.Module):
         # Handle empty tensors (edge case)
         if x.numel() == 0:
             if prenorm:
-                residual_out = torch.empty_like(
-                    x, dtype=torch.float32 if residual_in_fp32 else x.dtype
-                )
+                residual_out = torch.empty_like(x, dtype=torch.float32 if residual_in_fp32 else x.dtype)
                 return x, residual_out
             return x
 
@@ -131,9 +129,7 @@ class SimpleRMSNorm(torch.nn.Module):
         if residual is not None:
             # Ensure residual has the same shape as input
             if residual.shape != orig_shape:
-                raise ValueError(
-                    f"Residual shape {residual.shape} doesn't match input shape {orig_shape}"
-                )
+                raise ValueError(f"Residual shape {residual.shape} doesn't match input shape {orig_shape}")
 
             residual_2d = residual.view(-1, residual.shape[-1])
 
@@ -153,9 +149,7 @@ class SimpleRMSNorm(torch.nn.Module):
                 residual_out = x_2d.to(orig_dtype)
 
         # Apply RMS normalization
-        normalized_2d = self._simple_rms_norm(
-            x_2d, self.weight, self.eps, self.zero_centered_weight
-        )
+        normalized_2d = self._simple_rms_norm(x_2d, self.weight, self.eps, self.zero_centered_weight)
 
         # Reshape back to original shape
         normalized = normalized_2d.view(orig_shape)

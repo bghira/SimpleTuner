@@ -42,13 +42,9 @@ class BooguImageRotaryPosEmbed(nn.Module):
         self.patch_size = patch_size
 
     @staticmethod
-    def get_freqs_cis(
-        axes_dim: Tuple[int, int, int], axes_lens: Tuple[int, int, int], theta: int
-    ) -> List[torch.Tensor]:
+    def get_freqs_cis(axes_dim: Tuple[int, int, int], axes_lens: Tuple[int, int, int], theta: int) -> List[torch.Tensor]:
         freqs_cis = []
-        freqs_dtype = (
-            torch.float32 if torch.backends.mps.is_available() else torch.float64
-        )
+        freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
         for i, (d, e) in enumerate(zip(axes_dim, axes_lens)):
             emb = get_1d_rotary_pos_embed(d, e, theta=theta, freqs_dtype=freqs_dtype)
             freqs_cis.append(emb)
@@ -63,11 +59,7 @@ class BooguImageRotaryPosEmbed(nn.Module):
         for i in range(len(self.axes_dim)):
             freqs = freqs_cis[i].to(ids.device)
             index = ids[:, :, i : i + 1].repeat(1, 1, freqs.shape[-1]).to(torch.int64)
-            result.append(
-                torch.gather(
-                    freqs.unsqueeze(0).repeat(index.shape[0], 1, 1), dim=1, index=index
-                )
-            )
+            result.append(torch.gather(freqs.unsqueeze(0).repeat(index.shape[0], 1, 1), dim=1, index=index))
         return torch.cat(result, dim=-1).to(device)
 
     def forward(
@@ -88,37 +80,25 @@ class BooguImageRotaryPosEmbed(nn.Module):
 
         seq_lengths = [
             cap_len + sum(ref_img_len) + img_len
-            for cap_len, ref_img_len, img_len in zip(
-                l_effective_cap_len, l_effective_ref_img_len, l_effective_img_len
-            )
+            for cap_len, ref_img_len, img_len in zip(l_effective_cap_len, l_effective_ref_img_len, l_effective_img_len)
         ]
 
         max_seq_len = max(seq_lengths)
-        max_ref_img_len = max(
-            [sum(ref_img_len) for ref_img_len in l_effective_ref_img_len]
-        )
+        max_ref_img_len = max([sum(ref_img_len) for ref_img_len in l_effective_ref_img_len])
         max_img_len = max(l_effective_img_len)
 
         # Create position IDs
-        position_ids = torch.zeros(
-            batch_size, max_seq_len, 3, dtype=torch.int32, device=device
-        )
+        position_ids = torch.zeros(batch_size, max_seq_len, 3, dtype=torch.int32, device=device)
 
-        for i, (cap_seq_len, seq_len) in enumerate(
-            zip(l_effective_cap_len, seq_lengths)
-        ):
+        for i, (cap_seq_len, seq_len) in enumerate(zip(l_effective_cap_len, seq_lengths)):
             # add text position ids
-            position_ids[i, :cap_seq_len] = repeat(
-                torch.arange(cap_seq_len, dtype=torch.int32, device=device), "l -> l 3"
-            )
+            position_ids[i, :cap_seq_len] = repeat(torch.arange(cap_seq_len, dtype=torch.int32, device=device), "l -> l 3")
 
             pe_shift = cap_seq_len
             pe_shift_len = cap_seq_len
 
             if ref_img_sizes[i] is not None:
-                for ref_img_size, ref_img_len in zip(
-                    ref_img_sizes[i], l_effective_ref_img_len[i]
-                ):
+                for ref_img_size, ref_img_len in zip(ref_img_sizes[i], l_effective_ref_img_len[i]):
                     H, W = ref_img_size
                     ref_H_tokens, ref_W_tokens = H // p, W // p
                     assert ref_H_tokens * ref_W_tokens == ref_img_len
@@ -134,15 +114,9 @@ class BooguImageRotaryPosEmbed(nn.Module):
                         "w -> h w",
                         h=ref_H_tokens,
                     ).flatten()
-                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 0] = (
-                        pe_shift
-                    )
-                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 1] = (
-                        row_ids
-                    )
-                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 2] = (
-                        col_ids
-                    )
+                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 0] = pe_shift
+                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 1] = row_ids
+                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 2] = col_ids
 
                     pe_shift += max(ref_H_tokens, ref_W_tokens)
                     pe_shift_len += ref_img_len
@@ -202,14 +176,10 @@ class BooguImageRotaryPosEmbed(nn.Module):
             )
         ):
             cap_freqs_cis[i, :cap_seq_len] = freqs_cis[i, :cap_seq_len]
-            ref_img_freqs_cis[i, : sum(ref_img_len)] = freqs_cis[
-                i, cap_seq_len : cap_seq_len + sum(ref_img_len)
-            ]
+            ref_img_freqs_cis[i, : sum(ref_img_len)] = freqs_cis[i, cap_seq_len : cap_seq_len + sum(ref_img_len)]
             img_freqs_cis[i, :img_len] = freqs_cis[
                 i,
-                cap_seq_len + sum(ref_img_len) : cap_seq_len
-                + sum(ref_img_len)
-                + img_len,
+                cap_seq_len + sum(ref_img_len) : cap_seq_len + sum(ref_img_len) + img_len,
             ]
 
         return (
@@ -237,13 +207,9 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
         self.patch_size = patch_size
 
     @staticmethod
-    def get_freqs_cis(
-        axes_dim: Tuple[int, int, int], axes_lens: Tuple[int, int, int], theta: int
-    ) -> List[torch.Tensor]:
+    def get_freqs_cis(axes_dim: Tuple[int, int, int], axes_lens: Tuple[int, int, int], theta: int) -> List[torch.Tensor]:
         freqs_cis = []
-        freqs_dtype = (
-            torch.float32 if torch.backends.mps.is_available() else torch.float64
-        )
+        freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
         for i, (d, e) in enumerate(zip(axes_dim, axes_lens)):
             emb = get_1d_rotary_pos_embed(d, e, theta=theta, freqs_dtype=freqs_dtype)
             freqs_cis.append(emb)
@@ -258,11 +224,7 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
         for i in range(len(self.axes_dim)):
             freqs = freqs_cis[i].to(ids.device)
             index = ids[:, :, i : i + 1].repeat(1, 1, freqs.shape[-1]).to(torch.int64)
-            result.append(
-                torch.gather(
-                    freqs.unsqueeze(0).repeat(index.shape[0], 1, 1), dim=1, index=index
-                )
-            )
+            result.append(torch.gather(freqs.unsqueeze(0).repeat(index.shape[0], 1, 1), dim=1, index=index))
         return torch.cat(result, dim=-1).to(device)
 
     def forward(
@@ -283,37 +245,25 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
 
         seq_lengths = [
             cap_len + sum(ref_img_len) + img_len
-            for cap_len, ref_img_len, img_len in zip(
-                l_effective_cap_len, l_effective_ref_img_len, l_effective_img_len
-            )
+            for cap_len, ref_img_len, img_len in zip(l_effective_cap_len, l_effective_ref_img_len, l_effective_img_len)
         ]
 
         max_seq_len = max(seq_lengths)
-        max_ref_img_len = max(
-            [sum(ref_img_len) for ref_img_len in l_effective_ref_img_len]
-        )
+        max_ref_img_len = max([sum(ref_img_len) for ref_img_len in l_effective_ref_img_len])
         max_img_len = max(l_effective_img_len)
 
         # Create position IDs
-        position_ids = torch.zeros(
-            batch_size, max_seq_len, 3, dtype=torch.int32, device=device
-        )
+        position_ids = torch.zeros(batch_size, max_seq_len, 3, dtype=torch.int32, device=device)
 
-        for i, (cap_seq_len, seq_len) in enumerate(
-            zip(l_effective_cap_len, seq_lengths)
-        ):
+        for i, (cap_seq_len, seq_len) in enumerate(zip(l_effective_cap_len, seq_lengths)):
             # add text position ids
-            position_ids[i, :cap_seq_len] = repeat(
-                torch.arange(cap_seq_len, dtype=torch.int32, device=device), "l -> l 3"
-            )
+            position_ids[i, :cap_seq_len] = repeat(torch.arange(cap_seq_len, dtype=torch.int32, device=device), "l -> l 3")
 
             pe_shift = cap_seq_len
             pe_shift_len = cap_seq_len
 
             if ref_img_sizes[i] is not None:
-                for ref_img_size, ref_img_len in zip(
-                    ref_img_sizes[i], l_effective_ref_img_len[i]
-                ):
+                for ref_img_size, ref_img_len in zip(ref_img_sizes[i], l_effective_ref_img_len[i]):
                     H, W = ref_img_size
                     ref_H_tokens, ref_W_tokens = H // p, W // p
                     assert ref_H_tokens * ref_W_tokens == ref_img_len
@@ -329,15 +279,9 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
                         "w -> h w",
                         h=ref_H_tokens,
                     ).flatten()
-                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 0] = (
-                        pe_shift
-                    )
-                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 1] = (
-                        row_ids
-                    )
-                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 2] = (
-                        col_ids
-                    )
+                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 0] = pe_shift
+                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 1] = row_ids
+                    position_ids[i, pe_shift_len : pe_shift_len + ref_img_len, 2] = col_ids
 
                     pe_shift += max(ref_H_tokens, ref_W_tokens)
                     pe_shift_len += ref_img_len
@@ -390,10 +334,7 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
 
         # Calculate combined image sequence lengths (ref_img + img) for each sample
         combined_img_seq_lengths = [
-            sum(ref_img_len) + img_len
-            for ref_img_len, img_len in zip(
-                l_effective_ref_img_len, l_effective_img_len
-            )
+            sum(ref_img_len) + img_len for ref_img_len, img_len in zip(l_effective_ref_img_len, l_effective_img_len)
         ]
         max_combined_img_len = max(combined_img_seq_lengths)
 
@@ -415,28 +356,18 @@ class BooguImageDoubleStreamRotaryPosEmbed(nn.Module):
             )
         ):
             cap_freqs_cis[i, :cap_seq_len] = freqs_cis[i, :cap_seq_len]
-            ref_img_freqs_cis[i, : sum(ref_img_len)] = freqs_cis[
-                i, cap_seq_len : cap_seq_len + sum(ref_img_len)
-            ]
+            ref_img_freqs_cis[i, : sum(ref_img_len)] = freqs_cis[i, cap_seq_len : cap_seq_len + sum(ref_img_len)]
             img_freqs_cis[i, :img_len] = freqs_cis[
                 i,
-                cap_seq_len + sum(ref_img_len) : cap_seq_len
-                + sum(ref_img_len)
-                + img_len,
+                cap_seq_len + sum(ref_img_len) : cap_seq_len + sum(ref_img_len) + img_len,
             ]
 
             # Combined image rotary embeddings: ref_img + img (same order as img_patch_embed_and_refine)
-            combined_img_freqs_cis[i, : sum(ref_img_len)] = freqs_cis[
-                i, cap_seq_len : cap_seq_len + sum(ref_img_len)
+            combined_img_freqs_cis[i, : sum(ref_img_len)] = freqs_cis[i, cap_seq_len : cap_seq_len + sum(ref_img_len)]
+            combined_img_freqs_cis[i, sum(ref_img_len) : sum(ref_img_len) + img_len] = freqs_cis[
+                i,
+                cap_seq_len + sum(ref_img_len) : cap_seq_len + sum(ref_img_len) + img_len,
             ]
-            combined_img_freqs_cis[i, sum(ref_img_len) : sum(ref_img_len) + img_len] = (
-                freqs_cis[
-                    i,
-                    cap_seq_len + sum(ref_img_len) : cap_seq_len
-                    + sum(ref_img_len)
-                    + img_len,
-                ]
-            )
 
         return (
             complex_rotary_to_real(cap_freqs_cis),
@@ -488,9 +419,7 @@ class BooguImagePromptTuningRotaryPosEmbed(nn.Module):
             - attention_mask: [B, num_tokens] or [B, num_tokens, num_tokens] - Attention mask
         """
         # Generate 1D rotary embeddings for text-style tokens
-        freqs_dtype = (
-            torch.float32 if torch.backends.mps.is_available() else torch.float64
-        )
+        freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
 
         # get_1d_rotary_pos_embed(dim, seq_len) returns [seq_len, dim//2]
         # Because RoPE uses complex representation, each dimension is split into sin/cos pairs
@@ -511,14 +440,10 @@ class BooguImagePromptTuningRotaryPosEmbed(nn.Module):
 
         # Select the appropriate rotary embeddings for each position
         # text_freqs_cis is [num_tokens, instruction_dim//2], we want [num_tokens, instruction_dim//2]
-        rotary_emb = text_freqs_cis[
-            position_indices
-        ]  # [num_tokens, instruction_dim//2]
+        rotary_emb = text_freqs_cis[position_indices]  # [num_tokens, instruction_dim//2]
 
         # Expand to batch size and move to target device
-        rotary_emb = (
-            rotary_emb.unsqueeze(0).expand(batch_size, -1, -1).to(device)
-        )  # [B, num_tokens, instruction_dim//2]
+        rotary_emb = rotary_emb.unsqueeze(0).expand(batch_size, -1, -1).to(device)  # [B, num_tokens, instruction_dim//2]
 
         # Create attention mask based on use_causal_mask parameter
         if use_causal_mask:

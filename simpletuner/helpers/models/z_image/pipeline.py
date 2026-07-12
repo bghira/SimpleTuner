@@ -616,6 +616,114 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
             latents = latents.to(device)
         return latents
 
+    def prepare_reference_latents(
+        self,
+        reference_image,
+        batch_size: int,
+        height: int,
+        width: int,
+        dtype: torch.dtype,
+        device: torch.device,
+        generator=None,
+    ) -> Optional[torch.Tensor]:
+        if reference_image is None:
+            return None
+
+        if not isinstance(reference_image, list):
+            reference_images = [reference_image]
+        else:
+            reference_images = reference_image
+
+        if len(reference_images) == 1 and batch_size > 1:
+            reference_images = reference_images * batch_size
+        elif len(reference_images) != batch_size:
+            raise ValueError(f"Expected 1 or {batch_size} reference images, got {len(reference_images)}.")
+
+        reference_tensor = self.image_processor.preprocess(reference_images, height=height, width=width)
+        reference_tensor = reference_tensor.to(device=device, dtype=self.vae.dtype)
+        reference_latents = self.vae.encode(reference_tensor).latent_dist.sample(generator=generator)
+        reference_latents = (reference_latents - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+        return reference_latents.to(device=device, dtype=dtype)
+
+    def _latent_sequence_length(self, latents: torch.Tensor) -> int:
+        transformer_config = getattr(self.transformer, "config", None)
+        patch_sizes = getattr(transformer_config, "all_patch_size", (2,))
+        patch_size = patch_sizes[0] if isinstance(patch_sizes, (tuple, list)) and patch_sizes else 2
+        if not isinstance(patch_size, int):
+            patch_size = int(patch_size)
+        patch_size = max(patch_size, 1)
+
+        frame_patch_sizes = getattr(transformer_config, "all_f_patch_size", (1,))
+        frame_patch_size = frame_patch_sizes[0] if isinstance(frame_patch_sizes, (tuple, list)) and frame_patch_sizes else 1
+        if not isinstance(frame_patch_size, int):
+            frame_patch_size = int(frame_patch_size)
+        frame_patch_size = max(frame_patch_size, 1)
+
+        if latents.ndim == 4:
+            _, _, height, width = latents.shape
+            frames = 1
+        elif latents.ndim == 5:
+            _, _, frames, height, width = latents.shape
+        else:
+            raise ValueError(f"Expected 4D or 5D Z-Image latents, got shape {latents.shape}.")
+
+        if height % patch_size != 0 or width % patch_size != 0 or frames % frame_patch_size != 0:
+            raise ValueError(
+                f"Z-Image reference latents shape {latents.shape} is not divisible by patch sizes "
+                f"{patch_size}x{patch_size}x{frame_patch_size}."
+            )
+        return (frames // frame_patch_size) * (height // patch_size) * (width // patch_size)
+
+    def _prepare_reference_transformer_inputs(
+        self,
+        latent_model_input: torch.Tensor,
+        reference_latents: Optional[torch.Tensor],
+        timestep_model_input: torch.Tensor,
+    ):
+        latent_model_input = latent_model_input.unsqueeze(2)
+        if reference_latents is None:
+            return list(latent_model_input.unbind(dim=0)), timestep_model_input, None
+
+        if reference_latents.shape[0] == latent_model_input.shape[0]:
+            reference_model_input = reference_latents
+        elif reference_latents.shape[0] * 2 == latent_model_input.shape[0]:
+            reference_model_input = torch.cat([reference_latents] * 2)
+        else:
+            raise ValueError(
+                f"Reference latents batch {reference_latents.shape[0]} does not match transformer batch "
+                f"{latent_model_input.shape[0]}."
+            )
+
+        reference_model_input = reference_model_input.to(device=latent_model_input.device, dtype=latent_model_input.dtype)
+        reference_model_input = reference_model_input.unsqueeze(2)
+        combined_input = torch.cat([reference_model_input, latent_model_input], dim=-1)
+
+        ref_seq_len = self._latent_sequence_length(reference_model_input)
+        target_seq_len = self._latent_sequence_length(latent_model_input)
+        if timestep_model_input.ndim == 1:
+            target_timesteps = timestep_model_input[:, None].expand(-1, target_seq_len)
+        elif timestep_model_input.ndim == 2 and timestep_model_input.shape[1] == target_seq_len:
+            target_timesteps = timestep_model_input
+        else:
+            raise ValueError(
+                f"Expected timestep shape ({combined_input.shape[0]},) or "
+                f"({combined_input.shape[0]}, {target_seq_len}), got {timestep_model_input.shape}."
+            )
+        reference_timesteps = torch.zeros(
+            combined_input.shape[0],
+            ref_seq_len,
+            device=timestep_model_input.device,
+            dtype=timestep_model_input.dtype,
+        )
+        combined_timesteps = torch.cat([reference_timesteps, target_timesteps], dim=1)
+        return list(combined_input.unbind(dim=0)), combined_timesteps, latent_model_input.shape[-1]
+
+    @staticmethod
+    def _crop_reference_outputs(model_out_list, target_width: Optional[int]):
+        if target_width is None:
+            return model_out_list
+        return [out[..., -target_width:] for out in model_out_list]
+
     @property
     def guidance_scale(self):
         return self._guidance_scale
@@ -674,6 +782,7 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
         latents: Optional[torch.FloatTensor] = None,
         prompt_embeds: Optional[List[torch.FloatTensor]] = None,
         negative_prompt_embeds: Optional[List[torch.FloatTensor]] = None,
+        reference_image: Optional[Any] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -738,6 +847,8 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                 Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
                 weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
                 argument.
+            reference_image (`PIL.Image.Image`, `torch.Tensor`, or list, *optional*):
+                Reference image or images to encode and prepend as clean IC-LoRA conditioning latents.
             output_type (`str`, *optional*, defaults to `"pil"`):
                 The output format of the generate image. Choose between
                 [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
@@ -870,6 +981,15 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
             latents,
         )
         image_seq_len = (latents.shape[2] // 2) * (latents.shape[3] / 2)
+        reference_latents = self.prepare_reference_latents(
+            reference_image=reference_image,
+            batch_size=actual_batch_size,
+            height=height,
+            width=width,
+            dtype=dtype,
+            device=device,
+            generator=generator,
+        )
 
         # 5. Prepare timesteps
         mu = calculate_shift(
@@ -942,8 +1062,11 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                     prompt_embeds_model_input = prompt_embeds
                     timestep_model_input = timestep
 
-                latent_model_input = latent_model_input.unsqueeze(2)
-                latent_model_input_list = list(latent_model_input.unbind(dim=0))
+                latent_model_input_list, timestep_model_input, target_width = self._prepare_reference_transformer_inputs(
+                    latent_model_input,
+                    reference_latents,
+                    timestep_model_input,
+                )
 
                 _tlora_cfg = getattr(self, "_tlora_config", None)
                 if _tlora_cfg:
@@ -964,6 +1087,7 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                 finally:
                     if _tlora_cfg:
                         clear_tlora_mask()
+                model_out_list = self._crop_reference_outputs(model_out_list, target_width)
 
                 if apply_cfg:
                     # Perform CFG
@@ -1011,8 +1135,12 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                     and i < num_inference_steps * skip_layer_guidance_stop
                 )
                 if should_skip_layers:
-                    skip_latent_input = latents.to(dtype).unsqueeze(2)
-                    skip_latent_list = list(skip_latent_input.unbind(dim=0))
+                    skip_latent_input = latents.to(dtype)
+                    skip_latent_list, skip_timestep, skip_target_width = self._prepare_reference_transformer_inputs(
+                        skip_latent_input,
+                        reference_latents,
+                        timestep,
+                    )
                     _tlora_cfg = getattr(self, "_tlora_config", None)
                     if _tlora_cfg:
                         apply_tlora_inference_mask(
@@ -1025,7 +1153,7 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                     try:
                         skip_out = self.transformer(
                             skip_latent_list,
-                            timestep,
+                            skip_timestep,
                             prompt_embeds,
                             skip_layers=skip_guidance_layers,
                             joint_attention_kwargs=self.joint_attention_kwargs,
@@ -1033,6 +1161,7 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                     finally:
                         if _tlora_cfg:
                             clear_tlora_mask()
+                    skip_out = self._crop_reference_outputs(skip_out, skip_target_width)
                     skip_pred = torch.stack([out.float() for out in skip_out], dim=0).squeeze(2)
                     skip_pred = -skip_pred
                     noise_pred = noise_pred + (pos_out.squeeze(2) - skip_pred) * self._skip_layer_guidance_scale

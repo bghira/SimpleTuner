@@ -19,7 +19,7 @@ from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import BasicTransformerBlock
-from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor, FusedAttnProcessor2_0
+from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor
 from diffusers.models.embeddings import PatchEmbed, PixArtAlphaTextProjection
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
@@ -36,6 +36,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.packed_attention_processors import PackedFusedAttnProcessor2_0
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -427,7 +428,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         self.set_attn_processor(AttnProcessor())
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.fuse_qkv_projections
-    def fuse_qkv_projections(self):
+    def fuse_qkv_projections(self, preferred_backend: Optional[str] = None):
         """
         Enables fused QKV projections. For self-attention modules, all projection matrices (i.e., query, key, value)
         are fused. For cross-attention modules, key and value projection matrices are fused.
@@ -450,7 +451,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             if isinstance(module, Attention):
                 module.fuse_projections(fuse=True)
 
-        self.set_attn_processor(FusedAttnProcessor2_0())
+        self.set_attn_processor(PackedFusedAttnProcessor2_0(preferred_backend=preferred_backend))
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.unfuse_qkv_projections
     def unfuse_qkv_projections(self):
@@ -465,6 +466,9 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         """
         if self.original_attn_processors is not None:
             self.set_attn_processor(self.original_attn_processors)
+        for module in self.modules():
+            if isinstance(module, Attention):
+                module.unfuse_projections()
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Set the TREAD router and routing configuration."""

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training import quantised_precision_levels
 
-from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ParserType, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -28,6 +28,20 @@ def register_model_fields(registry: "FieldRegistry") -> None:
     def _quant_label(value: str) -> str:
         if value == "no_change":
             return "No Change"
+        if value == "int8dq-torchao":
+            return "INT8 dynamic activations (TorchAO)"
+        if value == "int8dq-int4-torchao":
+            return "INT8 dynamic activations + INT4 weights (TorchAO)"
+        if value == "fp8-native":
+            return "FP8 native scaled matmul"
+        if value == "fp8-torchao":
+            return "FP8 dynamic activations (TorchAO)"
+        if value == "fp8wo-torchao":
+            return "FP8 weight-only (TorchAO)"
+        if value == "fp8-int4-torchao":
+            return "FP8 dynamic activations + INT4 weights (TorchAO)"
+        if value == "fp8-sdnq":
+            return "FP8 native matmul (SDNQ)"
         if "-" in value:
             prefix, suffix = value.split("-", 1)
             prefix_label = prefix.upper()
@@ -581,6 +595,274 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             documentation="OPTIONS.md#--quantization_config",
         )
     )
+
+    sdnq_dependency = [
+        FieldDependency(
+            field="base_model_precision",
+            operator="in",
+            values=[opt for opt in quantised_precision_levels if "sdnq" in opt],
+            action="show",
+        )
+    ]
+    registry._add_field(
+        ConfigField(
+            name="sdnq_weights_dtype",
+            arg_name="--sdnq_weights_dtype",
+            ui_label="SDNQ Weight Dtype",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="quantization",
+            default_value=None,
+            dependencies=sdnq_dependency,
+            help_text="Override the SDNQ storage dtype, such as int8, uint4, float8_e4m3fn, or float8_e5m2.",
+            tooltip="Leave blank to use the selected base_model_precision preset.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=20,
+            documentation="OPTIONS.md#--sdnq_weights_dtype",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="sdnq_quantized_matmul_dtype",
+            arg_name="--sdnq_quantized_matmul_dtype",
+            ui_label="SDNQ Matmul Dtype",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="quantization",
+            default_value="auto",
+            choices=[
+                {"value": "auto", "label": "Auto"},
+                {"value": "int8", "label": "INT8"},
+                {"value": "float8_e4m3fn", "label": "FP8 E4M3"},
+                {"value": "fp8", "label": "FP8"},
+                {"value": "float16", "label": "FP16"},
+                {"value": "fp16", "label": "FP16 alias"},
+            ],
+            dependencies=sdnq_dependency,
+            help_text="Matmul dtype used by SDNQ quantized matmul. FP8 is the H100/H200 native path.",
+            tooltip="Auto uses INT8 except for fp8-sdnq, which uses FP8 matmul.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=21,
+            documentation="OPTIONS.md#--sdnq_quantized_matmul_dtype",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="sdnq_group_size",
+            arg_name="--sdnq_group_size",
+            ui_label="SDNQ Group Size",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="quantization",
+            default_value=None,
+            dependencies=sdnq_dependency,
+            help_text="Override SDNQ quantization group size. Use -1 for whole-tensor/static matmul; leave blank for preset defaults.",
+            tooltip="fp8-sdnq defaults to -1. Older presets default to 32.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=22,
+            parser_type=ParserType.INTEGER,
+            documentation="OPTIONS.md#--sdnq_group_size",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="sdnq_use_quantized_matmul",
+            arg_name="--sdnq_use_quantized_matmul",
+            ui_label="SDNQ Quantized Matmul",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="quantization",
+            default_value=None,
+            dependencies=sdnq_dependency,
+            help_text="Enable SDNQ quantized matmul. Leave blank to use native FP8 matmul only when SDNQ compile mode and FP8 matmul support are both available; other presets follow SDNQ compile availability.",
+            tooltip="SDNQ currently requires its torch.compile/Triton path for quantized matmul.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=23,
+            documentation="OPTIONS.md#--sdnq_use_quantized_matmul",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="sdnq_compile_mode",
+            arg_name="--sdnq_compile_mode",
+            ui_label="SDNQ Compile Mode",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="quantization",
+            default_value="auto",
+            choices=[
+                {"value": "auto", "label": "Auto"},
+                {"value": "compile", "label": "Compile"},
+                {"value": "eager", "label": "Eager"},
+            ],
+            dependencies=sdnq_dependency,
+            help_text="Controls SDNQ_USE_TORCH_COMPILE before SDNQ is imported.",
+            tooltip="Controls SDNQ's internal torch.compile use. Eager mode disables SDNQ quantized matmul unless the library changes that requirement.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=24,
+            documentation="OPTIONS.md#--sdnq_compile_mode",
+        )
+    )
+    for field_name, arg_name, label, help_text, order in [
+        (
+            "sdnq_use_static_quantization",
+            "--sdnq_use_static_quantization",
+            "SDNQ Static Quantization",
+            "Use static SDNQ weight quantization. Leave blank for the SDNQ preset default.",
+            25,
+        ),
+        (
+            "sdnq_use_stochastic_rounding",
+            "--sdnq_use_stochastic_rounding",
+            "SDNQ Stochastic Rounding",
+            "Use stochastic rounding during SDNQ quantization. Leave blank for the SDNQ preset default.",
+            26,
+        ),
+        (
+            "sdnq_dequantize_fp32",
+            "--sdnq_dequantize_fp32",
+            "SDNQ FP32 Dequant Scale",
+            "Use FP32 dequantization scale math. Leave blank for the SDNQ preset default.",
+            27,
+        ),
+        (
+            "sdnq_use_svd",
+            "--sdnq_use_svd",
+            "SDNQ SVD",
+            "Override SDNQ SVD usage for low-bit quantization. Leave blank for automatic low-bit behavior.",
+            28,
+        ),
+        (
+            "sdnq_use_hadamard",
+            "--sdnq_use_hadamard",
+            "SDNQ Hadamard",
+            "Enable SDNQ Hadamard rotation before quantization.",
+            31,
+        ),
+    ]:
+        registry._add_field(
+            ConfigField(
+                name=field_name,
+                arg_name=arg_name,
+                ui_label=label,
+                field_type=FieldType.CHECKBOX,
+                tab="model",
+                section="quantization",
+                default_value=None,
+                dependencies=sdnq_dependency,
+                help_text=help_text,
+                importance=ImportanceLevel.EXPERIMENTAL,
+                order=order,
+                documentation=f"OPTIONS.md#--{field_name}",
+            )
+        )
+    for field_name, arg_name, label, help_text, order in [
+        (
+            "sdnq_svd_rank",
+            "--sdnq_svd_rank",
+            "SDNQ SVD Rank",
+            "Override the SVD rank used by SDNQ low-bit quantization.",
+            29,
+        ),
+        (
+            "sdnq_svd_steps",
+            "--sdnq_svd_steps",
+            "SDNQ SVD Steps",
+            "Override the SVD iteration count used by SDNQ low-bit quantization.",
+            30,
+        ),
+        (
+            "sdnq_hadamard_group_size",
+            "--sdnq_hadamard_group_size",
+            "SDNQ Hadamard Group Size",
+            "Override SDNQ Hadamard group size.",
+            32,
+        ),
+    ]:
+        registry._add_field(
+            ConfigField(
+                name=field_name,
+                arg_name=arg_name,
+                ui_label=label,
+                field_type=FieldType.NUMBER,
+                tab="model",
+                section="quantization",
+                default_value=None,
+                validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message=f"{label} must be at least 1")],
+                dependencies=sdnq_dependency,
+                help_text=help_text,
+                importance=ImportanceLevel.EXPERIMENTAL,
+                order=order,
+                parser_type=ParserType.INTEGER,
+                documentation=f"OPTIONS.md#--{field_name}",
+            )
+        )
+    for field_name, arg_name, label, help_text, order in [
+        (
+            "sdnq_modules_to_not_convert",
+            "--sdnq_modules_to_not_convert",
+            "SDNQ Modules To Not Convert",
+            "JSON array, file path, or comma-separated module patterns that SDNQ should not quantize.",
+            33,
+        ),
+        (
+            "sdnq_modules_to_not_use_matmul",
+            "--sdnq_modules_to_not_use_matmul",
+            "SDNQ Modules Without Quantized Matmul",
+            "JSON array, file path, or comma-separated module patterns that should use SDNQ storage without quantized matmul.",
+            34,
+        ),
+    ]:
+        registry._add_field(
+            ConfigField(
+                name=field_name,
+                arg_name=arg_name,
+                ui_label=label,
+                field_type=FieldType.TEXT,
+                tab="model",
+                section="quantization",
+                default_value=None,
+                dependencies=sdnq_dependency,
+                help_text=help_text,
+                importance=ImportanceLevel.EXPERIMENTAL,
+                order=order,
+                parser_type=ParserType.STRING,
+                documentation=f"OPTIONS.md#--{field_name}",
+            )
+        )
+    for field_name, arg_name, label, help_text, order in [
+        (
+            "sdnq_modules_dtype_dict",
+            "--sdnq_modules_dtype_dict",
+            "SDNQ Module Dtype Overrides",
+            "JSON object mapping SDNQ dtype/minimum-bit rules to module patterns.",
+            35,
+        ),
+        (
+            "sdnq_modules_quant_config",
+            "--sdnq_modules_quant_config",
+            "SDNQ Module Quant Config",
+            "JSON object mapping module patterns to SDNQ quantization argument overrides.",
+            36,
+        ),
+    ]:
+        registry._add_field(
+            ConfigField(
+                name=field_name,
+                arg_name=arg_name,
+                ui_label=label,
+                field_type=FieldType.TEXTAREA,
+                tab="model",
+                section="quantization",
+                default_value=None,
+                dependencies=sdnq_dependency,
+                help_text=help_text,
+                importance=ImportanceLevel.EXPERIMENTAL,
+                order=order,
+                parser_type=ParserType.STRING,
+                documentation=f"OPTIONS.md#--{field_name}",
+            )
+        )
 
     registry._add_field(
         ConfigField(

@@ -15,6 +15,7 @@ class TestSDNQPrecisionLevels(unittest.TestCase):
             "int16-sdnq",
             "uint16-sdnq",
             "fp16-sdnq",
+            "fp8-sdnq",
             "int6-sdnq",
             "int5-sdnq",
             "uint5-sdnq",
@@ -34,6 +35,7 @@ class TestSDNQPrecisionLevels(unittest.TestCase):
             "int16-sdnq",
             "uint16-sdnq",
             "fp16-sdnq",
+            "fp8-sdnq",
             "int6-sdnq",
             "int5-sdnq",
             "uint5-sdnq",
@@ -62,6 +64,7 @@ class TestSDNQQuantizationFunction(unittest.TestCase):
             "int16-sdnq",
             "uint16-sdnq",
             "fp16-sdnq",
+            "fp8-sdnq",
             "int6-sdnq",
             "int5-sdnq",
             "uint5-sdnq",
@@ -77,6 +80,19 @@ class TestSDNQQuantizationFunction(unittest.TestCase):
         from simpletuner.helpers.training.quantisation import get_quant_fn
 
         self.assertIsNone(get_quant_fn("no_change"))
+
+    def test_fp8_sdnq_quantized_matmul_default_uses_fp8_mm_support(self):
+        from simpletuner.helpers.training.quantisation import _default_sdnq_use_quantized_matmul
+
+        self.assertTrue(_default_sdnq_use_quantized_matmul("fp8-sdnq", True, True))
+        self.assertFalse(_default_sdnq_use_quantized_matmul("fp8-sdnq", False, True))
+        self.assertFalse(_default_sdnq_use_quantized_matmul("fp8-sdnq", True, False))
+
+    def test_non_fp8_sdnq_quantized_matmul_default_uses_compile_support(self):
+        from simpletuner.helpers.training.quantisation import _default_sdnq_use_quantized_matmul
+
+        self.assertTrue(_default_sdnq_use_quantized_matmul("int8-sdnq", True, False))
+        self.assertFalse(_default_sdnq_use_quantized_matmul("int8-sdnq", False, True))
 
 
 class TestSDNQOptimizerRegistration(unittest.TestCase):
@@ -202,6 +218,7 @@ class TestSDNQDtypeMapping(unittest.TestCase):
             "int16-sdnq": "int16",
             "uint16-sdnq": "uint16",
             "fp16-sdnq": "fp16",
+            "fp8-sdnq": "float8_e4m3fn",
             "int6-sdnq": "int6",
             "int5-sdnq": "int5",
             "uint5-sdnq": "uint5",

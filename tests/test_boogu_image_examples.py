@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 from simpletuner.cli.examples import copy_example, find_referenced_files
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES_DIR = REPO_ROOT / "simpletuner" / "examples"
 

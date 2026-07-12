@@ -36,6 +36,7 @@ from simpletuner.helpers.training.lora_format import (
     normalize_lora_format,
 )
 from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+from simpletuner.helpers.training.wrappers import unwrap_model
 
 from .audio_autoencoder import AutoencoderKLLTX2Audio
 from .autoencoder import AutoencoderKLLTX2Video
@@ -89,6 +90,15 @@ EXAMPLE_DOC_STRING = """
         ... )
         ```
 """
+
+
+def _set_pipeline_transformer(pipeline, transformer):
+    transformer = unwrap_model(None, transformer)
+    pipeline.transformer = transformer
+    if transformer is not None:
+        pipeline.transformer_spatial_patch_size = transformer.config.patch_size
+        pipeline.transformer_temporal_patch_size = transformer.config.patch_size_t
+    return transformer
 
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
@@ -247,6 +257,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         vocoder: LTX2Vocoder,
     ):
         super().__init__()
+        transformer = unwrap_model(None, transformer)
 
         self.register_modules(
             vae=vae,
@@ -670,6 +681,16 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         return latents
 
     @staticmethod
+    def _normalize_latents(
+        latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor, scaling_factor: float = 1.0
+    ) -> torch.Tensor:
+        # Normalize latents across the channel dimension [B, C, F, H, W]
+        latents_mean = latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents_std = latents_std.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents = (latents - latents_mean) * scaling_factor / latents_std
+        return latents
+
+    @staticmethod
     def _denormalize_latents(
         latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor, scaling_factor: float = 1.0
     ) -> torch.Tensor:
@@ -1036,6 +1057,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
 
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
             callback_on_step_end_tensor_inputs = callback_on_step_end.tensor_inputs
+        _set_pipeline_transformer(self, self.transformer)
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -1269,7 +1291,9 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                             encoder_hidden_states=connector_prompt_embeds,
                             audio_encoder_hidden_states=connector_audio_prompt_embeds,
                             timestep=video_timestep,
+                            audio_timestep=timestep,
                             sigma=video_timestep,
+                            audio_sigma=timestep,
                             encoder_attention_mask=connector_attention_mask,
                             audio_encoder_attention_mask=connector_attention_mask,
                             num_frames=latent_num_frames,

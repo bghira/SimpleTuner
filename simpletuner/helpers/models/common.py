@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 import numpy as np
 import torch
 import torch.nn.functional as F
+from huggingface_hub import snapshot_download
 from PIL import Image
 from torch.distributions import Beta
 from torchvision import transforms
@@ -81,6 +82,10 @@ else:
     logger.setLevel("ERROR")
 
 
+def _is_hf_repo_id(path: str) -> bool:
+    return isinstance(path, str) and not os.path.exists(path) and "://" not in path
+
+
 flow_matching_model_families = [
     "flux",
     "flux2",
@@ -100,6 +105,7 @@ flow_matching_model_families = [
     "z_image_omni",
     "zlab_i1",
     "ideogram",
+    "krea2",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -116,6 +122,7 @@ upstream_config_sources = {
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
+    "krea2": "krea/Krea-2-Raw",
 }
 
 
@@ -469,6 +476,7 @@ class ModelFoundation(ABC):
     VALIDATION_USE_AUTOCAST = True
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
+    DDP_FIND_UNUSED_PARAMETERS = False
     DEFAULT_AUDIO_CHANNELS = 1
     DEFAULT_LORA_EXCLUDE_TARGETS = None  # regex, not list
 
@@ -1679,6 +1687,25 @@ class ModelFoundation(ABC):
                 except Exception:
                     continue
 
+    def _collect_wrapped_component_classes(self, component):
+        classes = set()
+        seen = set()
+
+        def visit(module):
+            if module is None or id(module) in seen:
+                return
+            seen.add(id(module))
+            module = self.unwrap_model(module)
+            classes.add(type(module))
+
+            for attr_name in ("module", "_orig_mod", "base_model", "model"):
+                child = getattr(module, attr_name, None)
+                if child is not module:
+                    visit(child)
+
+        visit(component)
+        return classes
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -1690,14 +1717,15 @@ class ModelFoundation(ABC):
         denoiser = None
         text_encoder_one_ = None
         text_encoder_two_ = None
+        denoiser_classes = self._collect_wrapped_component_classes(self.model)
+        if self.controlnet is not None:
+            denoiser_classes.update(self._collect_wrapped_component_classes(self.controlnet))
 
         while len(models) > 0:
             model = models.pop()
             unwrapped_model = self.unwrap_model(model)
 
-            if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
-                denoiser = model
-            elif isinstance(unwrapped_model, type(self.unwrap_model(self.controlnet))):
+            if isinstance(unwrapped_model, tuple(denoiser_classes)):
                 denoiser = model
             # If your text_encoders exist:
             elif (
@@ -1983,7 +2011,7 @@ class ModelFoundation(ABC):
         return self._single_file_component_cache
 
     def unwrap_model(self, model=None, keep_fp32_wrapper: bool = True):
-        if self.config.controlnet and model is None:
+        if getattr(self.config, "controlnet", False) and model is None:
             if self.controlnet is None:
                 return None
             return unwrap_model(self.accelerator, self.controlnet, keep_fp32_wrapper=keep_fp32_wrapper)
@@ -2047,6 +2075,7 @@ class ModelFoundation(ABC):
         accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
         base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
         torchao_quantized = "torchao" in base_precision
+        quanto_quantized = "quanto" in base_precision
         should_configure_offload = (
             self.group_offload_requested()
             and accelerator_device is not None
@@ -2060,6 +2089,7 @@ class ModelFoundation(ABC):
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
                 torchao_quantized,
+                quanto_quantized,
             ]
         )
 
@@ -2070,6 +2100,11 @@ class ModelFoundation(ABC):
         elif self.model is not None and torchao_quantized:
             logger.info(
                 "Skipping model.to(%s) for TorchAO-quantized base model to avoid weight swap errors.",
+                target_device,
+            )
+        elif self.model is not None and quanto_quantized:
+            logger.info(
+                "Skipping model.to(%s) for Quanto-quantized base model to avoid QLinear weight swap errors.",
                 target_device,
             )
         if self.controlnet is not None and not skip_moving_trained_component:
@@ -2589,6 +2624,25 @@ class ModelFoundation(ABC):
                     "subfolder": text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
                 }
+                accelerator = getattr(self, "accelerator", None)
+                if accelerator is not None and _is_hf_repo_id(text_encoder_path):
+                    subfolder = text_encoder_kwargs["subfolder"]
+                    if _get_rank() == 0:
+                        snapshot_download(
+                            repo_id=text_encoder_path,
+                            revision=self.config.revision,
+                            allow_patterns=[f"{subfolder}/*"] if subfolder else None,
+                        )
+                    if torch.distributed.is_available() and torch.distributed.is_initialized():
+                        torch.distributed.barrier()
+                    else:
+                        accelerator.wait_for_everyone()
+                    text_encoder_kwargs["pretrained_model_name_or_path"] = snapshot_download(
+                        repo_id=text_encoder_path,
+                        revision=self.config.revision,
+                        allow_patterns=[f"{subfolder}/*"] if subfolder else None,
+                        local_files_only=True,
+                    )
                 logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
                 text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
                 is_bnb_quantized = self._is_bitsandbytes_model(text_encoder)
@@ -3077,10 +3131,18 @@ class ModelFoundation(ABC):
         self._init_layersync_regularizer()
 
     def fuse_qkv_projections(self):
-        if self.config.fuse_qkv_projections:
-            logger.warning(
-                f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker."
-            )
+        if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
+            return
+        if self.model is not None:
+            model = self.unwrap_model(model=self.model)
+            fuse = getattr(model, "fuse_qkv_projections", None)
+            if callable(fuse):
+                fuse(preferred_backend=getattr(self.config, "attention_mechanism", None))
+                self._qkv_projections_fused = True
+                return
+        logger.warning(
+            f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker."
+        )
 
     def unfuse_qkv_projections(self):
         """
@@ -3093,13 +3155,23 @@ class ModelFoundation(ABC):
         - Saving full model checkpoints
         - Any operation that expects separate Q, K, V projections
         """
-        pass
+        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
+            return
+        self._qkv_projections_fused = False
+        if self.model is not None:
+            model = self.unwrap_model(model=self.model)
+            unfuse = getattr(model, "unfuse_qkv_projections", None)
+            if callable(unfuse):
+                unfuse()
 
     def set_prepared_model(self, model, base_model: bool = False):
         if self.config.controlnet and not base_model:
             self.controlnet = model
         else:
             self.model = model
+
+    def before_accelerator_prepare(self):
+        pass
 
     def freeze_components(self):
         if self.vae is not None:
@@ -3420,11 +3492,7 @@ class ModelFoundation(ABC):
                 pipeline_kwargs["scheduler"] = scheduler
 
         base_scheduler = getattr(self, "noise_schedule", None)
-        if (
-            "scheduler" not in pipeline_kwargs
-            and base_scheduler is not None
-            and not self.requires_special_scheduler_setup()
-        ):
+        if "scheduler" not in pipeline_kwargs and base_scheduler is not None and not self.requires_special_scheduler_setup():
             try:
                 pipeline_kwargs["scheduler"] = base_scheduler.__class__.from_config(base_scheduler.config)
             except Exception:
@@ -4195,6 +4263,11 @@ class ModelFoundation(ABC):
         self.reset_flow_custom_timestep_cursor(fallback_global_step)
         return False
 
+    def _get_dataset_timestep_sampling_offset(self, batch: dict) -> float:
+        """Per-dataset flow timestep sampling bias (see DATALOADER.md ``timestep_sampling_offset``)."""
+        config = StateTracker.get_data_backend_config(batch.get("data_backend_id"))
+        return float(config.get("timestep_sampling_offset", 0.0))
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -4258,7 +4331,11 @@ class ModelFoundation(ABC):
                 self.config.flow_use_uniform_schedule,
             ]
         ):
-            sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device))
+            normal = torch.randn((bsz,), device=self.accelerator.device)
+            timestep_offset = self._get_dataset_timestep_sampling_offset(batch)
+            if timestep_offset:
+                normal = normal + timestep_offset
+            sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * normal)
             sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
         elif self.config.flow_use_uniform_schedule:
             sigmas = torch.rand((bsz,), device=self.accelerator.device)

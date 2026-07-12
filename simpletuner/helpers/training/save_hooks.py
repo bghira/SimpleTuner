@@ -83,6 +83,45 @@ def merge_safetensors_files(directory, metadata=None):
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
 
+def _collect_wrapped_component_classes(accelerator, component):
+    classes = set()
+    seen = set()
+
+    def visit(module):
+        if module is None or id(module) in seen:
+            return
+        seen.add(id(module))
+        module = unwrap_model(accelerator, module)
+        classes.add(type(module))
+
+        for attr_name in ("module", "_orig_mod", "base_model", "model"):
+            child = getattr(module, attr_name, None)
+            if child is not module:
+                visit(child)
+
+    visit(component)
+    return classes
+
+
+def _get_trained_component_for_save(model, **kwargs):
+    try:
+        return model.get_trained_component(**kwargs)
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        return model.get_trained_component()
+
+
+def _materialize_tensor_for_save(tensor: torch.Tensor) -> torch.Tensor:
+    if type(tensor).__name__ == "DTensor" and hasattr(tensor, "full_tensor"):
+        tensor = tensor.full_tensor()
+    return tensor.detach().cpu().contiguous().clone()
+
+
+def _materialize_state_dict_for_save(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    return {name: _materialize_tensor_for_save(tensor) for name, tensor in state_dict.items()}
+
+
 class SaveHookManager:
     def __init__(
         self,
@@ -423,7 +462,7 @@ class SaveHookManager:
             except Exception as exc:
                 logger.warning("Failed to restore models after offload save: %s", exc)
 
-    def _save_lora(self, models, weights, output_dir):
+    def _save_lora(self, models, weights, output_dir, write: bool = True):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
         model_lora_layers_to_save = None
@@ -449,10 +488,23 @@ class SaveHookManager:
             }
             ema_modules_to_save = {self.model.MODEL_SUBFOLDER: ema_trained_component}
             ema_metadata = _collate_lora_metadata(ema_modules_to_save)
-            self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters, **ema_metadata)
+            lora_save_parameters = {
+                key: _materialize_state_dict_for_save(value) for key, value in lora_save_parameters.items()
+            }
+            if write:
+                self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters, **ema_metadata)
             self.ema_model.restore(trainable_parameters)
 
-        trained_component_cls = type(unwrap_model(self.accelerator, self.model.get_trained_component()))
+        trained_component_classes = _collect_wrapped_component_classes(
+            self.accelerator,
+            self.model.get_trained_component(unwrap_model=False),
+        )
+        trained_component_classes.update(
+            _collect_wrapped_component_classes(
+                self.accelerator,
+                _get_trained_component_for_save(self.model, base_model=True, unwrap_model=False),
+            )
+        )
         text_encoder_0_cls = None
         text_encoder_1_cls = None
 
@@ -471,13 +523,13 @@ class SaveHookManager:
             unwrapped_model = unwrap_model(self.accelerator, model)
             if self.args.controlnet and isinstance(
                 unwrapped_model,
-                trained_component_cls,
+                tuple(trained_component_classes),
             ):
                 # controlnet_lora_layers
                 controlnet_layers = get_peft_model_state_dict(unwrapped_model)
                 lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
                 modules_to_save["controlnet"] = unwrapped_model
-            elif isinstance(unwrapped_model, trained_component_cls):
+            elif isinstance(unwrapped_model, tuple(trained_component_classes)):
                 # unet_lora_layers or transformer_lora_layers
                 lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(unwrapped_model),
@@ -502,6 +554,10 @@ class SaveHookManager:
             # make sure to pop weight so that corresponding model is not saved again
             if weights:
                 weights.pop()
+
+        lora_save_parameters = {key: _materialize_state_dict_for_save(value) for key, value in lora_save_parameters.items()}
+        if not write:
+            return
 
         metadata = _collate_lora_metadata(modules_to_save)
         self.model.save_lora_weights(output_dir, **lora_save_parameters, **metadata)
@@ -800,17 +856,20 @@ class SaveHookManager:
             ):
                 logger.info("Detected FSDP v2; skipping custom full-model save and relying on Accelerate shards.")
                 # LoRA/LyCORIS adapters are not part of the FSDP-wrapped module; save them explicitly.
-                if is_main_process and "lora" in self.args.model_type:
+                if "lora" in self.args.model_type:
                     if self.args.lora_type == "lycoris":
-                        logger.info("Saving LyCORIS adapter weights alongside FSDP v2 shards.")
-                        self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
+                        if is_main_process:
+                            logger.info("Saving LyCORIS adapter weights alongside FSDP v2 shards.")
+                            self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
                     elif self.args.lora_type == "standard":
-                        logger.info("Saving standard LoRA adapter weights alongside FSDP v2 shards.")
-                        self._save_lora(models=models, weights=weights, output_dir=output_dir)
-                        self._save_lyrics_embedder_state(
-                            output_dir=output_dir,
-                            is_main_process=is_main_process,
-                        )
+                        if is_main_process:
+                            logger.info("Saving standard LoRA adapter weights alongside FSDP v2 shards.")
+                        self._save_lora(models=models, weights=weights, output_dir=output_dir, write=is_main_process)
+                        if is_main_process:
+                            self._save_lyrics_embedder_state(
+                                output_dir=output_dir,
+                                is_main_process=is_main_process,
+                            )
                 if self.accelerator is not None and distributed_type != DistributedType.NO:
                     self.accelerator.wait_for_everyone()
                 return
@@ -875,7 +934,7 @@ class SaveHookManager:
                     load_model = self.denoiser_class.from_pretrained(input_dir, subfolder=self.denoiser_subdir)
                     if self.args.model_family == "sd3" and not self.args.train_text_encoder:
                         logger.info("Unloading text encoders for full SD3 training without --train_text_encoder")
-                        (self.text_encoder_0, self.text_encoder_1) = (None, None)
+                        self.text_encoder_0, self.text_encoder_1 = (None, None)
 
                     model.register_to_config(**load_model.config)
                     model.load_state_dict(load_model.state_dict())

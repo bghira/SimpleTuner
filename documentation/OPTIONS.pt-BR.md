@@ -129,7 +129,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 ### `--musubi_blocks_to_swap`
 
-- **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image e HunyuanVideo — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
+- **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo e Krea 2 — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
 - **Padrao**: `0` (desabilitado)
 - **Notas**: Offload de pesos estilo Musubi; reduz VRAM com custo de throughput e e ignorado quando gradientes estao habilitados.
 
@@ -206,6 +206,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Para especificar o modelo base a partir do qual iniciar o treino. Use `--revision` e `--variant` para especificar versoes especificas de um repositorio. Isso tambem suporta caminhos `.safetensors` de arquivo unico para SDXL, Flux e SD3.x.
 
+### `--pretrained_transformer_model_name_or_path`
+
+- **O que**: Caminho opcional para pesos transformer pre-treinados ou seu identificador em <https://huggingface.co/models>.
+- **Padrao**: `None` (para loaders que suportam esta sobrescrita, a origem do transformer continua ligada a `--pretrained_model_name_or_path`)
+- **Por que**: Use quando o componente transformer estiver em um repositorio, pasta local ou checkpoint separado do pacote do modelo base.
+- **Notas**: Combine com `--pretrained_transformer_subfolder` quando os pesos transformer estiverem em uma subpasta desse caminho.
+
 ### `--pretrained_t5_model_name_or_path`
 
 - **O que**: Caminho para o modelo T5 pre-treinado ou seu identificador em <https://huggingface.co/models>.
@@ -269,7 +276,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 #### Presets de pipeline Diffusers
 
 - `nf4-bnb` carrega via Diffusers com config BitsAndBytes NF4 4-bit (apenas CUDA). Requer `bitsandbytes` e um build do diffusers com suporte BnB.
-- `int4-torchao`, `int8-torchao` e `fp8-torchao` usam TorchAoConfig via Diffusers (CUDA). Requer `torchao` e diffusers/transformers recentes.
+- `int4-torchao`, `int8-torchao`, `fp8-torchao` e `fp8wo-torchao` usam TorchAoConfig via Diffusers (CUDA). Requer `torchao` e diffusers/transformers recentes.
 - `int8-quanto`, `int4-quanto`, `int2-quanto`, `fp8-quanto` e `fp8uz-quanto` usam QuantoConfig via Diffusers. O diffusers mapeia FP8-NUZ para pesos float8; use quantizacao manual do quanto se precisar da variante NUZ.
 - Checkpoints `.gguf` sao auto-detectados e carregados com `GGUFQuantizationConfig` quando disponivel. Instale diffusers/transformers recentes para suporte GGUF.
 
@@ -299,7 +306,8 @@ Uma biblioteca mais nova do Pytorch; AO permite substituir linears e convolucoes
   - no momento, roda um pouco mais lento (11s/iter) do que o Quanto (9s/iter) no Apple MPS
   - sem `torch.compile`, mesma velocidade e uso de memoria que `int8-quanto` em CUDA, perfil desconhecido em ROCm
   - com `torch.compile`, mais lento que `int8-quanto`
-- `fp8-torchao` so esta disponivel para aceleradores Hopper (H100, H200) ou mais novos (Blackwell B200)
+- `fp8-native` and `fp8-torchao` exigem aceleradores Ada Lovelace (RTX 40/L40S), Hopper (H100/H200) ou mais novos com suporte a FP8 scaled matmul
+- `fp8-transformerengine` troca camadas Linear elegiveis por modulos FP8 do TransformerEngine e envolve o forward do modelo com TE FP8 autocast. Instale com `pip install 'simpletuner[transformerengine]'`; este preset e voltado para aceleradores CUDA Ada Lovelace, Hopper ou mais novos.
 
 ##### Otimizadores
 
@@ -318,6 +326,7 @@ Tambem fornece dois otimizadores voltados para usuarios Hopper (H100 ou superior
 - `uint16-sdnq` - Maior precisao para qualidade maxima (ex.: Stable Cascade)
 - `int16-sdnq` - Alternativa 16-bit com sinal
 - `fp16-sdnq` - FP16 quantizado, maxima precisao com beneficios SDNQ
+- `fp8-sdnq` - Pesos FP8 com matmul FP8 nativo do SDNQ, indicado para aceleradores H100/H200
 
 **Para treinamento LoRA** (pesos base congelados):
 - `int8-sdnq` - 8-bit com sinal, boa escolha geral
@@ -333,6 +342,19 @@ Tambem fornece dois otimizadores voltados para usuarios Hopper (H100 ou superior
 - Otimizado para treinamento: usa arredondamento estocastico para reduzir acumulacao de erro de quantizacao
 - Eficiente em memoria: suporta buffers de estado do otimizador quantizados
 - Matmul desacoplado: precisao de peso e precisao de matmul sao independentes (INT8/FP8/FP16 disponivel)
+
+##### Opcoes SDNQ Native Matmul
+
+- `--sdnq_weights_dtype` - Sobrescreve o dtype de armazenamento SDNQ, por exemplo `float8_e4m3fn`, `int8` ou `uint4`.
+- `--sdnq_quantized_matmul_dtype` - Dtype de matmul: `auto`, `int8`, `float8_e4m3fn`, `fp8`, `float16` ou `fp16`.
+- `--sdnq_group_size` - Tamanho do grupo de quantizacao. Use `-1` para matmul estatico de tensor inteiro; `fp8-sdnq` usa `-1` por padrao.
+- `--sdnq_use_quantized_matmul` - Ativa ou desativa o matmul quantizado do SDNQ. Se nao definido, `fp8-sdnq` usa matmul FP8 nativo somente quando o modo compile do SDNQ e o suporte a matmul FP8 estao disponiveis; outros presets seguem a disponibilidade de compile do SDNQ.
+- `--sdnq_compile_mode` - `auto`, `compile` ou `eager`. Controla o uso interno de `torch.compile` pelo SDNQ. Atualmente, o SDNQ requer modo compile para matmul quantizado; modo eager usa matmul dequantizado.
+- `--sdnq_use_static_quantization`, `--sdnq_use_stochastic_rounding`, `--sdnq_dequantize_fp32` - Sobrescrevem defaults de quantizacao de treinamento SDNQ.
+- `--sdnq_use_svd`, `--sdnq_svd_rank`, `--sdnq_svd_steps` - Configuram SVDQuant para presets SDNQ de baixo bit.
+- `--sdnq_use_hadamard`, `--sdnq_hadamard_group_size` - Ativam e configuram a rotacao Hadamard do SDNQ.
+- `--sdnq_modules_to_not_convert`, `--sdnq_modules_to_not_use_matmul` - Padroes de modulos como array JSON, arquivo ou lista separada por virgulas.
+- `--sdnq_modules_dtype_dict`, `--sdnq_modules_quant_config` - Objetos JSON ou arquivos para overrides por modulo.
 
 ##### Otimizadores SDNQ
 
@@ -411,6 +433,7 @@ Mecanismos de atencao alternativos sao suportados, com diferentes niveis de comp
 - `xformers` habilita o kernel de atencao [xformers](https://github.com/facebookresearch/xformers) (treino + inferencia) quando o modelo expõe `enable_xformers_memory_efficient_attention`.
 - `flash-attn`, `flash-attn-2`, `flash-attn-3` e `flash-attn-3-varlen` usam o helper `attention_backend` do Diffusers para rotear atencao para kernels FlashAttention v1/2/3. Instale os wheels `flash-attn` / `flash-attn-interface` correspondentes e note que FA3 exige GPUs Hopper.
 - `flex` seleciona o backend FlexAttention do PyTorch 2.5 (FP16/BF16 em CUDA). Voce deve compilar/instalar os kernels Flex separadamente — veja [documentation/attention/FLEX.md](attention/FLEX.md).
+- `metal-flash-attention` usa o backend PyTorch custom-op do Universal Metal Flash Attention em Apple Silicon. Instale primeiro o pacote UMFA `examples/pytorch-custom-op-ffi`; chamadas SDPA MPS FP32 4D elegiveis com pelo menos quatro heads e sequence length 64 ou maior, incluindo layouts transposed estilo FLUX, sao despachadas por `metal_sdpa_extension`, enquanto FP16/BF16, chamadas com mascara, causais, pequenas e 2D fazem fallback para PyTorch SDPA. SimpleTuner executa verificacoes iniciais de paridade FP32 forward e autograd, e rejeita builds UMFA que nao correspondam numericamente. `metal-flash-attention-int8` e `metal-flash-attention-int4` usam a entrada autograd quantizada do UMFA com quantizacao blockwise (`quant_mode=2`) e exigem um check inicial adicional para saidas com autograd e gradientes multi-head finitos.
 - `cudnn`, `native-efficient`, `native-flash`, `native-math`, `native-npu` e `native-xla` selecionam o backend SDPA correspondente exposto por `torch.nn.attention.sdpa_kernel`. Esses sao úteis para determinismo (`native-math`), kernel SDPA do CuDNN ou aceleradores nativos (NPU/XLA).
 - `sla` habilita [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA), fornecendo um kernel hibrido esparso/linear ajustavel para treino e validacao sem gating adicional.
   - Instale o pacote SLA (por exemplo via `pip install -e ~/src/SLA`) antes de selecionar esse backend.
@@ -864,6 +887,25 @@ Diferentes modelos esperam diferentes dados de conditioning:
   - `random` seleciona um dataset de condicionamento por sample, alternando entre condicoes durante o treino.
 - **Nota**: Ao usar `combined`, voce nao pode definir `captions` separadas nos datasets de condicionamento; as captions do dataset de origem sao usadas.
 - **Veja tambem**: [DATALOADER.md](DATALOADER.md#conditioning_data) para configurar multiplos datasets de condicionamento.
+
+### `--krea2_reference_latents` {#--krea2_reference_latents}
+
+- **O que**: Habilita treino Krea 2 com reference dataset.
+- **Por que**: Quando habilitado, Krea 2 usa a imagem de condicionamento pareada ao cachear os prompt embeddings Qwen3VL, e adiciona os latentes VAE limpos dessa imagem ao fluxo de tokens do transformer durante o treino.
+- **Dataset**: Configure o dataset principal de imagens com `conditioning_data` apontando para um dataset de conditioning pareado. Os nomes dos arquivos devem coincidir entre imagens target e reference.
+- **Escopo**: Esta e uma opcao do lado do modelo Krea 2. Ela nao gera conditioning datasets; use as configuracoes normais de reference dataset do dataloader.
+
+### Opcoes de condicionamento do LTX-2
+
+Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON/TOML com os nomes abaixo, ou passe os flags CLI correspondentes, como `--ltx2_first_frame_conditioning_probability`.
+
+- **Condicionamento intrinseco de tokens alvo**: tokens de video alvo selecionados sao copiados dos latentes limpos, seus timesteps viram `0`, e eles sao excluidos da perda de video.
+  - `ltx2_intrinsic_conditioning`: array JSON de objetos de condicao, por exemplo `[{"type":"first_frame","probability":1.0}]`. Valores `type` suportados: `first_frame`, `prefix`, `suffix`, `spatial_crop` e `mask`.
+  - Chaves curtas: `ltx2_first_frame_conditioning_probability`, `ltx2_prefix_conditioning_probability`, `ltx2_prefix_conditioning_frames`, `ltx2_suffix_conditioning_probability`, `ltx2_suffix_conditioning_frames` e `ltx2_mask_conditioning_probability`.
+  - Para `mask`, valor `1` significa condicionamento limpo/sem perda; valor `0` significa treino ruidoso normal.
+- **Escala de referencia IC-LoRA**: `ltx2_reference_spatial_scale_factor` e `ltx2_reference_temporal_scale_factor` ajustam coordenadas dos tokens de referencia. A escala espacial e inferida pelos tamanhos latentes de referencia/alvo quando omitida.
+- **Referencia IC-LoRA de validacao**: `validation_ltx2_video_conditioning` e uma lista JSON de videos de referencia locais para validacao, por exemplo `[{"path":"data/reference.mp4","strength":1.0}]`.
+- **Escopo**: Essas configuracoes controlam apenas o comportamento de condicionamento LTX-2 no modelo. Pareamento de datasets, arquivos de mascara, datasets de referencia, controles WebUI e templates de dataset sao configurados separadamente.
 
 ---
 
@@ -1533,11 +1575,11 @@ usage: train.py [-h] --model_family
                 [--vae_cache_ondemand [VAE_CACHE_ONDEMAND]]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
                 [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
-                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
+                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
                 [--quantize_via {cpu,accelerator,pipeline}]
@@ -1661,7 +1703,7 @@ usage: train.py [-h] --model_family
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--mixed_precision {no,fp16,bf16,fp8}]
-                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--disable_tf32 [DISABLE_TF32]]
                 [--set_grads_to_none [SET_GRADS_TO_NONE]]
@@ -1833,19 +1875,19 @@ options:
   --aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}
                         Number of decimal places to round aspect ratios to for
                         bucket creation
-  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for loading the base model. Lower precision
                         saves memory.
-  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
+  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}
                         Precision for text encoders. Lower precision saves
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
@@ -2138,7 +2180,7 @@ options:
                         Sigma data for soft min SNR weighting
   --mixed_precision {no,fp16,bf16,fp8}
                         Precision for training computations
-  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         Attention computation backend
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention

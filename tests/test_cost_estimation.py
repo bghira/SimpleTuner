@@ -49,12 +49,12 @@ class TestHardwareOption(unittest.TestCase):
         hw = HardwareOption(
             id="gpu-l40s",
             name="L40S (48GB)",
-            cost_per_second=0.000975,
+            cost_per_second=0.000972222,
             memory_gb=48,
         )
 
-        # ~$3.51/hour
-        self.assertAlmostEqual(hw.cost_per_hour, 3.51, places=2)
+        # ~$3.50/hour
+        self.assertAlmostEqual(hw.cost_per_hour, 3.50, places=2)
 
     def test_to_dict(self):
         """Test to_dict includes all fields."""
@@ -226,7 +226,7 @@ class TestCostCalculation(unittest.TestCase):
             default_hardware={
                 "gpu-l40s": {
                     "name": "L40S",
-                    "cost_per_second": 0.000975,
+                    "cost_per_second": 0.000972222,
                 },
             },
             default_hardware_id="gpu-l40s",
@@ -234,7 +234,7 @@ class TestCostCalculation(unittest.TestCase):
 
         # 1 hour = 3600 seconds
         cost = provider.calculate_cost("gpu-l40s", 3600)
-        self.assertAlmostEqual(cost, 3.51, places=2)
+        self.assertAlmostEqual(cost, 3.50, places=2)
 
     def test_calculate_cost_unknown_hardware(self):
         """Test calculate_cost returns None for unknown hardware."""
@@ -285,7 +285,7 @@ class TestCostCalculation(unittest.TestCase):
             default_hardware={
                 "gpu-l40s": {
                     "name": "L40S",
-                    "cost_per_second": 0.000975,
+                    "cost_per_second": 0.000972222,
                 },
             },
             default_hardware_id="gpu-l40s",
@@ -294,8 +294,8 @@ class TestCostCalculation(unittest.TestCase):
         # Typical training job: 30 minutes
         estimate = provider.estimate_cost("gpu-l40s", 30)
 
-        # Estimated cost: 30 min * $0.000975 * 60 = $1.755
-        self.assertAlmostEqual(estimate["estimated"], 1.755, places=2)
+        # Estimated cost: 30 min * $0.000972222 * 60 = $1.75
+        self.assertAlmostEqual(estimate["estimated"], 1.75, places=2)
 
         # Bounds check
         self.assertLess(estimate["min"], estimate["estimated"])
@@ -331,7 +331,7 @@ class TestCostCalculation(unittest.TestCase):
             default_hardware={
                 "gpu-l40s": {
                     "name": "L40S",
-                    "cost_per_second": 0.000975,
+                    "cost_per_second": 0.000972222,
                 },
             },
             default_hardware_id="gpu-l40s",
@@ -340,8 +340,8 @@ class TestCostCalculation(unittest.TestCase):
         # 24 hours = 1440 minutes
         estimate = provider.estimate_cost("gpu-l40s", 1440)
 
-        # Expected: 1440 * 60 * 0.000975 = $84.24
-        self.assertAlmostEqual(estimate["estimated"], 84.24, places=2)
+        # Expected: 1440 * 60 * 0.000972222 = $84.00
+        self.assertAlmostEqual(estimate["estimated"], 84.00, places=2)
 
 
 class TestReplicatePricing(unittest.TestCase):
@@ -366,20 +366,20 @@ class TestReplicatePricing(unittest.TestCase):
 
         self.assertIsNotNone(hw)
         self.assertEqual(hw.memory_gb, 48)
-        # L40S costs ~$0.000975/s = ~$3.51/hour
-        self.assertAlmostEqual(hw.cost_per_hour, 3.51, places=2)
+        # L40S costs ~$0.000972222/s = ~$3.50/hour
+        self.assertAlmostEqual(hw.cost_per_hour, 3.50, places=2)
 
-    def test_replicate_a100_pricing(self):
-        """Test Replicate A100 pricing."""
+    def test_replicate_h100_pricing(self):
+        """Test Replicate H100 pricing."""
         from simpletuner.simpletuner_sdk.server.services.cloud.pricing import get_pricing_provider
 
         provider = get_pricing_provider("replicate")
-        hw = provider.get_hardware_by_id("gpu-a100-large")
+        hw = provider.get_hardware_by_id("gpu-h100")
 
         self.assertIsNotNone(hw)
         self.assertEqual(hw.memory_gb, 80)
-        # A100 costs ~$0.0014/s = ~$5.04/hour
-        self.assertAlmostEqual(hw.cost_per_hour, 5.04, places=2)
+        # H100 costs ~$0.001525/s = ~$5.49/hour
+        self.assertAlmostEqual(hw.cost_per_hour, 5.49, places=2)
 
     def test_replicate_default_hardware(self):
         """Test Replicate default hardware is L40S."""

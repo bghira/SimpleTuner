@@ -110,8 +110,7 @@ class ValidationServiceConstraintTests(unittest.TestCase):
         self.assertFalse(result.is_valid)
         self.assertTrue(
             any(
-                msg.field == "resume_from_checkpoint" and msg.severity == ValidationSeverity.ERROR
-                for msg in result.messages
+                msg.field == "resume_from_checkpoint" and msg.severity == ValidationSeverity.ERROR for msg in result.messages
             ),
             [msg.to_dict() for msg in result.messages],
         )

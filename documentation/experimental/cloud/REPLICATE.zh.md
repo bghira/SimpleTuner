@@ -2,8 +2,9 @@
 
 Replicate 是用于运行机器学习模型的云平台。SimpleTuner 使用 Replicate 的 Cog 容器系统在云端 GPU 上运行训练任务。
 
-- **模型：** `simpletuner/advanced-trainer`
-- **默认 GPU：** L40S（48GB 显存）
+- **默认模型：** `simpletuner/advanced-trainer-h100`
+- **默认 GPU：** H100
+- **可选配置：** `h100`, `h100-x2`, `h100-x4`, `h100-x8`, `l40s`, `l40s-x2`, `l40s-x4`, `l40s-x8`
 
 ## 快速开始
 
@@ -43,8 +44,14 @@ Replicate 是用于运行机器学习模型的云平台。SimpleTuner 使用 Rep
 
 | 硬件 | 显存 | 成本 | 适用场景 |
 |----------|------|------|----------|
-| L40S | 48GB | ~ $3.50/小时 | 大多数 LoRA 训练 |
-| A100（80GB） | 80GB | ~ $5.00/小时 | 大模型、全量微调 |
+| H100 | 80GB | 参见 Replicate 价格 | 大模型、全量微调 |
+| L40S | 48GB | 参见 Replicate 价格 | 较小的 LoRA 训练 |
+
+WebUI 提交弹窗可为每个任务选择硬件配置。CLI 示例：
+
+```bash
+simpletuner cloud jobs submit my-config --hardware-profile h100-x4
+```
 
 ### 典型训练成本
 
@@ -297,6 +304,6 @@ env | grep -i proxy
 ## 链接
 
 - [Replicate 文档](https://replicate.com/docs)
-- [SimpleTuner on Replicate](https://replicate.com/simpletuner/advanced-trainer)
+- [SimpleTuner on Replicate](https://replicate.com/simpletuner/advanced-trainer-h100)
 - [Replicate API Tokens](https://replicate.com/account/api-tokens)
 - [Replicate 状态页](https://replicate.statuspage.io/)

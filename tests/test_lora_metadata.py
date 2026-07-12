@@ -10,7 +10,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes
-from simpletuner.helpers.training.save_hooks import MODEL_SPEC_VERSION, SaveHookManager
+from simpletuner.helpers.training.save_hooks import MODEL_SPEC_VERSION, SaveHookManager, _materialize_state_dict_for_save
 
 
 class _DummyAccelerator:
@@ -54,7 +54,7 @@ class _DummyModel:
         self._text_encoders = {0: text_encoder} if text_encoder is not None else {}
         self.save_lora_weights = MagicMock()
 
-    def get_trained_component(self, unwrap_model=False):
+    def get_trained_component(self, unwrap_model=False, base_model=False):
         return self._trained_component
 
     def get_text_encoder(self, index: int):
@@ -143,6 +143,26 @@ class SaveHookMetadataTests(unittest.TestCase):
             use_deepspeed_optimizer=False,
         )
         return manager, model, trained_component
+
+    def test_materialize_state_dict_for_save_expands_dtensor_like_values(self):
+        class DTensor:
+            def __init__(self):
+                self.full_tensor_called = False
+
+            def full_tensor(self):
+                self.full_tensor_called = True
+                return torch.tensor([[1.0, 2.0]], device="cpu")
+
+        dtensor = DTensor()
+        regular = torch.tensor([3.0], requires_grad=True)
+
+        materialized = _materialize_state_dict_for_save({"dtensor": dtensor, "regular": regular})
+
+        self.assertTrue(dtensor.full_tensor_called)
+        self.assertEqual(materialized["dtensor"].device.type, "cpu")
+        self.assertFalse(materialized["regular"].requires_grad)
+        self.assertTrue(materialized["regular"].is_contiguous())
+        self.assertIsNot(materialized["regular"], regular)
 
     def test_save_hook_collects_metadata_for_transformer_and_text_encoder(self):
         text_encoder = _DummyTextEncoder("text_encoder")

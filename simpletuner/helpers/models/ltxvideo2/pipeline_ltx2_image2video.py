@@ -37,6 +37,7 @@ from simpletuner.helpers.training.lora_format import (
     normalize_lora_format,
 )
 from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
+from simpletuner.helpers.training.wrappers import unwrap_model
 
 from .audio_autoencoder import AutoencoderKLLTX2Audio
 from .autoencoder import AutoencoderKLLTX2Video
@@ -95,6 +96,15 @@ EXAMPLE_DOC_STRING = """
         ... )
         ```
 """
+
+
+def _set_pipeline_transformer(pipeline, transformer):
+    transformer = unwrap_model(None, transformer)
+    pipeline.transformer = transformer
+    if transformer is not None:
+        pipeline.transformer_spatial_patch_size = transformer.config.patch_size
+        pipeline.transformer_temporal_patch_size = transformer.config.patch_size_t
+    return transformer
 
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
@@ -236,6 +246,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
         vocoder: LTX2Vocoder,
     ):
         super().__init__()
+        transformer = unwrap_model(None, transformer)
 
         self.register_modules(
             vae=vae,
@@ -1085,6 +1096,7 @@ class LTX2ImageToVideoPipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoL
 
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
             callback_on_step_end_tensor_inputs = callback_on_step_end.tensor_inputs
+        _set_pipeline_transformer(self, self.transformer)
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(

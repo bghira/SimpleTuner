@@ -55,6 +55,7 @@ from diffusers.utils.torch_utils import is_compiled_module
 from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
@@ -1739,7 +1740,38 @@ class Validation:
         return mode
 
     def _use_distributed_validation(self) -> bool:
-        return self._validation_multigpu_mode() == "batch-parallel"
+        return self._validation_multigpu_mode() == "batch-parallel" or self._use_context_parallel_validation()
+
+    def _context_parallel_validation_info(self) -> tuple[bool, int, int, int, int]:
+        cp_info = get_cp_info(self.accelerator)
+        if not cp_info[0]:
+            return False, 0, 0, 1, 1
+        return get_model_replica_data_info(self.accelerator, cp_info)
+
+    def _use_context_parallel_validation(self) -> bool:
+        cp_enabled, *_ = self._context_parallel_validation_info()
+        return cp_enabled
+
+    def _split_validation_work_items(
+        self, work_items: list[_ValidationWorkItem]
+    ) -> tuple[list[_ValidationWorkItem], bool, int]:
+        use_distributed = self._use_distributed_validation()
+        if not use_distributed:
+            return work_items, False, 1
+
+        cp_enabled, data_rank, _data_local_rank, _data_group_size, data_parallel_size = (
+            self._context_parallel_validation_info()
+        )
+        if cp_enabled:
+            return work_items[data_rank::data_parallel_size], True, data_parallel_size
+
+        return split_across_processes(self.accelerator, work_items), True, getattr(self.accelerator, "num_processes", 1)
+
+    def _should_publish_validation_payloads(self) -> bool:
+        cp_enabled, _data_rank, data_local_rank, _data_group_size, _data_parallel_size = (
+            self._context_parallel_validation_info()
+        )
+        return not cp_enabled or data_local_rank == 0
 
     def _validation_seed_source(self):
         if self.config.validation_seed_source == "gpu":
@@ -2563,9 +2595,15 @@ class Validation:
         # Ensure the pipeline has an attached base model; some model-specific get_pipeline
         # implementations skip binding the transformer/unet when load_base_model=False.
         pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
-        if pipeline_model is None and getattr(self.model, "model", None) is not None:
-            # Prefer unwrapped module so pipeline APIs that expect .dtype work even with DDP/FSDP/compile.
-            setattr(self.model.pipeline, self.model.MODEL_TYPE.value, self.model.unwrap_model())
+        if getattr(self.model, "model", None) is not None:
+            try:
+                is_pipeline_fsdp = FSDP_AVAILABLE and pipeline_model is not None and isinstance(pipeline_model, FSDP)
+                if pipeline_model is None or not is_pipeline_fsdp:
+                    # Prefer unwrapped module so pipeline APIs that expect .config/.dtype work with DDP/compile.
+                    setattr(self.model.pipeline, self.model.MODEL_TYPE.value, self.model.unwrap_model())
+            except Exception:
+                if pipeline_model is None:
+                    raise
 
         # Remove text encoders on 'meta' device to avoid move errors
         for attr in [
@@ -2598,6 +2636,10 @@ class Validation:
             if "torchao" in base_precision:
                 logger.info(
                     "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
+                )
+            elif "quanto" in base_precision:
+                logger.info(
+                    "Skipping pipeline.to for Quanto-quantized base model to avoid QLinear weight swap errors during validation."
                 )
             elif musubi_active:
                 logger.info(
@@ -3271,26 +3313,28 @@ class Validation:
             return
 
         work_items = self._prepare_validation_work_items(_content)
-        use_distributed = self._use_distributed_validation()
-        num_processes = getattr(self.accelerator, "num_processes", 1)
+        local_work_items, use_distributed, validation_worker_count = self._split_validation_work_items(work_items)
+        cp_validation_enabled = self._use_context_parallel_validation()
 
         # Disable batch-parallel if we don't have enough prompts to meaningfully split
-        # This avoids collective communication deadlocks when some processes get empty work
-        if use_distributed and len(work_items) < num_processes:
+        # This avoids collective communication deadlocks when some processes get empty work.
+        # CP validation is model-parallel: one prompt can legitimately occupy a full CP group.
+        if use_distributed and not cp_validation_enabled and len(work_items) < validation_worker_count:
             use_distributed = False
             logger.info(
-                f"Disabling batch-parallel for validation: {len(work_items)} prompt(s) < {num_processes} processes. "
+                f"Disabling batch-parallel for validation: {len(work_items)} prompt(s) < {validation_worker_count} processes. "
                 f"Only main process will execute."
             )
             # When falling back to single-process, only main process should continue
             if not self.accelerator.is_main_process:
                 return
+            local_work_items = work_items
 
-        local_work_items = split_across_processes(self.accelerator, work_items) if use_distributed else work_items
         rank = getattr(self.accelerator, "process_index", 0)
         logger.info(
             f"[Rank {rank}] Processing {len(local_work_items)} local validation work items "
             f"(distributed_mode={use_distributed}, total={len(work_items)}, "
+            f"validation_worker_count={validation_worker_count}, cp_validation={cp_validation_enabled}, "
             f"work_item_prompts={[item.prompt for item in local_work_items]})"
         )
         progress_disable = use_distributed and not self.accelerator.is_main_process
@@ -3313,7 +3357,8 @@ class Validation:
                 decorated_shortname=decorated_shortname,
                 validation_type=validation_type,
             )
-            local_payloads.append(payload)
+            if self._should_publish_validation_payloads():
+                local_payloads.append(payload)
 
             # In non-distributed mode, apply results immediately after each prompt completes
             if not use_distributed:

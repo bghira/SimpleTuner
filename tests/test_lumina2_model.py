@@ -7,6 +7,20 @@ import torch
 from simpletuner.helpers.models.lumina2.model import Lumina2
 
 
+class _DummyTransformer:
+    def __init__(self, output=None, forward=None):
+        self.config = SimpleNamespace(patch_size=2)
+        self.output = output
+        self.forward = forward
+        self.call_args = None
+
+    def __call__(self, **kwargs):
+        self.call_args = SimpleNamespace(kwargs=kwargs)
+        if self.forward is not None:
+            return self.forward(**kwargs)
+        return self.output
+
+
 class Lumina2ModelTests(unittest.TestCase):
     def setUp(self):
         self.model = Lumina2.__new__(Lumina2)
@@ -17,8 +31,7 @@ class Lumina2ModelTests(unittest.TestCase):
         self.model.noise_schedule = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
         self.model._new_hidden_state_buffer = MagicMock(return_value={})
         self.model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=2)
-        self.model.model = MagicMock()
-        self.model.model.config = SimpleNamespace(patch_size=2)
+        self.model.model = _DummyTransformer()
 
     def test_model_predict_uses_crepa_capture_block_override(self):
         hidden_states_buffer = {}
@@ -29,7 +42,7 @@ class Lumina2ModelTests(unittest.TestCase):
             kwargs["hidden_states_buffer"]["layer_6"] = torch.full((1, 4, 8), 6.0)
             return (torch.ones(1, 16, 4, 4),)
 
-        self.model.model = MagicMock(side_effect=_forward)
+        self.model.model = _DummyTransformer(forward=_forward)
 
         prepared_batch = {
             "noisy_latents": torch.randn(1, 16, 4, 4),
@@ -48,7 +61,7 @@ class Lumina2ModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["model_prediction"], -torch.ones(1, 16, 4, 4)))
 
     def test_model_predict_accepts_tokenwise_timesteps(self):
-        self.model.model = MagicMock(return_value=(torch.ones(1, 16, 4, 4),))
+        self.model.model = _DummyTransformer(output=(torch.ones(1, 16, 4, 4),))
 
         prepared_batch = {
             "noisy_latents": torch.randn(1, 16, 4, 4),

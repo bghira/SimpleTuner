@@ -116,6 +116,71 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         fake_vae.register_to_config.assert_called_once_with(_name_or_path="dg845/LTX-2.3-Diffusers")
         self.assertIs(self.model.vae, fake_vae)
 
+    def test_intrinsic_first_frame_conditioning_replaces_tokens_and_masks_loss(self):
+        self.model.config.ltx2_intrinsic_conditioning = [{"type": "first_frame", "probability": 1.0}]
+        packed_noisy = torch.zeros(2, 8, 1)
+        packed_clean = torch.arange(16, dtype=torch.float32).view(2, 8, 1)
+        timesteps = torch.ones(2, 8)
+
+        conditioned, conditioned_timesteps, loss_mask = self.model._apply_ltx2_intrinsic_conditioning(
+            packed_noisy=packed_noisy,
+            packed_clean=packed_clean,
+            target_timesteps=timesteps,
+            prepared_batch={},
+            num_frames=2,
+            height=2,
+            width=2,
+            patch_size=1,
+            patch_size_t=1,
+        )
+
+        self.assertTrue(torch.equal(conditioned[:, :4], packed_clean[:, :4]))
+        self.assertTrue(torch.equal(conditioned[:, 4:], packed_noisy[:, 4:]))
+        self.assertTrue(torch.equal(conditioned_timesteps[:, :4], torch.zeros(2, 4)))
+        self.assertTrue(torch.equal(conditioned_timesteps[:, 4:], torch.ones(2, 4)))
+        self.assertTrue(torch.equal(loss_mask[:, :4], torch.zeros(2, 4, dtype=torch.bool)))
+        self.assertTrue(torch.equal(loss_mask[:, 4:], torch.ones(2, 4, dtype=torch.bool)))
+
+    def test_intrinsic_conditioning_accepts_json_string_config(self):
+        self.model.config.ltx2_intrinsic_conditioning = '[{"type":"prefix","probability":0.5,"temporal_boundary":2}]'
+
+        specs = self.model._ltx2_intrinsic_condition_specs()
+
+        self.assertEqual(specs, [{"type": "prefix", "probability": 0.5, "temporal_boundary": 2}])
+
+    def test_mask_conditioning_uses_one_as_clean_no_loss(self):
+        mask_pixels = torch.full((1, 1, 2, 2), -1.0)
+        mask_pixels[:, :, 0, :] = 1.0
+
+        token_mask = self.model._ltx2_mask_condition_mask(
+            mask_pixels,
+            batch_size=1,
+            post_patch_frames=2,
+            post_patch_height=2,
+            post_patch_width=2,
+            device=torch.device("cpu"),
+        )
+
+        self.assertTrue(torch.equal(token_mask, torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]])))
+
+    def test_reference_coords_scale_to_target_space(self):
+        self.model.config.ltx2_reference_temporal_scale_factor = 2
+        ref_coords = torch.tensor([[[[0.0, 0.5], [1.0, 1.5]], [[2.0, 3.0], [4.0, 5.0]], [[6.0, 7.0], [8.0, 9.0]]]])
+        target_coords = torch.tensor([[[[0.0, 0.25], [0.25, 0.5]], [[0.0, 1.0], [1.0, 2.0]], [[0.0, 1.0], [1.0, 2.0]]]])
+
+        scaled = self.model._scale_ltx2_reference_coords(
+            ref_coords=ref_coords,
+            target_coords=target_coords,
+            ref_height=4,
+            ref_width=4,
+            target_height=8,
+            target_width=8,
+        )
+
+        self.assertTrue(torch.equal(scaled[:, 1], ref_coords[:, 1] * 2))
+        self.assertTrue(torch.equal(scaled[:, 2], ref_coords[:, 2] * 2))
+        self.assertTrue(torch.equal(scaled[:, 0], torch.clamp(ref_coords[:, 0] - 0.25, min=0)))
+
 
 class TestLTXVideo2Metadata(unittest.TestCase):
     def test_model_metadata_exposes_only_named_ltx23_flavours(self):
@@ -127,6 +192,23 @@ class TestLTXVideo2Metadata(unittest.TestCase):
             metadata["ltxvideo2"]["flavour_choices"],
             ["dev", "dev-fp4", "dev-fp8", "2.3-dev", "2.3-distilled"],
         )
+
+
+class TestLTXVideo2Loss(unittest.TestCase):
+    def test_masked_video_loss_ignores_intrinsic_condition_tokens(self):
+        model = LTXVideo2.__new__(LTXVideo2)
+        model.model = SimpleNamespace(config=SimpleNamespace(patch_size=1, patch_size_t=1))
+        model.config = SimpleNamespace(loss_type="l2")
+        prepared_batch = {
+            "latents": torch.zeros(1, 1, 1, 1, 2),
+            "noise": torch.ones(1, 1, 1, 1, 2),
+            "video_loss_mask": torch.tensor([[False, True]]),
+        }
+        model_output = {"model_prediction": torch.tensor([[[[[99.0, 1.0]]]]])}
+
+        loss = model._compute_ltx2_masked_video_loss(prepared_batch, model_output)
+
+        self.assertEqual(loss.item(), 0.0)
 
 
 class TestLTXVideo2TransformerLoading(unittest.TestCase):
@@ -205,6 +287,43 @@ class TestLTXVideo2TransformerLoading(unittest.TestCase):
         self.assertIsNotNone(transformer.prompt_adaln)
         self.assertIsNotNone(transformer.audio_prompt_adaln)
         self.assertIsNotNone(transformer.transformer_blocks[0].attn1.to_gate_logits)
+
+    def test_transformer_forward_exposes_self_attention_masks(self):
+        import inspect
+
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        sig = inspect.signature(LTX2VideoTransformer3DModel.forward)
+        self.assertIn("self_attention_mask", sig.parameters)
+        self.assertIn("audio_self_attention_mask", sig.parameters)
+        self.assertIn("a2v_cross_attention_mask", sig.parameters)
+        self.assertIn("v2a_cross_attention_mask", sig.parameters)
+
+    def test_ltx2_conditioning_config_fields_are_parseable(self):
+        from simpletuner.helpers.configuration.cmd_args import get_argument_parser
+
+        parser = get_argument_parser()
+        args = parser.parse_args(
+            [
+                "--model_family",
+                "ltxvideo2",
+                "--output_dir",
+                "/tmp/simpletuner-test",
+                "--model_type",
+                "lora",
+                "--optimizer",
+                "adamw_bf16",
+                "--data_backend_config",
+                "/tmp/backend.json",
+                "--ltx2_intrinsic_conditioning",
+                '[{"type":"first_frame","probability":1.0}]',
+                "--ltx2_reference_temporal_scale_factor",
+                "2",
+            ]
+        )
+
+        self.assertEqual(args.ltx2_intrinsic_conditioning, '[{"type":"first_frame","probability":1.0}]')
+        self.assertEqual(args.ltx2_reference_temporal_scale_factor, 2)
 
 
 if __name__ == "__main__":

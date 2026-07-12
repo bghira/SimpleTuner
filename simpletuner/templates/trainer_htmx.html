@@ -3120,6 +3120,7 @@ function trainerComponent() {
             'canny', 'edges', 'hed', 'lineart', 'lineart_coarse', 'scribble',
             'depth', 'depth_midas', 'depth_leres', 'normal_map', 'random_masks',
             'binary_mask', 'inpainting', 'jpeg_artifacts', 'superresolution',
+            'logc3_sdr', 'sdr', 'sdr_downsample', 'hdr_to_sdr',
             'content_shuffle', 'tile', 'rembg'
         ],
         captionFilters: [],
@@ -7735,7 +7736,7 @@ window.triggerManualCheckpoint = async function() {
                 <input class="form-check-input" type="checkbox" role="switch" id="prompt-library-bbox-toggle">
                 <label class="form-check-label" for="prompt-library-bbox-toggle">
                     <span class="fw-semibold">Enable bounding box regions</span>
-                    <small class="text-body-secondary d-block" style="font-size: 0.8rem;">
+                    <small class="prompt-library-bbox-hint d-block" style="font-size: 0.8rem;">
                         Define spatial regions per prompt for GLIGEN positional grounding. Has no effect when GLIGEN is not enabled.
                     </small>
                 </label>
@@ -7776,11 +7777,11 @@ window.triggerManualCheckpoint = async function() {
             <!-- Column headers for the prompt rows -->
             <div class="row g-2 mb-1" id="prompt-library-col-headers">
                 <div class="col-md-3">
-                    <small class="text-body-secondary fw-semibold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">Shortname</small>
+                    <small class="prompt-library-column-heading fw-semibold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">Shortname</small>
                     <div class="form-text mt-0" style="font-size: 0.7rem;">Unique ID used in filenames</div>
                 </div>
                 <div class="col-md-8">
-                    <small class="text-body-secondary fw-semibold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">Prompt</small>
+                    <small class="prompt-library-column-heading fw-semibold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">Prompt</small>
                     <div class="form-text mt-0" style="font-size: 0.7rem;">Text prompt used for validation inference</div>
                 </div>
                 <div class="col-md-1 text-end"></div>

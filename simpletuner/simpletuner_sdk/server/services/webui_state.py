@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from simpletuner.simpletuner_sdk.server.utils.assets import get_asset_version
+from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_data_roots
 
 _WEBUI_CONFIG_ENV = "SIMPLETUNER_WEB_UI_CONFIG"
 _XDG_HOME_ENV = "XDG_HOME"
@@ -263,12 +264,7 @@ class WebUIStateStore:
             root.mkdir(parents=True, exist_ok=True)
             return root / "webui"
 
-        candidate_roots = []
-        if Path("/workspace").exists():
-            candidate_roots.append(Path("/workspace/simpletuner"))
-        if Path("/notebooks").exists():
-            candidate_roots.append(Path("/notebooks/simpletuner"))
-        candidate_roots.append(Path.home() / ".simpletuner")
+        candidate_roots = get_simpletuner_data_roots()
 
         for root in candidate_roots:
             webui_dir = root / "webui"
@@ -335,12 +331,13 @@ class WebUIStateStore:
         payload = self._read_json("defaults")
         if not payload:
             return WebUIDefaults()
+        base_defaults = WebUIDefaults()
         data: Dict[str, Any] = {}
-        for key in WebUIDefaults().__dict__.keys():
+        for key, default_value in base_defaults.__dict__.items():
             if key == "accelerate_overrides":
                 data[key] = _normalise_accelerate_overrides(payload.get(key))
             else:
-                data[key] = payload.get(key)
+                data[key] = payload.get(key, default_value)
         defaults = WebUIDefaults(**data)
 
         # Normalise theme selection
@@ -432,6 +429,17 @@ class WebUIStateStore:
         # Normalise cloud hint dismissal booleans
         defaults.cloud_dataloader_hint_dismissed = bool(payload.get("cloud_dataloader_hint_dismissed", False))
         defaults.cloud_git_hint_dismissed = bool(payload.get("cloud_git_hint_dismissed", False))
+
+        # Normalise cloud tab enabled (default True)
+        cloud_tab_value = payload.get("cloud_tab_enabled")
+        if cloud_tab_value is None:
+            defaults.cloud_tab_enabled = True
+        elif isinstance(cloud_tab_value, bool):
+            defaults.cloud_tab_enabled = cloud_tab_value
+        elif isinstance(cloud_tab_value, str):
+            defaults.cloud_tab_enabled = cloud_tab_value.strip().lower() not in {"0", "false", "no", "off"}
+        else:
+            defaults.cloud_tab_enabled = bool(cloud_tab_value)
 
         # Normalise cloud data consent
         consent_value = payload.get("cloud_data_consent")

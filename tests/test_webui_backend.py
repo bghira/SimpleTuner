@@ -1,17 +1,20 @@
 """unittest-based coverage for WebUI backend state management."""
 
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from simpletuner.cli.common import _find_webui_state_file
 from simpletuner.simpletuner_sdk.server.services.webui_state import (
     OnboardingStepState,
     WebUIDefaults,
     WebUIOnboardingState,
     WebUIStateStore,
 )
+from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory
 
 
 class WebUIStateStoreTests(unittest.TestCase):
@@ -104,6 +107,33 @@ class WebUIStateStoreTests(unittest.TestCase):
         self.assertIsNone(loaded.configs_dir)
         self.assertIsNone(loaded.output_dir)
         self.assertIsNone(loaded.active_config)
+        self.assertTrue(loaded.cloud_tab_enabled)
+
+    def test_legacy_defaults_without_cloud_tab_enabled_keeps_cloud_enabled(self) -> None:
+        defaults_file = self.store.base_dir / "defaults.json"
+        defaults_file.write_text(json.dumps({"theme": "dark"}))
+
+        loaded = self.store.load_defaults()
+        bundle = self.store.resolve_defaults(loaded)
+
+        self.assertTrue(loaded.cloud_tab_enabled)
+        self.assertTrue(bundle["resolved"]["cloud_tab_enabled"])
+
+    def test_null_cloud_tab_enabled_keeps_default_enabled(self) -> None:
+        defaults_file = self.store.base_dir / "defaults.json"
+        defaults_file.write_text(json.dumps({"cloud_tab_enabled": None}))
+
+        loaded = self.store.load_defaults()
+
+        self.assertTrue(loaded.cloud_tab_enabled)
+
+    def test_false_cloud_tab_enabled_is_preserved(self) -> None:
+        defaults_file = self.store.base_dir / "defaults.json"
+        defaults_file.write_text(json.dumps({"cloud_tab_enabled": False}))
+
+        loaded = self.store.load_defaults()
+
+        self.assertFalse(loaded.cloud_tab_enabled)
 
     def test_load_onboarding_returns_empty_when_missing(self) -> None:
         loaded = self.store.load_onboarding()
@@ -185,6 +215,49 @@ class WebUIStateStoreTests(unittest.TestCase):
         self.assertNotIn("--num_processes", loaded.accelerate_overrides)
         # Manual metadata remains so users can switch back without losing previous input
         self.assertEqual(loaded.accelerate_overrides.get("manual_count"), 4)
+
+
+class WebUIWorkspacePathTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self._tmpdir.name)
+        self.workspace = self.temp_path / "workspace"
+        self._env_patches = patch.dict(
+            os.environ,
+            {
+                "HOME": str(self.temp_path / "home"),
+                "SIMPLETUNER_WORKSPACE": str(self.workspace),
+                "SIMPLETUNER_WEB_UI_CONFIG": "",
+                "SIMPLETUNER_CONFIG_DIR": "",
+                "XDG_HOME": "",
+                "XDG_CONFIG_HOME": "",
+            },
+        )
+        self._env_patches.start()
+
+    def tearDown(self) -> None:
+        self._env_patches.stop()
+        self._tmpdir.cleanup()
+
+    def test_workspace_env_controls_webui_fallback_paths(self) -> None:
+        store = WebUIStateStore()
+        bundle = store.get_defaults_bundle()
+
+        self.assertEqual(store.base_dir, self.workspace / "webui")
+        self.assertEqual(bundle["fallbacks"]["configs_dir"], str(self.workspace / "config"))
+        self.assertEqual(bundle["fallbacks"]["output_dir"], str(self.workspace / "output"))
+        self.assertEqual(bundle["fallbacks"]["datasets_dir"], str(self.workspace / "datasets"))
+
+    def test_workspace_env_controls_cli_webui_state_discovery(self) -> None:
+        defaults_path = self.workspace / "webui" / "defaults.json"
+        defaults_path.parent.mkdir(parents=True)
+        defaults_path.write_text("{}", encoding="utf-8")
+
+        self.assertEqual(_find_webui_state_file("defaults.json"), defaults_path)
+
+    def test_workspace_env_controls_default_config_directory(self) -> None:
+        self.assertEqual(get_config_directory(), self.workspace / "config")
+        self.assertTrue((self.workspace / "config").exists())
 
 
 class WebUIDefaultsUpdateTests(WebUIStateStoreTests):

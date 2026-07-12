@@ -6,6 +6,8 @@ import os
 import warnings
 from pathlib import Path as _Path
 
+os.environ.setdefault("TORCH_BLAS_PREFER_CUBLASLT", "1")
+
 
 def _get_package_dir() -> _Path:
     """Return the path to the simpletuner package directory.
@@ -24,6 +26,7 @@ def _get_package_dir() -> _Path:
         if spec.submodule_search_locations:
             return _Path(spec.submodule_search_locations[0])
     raise RuntimeError("Cannot determine simpletuner package directory")
+
 
 # Suppress SWIG-related deprecation warnings from third-party libraries (faiss, etc.)
 # These warnings are issued during import before we can install custom handlers.
@@ -123,4 +126,4 @@ def _suppress_swigvarlink(message, *args, **kwargs):
 warnings.warn = _suppress_swigvarlink
 
 
-__version__ = "4.3.5"
+__version__ = "4.4.0"

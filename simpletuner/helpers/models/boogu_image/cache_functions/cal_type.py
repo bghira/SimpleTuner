@@ -40,9 +40,7 @@ def cal_type(cache_dic, current):
         cache_dic["cache_counter"] += 1
         current["type"] = "Taylor"
 
-    elif (
-        cache_dic["cache_counter"] % 2 == 1
-    ):  # 0: ToCa-Aggresive-ToCa, 1: Aggresive-ToCa-Aggresive
+    elif cache_dic["cache_counter"] % 2 == 1:  # 0: ToCa-Aggresive-ToCa, 1: Aggresive-ToCa-Aggresive
         cache_dic["cache_counter"] += 1
         current["type"] = "ToCa"
     # 'cache_noise' 'ToCa' 'FORA'

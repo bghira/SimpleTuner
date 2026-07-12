@@ -352,6 +352,20 @@
 }
 ```
 
+##### `sdr` / `logc3_sdr`
+为成对条件数据集生成 SDR/参考条件图像。默认的 `rec709` transform 会对已是 Rec.709 SDR 的输入做归一化和裁剪，与 LTX-2 HDR IC-LoRA 的参考条件路径一致：
+```json
+{
+  "type": "sdr",
+  "conditioning_type": "reference_strict",
+  "transform": "rec709",
+  "input_scale": 1.0,
+  "exposure": 0.0,
+  "captions": false
+}
+```
+当解码后的源值是线性值且需要显示用 SDR 代理图像时，请使用 `transform: "srgb"`。仅在明确需要 LogC3 编码样本时使用 `transform: "logc3"`（或 `logc3_sdr` 别名）。`input_scale` 会在 exposure 前应用，适用于解码后的值需要归一化的情况。此生成器目前仅处理 SimpleTuner 图像后端可以解码的图像样本。
+
 ##### `jpeg_artifacts`
 为伪影去除训练生成 JPEG 压缩伪影：
 ```json
@@ -589,6 +603,13 @@
 ### `only_instance_prompt`
 
 - 除 `prepend_instance_prompt` 外，还会将数据集中所有字幕替换为单一短语或触发词。
+
+### `timestep_sampling_offset`
+
+- 将该数据集的流匹配（flow-matching）时间步采样偏移到更高或更低的噪声水平。作用于默认的 logit-normal（sigmoid）调度。
+- **负值**会使采样偏向低噪声时间步，让训练聚焦于精细细节（如特写或纹理密集的数据）；**正值**会偏向高噪声时间步，聚焦于整体结构（如全身或构图密集的数据）。
+- 该值会加到 sigmoid 前的正态采样上；常用幅度通常在 `-1.0` 到 `1.0` 之间。默认为 `0.0`（无偏置，与原始行为完全一致）。
+- 由于每个 batch 都取自单一数据集，请按语义粒度将图像分到不同数据集，并为每个数据集分别设置 `timestep_sampling_offset`。
 
 ### `repeats`
 

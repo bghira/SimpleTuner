@@ -43,6 +43,7 @@ class SubmissionContext:
     snapshot_message: Optional[str] = None
     upload_id: Optional[str] = None
     idempotency_key: Optional[str] = None
+    hardware_profile: Optional[str] = None
 
     # Quota tracking
     reservation_id: Optional[str] = None
@@ -152,8 +153,9 @@ class JobSubmissionService:
         provider_config = await self.store.get_provider_config(ctx.provider)
         if ctx.provider == "replicate" and hasattr(client, "_version"):
             version_override = provider_config.get("version_override")
-            if version_override:
-                client._version = version_override
+            client._version = version_override or None
+            if not ctx.hardware_profile:
+                ctx.hardware_profile = provider_config.get("hardware_profile")
 
         # Submit to provider
         try:
@@ -165,6 +167,7 @@ class JobSubmissionService:
                 hf_token=hf_token,
                 hub_model_id=hub_model_id,
                 lycoris_config=lycoris_config_data,
+                hardware_profile=ctx.hardware_profile,
             )
             if circuit:
                 await circuit.record_success()
@@ -205,6 +208,8 @@ class JobSubmissionService:
                 unified_job.metadata["snapshot"] = snapshot_metadata
             if ctx.tracker_run_name:
                 unified_job.metadata["tracker_run_name"] = ctx.tracker_run_name
+            if ctx.hardware_profile:
+                unified_job.metadata["hardware_profile"] = ctx.hardware_profile
 
             await self.store.add_job(unified_job)
 
@@ -293,6 +298,8 @@ class JobSubmissionService:
             metadata["snapshot"] = snapshot_metadata
         if ctx.tracker_run_name:
             metadata["tracker_run_name"] = ctx.tracker_run_name
+        if ctx.hardware_profile:
+            metadata["hardware_profile"] = ctx.hardware_profile
 
         job = UnifiedJob(
             job_id=job_id,
@@ -324,6 +331,8 @@ class JobSubmissionService:
             metadata["tracker_run_name"] = ctx.tracker_run_name
         if ctx.upload_id:
             metadata["upload_id"] = ctx.upload_id
+        if ctx.hardware_profile:
+            metadata["hardware_profile"] = ctx.hardware_profile
 
         updates: Dict[str, Any] = {
             "status": cloud_job.status.value,

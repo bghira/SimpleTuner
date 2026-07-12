@@ -249,6 +249,22 @@ describe('cloudUploadStateFactory', () => {
 
             expect(state.preSubmitModal.dataloaderPreview).toEqual([]);
         });
+
+        test('hardwareProfile starts empty when no user preference is stored', () => {
+            const state = window.cloudUploadStateFactory();
+
+            expect(state.preSubmitModal.hardwareProfile).toBe('');
+        });
+
+        test('hardwareProfile reads a stored user preference', () => {
+            localStorageMock.getItem.mockImplementation((key) => (
+                key === 'cloud_replicate_hardware_profile' ? 'l40s-x2' : null
+            ));
+
+            const state = window.cloudUploadStateFactory();
+
+            expect(state.preSubmitModal.hardwareProfile).toBe('l40s-x2');
+        });
     });
 
     describe('webhookCheck state', () => {

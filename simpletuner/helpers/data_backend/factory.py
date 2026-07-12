@@ -417,6 +417,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["probability"] = 1.0
         else:
             output["config"]["probability"] = float(probability)
+    if "timestep_sampling_offset" in backend:
+        timestep_sampling_offset = backend["timestep_sampling_offset"]
+        output["config"]["timestep_sampling_offset"] = float(timestep_sampling_offset) if timestep_sampling_offset else 0.0
     if "ignore_epochs" in backend:
         logger.error("ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration.")
     if "repeats" in backend:
@@ -729,7 +732,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                     f"using '{default_lyrics_format}'. Set audio.lyrics_filename_format to match your naming scheme."
                 )
             output["config"]["audio"] = audio_settings
-    if backend.get("dataset_type", None) == "video":
+    has_video_config = backend.get("dataset_type", None) == "video" or (
+        dataset_type is DatasetType.CONDITIONING and isinstance(backend.get("video"), dict)
+    )
+    if has_video_config:
         output["config"]["video"] = {}
         if "video" in backend:
             output["config"]["video"].update(backend["video"])

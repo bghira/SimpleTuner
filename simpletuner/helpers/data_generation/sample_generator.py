@@ -198,6 +198,126 @@ class SuperResolutionSampleGenerator(SampleGenerator):
         return Image.fromarray(noisy_array)
 
 
+class SDRDownsampleSampleGenerator(SampleGenerator):
+    """
+    Creates SDR/reference conditioning images from decoded image samples.
+
+    The default SDR transform mirrors LTX-2 HDR IC-LoRA reference conditioning:
+    callers provide Rec.709 SDR inputs, then the pipeline normalizes and clamps
+    them. Use the explicit LogC3 transform only when generating LogC3-encoded
+    proxies.
+    """
+
+    A = 5.555556
+    B = 0.052272
+    C = 0.247190
+    D = 0.385537
+    E = 5.367655
+    F = 0.092809
+    CUT = 0.010591
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        params = config.get("params") if isinstance(config.get("params"), dict) else {}
+        options = {**config, **params}
+
+        generator_type = str(options.get("type", "sdr")).lower()
+        default_transform = "logc3" if generator_type == "logc3_sdr" else "rec709"
+        self.transform = str(options.get("transform", default_transform)).lower()
+        if self.transform in {"identity", "ldr"}:
+            self.transform = "rec709"
+        if self.transform not in {"rec709", "logc3", "srgb"}:
+            raise ValueError("SDR conditioning transform must be one of: rec709, logc3, srgb.")
+
+        self.input_scale = float(options.get("input_scale", 1.0))
+        if self.input_scale <= 0:
+            raise ValueError("SDR conditioning input_scale must be greater than 0.")
+
+        self.exposure = float(options.get("exposure", 0.0))
+
+    def transform_batch(
+        self,
+        images: List[Image.Image],
+        source_paths: List[str],
+        metadata_list: List[Dict],
+        accelerator,
+    ) -> List[Image.Image]:
+        transformed_images = []
+
+        for sample, path in zip(images, source_paths):
+            try:
+                values = self._sample_to_float_array(sample)
+                values = values * self.input_scale * (2.0**self.exposure)
+                if self.transform == "logc3":
+                    sdr = self._compress_logc3(values)
+                elif self.transform == "srgb":
+                    sdr = self._linear_to_srgb(values)
+                else:
+                    sdr = self._compress_ldr(values)
+                transformed_images.append(self._array_to_rgb_image(sdr))
+            except Exception as e:
+                logger.error(f"Error creating SDR conditioning image for {path}: {e}")
+                raise
+
+        return transformed_images
+
+    @classmethod
+    def _compress_logc3(cls, hdr: np.ndarray) -> np.ndarray:
+        x = np.clip(hdr.astype(np.float32, copy=False), 0.0, None)
+        log_part = cls.C * np.log10(cls.A * x + cls.B) + cls.D
+        lin_part = cls.E * x + cls.F
+        return np.clip(np.where(x >= cls.CUT, log_part, lin_part), 0.0, 1.0)
+
+    @staticmethod
+    def _compress_ldr(ldr: np.ndarray) -> np.ndarray:
+        return np.clip(ldr.astype(np.float32, copy=False), 0.0, 1.0)
+
+    @staticmethod
+    def _linear_to_srgb(linear: np.ndarray) -> np.ndarray:
+        x = np.clip(linear.astype(np.float32, copy=False), 0.0, 1.0)
+        return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1.0 / 2.4) - 0.055)
+
+    @staticmethod
+    def _sample_to_float_array(sample: Any) -> np.ndarray:
+        if torch.is_tensor(sample):
+            sample = sample.detach().cpu().numpy()
+
+        if isinstance(sample, Image.Image):
+            array = np.asarray(sample)
+        elif isinstance(sample, np.ndarray):
+            array = sample
+        else:
+            raise ValueError(f"Unsupported sample type for SDR conditioning: {type(sample)}")
+
+        if array.ndim == 4:
+            raise ValueError("SDR conditioning generator currently expects image samples, not video arrays.")
+        if array.ndim not in (2, 3):
+            raise ValueError(f"Unsupported array shape for SDR conditioning: {array.shape}")
+
+        if array.ndim == 2:
+            array = np.repeat(array[:, :, np.newaxis], 3, axis=2)
+        elif array.shape[2] == 1:
+            array = np.repeat(array, 3, axis=2)
+        elif array.shape[2] >= 3:
+            array = array[:, :, :3]
+        else:
+            raise ValueError(f"Expected at least one channel for SDR conditioning, got shape {array.shape}")
+
+        if np.issubdtype(array.dtype, np.floating):
+            return array.astype(np.float32, copy=False)
+
+        if np.issubdtype(array.dtype, np.integer):
+            max_value = np.iinfo(array.dtype).max
+            return array.astype(np.float32) / float(max_value)
+
+        raise ValueError(f"Unsupported dtype for SDR conditioning: {array.dtype}")
+
+    @staticmethod
+    def _array_to_rgb_image(array: np.ndarray) -> Image.Image:
+        rgb = (np.clip(array, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+        return Image.fromarray(rgb, mode="RGB")
+
+
 class JPEGArtifactsSampleGenerator(SampleGenerator):
     """
     Creates images with JPEG compression artifacts for artifact removal training.
@@ -1124,6 +1244,10 @@ GENERATOR_REGISTRY: Dict[str, Type[SampleGenerator]] = {
     "superresolution": SuperResolutionSampleGenerator,
     "super_resolution": SuperResolutionSampleGenerator,  # Alias
     "lowres": SuperResolutionSampleGenerator,  # Alias
+    "sdr": SDRDownsampleSampleGenerator,
+    "sdr_downsample": SDRDownsampleSampleGenerator,
+    "logc3_sdr": SDRDownsampleSampleGenerator,
+    "hdr_to_sdr": SDRDownsampleSampleGenerator,
     "jpeg_artifacts": JPEGArtifactsSampleGenerator,
     "jpeg": JPEGArtifactsSampleGenerator,  # Alias
     "compression": JPEGArtifactsSampleGenerator,  # Alias

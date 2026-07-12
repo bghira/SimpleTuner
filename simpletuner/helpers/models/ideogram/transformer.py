@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 
 from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
@@ -281,6 +282,16 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
     """Ideogram 4 flow-matching transformer."""
 
     _supports_gradient_checkpointing = True
+    _cp_plan = {
+        "": {
+            "llm_features": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "x": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "position_ids": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+            "segment_ids": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+            "indicator": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
+        },
+        "final_layer": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
 
     def __init__(self, config: Ideogram4Config) -> None:
         super().__init__()

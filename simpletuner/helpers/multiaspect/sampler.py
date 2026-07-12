@@ -619,12 +619,24 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Given an original dataset sample path, return a TrainingSample
         """
-        # strip leading /
-        original_sample_path = original_sample_path.lstrip("/")
-        if self.metadata_backend.instance_data_dir not in original_sample_path:
-            full_path = os.path.join(self.metadata_backend.instance_data_dir, original_sample_path)
-        else:
+        conditioning_dir = self.metadata_backend.instance_data_dir
+        if os.path.isabs(original_sample_path):
             full_path = original_sample_path
+            conditioning_dir_abs = os.path.abspath(conditioning_dir) if conditioning_dir is not None else None
+            if self.source_dataset_id is not None:
+                source_backend = StateTracker.get_data_backend(self.source_dataset_id)
+                source_dir = source_backend["config"]["instance_data_dir"]
+                source_dir_abs = os.path.abspath(source_dir)
+                if full_path.startswith(source_dir_abs):
+                    full_path = full_path.replace(source_dir_abs, conditioning_dir_abs, 1)
+            if conditioning_dir_abs is not None and not full_path.startswith(conditioning_dir_abs):
+                full_path = os.path.join(conditioning_dir_abs, os.path.basename(full_path))
+        else:
+            sample_path = original_sample_path.lstrip("/")
+            if conditioning_dir not in sample_path:
+                full_path = os.path.join(conditioning_dir, sample_path)
+            else:
+                full_path = sample_path
         try:
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:

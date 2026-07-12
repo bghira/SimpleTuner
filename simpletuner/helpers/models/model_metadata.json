@@ -43,6 +43,16 @@
             "klein-9b"
         ]
     },
+    "krea2": {
+        "class_name": "Krea2",
+        "module_path": "simpletuner.helpers.models.krea2.model",
+        "name": "Krea 2",
+        "prediction_type": "flow_matching",
+        "flavour_choices": [
+            "raw",
+            "turbo"
+        ]
+    },
     "ltxvideo2": {
         "class_name": "LTXVideo2",
         "module_path": "simpletuner.helpers.models.ltxvideo2.model",
