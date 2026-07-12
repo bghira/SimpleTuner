@@ -75,6 +75,12 @@ PYTORCH_DEPENDENCIES = [
     "torchaudio>=2.11.0",
 ]
 
+APPLE_PYTORCH_DEPENDENCIES = [
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "torchaudio>=2.11.0",
+]
+
 TORCHAO_DEPENDENCY = "torchao>=0.17.0,<0.18.0"
 TRANSFORMERENGINE_DEPENDENCY = "transformer_engine[pytorch]>=2.16.0,<2.17.0"
 CUDA13_RUNTIME_DEPENDENCIES = [
@@ -234,7 +240,7 @@ def get_rocm_dependencies():
 
 def get_apple_dependencies():
     return [
-        *PYTORCH_DEPENDENCIES,
+        *APPLE_PYTORCH_DEPENDENCIES,
         TORCHAO_DEPENDENCY,
     ]
 

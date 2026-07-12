@@ -801,6 +801,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         "flash-attn-3-varlen-hub",
         "flash-attn-4-hub",
         "flex",
+        "metal-flash-attention",
+        "metal-flash-attention-int8",
+        "metal-flash-attention-int4",
         "native",
         "cudnn",
         "native-efficient",
@@ -821,7 +824,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             default_value="diffusers",
             choices=[{"value": a, "label": a} for a in attention_mechanisms],
             help_text="Attention computation backend",
-            tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
+            tooltip="Diffusers is default. Xformers, SageAttention, SLA, FlashAttention, and Metal Flash Attention require their matching backend packages.",
             importance=ImportanceLevel.ADVANCED,
             order=10,
         )

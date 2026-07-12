@@ -22,6 +22,7 @@ from simpletuner.helpers.distillation.common import validate_distillation_text_e
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import (
     AttentionBackendMode,
+    get_metal_flash_attention_unavailable_reason,
     is_sageattention_available,
     xformers_compute_capability_error,
 )
@@ -1317,13 +1318,27 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise ValueError("--validation_external_script is required when --validation_method=external-script.")
         args.validation_external_script = str(script_value).strip()
 
-    if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
-        warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
+    attention_mech = getattr(args, "attention_mechanism", "diffusers")
+    normalized_attention_mech = str(attention_mech or "diffusers").strip().lower().replace("_", "-")
+    non_cuda_supported_mechanisms = {
+        "diffusers",
+        "native",
+        "native-math",
+        "native-efficient",
+        "native-flash",
+        "native-npu",
+        "native-xla",
+        "metal-flash-attention",
+    }
+    if normalized_attention_mech not in non_cuda_supported_mechanisms and not torch.cuda.is_available():
+        warning_log(
+            "For non-CUDA systems, only the following attention mechanisms are officially supported: "
+            f"{', '.join(sorted(non_cuda_supported_mechanisms))}."
+        )
 
     if hasattr(args, "sageattention_usage"):
         args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
 
-    attention_mech = getattr(args, "attention_mechanism", "diffusers")
     if attention_mech == "xformers":
         xformers_error = xformers_compute_capability_error()
         if xformers_error:
@@ -1333,6 +1348,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"SageAttention is not installed but --attention_mechanism={attention_mech} was requested. "
             "Install it with: pip install sageattention"
+        )
+
+    if normalized_attention_mech == "metal-flash-attention":
+        metal_unavailable_reason = get_metal_flash_attention_unavailable_reason()
+    else:
+        metal_unavailable_reason = None
+    if metal_unavailable_reason:
+        raise ValueError(
+            "Metal Flash Attention was requested, but the UMFA PyTorch custom-op backend is not installed "
+            f"or is not usable: {metal_unavailable_reason}"
         )
 
     # Disk low space detection validation

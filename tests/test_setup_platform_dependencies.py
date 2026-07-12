@@ -22,16 +22,22 @@ def load_setup_kwargs() -> dict:
 
 
 class SetupPlatformDependencyTests(unittest.TestCase):
-    def test_platform_extras_use_latest_torchao_with_torch_211_floor(self):
+    def test_platform_extras_use_latest_torchao_with_expected_torch_floor(self):
         extras_require = load_setup_kwargs()["extras_require"]
 
-        for extra_name in ("apple", "cuda", "cuda13", "rocm", "cpu"):
+        for extra_name in ("cuda", "cuda13", "rocm", "cpu"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
                 self.assertIn("torch>=2.11.0", dependencies)
                 self.assertIn("torchvision>=0.26.0", dependencies)
                 self.assertIn("torchaudio>=2.11.0", dependencies)
                 self.assertIn("torchao>=0.17.0,<0.18.0", dependencies)
+
+        apple_dependencies = extras_require["apple"]
+        self.assertIn("torch>=2.13.0", apple_dependencies)
+        self.assertIn("torchvision>=0.28.0", apple_dependencies)
+        self.assertIn("torchaudio>=2.11.0", apple_dependencies)
+        self.assertIn("torchao>=0.17.0,<0.18.0", apple_dependencies)
 
     def test_cuda_nightly_extras_use_latest_torchao_range(self):
         extras_require = load_setup_kwargs()["extras_require"]

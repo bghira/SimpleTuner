@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
@@ -20,6 +21,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self._reset_controller()
 
     def _reset_controller(self):
+        AttentionBackendController.restore_default()
         AttentionBackendController._active_backend = None
         AttentionBackendController._active_phase = AttentionPhase.TRAIN
         AttentionBackendController._sla_cache = {}
@@ -31,7 +33,271 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._sla_state_store = {}
         AttentionBackendController._diffusers_backend_context = None
         AttentionBackendController._diffusers_backend_name = None
+        AttentionBackendController._metal_flash_attention_health_checked = set()
         attention_backend_module.get_packed_attention_backend.cache_clear()
+        attention_backend_module.get_metal_flash_attention_unavailable_reason.cache_clear()
+        attention_backend_module._metal_flash_attention_runtime_error.cache_clear()
+        attention_backend_module._metal_quantized_flash_attention_runtime_error.cache_clear()
+
+    def test_metal_flash_attention_availability_false_when_package_missing(self):
+        def fake_import(name):
+            if name == "pytorch_custom_op_ffi":
+                raise ImportError(name)
+            return __import__(name)
+
+        with patch.object(attention_backend_module.importlib, "import_module", side_effect=fake_import):
+            self.assertFalse(attention_backend_module.is_metal_flash_attention_available())
+
+    def test_metal_flash_attention_availability_false_when_runtime_parity_fails(self):
+        package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
+        extension = SimpleNamespace(
+            metal_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query
+        )
+
+        def fake_import(name):
+            if name == "pytorch_custom_op_ffi":
+                return package
+            if name == "metal_sdpa_extension":
+                return extension
+            return __import__(name)
+
+        with (
+            patch.object(attention_backend_module.importlib, "import_module", side_effect=fake_import),
+            patch.object(attention_backend_module, "_metal_flash_attention_runtime_error", return_value="parity failed"),
+        ):
+            self.assertFalse(attention_backend_module.is_metal_flash_attention_available())
+            self.assertIn(
+                "parity failed",
+                attention_backend_module.get_metal_flash_attention_unavailable_reason(),
+            )
+
+    def test_metal_flash_attention_installs_sdpa_wrapper(self):
+        calls = []
+
+        def fake_metal_sdpa(query, key, value, is_causal=False, scale=0.0):
+            calls.append((query, key, value, is_causal, scale))
+            return query + 1
+
+        extension = SimpleNamespace(metal_flash_attention_autograd=fake_metal_sdpa)
+        config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention"})()
+
+        with (
+            patch.object(AttentionBackendController, "_load_metal_flash_attention_extension", return_value=extension),
+            patch.object(AttentionBackendController, "_metal_flash_attention_should_fallback", return_value=False),
+        ):
+            AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+            query = torch.zeros(1, 1, 2, 4)
+            key = torch.zeros_like(query)
+            value = torch.zeros_like(query)
+            output = torch.nn.functional.scaled_dot_product_attention(query, key, value, is_causal=True, scale=0.5)
+
+        self.assertEqual(AttentionBackendController._active_backend, "metal-flash-attention")
+        self.assertTrue(torch.equal(output, torch.ones_like(query)))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0][3])
+        self.assertEqual(calls[0][4], 0.5)
+
+    def test_metal_flash_attention_int8_installs_quantized_wrapper(self):
+        calls = []
+
+        def fake_quantized_sdpa(query, key, value, is_causal=False, scale=0.0, target_precision=0, quant_mode=0):
+            calls.append((query, key, value, is_causal, scale, target_precision, quant_mode))
+            return query + 1
+
+        extension = SimpleNamespace(metal_quantized_flash_attention_autograd=fake_quantized_sdpa)
+        config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention-int8"})()
+
+        with (
+            patch.object(AttentionBackendController, "_load_metal_flash_attention_extension", return_value=extension),
+            patch.object(AttentionBackendController, "_metal_flash_attention_should_fallback", return_value=False),
+        ):
+            AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+            query = torch.zeros(1, 1, 2, 4)
+            key = torch.zeros_like(query)
+            value = torch.zeros_like(query)
+            output = torch.nn.functional.scaled_dot_product_attention(query, key, value, is_causal=True, scale=0.5)
+
+        self.assertEqual(AttentionBackendController._active_backend, "metal-flash-attention-int8")
+        self.assertTrue(torch.equal(output, torch.ones_like(query)))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0][3])
+        self.assertEqual(calls[0][4], 0.5)
+        self.assertEqual(calls[0][5], 3)
+        self.assertEqual(calls[0][6], 2)
+
+    def test_metal_flash_attention_int4_profile_uses_target_precision_4(self):
+        profile = attention_backend_module._METAL_FLASH_ATTENTION_PROFILES["metal-flash-attention-int4"]
+
+        self.assertEqual(profile.target_precision, 4)
+        self.assertEqual(profile.quant_mode, 2)
+
+    def test_metal_flash_attention_wrapper_falls_back_when_unsupported(self):
+        calls = []
+
+        def fake_metal_sdpa(query, key, value, is_causal=False, scale=0.0):
+            calls.append((query, key, value, is_causal, scale))
+            return query + 1
+
+        def fake_original(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False):
+            return query + 2
+
+        extension = SimpleNamespace(metal_flash_attention_autograd=fake_metal_sdpa)
+        config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention"})()
+
+        with (
+            patch.object(AttentionBackendController, "_load_metal_flash_attention_extension", return_value=extension),
+            patch.object(AttentionBackendController, "_metal_flash_attention_should_fallback", return_value=True),
+        ):
+            AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+            query = torch.zeros(1, 1, 2, 4)
+            key = torch.zeros_like(query)
+            value = torch.zeros_like(query)
+            with patch.object(torch.nn.functional, "scaled_dot_product_attention_sdpa", fake_original, create=True):
+                output = torch.nn.functional.scaled_dot_product_attention(query, key, value, dropout_p=0.1)
+
+        self.assertTrue(torch.equal(output, torch.full_like(query, 2)))
+        self.assertEqual(calls, [])
+
+    def test_call_original_sdpa_uses_keyword_only_arguments(self):
+        query = torch.zeros(1, 1, 2, 4)
+
+        output = AttentionBackendController._call_original_sdpa(
+            query,
+            query,
+            query,
+            None,
+            0.0,
+            False,
+            None,
+            False,
+        )
+
+        self.assertEqual(output.shape, query.shape)
+
+    def test_metal_flash_attention_runtime_check_reports_failure(self):
+        result = SimpleNamespace(returncode=1, stdout="extension crashed", stderr="")
+
+        with patch.object(attention_backend_module.subprocess, "run", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "runtime check failed"):
+                AttentionBackendController._check_metal_flash_attention_runtime()
+
+        self.assertEqual(AttentionBackendController._metal_flash_attention_health_checked, set())
+
+    def test_metal_flash_attention_fallback_conditions(self):
+        query = torch.zeros(1, 1, 2, 4)
+
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                None,
+                0.1,
+                False,
+                False,
+            )
+        )
+
+    @unittest.skipUnless(
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available(),
+        "Requires MPS.",
+    )
+    def test_metal_flash_attention_dispatches_only_verified_fp32_mps_shape(self):
+        query = torch.zeros(1, 4, 64, 64, device="mps", dtype=torch.float32)
+        transposed_query = torch.zeros(1, 64, 4, 64, device="mps", dtype=torch.float32).transpose(1, 2)
+        single_head_query = torch.zeros(1, 1, 8, 16, device="mps", dtype=torch.float32)
+        fp16_query = torch.zeros_like(query, dtype=torch.float16)
+        mask = torch.zeros(1, 1, 64, 64, device="mps", dtype=torch.bool)
+        two_dimensional_query = torch.zeros(2, 4, device="mps", dtype=torch.float32)
+
+        self.assertFalse(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertFalse(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                transposed_query,
+                transposed_query,
+                transposed_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                single_head_query,
+                single_head_query,
+                single_head_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                fp16_query,
+                fp16_query,
+                fp16_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                mask,
+                0.0,
+                False,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                query,
+                query,
+                query,
+                None,
+                0.0,
+                True,
+                False,
+            )
+        )
+        self.assertTrue(
+            AttentionBackendController._metal_flash_attention_should_fallback(
+                two_dimensional_query,
+                two_dimensional_query,
+                two_dimensional_query,
+                None,
+                0.0,
+                False,
+                False,
+            )
+        )
 
     def test_save_checkpoint_no_state(self):
         AttentionBackendController._active_backend = "sla"

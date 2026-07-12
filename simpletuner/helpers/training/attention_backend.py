@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import inspect
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -24,6 +26,24 @@ if TYPE_CHECKING:
     from sparse_linear_attention import SparseLinearAttention
 
 logger = get_logger("AttentionBackend")
+
+
+@dataclass(frozen=True)
+class MetalFlashAttentionProfile:
+    target_precision: Optional[int] = None
+    quant_mode: int = 0
+
+
+_METAL_FLASH_ATTENTION_PROFILES = {
+    "metal-flash-attention": MetalFlashAttentionProfile(),
+    "metal-sdpa": MetalFlashAttentionProfile(),
+    "umfa": MetalFlashAttentionProfile(),
+    "universal-metal-flash-attention": MetalFlashAttentionProfile(),
+    "metal-flash-attention-int8": MetalFlashAttentionProfile(target_precision=3, quant_mode=2),
+    "metal-flash-attention-int4": MetalFlashAttentionProfile(target_precision=4, quant_mode=2),
+}
+
+_METAL_FLASH_ATTENTION_ALIASES = set(_METAL_FLASH_ATTENTION_PROFILES)
 
 _DIFFUSERS_BACKEND_TARGETS: Dict[str, str] = {
     "flash": "flash",
@@ -402,6 +422,318 @@ def is_sageattention_available() -> bool:
         return False
 
 
+@lru_cache(maxsize=8)
+def get_metal_flash_attention_unavailable_reason(backend: str = "metal-flash-attention") -> Optional[str]:
+    """Return why the UMFA PyTorch custom-op backend cannot be used, or None when usable."""
+    backend_key = _normalize_backend_key(str(backend or "metal-flash-attention").strip().lower())
+    profile = _METAL_FLASH_ATTENTION_PROFILES.get(backend_key)
+    if profile is None:
+        return f"Unsupported Metal Flash Attention backend '{backend}'."
+    try:
+        package = importlib.import_module("pytorch_custom_op_ffi")
+    except ImportError:
+        return "Could not import the UMFA PyTorch custom-op package."
+    except Exception as exc:
+        return f"Failed to import the UMFA PyTorch custom-op package: {exc}"
+
+    availability_check = getattr(package, "is_metal_sdpa_available", None)
+    if not callable(availability_check):
+        return "The installed UMFA PyTorch package does not expose is_metal_sdpa_available()."
+
+    try:
+        if not availability_check():
+            return "UMFA Metal SDPA is installed but not available on this host."
+    except Exception as exc:
+        return f"Failed to query UMFA Metal SDPA availability: {exc}"
+
+    try:
+        extension = importlib.import_module("metal_sdpa_extension")
+    except ImportError:
+        return "Could not import metal_sdpa_extension from the UMFA PyTorch custom-op package."
+    except Exception as exc:
+        return f"Failed to import metal_sdpa_extension from the UMFA PyTorch custom-op package: {exc}"
+
+    if profile.target_precision is None:
+        if not callable(getattr(extension, "metal_flash_attention_autograd", None)):
+            return "metal_sdpa_extension does not expose metal_flash_attention_autograd()."
+        return _metal_flash_attention_runtime_error()
+
+    if not callable(getattr(extension, "metal_quantized_flash_attention_autograd", None)):
+        return "metal_sdpa_extension does not expose metal_quantized_flash_attention_autograd()."
+
+    return _metal_quantized_flash_attention_runtime_error(profile.target_precision, profile.quant_mode)
+
+
+def is_metal_flash_attention_available(backend: str = "metal-flash-attention") -> bool:
+    """Check if the UMFA PyTorch custom-op backend can run correctly on this host."""
+    return get_metal_flash_attention_unavailable_reason(backend) is None
+
+
+@lru_cache(maxsize=1)
+def _metal_flash_attention_runtime_error() -> Optional[str]:
+    script = """
+import math
+import torch
+import metal_sdpa_extension
+
+if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
+    raise SystemExit("MPS is not available")
+
+
+def reference_attention_cpu(query, key, value, scale=None):
+    if scale is None:
+        scale = 1.0 / math.sqrt(query.shape[-1])
+    scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+    probs = torch.softmax(scores, dim=-1)
+    return torch.matmul(probs, value)
+
+
+def reference_attention(query, key, value, scale=None):
+    query = query.detach().cpu().float()
+    key = key.detach().cpu().float()
+    value = value.detach().cpu().float()
+    return reference_attention_cpu(query, key, value, scale)
+
+
+def reference_attention_grads(query, key, value):
+    ref_query = query.detach().cpu().float().requires_grad_(True)
+    ref_key = key.detach().cpu().float().requires_grad_(True)
+    ref_value = value.detach().cpu().float().requires_grad_(True)
+    ref_output = reference_attention_cpu(ref_query, ref_key, ref_value)
+    ref_loss = ref_output.square().mean()
+    ref_loss.backward()
+    return ref_query.grad, ref_key.grad, ref_value.grad
+
+
+def check(shape, rtol, atol, transposed=False, queued_producer=False):
+    torch.manual_seed(42)
+    if transposed:
+        batch, heads, seq, dim = shape
+        query = torch.randn((batch, seq, heads, dim), dtype=torch.float32, device="mps").transpose(1, 2)
+        key = torch.randn((batch, seq, heads, dim), dtype=torch.float32, device="mps").transpose(1, 2)
+        value = torch.randn((batch, seq, heads, dim), dtype=torch.float32, device="mps").transpose(1, 2)
+    else:
+        query = torch.randn(shape, dtype=torch.float32, device="mps")
+        key = torch.randn(shape, dtype=torch.float32, device="mps")
+        value = torch.randn(shape, dtype=torch.float32, device="mps")
+
+    if queued_producer:
+        query = query.mul(1.0)
+        key = key.mul(1.0)
+        value = value.mul(1.0)
+    else:
+        torch.mps.synchronize()
+        expected = reference_attention(query, key, value)
+
+    observed = metal_sdpa_extension.metal_flash_attention_autograd(
+        query,
+        key,
+        value,
+        False,
+        0.0,
+    )
+    torch.mps.synchronize()
+    if queued_producer:
+        expected = reference_attention(query, key, value)
+
+    if observed.shape != query.shape:
+        raise SystemExit(f"Unexpected output shape for {shape}: {tuple(observed.shape)}")
+    if observed.dtype != expected.dtype:
+        raise SystemExit(f"Unexpected output dtype for {shape}: {observed.dtype}")
+    if not torch.isfinite(observed).all().item():
+        raise SystemExit(f"UMFA Metal SDPA produced non-finite values for {shape}")
+
+    expected_cpu = expected.float()
+    observed_cpu = observed.float().cpu()
+    if not torch.allclose(observed_cpu, expected_cpu, rtol=rtol, atol=atol):
+        diff = (observed_cpu - expected_cpu).abs()
+        raise SystemExit(
+            "UMFA Metal SDPA parity failed for "
+            f"shape={shape} dtype=torch.float32: "
+            f"max_abs={diff.max().item():.6g}, mean_abs={diff.mean().item():.6g}"
+        )
+
+
+def check_autograd(shape, rtol, atol):
+    torch.manual_seed(43)
+    query = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=True)
+    key = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=True)
+    value = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=True)
+    torch.mps.synchronize()
+    expected_grads = reference_attention_grads(query, key, value)
+
+    observed = metal_sdpa_extension.metal_flash_attention_autograd(
+        query,
+        key,
+        value,
+        False,
+        0.0,
+    )
+    torch.mps.synchronize()
+
+    if not observed.requires_grad or observed.grad_fn is None:
+        raise SystemExit("UMFA Metal SDPA output is detached; autograd is required for training.")
+
+    loss = observed.square().mean()
+    loss.backward()
+    torch.mps.synchronize()
+
+    for name, tensor, expected in (
+        ("query", query, expected_grads[0]),
+        ("key", key, expected_grads[1]),
+        ("value", value, expected_grads[2]),
+    ):
+        if tensor.grad is None:
+            raise SystemExit(f"UMFA Metal SDPA did not produce a {name} gradient.")
+        if not torch.isfinite(tensor.grad).all().item():
+            raise SystemExit(f"UMFA Metal SDPA produced non-finite {name} gradients.")
+        observed_grad = tensor.grad.detach().cpu().float()
+        if not torch.allclose(observed_grad, expected, rtol=rtol, atol=atol):
+            diff = (observed_grad - expected).abs()
+            raise SystemExit(
+                "UMFA Metal SDPA gradient parity failed for "
+                f"shape={shape} tensor={name}: "
+                f"max_abs={diff.max().item():.6g}, mean_abs={diff.mean().item():.6g}"
+            )
+
+
+check((1, 4, 64, 64), 1e-4, 1e-4)
+check_autograd((1, 4, 64, 64), 1e-3, 1e-3)
+check((1, 24, 512, 128), 1e-4, 1e-4)
+check((1, 24, 512, 128), 1e-4, 1e-4, transposed=True)
+check((1, 24, 512, 128), 1e-4, 1e-4, queued_producer=True)
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "UMFA Metal SDPA runtime check timed out."
+
+    if result.returncode == 0:
+        return None
+
+    detail = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    message = "UMFA Metal SDPA runtime check failed."
+    if detail:
+        message = f"{message}\n{detail[-2000:]}"
+    return message
+
+
+@lru_cache(maxsize=4)
+def _metal_quantized_flash_attention_runtime_error(target_precision: int, quant_mode: int) -> Optional[str]:
+    script = f"""
+import torch
+import torch.nn.functional as F
+import metal_sdpa_extension
+
+TARGET_PRECISION = {target_precision}
+QUANT_MODE = {quant_mode}
+OUTPUT_ATOL = 0.05 if TARGET_PRECISION == 3 else 0.5
+
+if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
+    raise SystemExit("MPS is not available")
+
+selected_impl = getattr(metal_sdpa_extension, "metal_quantized_flash_attention_autograd", None)
+if not callable(selected_impl):
+    raise SystemExit("metal_sdpa_extension does not expose metal_quantized_flash_attention_autograd().")
+
+
+def check(seed, heads):
+    torch.manual_seed(seed)
+    shape = (1, heads, 64, 32)
+    query_base = torch.randn(shape, dtype=torch.float32, device="mps") * 0.05
+    key_base = torch.randn(shape, dtype=torch.float32, device="mps") * 0.05
+    value_base = torch.randn(shape, dtype=torch.float32, device="mps") * 0.05
+
+    query_ref = query_base.detach().clone().requires_grad_(True)
+    key_ref = key_base.detach().clone().requires_grad_(True)
+    value_ref = value_base.detach().clone().requires_grad_(True)
+    query = query_base.detach().clone().requires_grad_(True)
+    key = key_base.detach().clone().requires_grad_(True)
+    value = value_base.detach().clone().requires_grad_(True)
+
+    expected = F.scaled_dot_product_attention(
+        query_ref,
+        key_ref,
+        value_ref,
+        dropout_p=0.0,
+        is_causal=False,
+    )
+    observed = selected_impl(
+        query,
+        key,
+        value,
+        False,
+        0.0,
+        TARGET_PRECISION,
+        QUANT_MODE,
+    )
+    torch.mps.synchronize()
+
+    if observed.shape != query.shape:
+        raise SystemExit("Unexpected quantized UMFA output shape: " + str(tuple(observed.shape)))
+    if observed.dtype != torch.float32:
+        raise SystemExit("Unexpected quantized UMFA output dtype: " + str(observed.dtype))
+    if not observed.requires_grad or observed.grad_fn is None:
+        raise SystemExit("Quantized UMFA output is detached; autograd is required for training.")
+    if not torch.isfinite(observed).all().item():
+        raise SystemExit("Quantized UMFA produced non-finite output values.")
+
+    output_diff = (observed.detach() - expected.detach()).abs().max().item()
+    if output_diff > OUTPUT_ATOL:
+        raise SystemExit(
+            "Quantized UMFA output drift is too high: "
+            + "target_precision="
+            + str(TARGET_PRECISION)
+            + " heads="
+            + str(heads)
+            + " seed="
+            + str(seed)
+            + " max_abs="
+            + str(output_diff)
+        )
+
+    loss = observed.square().mean()
+    loss.backward()
+    torch.mps.synchronize()
+
+    for name, tensor in (("query", query), ("key", key), ("value", value)):
+        if tensor.grad is None:
+            raise SystemExit("Quantized UMFA did not produce a " + name + " gradient.")
+        if not torch.isfinite(tensor.grad).all().item():
+            raise SystemExit("Quantized UMFA produced non-finite " + name + " gradients.")
+
+
+for heads in (4, 8):
+    for seed in range(8):
+        check(seed, heads)
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "Quantized UMFA Metal SDPA runtime check timed out."
+
+    if result.returncode == 0:
+        return None
+
+    detail = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    message = "Quantized UMFA Metal SDPA runtime check failed."
+    if detail:
+        message = f"{message}\n{detail[-2000:]}"
+    return message
+
+
 def xformers_compute_capability_error() -> Optional[str]:
     """Return an error message if xformers is unsupported on the current GPU, else None.
 
@@ -435,6 +767,7 @@ class AttentionBackendController:
     _sla_state_filename: str = "sla_attention.pt"
     _diffusers_backend_context = None
     _diffusers_backend_name: Optional[str] = None
+    _metal_flash_attention_health_checked: set[str] = set()
 
     @classmethod
     def apply(cls, config, phase: AttentionPhase) -> None:
@@ -457,6 +790,10 @@ class AttentionBackendController:
 
         if cls._is_sageattention_backend(backend):
             cls._configure_sageattention(config, backend, phase)
+            return
+
+        if cls._is_metal_flash_attention_backend(backend_alias):
+            cls._enable_metal_flash_attention(backend_alias)
             return
 
         if backend == "sla":
@@ -489,7 +826,16 @@ class AttentionBackendController:
     def _call_original_sdpa(cls, query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa):
         functional = torch.nn.functional
         original = getattr(functional, "scaled_dot_product_attention_sdpa", functional.scaled_dot_product_attention)
-        return original(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
+        return original(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            scale=scale,
+            enable_gqa=enable_gqa,
+        )
 
     @staticmethod
     def _normalize_backend_key(value: str) -> str:
@@ -501,6 +847,164 @@ class AttentionBackendController:
             return None
         normalized = cls._normalize_backend_key(backend)
         return _DIFFUSERS_BACKEND_ALIASES.get(normalized)
+
+    @classmethod
+    def _load_metal_flash_attention_extension(cls, backend: str = "metal-flash-attention"):
+        backend_key = _normalize_backend_key(str(backend or "metal-flash-attention").strip().lower())
+        profile = _METAL_FLASH_ATTENTION_PROFILES.get(backend_key)
+        if profile is None:
+            message = f"Unsupported Metal Flash Attention backend '{backend}'."
+            logger.error(message)
+            raise RuntimeError(message)
+        try:
+            package = importlib.import_module("pytorch_custom_op_ffi")
+        except ImportError as exc:
+            message = (
+                "Could not import the UMFA PyTorch custom-op package. " f"Install it to use --attention_mechanism={backend}."
+            )
+            logger.error(message)
+            raise RuntimeError(message) from exc
+
+        availability_check = getattr(package, "is_metal_sdpa_available", None)
+        if not callable(availability_check):
+            message = "The installed UMFA PyTorch package does not expose is_metal_sdpa_available()."
+            logger.error(message)
+            raise RuntimeError(message)
+
+        try:
+            available = bool(availability_check())
+        except Exception as exc:
+            message = f"Failed to query UMFA Metal SDPA availability: {exc}"
+            logger.error(message)
+            raise RuntimeError(message) from exc
+
+        if not available:
+            message = "UMFA Metal SDPA is installed but not available on this host."
+            logger.error(message)
+            raise RuntimeError(message)
+
+        try:
+            extension = importlib.import_module("metal_sdpa_extension")
+        except ImportError as exc:
+            message = "Could not import metal_sdpa_extension from the UMFA PyTorch custom-op package."
+            logger.error(message)
+            raise RuntimeError(message) from exc
+
+        selected_impl_name = (
+            "metal_flash_attention_autograd"
+            if profile.target_precision is None
+            else "metal_quantized_flash_attention_autograd"
+        )
+        selected_impl = getattr(extension, selected_impl_name, None)
+        if not callable(selected_impl):
+            message = f"metal_sdpa_extension does not expose {selected_impl_name}()."
+            logger.error(message)
+            raise RuntimeError(message)
+
+        cls._check_metal_flash_attention_runtime(backend)
+        return extension
+
+    @classmethod
+    def _check_metal_flash_attention_runtime(cls, backend: str = "metal-flash-attention") -> None:
+        backend_key = _normalize_backend_key(str(backend or "metal-flash-attention").strip().lower())
+        if backend_key in cls._metal_flash_attention_health_checked:
+            return
+
+        profile = _METAL_FLASH_ATTENTION_PROFILES.get(backend_key, MetalFlashAttentionProfile())
+        if profile.target_precision is None:
+            runtime_error = _metal_flash_attention_runtime_error()
+        else:
+            runtime_error = _metal_quantized_flash_attention_runtime_error(profile.target_precision, profile.quant_mode)
+        if runtime_error:
+            logger.error(runtime_error)
+            raise RuntimeError(runtime_error)
+
+        cls._metal_flash_attention_health_checked.add(backend_key)
+
+    @staticmethod
+    def _is_metal_flash_attention_backend(backend: str) -> bool:
+        return backend in _METAL_FLASH_ATTENTION_ALIASES
+
+    @classmethod
+    def _enable_metal_flash_attention(cls, backend: str) -> None:
+        if cls._active_backend == backend:
+            return
+
+        cls._disable_diffusers_backend()
+        profile = _METAL_FLASH_ATTENTION_PROFILES.get(backend, MetalFlashAttentionProfile())
+        extension = cls._load_metal_flash_attention_extension(backend)
+        if profile.target_precision is None:
+            selected_impl = extension.metal_flash_attention_autograd
+        else:
+            selected_impl = extension.metal_quantized_flash_attention_autograd
+        cls._store_sdpa_reference()
+
+        def wrapper(
+            query,
+            key,
+            value,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=None,
+            enable_gqa=False,
+        ):
+            if cls._metal_flash_attention_should_fallback(query, key, value, attn_mask, dropout_p, is_causal, enable_gqa):
+                return cls._call_original_sdpa(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
+
+            try:
+                if profile.target_precision is None:
+                    return selected_impl(
+                        query,
+                        key,
+                        value,
+                        is_causal,
+                        0.0 if scale is None else scale,
+                    )
+                return selected_impl(
+                    query,
+                    key,
+                    value,
+                    is_causal,
+                    0.0 if scale is None else scale,
+                    profile.target_precision,
+                    profile.quant_mode,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Could not run Metal Flash Attention (%s). Falling back to PyTorch SDPA.",
+                    exc,
+                )
+                return cls._call_original_sdpa(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
+
+        torch.nn.functional.scaled_dot_product_attention = wrapper
+        if not hasattr(torch.nn.functional, "scaled_dot_product_attention_metal_flash"):
+            setattr(torch.nn.functional, "scaled_dot_product_attention_metal_flash", wrapper)
+        cls._active_backend = backend
+
+    @staticmethod
+    def _metal_flash_attention_should_fallback(query, key, value, attn_mask, dropout_p, is_causal, enable_gqa) -> bool:
+        if dropout_p not in (0, 0.0, None):
+            return True
+        if is_causal:
+            return True
+        if enable_gqa:
+            return True
+        if not all(isinstance(tensor, torch.Tensor) for tensor in (query, key, value)):
+            return True
+        if query.device.type != "mps" or key.device.type != "mps" or value.device.type != "mps":
+            return True
+        if query.ndim != 4:
+            return True
+        if query.shape[1] < 4 or query.shape[2] < 64:
+            return True
+        if query.dtype != torch.float32:
+            return True
+        if key.dtype != query.dtype or value.dtype != query.dtype:
+            return True
+        if attn_mask is not None:
+            return True
+        return False
 
     @classmethod
     def _enable_diffusers_backend(cls, backend_key: str, backend_enum: AttentionBackendName) -> None:

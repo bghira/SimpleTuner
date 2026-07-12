@@ -20,6 +20,78 @@ class _TrainerPageMixin:
     def _trainer_page(self, driver):
         return TrainerPage(driver, base_url=self.base_url)
 
+    def _show_configured_cloud_dashboard(self, driver, *, load_jobs: bool = False) -> list[str]:
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "return !!(el && window.Alpine && window.Alpine.$data && window.Alpine.$data(el));"
+            )
+        )
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script(
+                "const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));"
+                "return comp && comp.providersLoading === false;"
+            )
+        )
+        driver.execute_script(
+            """
+            const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));
+            comp.providers = [{ id: 'replicate', name: 'Replicate', configured: true }];
+            comp.isActiveProviderConfigured = () => true;
+            comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate', configured: true });
+            comp.activeProvider = 'replicate';
+            comp.onboarding = {
+                data_understood: true,
+                results_understood: true,
+                cost_understood: true,
+            };
+            comp.hints = { dataloader_dismissed: false, git_dismissed: true };
+            comp.webhookUrl = '';
+            comp.savedWebhookUrl = '';
+            comp.publishingStatus = {
+                loading: false,
+                hf_configured: false,
+                hf_token_valid: false,
+                hf_username: null,
+                hub_model_id: null,
+                push_to_hub: false,
+                s3_configured: false,
+                local_upload_available: false,
+                local_upload_dir: null,
+                message: null,
+            };
+            """,
+        )
+
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script(
+                "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
+            )
+        )
+        if not load_jobs:
+            return []
+
+        result = driver.execute_async_script(
+            """
+            const done = arguments[0];
+            const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));
+            if (!comp || typeof comp.loadJobs !== 'function') {
+                done({ error: 'Cloud jobs loader is not available' });
+                return;
+            }
+            Promise.resolve(comp.loadJobs())
+                .then(() => done({
+                    names: (comp.jobs || []).map((job) => job.metadata?.tracker_run_name || null),
+                }))
+                .catch((error) => done({ error: String(error) }));
+            """
+        )
+        if not isinstance(result, dict):
+            raise AssertionError(f"Unexpected Cloud jobs loader result: {result!r}")
+        if result.get("error"):
+            raise AssertionError(result["error"])
+        return result.get("names") or []
+
 
 class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test basic configuration and save flow."""
@@ -1655,6 +1727,37 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_dataset_wizard_name_step_enables_next_after_typing", scenario)
 
 
+class CloudTabVisibilityTestCase(_TrainerPageMixin, WebUITestCase):
+    """Ensure the Cloud tab default matches UI Settings."""
+
+    MAX_BROWSERS = 1
+
+    def test_cloud_tab_visible_when_default_setting_omitted(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            cloud_tab = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".tab-btn[data-tab='cloud']"))
+            )
+            self.assertTrue(cloud_tab.is_displayed())
+
+            settings_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='ui_settings']"))
+            )
+            settings_tab.click()
+            trainer_page.wait_for_tab("ui_settings")
+
+            checkbox = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ui-cloud-tab-enabled")))
+            self.assertTrue(checkbox.is_selected())
+
+        self.for_each_browser("test_cloud_tab_visible_when_default_setting_omitted", scenario)
+
+
 class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
     """Test cloud upload progress wiring for SSE updates."""
 
@@ -1973,22 +2076,26 @@ class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
 
         from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
         from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import get_default_config_dir
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
 
         async def _seed() -> None:
-            config_dir = self.home_path / ".simpletuner"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            store = await AsyncJobStore.get_instance(config_dir=config_dir)
-            job = UnifiedJob(
-                job_id=job_id,
-                job_type=JobType.CLOUD,
-                provider="replicate",
-                status=status,
-                config_name="test-config",
-                created_at=datetime.now(timezone.utc).isoformat(),
-                error_message=error_message,
-                metadata={"tracker_run_name": run_name},
-            )
-            await store.add_job(job)
+            for config_dir in {self.home_path / ".simpletuner", self.config_dir, get_default_config_dir()}:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                await AsyncJobStore.reset_instance()
+                JobRepository.reset_instance()
+                store = await AsyncJobStore.get_instance(config_dir=config_dir)
+                job = UnifiedJob(
+                    job_id=job_id,
+                    job_type=JobType.CLOUD,
+                    provider="replicate",
+                    status=status,
+                    config_name="test-config",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    error_message=error_message,
+                    metadata={"tracker_run_name": run_name},
+                )
+                await store.add_job(job)
 
         import asyncio
 
@@ -2021,11 +2128,9 @@ class CloudUploadStatusTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
             trainer_page.wait_for_htmx()
 
-            WebDriverWait(driver, 15).until(
-                lambda d: d.execute_script(
-                    "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
-                )
-            )
+            loaded_job_names = self._show_configured_cloud_dashboard(driver, load_jobs=True)
+            self.assertIn("Upload Smoke", loaded_job_names)
+            self.assertIn("Upload Failed", loaded_job_names)
 
             WebDriverWait(driver, 10).until(
                 lambda d: d.execute_script(
@@ -2078,11 +2183,7 @@ class CloudWebhookDraftInputTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
             trainer_page.wait_for_htmx()
 
-            WebDriverWait(driver, 15).until(
-                lambda d: d.execute_script(
-                    "const el = document.querySelector('.cloud-dashboard');" "return el && el.offsetParent !== null;"
-                )
-            )
+            self._show_configured_cloud_dashboard(driver)
 
             input_selector = ".cloud-setup-checklist .webhook-setup input[type='url']"
             webhook_input = WebDriverWait(driver, 10).until(
