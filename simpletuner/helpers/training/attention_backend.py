@@ -448,6 +448,8 @@ def get_metal_flash_attention_unavailable_reason(backend: str = "metal-flash-att
         extension = importlib.import_module("metal_sdpa_extension")
     except ImportError:
         return "Could not import metal_sdpa_extension from the UMFA PyTorch custom-op package."
+    except Exception as exc:
+        return f"Failed to import metal_sdpa_extension from the UMFA PyTorch custom-op package: {exc}"
 
     if profile.target_precision is None:
         if not callable(getattr(extension, "metal_flash_attention_autograd", None)):
