@@ -433,6 +433,8 @@ def get_metal_flash_attention_unavailable_reason(backend: str = "metal-flash-att
         package = importlib.import_module("pytorch_custom_op_ffi")
     except ImportError:
         return "Could not import the UMFA PyTorch custom-op package."
+    except Exception as exc:
+        return f"Failed to import the UMFA PyTorch custom-op package: {exc}"
 
     availability_check = getattr(package, "is_metal_sdpa_available", None)
     if not callable(availability_check):
