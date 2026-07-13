@@ -7,9 +7,9 @@
 - Apple Silicon with MPS available.
 - Xcode command line tools with the Metal toolchain.
 - SimpleTuner installed with the Apple dependency set. The Apple extra requires PyTorch `>=2.13.0`.
-- A UMFA build that exposes `metal_flash_attention_autograd`. Older forward-only builds are rejected by SimpleTuner.
+- A UMFA build that exposes `metal_flash_attention_autograd`, registers the PyTorch `MPS` dispatch key, and exposes `clear_quantization_mode`. The quantized aliases also require `metal_quantized_flash_attention_autograd`, `set_quantization_mode`, `QUANT_INT8`, `QUANT_INT4`, and `QUANT_BLOCK_WISE`.
 
-SimpleTuner only dispatches UMFA for MPS FP32 4D attention calls with at least four heads and sequence length at least 64. FP16/BF16, masked, causal, grouped-query, tiny, 2D, and non-MPS calls fall back to PyTorch SDPA.
+SimpleTuner direct-dispatches UMFA for unmasked MPS FP32 4D attention calls with at least four heads and sequence length at least 64. Other calls go through PyTorch SDPA. With a current UMFA build, PyTorch's MPS SDPA dispatcher is registered by UMFA, so quantized masked calls can still reach UMFA through the dispatcher; older builds that registered `PrivateUse1` instead of `MPS` will silently use native PyTorch SDPA.
 
 ## Build And Install UMFA
 
@@ -87,7 +87,24 @@ Quantized aliases are also available:
 - `metal-flash-attention-int8`
 - `metal-flash-attention-int4`
 
-These call UMFA's `metal_quantized_flash_attention_autograd` with blockwise quantization (`quant_mode=2`). SimpleTuner runs an additional startup check that verifies attached autograd outputs and finite multi-head gradients before enabling either alias.
+These set UMFA's global quantization mode with blockwise quantization (`quant_mode=2`) and use the quantized autograd entry point for direct-dispatched calls:
+
+- `metal-flash-attention-int8`: `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)`
+- `metal-flash-attention-int4`: `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`
+
+SimpleTuner clears that mode when switching back to FP32 UMFA or another attention backend. It also runs an additional startup check that verifies attached autograd outputs, finite multi-head gradients, dispatcher-level masked SDPA, and no PyTorch fallback before enabling either alias.
+
+The quantized dispatcher supports bool masks (`True` means attend), additive float masks, batched masks such as `[B, H, S_q, S_kv]`, and broadcast masks such as `[B, 1, 1, S_kv]`. All-true bool masks are detected and skipped as a fast path.
+
+To verify that the MPS dispatcher is taking the expected path during a run, inspect UMFA's dispatch counters:
+
+```python
+import metal_sdpa_extension as ext
+
+print(ext.get_dispatch_stats())
+```
+
+For Z-Image training, `quantized_autograd` should increase while `pytorch_fallback` stays at `0`. If the `encoder_attention_mask` is all true, `mask_all_true_skipped` should increase too.
 
 ## FLUX Sequence Lengths
 
@@ -154,5 +171,5 @@ With `vae_enable_tiling=true`, the 2048px VAE cache completed and the UMFA run c
 
 - `metal_flash_attention_autograd` is missing: rebuild UMFA from a version with autograd support and reinstall the FFI package.
 - `available False`: read `get_metal_flash_attention_unavailable_reason()`; SimpleTuner reports the exact failed import, availability, forward parity, or autograd parity check.
-- Training silently falls back: verify tensors are MPS FP32 4D BHSD with at least four heads and sequence length at least 64, and that `dropout_p=0`, `is_causal=False`, no mask, and no GQA are used.
+- Training silently falls back: verify tensors are MPS FP32 4D BHSD with at least four heads and sequence length at least 64, and that `dropout_p=0`, `is_causal=False`, and no GQA are used. For masked quantized paths, verify the UMFA build registers the PyTorch `MPS` dispatch key and exposes `get_dispatch_stats()`; builds registered only on `PrivateUse1` will be bypassed by `torch.device("mps")` tensors.
 - 2048px FLUX fails before attention: this is likely VAE cache memory pressure, not UMFA attention memory. Enable `vae_enable_tiling=true` or generate/reuse latents with a lower-memory cache workflow before treating attention as the blocker.

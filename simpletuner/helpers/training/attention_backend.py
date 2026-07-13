@@ -32,6 +32,8 @@ logger = get_logger("AttentionBackend")
 class MetalFlashAttentionProfile:
     target_precision: Optional[int] = None
     quant_mode: int = 0
+    target_precision_constant: Optional[str] = None
+    quant_mode_constant: Optional[str] = None
 
 
 _METAL_FLASH_ATTENTION_PROFILES = {
@@ -39,11 +41,42 @@ _METAL_FLASH_ATTENTION_PROFILES = {
     "metal-sdpa": MetalFlashAttentionProfile(),
     "umfa": MetalFlashAttentionProfile(),
     "universal-metal-flash-attention": MetalFlashAttentionProfile(),
-    "metal-flash-attention-int8": MetalFlashAttentionProfile(target_precision=3, quant_mode=2),
-    "metal-flash-attention-int4": MetalFlashAttentionProfile(target_precision=4, quant_mode=2),
+    "metal-flash-attention-int8": MetalFlashAttentionProfile(
+        target_precision=3,
+        quant_mode=2,
+        target_precision_constant="QUANT_INT8",
+        quant_mode_constant="QUANT_BLOCK_WISE",
+    ),
+    "metal-flash-attention-int4": MetalFlashAttentionProfile(
+        target_precision=4,
+        quant_mode=2,
+        target_precision_constant="QUANT_INT4",
+        quant_mode_constant="QUANT_BLOCK_WISE",
+    ),
 }
 
 _METAL_FLASH_ATTENTION_ALIASES = set(_METAL_FLASH_ATTENTION_PROFILES)
+
+
+def _resolve_metal_flash_attention_constant(extension, constant_name: str) -> int:
+    value = getattr(extension, constant_name, None)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RuntimeError(f"metal_sdpa_extension does not expose integer constant {constant_name}.")
+    return value
+
+
+def _resolve_metal_flash_attention_profile_values(
+    extension,
+    profile: MetalFlashAttentionProfile,
+) -> tuple[Optional[int], int]:
+    target_precision = profile.target_precision
+    quant_mode = profile.quant_mode
+    if profile.target_precision_constant is not None:
+        target_precision = _resolve_metal_flash_attention_constant(extension, profile.target_precision_constant)
+    if profile.quant_mode_constant is not None:
+        quant_mode = _resolve_metal_flash_attention_constant(extension, profile.quant_mode_constant)
+    return target_precision, quant_mode
+
 
 _DIFFUSERS_BACKEND_TARGETS: Dict[str, str] = {
     "flash": "flash",
@@ -456,12 +489,24 @@ def get_metal_flash_attention_unavailable_reason(backend: str = "metal-flash-att
     if profile.target_precision is None:
         if not callable(getattr(extension, "metal_flash_attention_autograd", None)):
             return "metal_sdpa_extension does not expose metal_flash_attention_autograd()."
+        if not callable(getattr(extension, "clear_quantization_mode", None)):
+            return "metal_sdpa_extension does not expose clear_quantization_mode()."
         return _metal_flash_attention_runtime_error()
 
     if not callable(getattr(extension, "metal_quantized_flash_attention_autograd", None)):
         return "metal_sdpa_extension does not expose metal_quantized_flash_attention_autograd()."
+    if not callable(getattr(extension, "clear_quantization_mode", None)):
+        return "metal_sdpa_extension does not expose clear_quantization_mode()."
+    if not callable(getattr(extension, "set_quantization_mode", None)):
+        return "metal_sdpa_extension does not expose set_quantization_mode()."
+    try:
+        target_precision, quant_mode = _resolve_metal_flash_attention_profile_values(extension, profile)
+    except RuntimeError as exc:
+        return str(exc)
+    if not callable(getattr(extension, "get_dispatch_stats", None)):
+        return "metal_sdpa_extension does not expose get_dispatch_stats()."
 
-    return _metal_quantized_flash_attention_runtime_error(profile.target_precision, profile.quant_mode)
+    return _metal_quantized_flash_attention_runtime_error(target_precision, quant_mode)
 
 
 def is_metal_flash_attention_available(backend: str = "metal-flash-attention") -> bool:
@@ -602,6 +647,8 @@ check_autograd((1, 4, 64, 64), 1e-3, 1e-3)
 check((1, 24, 512, 128), 1e-4, 1e-4)
 check((1, 24, 512, 128), 1e-4, 1e-4, transposed=True)
 check((1, 24, 512, 128), 1e-4, 1e-4, queued_producer=True)
+check((1, 4, 512, 128), 1e-4, 1e-4)
+check((1, 4, 1024, 128), 1e-4, 1e-4)
 """
     try:
         result = subprocess.run(
@@ -641,6 +688,13 @@ if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
 selected_impl = getattr(metal_sdpa_extension, "metal_quantized_flash_attention_autograd", None)
 if not callable(selected_impl):
     raise SystemExit("metal_sdpa_extension does not expose metal_quantized_flash_attention_autograd().")
+if not callable(getattr(metal_sdpa_extension, "set_quantization_mode", None)):
+    raise SystemExit("metal_sdpa_extension does not expose set_quantization_mode().")
+if not callable(getattr(metal_sdpa_extension, "clear_quantization_mode", None)):
+    raise SystemExit("metal_sdpa_extension does not expose clear_quantization_mode().")
+get_dispatch_stats = getattr(metal_sdpa_extension, "get_dispatch_stats", None)
+if not callable(get_dispatch_stats):
+    raise SystemExit("metal_sdpa_extension does not expose get_dispatch_stats().")
 
 
 def check(seed, heads):
@@ -712,6 +766,108 @@ def check(seed, heads):
 for heads in (4, 8):
     for seed in range(8):
         check(seed, heads)
+
+
+def check_shape_growth_cache():
+    torch.manual_seed(123)
+    for seq_len in (512, 1024):
+        shape = (1, 4, seq_len, 128)
+        query = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
+        key = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
+        value = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
+        torch.mps.synchronize()
+        observed = selected_impl(
+            query,
+            key,
+            value,
+            False,
+            0.0,
+            TARGET_PRECISION,
+            QUANT_MODE,
+        )
+        torch.mps.synchronize()
+        observed_std = observed.float().std().item()
+        if not torch.isfinite(observed).all().item():
+            raise SystemExit("Quantized UMFA shape-growth check produced non-finite values.")
+        if seq_len == 1024 and observed_std > 0.1:
+            raise SystemExit(
+                "Quantized UMFA shape-growth check failed after a 512-token warmup: "
+                + "target_precision="
+                + str(TARGET_PRECISION)
+                + " quant_mode="
+                + str(QUANT_MODE)
+                + " observed_std="
+                + str(observed_std)
+            )
+
+
+check_shape_growth_cache()
+
+
+def check_dispatch_mask(seed, mask, expect_all_true_skip):
+    torch.manual_seed(seed)
+    shape = (1, 4, 64, 32)
+    query = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.05).requires_grad_(True)
+    key = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.05).requires_grad_(True)
+    value = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.05).requires_grad_(True)
+    before = dict(get_dispatch_stats())
+
+    observed = F.scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        attn_mask=mask,
+        dropout_p=0.0,
+        is_causal=False,
+    )
+    observed.square().mean().backward()
+    torch.mps.synchronize()
+    after = dict(get_dispatch_stats())
+
+    if after.get("quantized_autograd", 0) <= before.get("quantized_autograd", 0):
+        raise SystemExit(
+            "Quantized UMFA dispatcher was not used for masked SDPA. "
+            + "before="
+            + str(before)
+            + " after="
+            + str(after)
+        )
+    if after.get("pytorch_fallback", 0) > before.get("pytorch_fallback", 0):
+        raise SystemExit(
+            "Quantized UMFA dispatcher fell back to PyTorch for masked SDPA. "
+            + "before="
+            + str(before)
+            + " after="
+            + str(after)
+        )
+    if expect_all_true_skip and after.get("mask_all_true_skipped", 0) <= before.get("mask_all_true_skipped", 0):
+        raise SystemExit(
+            "Quantized UMFA dispatcher did not skip an all-true bool mask. "
+            + "before="
+            + str(before)
+            + " after="
+            + str(after)
+        )
+    for name, grad in (("query", query.grad), ("key", key.grad), ("value", value.grad)):
+        if grad is None or not torch.isfinite(grad).all().item():
+            raise SystemExit("Quantized UMFA masked dispatcher produced invalid gradient for " + name)
+
+
+metal_sdpa_extension.clear_quantization_mode()
+try:
+    metal_sdpa_extension.set_quantization_mode(TARGET_PRECISION, QUANT_MODE)
+    all_true_bool_mask = torch.ones((1, 1, 1, 64), dtype=torch.bool, device="mps")
+    check_dispatch_mask(303, all_true_bool_mask, expect_all_true_skip=True)
+
+    partial_bool_mask = torch.ones((1, 1, 1, 64), dtype=torch.bool, device="mps")
+    partial_bool_mask[..., -1] = False
+    check_dispatch_mask(404, partial_bool_mask, expect_all_true_skip=False)
+
+    additive_float_mask = torch.zeros((1, 1, 1, 64), dtype=torch.float32, device="mps")
+    additive_float_mask[..., -1] = float("-inf")
+    check_dispatch_mask(505, additive_float_mask, expect_all_true_skip=False)
+finally:
+    metal_sdpa_extension.clear_quantization_mode()
 """
     try:
         result = subprocess.run(
@@ -767,6 +923,7 @@ class AttentionBackendController:
     _sla_state_filename: str = "sla_attention.pt"
     _diffusers_backend_context = None
     _diffusers_backend_name: Optional[str] = None
+    _metal_flash_attention_extension: Optional[Any] = None
     _metal_flash_attention_health_checked: set[str] = set()
 
     @classmethod
@@ -789,6 +946,7 @@ class AttentionBackendController:
             raise RuntimeError(message)
 
         if cls._is_sageattention_backend(backend):
+            cls._clear_metal_flash_attention_quantization_mode()
             cls._configure_sageattention(config, backend, phase)
             return
 
@@ -797,11 +955,13 @@ class AttentionBackendController:
             return
 
         if backend == "sla":
+            cls._clear_metal_flash_attention_quantization_mode()
             cls._enable_sla(config, phase)
             return
 
         diffusers_backend = cls._resolve_diffusers_backend(backend_alias)
         if diffusers_backend is not None:
+            cls._clear_metal_flash_attention_quantization_mode()
             cls._enable_diffusers_backend(backend_alias, diffusers_backend)
             return
 
@@ -810,6 +970,8 @@ class AttentionBackendController:
     @classmethod
     def restore_default(cls) -> None:
         cls._disable_diffusers_backend()
+        cls._clear_metal_flash_attention_quantization_mode()
+        cls._metal_flash_attention_extension = None
         functional = torch.nn.functional
         if hasattr(functional, "scaled_dot_product_attention_sdpa"):
             functional.scaled_dot_product_attention = functional.scaled_dot_product_attention_sdpa
@@ -901,11 +1063,56 @@ class AttentionBackendController:
             logger.error(message)
             raise RuntimeError(message)
 
-        cls._check_metal_flash_attention_runtime(backend)
+        if not callable(getattr(extension, "clear_quantization_mode", None)):
+            message = "metal_sdpa_extension does not expose clear_quantization_mode()."
+            logger.error(message)
+            raise RuntimeError(message)
+
+        if profile.target_precision is not None:
+            if not callable(getattr(extension, "set_quantization_mode", None)):
+                message = "metal_sdpa_extension does not expose set_quantization_mode()."
+                logger.error(message)
+                raise RuntimeError(message)
+            _resolve_metal_flash_attention_profile_values(extension, profile)
+            if not callable(getattr(extension, "get_dispatch_stats", None)):
+                message = "metal_sdpa_extension does not expose get_dispatch_stats()."
+                logger.error(message)
+                raise RuntimeError(message)
+
+        cls._check_metal_flash_attention_runtime(backend, extension)
+        cls._metal_flash_attention_extension = extension
         return extension
 
     @classmethod
-    def _check_metal_flash_attention_runtime(cls, backend: str = "metal-flash-attention") -> None:
+    def _clear_metal_flash_attention_quantization_mode(cls) -> None:
+        extension = cls._metal_flash_attention_extension
+        if extension is None:
+            extension = sys.modules.get("metal_sdpa_extension")
+        clear_quantization_mode = getattr(extension, "clear_quantization_mode", None)
+        if callable(clear_quantization_mode):
+            clear_quantization_mode()
+
+    @classmethod
+    def _configure_metal_flash_attention_quantization_mode(
+        cls,
+        extension,
+        profile: MetalFlashAttentionProfile,
+    ) -> tuple[Optional[int], int]:
+        if profile.target_precision is None:
+            cls._clear_metal_flash_attention_quantization_mode()
+            return None, profile.quant_mode
+
+        set_quantization_mode = getattr(extension, "set_quantization_mode", None)
+        if not callable(set_quantization_mode):
+            message = "metal_sdpa_extension does not expose set_quantization_mode()."
+            logger.error(message)
+            raise RuntimeError(message)
+        target_precision, quant_mode = _resolve_metal_flash_attention_profile_values(extension, profile)
+        set_quantization_mode(target_precision, quant_mode)
+        return target_precision, quant_mode
+
+    @classmethod
+    def _check_metal_flash_attention_runtime(cls, backend: str = "metal-flash-attention", extension=None) -> None:
         backend_key = _normalize_backend_key(str(backend or "metal-flash-attention").strip().lower())
         if backend_key in cls._metal_flash_attention_health_checked:
             return
@@ -914,7 +1121,15 @@ class AttentionBackendController:
         if profile.target_precision is None:
             runtime_error = _metal_flash_attention_runtime_error()
         else:
-            runtime_error = _metal_quantized_flash_attention_runtime_error(profile.target_precision, profile.quant_mode)
+            if extension is None:
+                try:
+                    extension = importlib.import_module("metal_sdpa_extension")
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Could not import metal_sdpa_extension from the UMFA PyTorch custom-op package."
+                    ) from exc
+            target_precision, quant_mode = _resolve_metal_flash_attention_profile_values(extension, profile)
+            runtime_error = _metal_quantized_flash_attention_runtime_error(target_precision, quant_mode)
         if runtime_error:
             logger.error(runtime_error)
             raise RuntimeError(runtime_error)
@@ -933,6 +1148,8 @@ class AttentionBackendController:
         cls._disable_diffusers_backend()
         profile = _METAL_FLASH_ATTENTION_PROFILES.get(backend, MetalFlashAttentionProfile())
         extension = cls._load_metal_flash_attention_extension(backend)
+        cls._metal_flash_attention_extension = extension
+        target_precision, quant_mode = cls._configure_metal_flash_attention_quantization_mode(extension, profile)
         if profile.target_precision is None:
             selected_impl = extension.metal_flash_attention_autograd
         else:
@@ -967,8 +1184,8 @@ class AttentionBackendController:
                     value,
                     is_causal,
                     0.0 if scale is None else scale,
-                    profile.target_precision,
-                    profile.quant_mode,
+                    target_precision,
+                    quant_mode,
                 )
             except Exception as exc:
                 logger.error(

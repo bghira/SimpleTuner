@@ -7,9 +7,9 @@
 - Apple Silicon with MPS available.
 - Xcode command line tools with Metal toolchain.
 - SimpleTuner Apple dependency set के साथ installed हो। Apple extra PyTorch `>=2.13.0` require करता है।
-- UMFA build में `metal_flash_attention_autograd` expose होना चाहिए। पुराने forward-only builds SimpleTuner reject करता है।
+- UMFA build में `metal_flash_attention_autograd` expose होना चाहिए, PyTorch `MPS` dispatch key register होनी चाहिए, और `clear_quantization_mode` expose होना चाहिए। Quantized aliases के लिए `metal_quantized_flash_attention_autograd`, `set_quantization_mode`, `QUANT_INT8`, `QUANT_INT4`, और `QUANT_BLOCK_WISE` भी चाहिए।
 
-SimpleTuner केवल MPS FP32 4D attention calls को UMFA पर dispatch करता है जब कम से कम चार heads हों और sequence length 64 या अधिक हो। FP16/BF16, masked, causal, grouped-query, tiny, 2D, और non-MPS calls PyTorch SDPA पर fallback होते हैं।
+SimpleTuner कम से कम चार heads और sequence length 64 या अधिक वाले unmasked MPS FP32 4D attention calls को UMFA पर direct-dispatch करता है। बाकी calls PyTorch SDPA से गुजरते हैं। Current UMFA build में PyTorch का MPS SDPA dispatcher UMFA से register होता है, इसलिए quantized masked calls भी dispatcher के through UMFA तक पहुंच सकते हैं; पुराने builds जो `MPS` के बजाय `PrivateUse1` पर register थे, `torch.device("mps")` tensors से silently bypass होते हैं।
 
 ## UMFA Build Aur Install
 
@@ -87,7 +87,24 @@ Quantized aliases भी उपलब्ध हैं:
 - `metal-flash-attention-int8`
 - `metal-flash-attention-int4`
 
-ये UMFA के `metal_quantized_flash_attention_autograd` को blockwise quantization (`quant_mode=2`) के साथ call करते हैं। SimpleTuner किसी भी alias को enable करने से पहले autograd से जुड़े outputs और finite multi-head gradients verify करने वाला अतिरिक्त startup check चलाता है।
+ये blockwise quantization (`quant_mode=2`) के साथ UMFA का global quantization mode set करते हैं और direct-dispatched calls के लिए quantized autograd entry point use करते हैं:
+
+- `metal-flash-attention-int8`: `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)`
+- `metal-flash-attention-int4`: `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`
+
+FP32 UMFA या किसी और attention backend पर लौटते समय SimpleTuner इस mode को clear करता है। SimpleTuner किसी भी alias को enable करने से पहले autograd से जुड़े outputs, finite multi-head gradients, dispatcher-level masked SDPA, और no PyTorch fallback verify करने वाला अतिरिक्त startup check भी चलाता है।
+
+Quantized dispatcher bool masks (`True` मतलब attend), additive float masks, `[B, H, S_q, S_kv]` batched masks, और `[B, 1, 1, S_kv]` जैसे broadcast masks support करता है। All-true bool masks detect होकर fast path में skip होते हैं।
+
+Run के दौरान MPS dispatcher expected path ले रहा है या नहीं, यह verify करने के लिए UMFA dispatch counters देखें:
+
+```python
+import metal_sdpa_extension as ext
+
+print(ext.get_dispatch_stats())
+```
+
+Z-Image training में `quantized_autograd` बढ़ना चाहिए, जबकि `pytorch_fallback` `0` रहना चाहिए। अगर `encoder_attention_mask` all-true है, तो `mask_all_true_skipped` भी बढ़ना चाहिए।
 
 ## FLUX Sequence Lengths
 
@@ -154,5 +171,5 @@ MPS backend out of memory (MPS allocated: 20.48 GiB, other allocations: 146.27 G
 
 - `metal_flash_attention_autograd` missing: autograd support वाली UMFA rebuild करें और FFI package reinstall करें।
 - `available False`: `get_metal_flash_attention_unavailable_reason()` पढ़ें।
-- Unexpected fallback: MPS FP32 4D BHSD tensors, heads >= 4, sequence length >= 64, `dropout_p=0`, `is_causal=False`, no mask, no GQA verify करें।
+- Unexpected fallback: MPS FP32 4D BHSD tensors, heads >= 4, sequence length >= 64, `dropout_p=0`, `is_causal=False`, और no GQA verify करें। Quantized masked paths के लिए confirm करें कि UMFA build PyTorch `MPS` dispatch key register करता है और `get_dispatch_stats()` expose करता है; सिर्फ `PrivateUse1` पर registered builds `torch.device("mps")` tensors से bypass होते हैं।
 - 2048px attention से पहले fail: यह likely VAE cache memory pressure है, UMFA attention memory नहीं। `vae_enable_tiling=true` enable करें या lower-memory cache workflow से latents generate/reuse करें।

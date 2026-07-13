@@ -7,9 +7,9 @@
 - Apple Silicon con MPS disponible.
 - Xcode command line tools con toolchain Metal.
 - SimpleTuner instalado con dependencias Apple. El extra Apple requiere PyTorch `>=2.13.0`.
-- Un build UMFA que exponga `metal_flash_attention_autograd`. Builds antiguos solo-forward son rechazados por SimpleTuner.
+- Un build UMFA que exponga `metal_flash_attention_autograd`, registre la dispatch key PyTorch `MPS` y exponga `clear_quantization_mode`. Los aliases cuantizados tambien requieren `metal_quantized_flash_attention_autograd`, `set_quantization_mode`, `QUANT_INT8`, `QUANT_INT4` y `QUANT_BLOCK_WISE`.
 
-SimpleTuner solo despacha a UMFA llamadas MPS FP32 4D con al menos cuatro heads y sequence length 64 o mayor. FP16/BF16, masked, causal, grouped-query, tiny, 2D y llamadas no-MPS vuelven a PyTorch SDPA.
+SimpleTuner despacha directamente a UMFA llamadas MPS FP32 4D sin mask con al menos cuatro heads y sequence length 64 o mayor. Otras llamadas pasan por PyTorch SDPA. Con un build UMFA actual, UMFA registra el dispatcher MPS SDPA de PyTorch, asi que llamadas quantized con mask todavia pueden llegar a UMFA por el dispatcher; builds antiguos registrados en `PrivateUse1` en vez de `MPS` son ignorados silenciosamente por tensores `torch.device("mps")`.
 
 ## Compilar E Instalar UMFA
 
@@ -87,7 +87,24 @@ Tambien hay aliases cuantizados:
 - `metal-flash-attention-int8`
 - `metal-flash-attention-int4`
 
-Estos llaman `metal_quantized_flash_attention_autograd` de UMFA con cuantizacion blockwise (`quant_mode=2`). SimpleTuner ejecuta un check inicial adicional que verifica salidas conectadas a autograd y gradientes multi-head finitos antes de habilitar cualquiera de los aliases.
+Estos configuran el modo global de cuantizacion de UMFA con cuantizacion blockwise (`quant_mode=2`) y usan la entrada autograd cuantizada para llamadas despachadas directamente:
+
+- `metal-flash-attention-int8`: `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)`
+- `metal-flash-attention-int4`: `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`
+
+SimpleTuner limpia ese modo al volver a UMFA FP32 u otro backend de atencion. Tambien ejecuta un check inicial adicional que verifica salidas conectadas a autograd, gradientes multi-head finitos, SDPA masked en el dispatcher y ausencia de fallback PyTorch antes de habilitar cualquiera de los aliases.
+
+El dispatcher quantized soporta bool masks (`True` significa attend), additive float masks, masks batched como `[B, H, S_q, S_kv]` y masks broadcast como `[B, 1, 1, S_kv]`. Bool masks all-true se detectan y se omiten como fast path.
+
+Para verificar que el dispatcher MPS usa la ruta esperada durante una ejecucion, inspecciona los contadores de dispatch de UMFA:
+
+```python
+import metal_sdpa_extension as ext
+
+print(ext.get_dispatch_stats())
+```
+
+En training Z-Image, `quantized_autograd` deberia aumentar mientras `pytorch_fallback` queda en `0`. Si `encoder_attention_mask` es all-true, `mask_all_true_skipped` tambien deberia aumentar.
 
 ## Sequence Lengths De FLUX
 
@@ -154,5 +171,5 @@ Con `vae_enable_tiling=true`, la cache VAE 2048px completo y UMFA completo el pa
 
 - Falta `metal_flash_attention_autograd`: recompila UMFA con soporte autograd y reinstala el paquete FFI.
 - `available False`: lee `get_metal_flash_attention_unavailable_reason()`.
-- Fallback inesperado: verifica tensores MPS FP32 4D BHSD, cuatro heads o mas, sequence length 64 o mas, `dropout_p=0`, `is_causal=False`, sin mask y sin GQA.
+- Fallback inesperado: verifica tensores MPS FP32 4D BHSD, cuatro heads o mas, sequence length 64 o mas, `dropout_p=0`, `is_causal=False` y sin GQA. Para rutas quantized con mask, confirma que el build UMFA registra la dispatch key PyTorch `MPS` y expone `get_dispatch_stats()`; builds registrados solo en `PrivateUse1` son bypassed por tensores `torch.device("mps")`.
 - 2048px falla antes de atencion: probablemente es presion de memoria de cache VAE, no memoria de UMFA. Activa `vae_enable_tiling=true` o genera/reusa latentes con un cache workflow de menor memoria.

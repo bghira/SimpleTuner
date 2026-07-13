@@ -7,9 +7,9 @@
 - MPS が使える Apple Silicon。
 - Metal toolchain を含む Xcode command line tools。
 - Apple dependency set で SimpleTuner をインストールしていること。Apple extra は PyTorch `>=2.13.0` を要求します。
-- `metal_flash_attention_autograd` を公開する UMFA build。古い forward-only build は SimpleTuner が拒否します。
+- `metal_flash_attention_autograd` を公開し、PyTorch `MPS` dispatch key を登録し、`clear_quantization_mode` を公開する UMFA build。quantized aliases ではさらに `metal_quantized_flash_attention_autograd`、`set_quantization_mode`、`QUANT_INT8`、`QUANT_INT4`、`QUANT_BLOCK_WISE` が必要です。
 
-SimpleTuner は、MPS FP32 4D attention call のうち、heads が 4 以上で sequence length が 64 以上のものだけを UMFA に dispatch します。FP16/BF16、mask 付き、causal、grouped-query、tiny、2D、non-MPS call は PyTorch SDPA に fallback します。
+SimpleTuner は、heads が 4 以上で sequence length が 64 以上の unmasked MPS FP32 4D attention call を UMFA に直接 dispatch します。それ以外の call は PyTorch SDPA を通ります。現在の UMFA build では PyTorch の MPS SDPA dispatcher が UMFA に登録されるため、quantized mask 付き call も dispatcher 経由で UMFA に到達できます。`MPS` ではなく `PrivateUse1` だけに登録された古い build は、`torch.device("mps")` tensors から静かに bypass されます。
 
 ## UMFA Build And Install
 
@@ -87,7 +87,24 @@ Quantized aliases も利用できます:
 - `metal-flash-attention-int8`
 - `metal-flash-attention-int4`
 
-これらは UMFA の `metal_quantized_flash_attention_autograd` を blockwise quantization (`quant_mode=2`) で呼び出します。SimpleTuner は、どちらの alias も有効化する前に、autograd に接続された出力と有限の multi-head gradients を確認する追加の起動時チェックを実行します。
+これらは blockwise quantization (`quant_mode=2`) で UMFA の global quantization mode を設定し、直接 dispatch される call では quantized autograd entry point を使います:
+
+- `metal-flash-attention-int8`: `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)`
+- `metal-flash-attention-int4`: `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`
+
+FP32 UMFA または別の attention backend に戻すとき、SimpleTuner はこの mode を clear します。SimpleTuner は、どちらの alias も有効化する前に、autograd に接続された出力、有限の multi-head gradients、dispatcher-level masked SDPA、PyTorch fallback なしを確認する追加の起動時チェックも実行します。
+
+Quantized dispatcher は bool masks（`True` が attend）、additive float masks、`[B, H, S_q, S_kv]` batched masks、`[B, 1, 1, S_kv]` のような broadcast masks をサポートします。All-true bool masks は検出され、fast path として skip されます。
+
+実行中に MPS dispatcher が期待した path を使っているか確認するには、UMFA の dispatch counters を見ます:
+
+```python
+import metal_sdpa_extension as ext
+
+print(ext.get_dispatch_stats())
+```
+
+Z-Image training では、`quantized_autograd` が増え、`pytorch_fallback` は `0` のままになるはずです。`encoder_attention_mask` が all-true の場合は、`mask_all_true_skipped` も増えます。
 
 ## FLUX Sequence Lengths
 
@@ -154,5 +171,5 @@ MPS backend out of memory (MPS allocated: 20.48 GiB, other allocations: 146.27 G
 
 - `metal_flash_attention_autograd` がない: autograd support 付き UMFA を rebuild して FFI package を reinstall します。
 - `available False`: `get_metal_flash_attention_unavailable_reason()` を確認します。
-- 予期しない fallback: MPS FP32 4D BHSD tensors、heads >= 4、sequence length >= 64、`dropout_p=0`、`is_causal=False`、mask なし、GQA なしを確認します。
+- 予期しない fallback: MPS FP32 4D BHSD tensors、heads >= 4、sequence length >= 64、`dropout_p=0`、`is_causal=False`、GQA なしを確認します。quantized mask 付き path では、UMFA build が PyTorch `MPS` dispatch key を登録し、`get_dispatch_stats()` を公開していることを確認してください。`PrivateUse1` のみに登録された build は `torch.device("mps")` tensors から bypass されます。
 - 2048px が attention 前に fail する: UMFA attention memory ではなく VAE cache memory pressure の可能性が高いです。`vae_enable_tiling=true` を有効にするか、より低メモリの cache workflow で latents を生成または再利用してください。

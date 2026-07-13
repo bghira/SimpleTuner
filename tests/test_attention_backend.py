@@ -33,6 +33,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._sla_state_store = {}
         AttentionBackendController._diffusers_backend_context = None
         AttentionBackendController._diffusers_backend_name = None
+        AttentionBackendController._metal_flash_attention_extension = None
         AttentionBackendController._metal_flash_attention_health_checked = set()
         attention_backend_module.get_packed_attention_backend.cache_clear()
         attention_backend_module.get_metal_flash_attention_unavailable_reason.cache_clear()
@@ -51,7 +52,8 @@ class TestAttentionBackendPersistence(unittest.TestCase):
     def test_metal_flash_attention_availability_false_when_runtime_parity_fails(self):
         package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
         extension = SimpleNamespace(
-            metal_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query
+            metal_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query,
+            clear_quantization_mode=lambda: None,
         )
 
         def fake_import(name):
@@ -71,14 +73,85 @@ class TestAttentionBackendPersistence(unittest.TestCase):
                 attention_backend_module.get_metal_flash_attention_unavailable_reason(),
             )
 
+    def test_metal_flash_attention_int8_requires_quantization_mode_controls(self):
+        package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
+        extension = SimpleNamespace(
+            metal_quantized_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query,
+            clear_quantization_mode=lambda: None,
+        )
+
+        def fake_import(name):
+            if name == "pytorch_custom_op_ffi":
+                return package
+            if name == "metal_sdpa_extension":
+                return extension
+            return __import__(name)
+
+        with patch.object(attention_backend_module.importlib, "import_module", side_effect=fake_import):
+            self.assertFalse(attention_backend_module.is_metal_flash_attention_available("metal-flash-attention-int8"))
+            self.assertIn(
+                "set_quantization_mode",
+                attention_backend_module.get_metal_flash_attention_unavailable_reason("metal-flash-attention-int8"),
+            )
+
+    def test_metal_flash_attention_int8_requires_quantization_constants(self):
+        package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
+        extension = SimpleNamespace(
+            metal_quantized_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query,
+            clear_quantization_mode=lambda: None,
+            set_quantization_mode=lambda precision, mode: None,
+        )
+
+        def fake_import(name):
+            if name == "pytorch_custom_op_ffi":
+                return package
+            if name == "metal_sdpa_extension":
+                return extension
+            return __import__(name)
+
+        with patch.object(attention_backend_module.importlib, "import_module", side_effect=fake_import):
+            self.assertFalse(attention_backend_module.is_metal_flash_attention_available("metal-flash-attention-int8"))
+            self.assertIn(
+                "QUANT_INT8",
+                attention_backend_module.get_metal_flash_attention_unavailable_reason("metal-flash-attention-int8"),
+            )
+
+    def test_metal_flash_attention_int8_requires_dispatch_stats(self):
+        package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
+        extension = SimpleNamespace(
+            metal_quantized_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query,
+            clear_quantization_mode=lambda: None,
+            set_quantization_mode=lambda precision, mode: None,
+            QUANT_INT8=3,
+            QUANT_BLOCK_WISE=2,
+        )
+
+        def fake_import(name):
+            if name == "pytorch_custom_op_ffi":
+                return package
+            if name == "metal_sdpa_extension":
+                return extension
+            return __import__(name)
+
+        with patch.object(attention_backend_module.importlib, "import_module", side_effect=fake_import):
+            self.assertFalse(attention_backend_module.is_metal_flash_attention_available("metal-flash-attention-int8"))
+            self.assertIn(
+                "get_dispatch_stats",
+                attention_backend_module.get_metal_flash_attention_unavailable_reason("metal-flash-attention-int8"),
+            )
+
     def test_metal_flash_attention_installs_sdpa_wrapper(self):
         calls = []
+        quantization_mode_calls = []
 
         def fake_metal_sdpa(query, key, value, is_causal=False, scale=0.0):
             calls.append((query, key, value, is_causal, scale))
             return query + 1
 
-        extension = SimpleNamespace(metal_flash_attention_autograd=fake_metal_sdpa)
+        extension = SimpleNamespace(
+            metal_flash_attention_autograd=fake_metal_sdpa,
+            clear_quantization_mode=lambda: quantization_mode_calls.append("clear"),
+        )
         config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention"})()
 
         with (
@@ -96,15 +169,23 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0][3])
         self.assertEqual(calls[0][4], 0.5)
+        self.assertEqual(quantization_mode_calls, ["clear"])
 
     def test_metal_flash_attention_int8_installs_quantized_wrapper(self):
         calls = []
+        quantization_mode_calls = []
 
         def fake_quantized_sdpa(query, key, value, is_causal=False, scale=0.0, target_precision=0, quant_mode=0):
             calls.append((query, key, value, is_causal, scale, target_precision, quant_mode))
             return query + 1
 
-        extension = SimpleNamespace(metal_quantized_flash_attention_autograd=fake_quantized_sdpa)
+        extension = SimpleNamespace(
+            metal_quantized_flash_attention_autograd=fake_quantized_sdpa,
+            set_quantization_mode=lambda precision, mode: quantization_mode_calls.append((precision, mode)),
+            clear_quantization_mode=lambda: quantization_mode_calls.append("clear"),
+            QUANT_INT8=30,
+            QUANT_BLOCK_WISE=20,
+        )
         config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention-int8"})()
 
         with (
@@ -122,14 +203,42 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0][3])
         self.assertEqual(calls[0][4], 0.5)
-        self.assertEqual(calls[0][5], 3)
-        self.assertEqual(calls[0][6], 2)
+        self.assertEqual(calls[0][5], 30)
+        self.assertEqual(calls[0][6], 20)
+        self.assertEqual(quantization_mode_calls, [(30, 20)])
+
+    def test_restore_default_clears_metal_flash_attention_quantization_mode(self):
+        quantization_mode_calls = []
+
+        def fake_quantized_sdpa(query, key, value, is_causal=False, scale=0.0, target_precision=0, quant_mode=0):
+            return query
+
+        extension = SimpleNamespace(
+            metal_quantized_flash_attention_autograd=fake_quantized_sdpa,
+            set_quantization_mode=lambda precision, mode: quantization_mode_calls.append((precision, mode)),
+            clear_quantization_mode=lambda: quantization_mode_calls.append("clear"),
+            QUANT_INT8=3,
+            QUANT_BLOCK_WISE=2,
+        )
+        config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention-int8"})()
+
+        with (
+            patch.object(AttentionBackendController, "_load_metal_flash_attention_extension", return_value=extension),
+            patch.object(AttentionBackendController, "_metal_flash_attention_should_fallback", return_value=False),
+        ):
+            AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+            AttentionBackendController.restore_default()
+
+        self.assertEqual(quantization_mode_calls, [(3, 2), "clear"])
+        self.assertIsNone(AttentionBackendController._metal_flash_attention_extension)
 
     def test_metal_flash_attention_int4_profile_uses_target_precision_4(self):
         profile = attention_backend_module._METAL_FLASH_ATTENTION_PROFILES["metal-flash-attention-int4"]
 
         self.assertEqual(profile.target_precision, 4)
         self.assertEqual(profile.quant_mode, 2)
+        self.assertEqual(profile.target_precision_constant, "QUANT_INT4")
+        self.assertEqual(profile.quant_mode_constant, "QUANT_BLOCK_WISE")
 
     def test_metal_flash_attention_wrapper_falls_back_when_unsupported(self):
         calls = []
