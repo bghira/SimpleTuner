@@ -1,6 +1,6 @@
 # Metal Flash Attention
 
-`metal-flash-attention` は、Apple Silicon の対象 MPS SDPA 呼び出しを Universal Metal Flash Attention (UMFA) PyTorch FFI extension に送ります。これは experimental で、現時点では PyTorch SDPA が多くの memory を使う、または long sequence length で MPSGraph limit に当たる FLUX-style FP32 training path 向けです。
+`metal-flash-attention` は、Apple Silicon の対象 MPS SDPA 呼び出しを Universal Metal Flash Attention (UMFA) PyTorch FFI extension に送ります。これは experimental で、現時点では PyTorch SDPA が多くの memory を使う、または long sequence length で MPSGraph limit に当たる FLUX-style FP32/FP16/BF16 path 向けです。
 
 ## Requirements
 
@@ -9,7 +9,7 @@
 - Apple dependency set で SimpleTuner をインストールしていること。Apple extra は PyTorch `>=2.13.0` を要求します。
 - `metal_flash_attention_autograd` を公開し、PyTorch `MPS` dispatch key を登録し、`clear_quantization_mode` を公開する UMFA build。quantized aliases ではさらに `metal_quantized_flash_attention_autograd`、`set_quantization_mode`、`QUANT_INT8`、`QUANT_INT4`、`QUANT_BLOCK_WISE` が必要です。
 
-SimpleTuner は、heads が 4 以上で sequence length が 64 以上の unmasked MPS FP32 4D attention call を UMFA に直接 dispatch します。それ以外の call は PyTorch SDPA を通ります。現在の UMFA build では PyTorch の MPS SDPA dispatcher が UMFA に登録されるため、quantized mask 付き call も dispatcher 経由で UMFA に到達できます。`MPS` ではなく `PrivateUse1` だけに登録された古い build は、`torch.device("mps")` tensors から静かに bypass されます。
+SimpleTuner は PyTorch の MPS SDPA dispatcher 経由でアテンションをルーティングし、現行の UMFA build はこの dispatcher を登録します。対象となるのは MPS FP32/FP16/BF16 の 4D アテンション呼び出しで、head 数は任意（single-head も動作）、sequence length も任意です。transposed な FLUX スタイルの layout、最大 4D の bool/additive mask、causal 呼び出しも含まれます。対象の呼び出しは PyTorch の MPS command stream に直接エンコードされ、呼び出しごとの同期はなく、FP16/BF16 入力が FP32 に昇格されることもありません。causal トレーニングも対象です — causal backward は厳密な勾配パリティを通過しています。dropout または `enable_gqa` を伴う呼び出しは PyTorch SDPA にフォールバックします。`MPS` ではなく `PrivateUse1` に登録された古い UMFA build は、ネイティブの PyTorch SDPA が静かに使われます。
 
 ## UMFA Build And Install
 
@@ -74,13 +74,11 @@ attention mechanism を設定します:
 
 ```json
 {
-  "attention_mechanism": "metal-flash-attention",
-  "mixed_precision": "no",
-  "base_model_default_dtype": "fp32"
+  "attention_mechanism": "metal-flash-attention"
 }
 ```
 
-現在の integration では `mixed_precision=no` と FP32 default が重要です。SimpleTuner は BF16/FP16 attention を UMFA に送らず fallback します。
+FP32・FP16・BF16 のアテンションはすべてネイティブに動作します。FP16/BF16 入力は低精度カーネルを使い（BF16 の softmax は FP32 で累積）、出力は入力 dtype で生成されるため、`mixed_precision: bf16` はどこでも FP32 を強制せずに機能します。dropout と `enable_gqa` は引き続きフォールバックします。
 
 Quantized aliases も利用できます:
 
@@ -94,7 +92,7 @@ Quantized aliases も利用できます:
 
 FP32 UMFA または別の attention backend に戻すとき、SimpleTuner はこの mode を clear します。SimpleTuner は、どちらの alias も有効化する前に、autograd に接続された出力、有限の multi-head gradients、dispatcher-level masked SDPA、PyTorch fallback なしを確認する追加の起動時チェックも実行します。
 
-Quantized dispatcher は bool masks（`True` が attend）、additive float masks、`[B, H, S_q, S_kv]` batched masks、`[B, 1, 1, S_kv]` のような broadcast masks をサポートします。All-true bool masks は検出され、fast path として skip されます。
+通常・量子化どちらの dispatcher も、bool mask（`True` は attend の意味）、additive float mask、`[B, H, S_q, S_kv]` のようなバッチ mask、`[B, 1, 1, S_kv]` のようなブロードキャスト mask をサポートします。all-true の bool mask は検出され、fast path としてスキップされます。mask 付き呼び出しも in-stream 経路のままで、mask の展開はアテンションカーネルと同じ command buffer 上にエンコードされます。
 
 実行中に MPS dispatcher が期待した path を使っているか確認するには、UMFA の dispatch counters を見ます:
 
@@ -104,7 +102,18 @@ import metal_sdpa_extension as ext
 print(ext.get_dispatch_stats())
 ```
 
-Z-Image training では、`quantized_autograd` が増え、`pytorch_fallback` は `0` のままになるはずです。`encoder_attention_mask` が all-true の場合は、`mask_all_true_skipped` も増えます。
+量子化なしの推論/検証では、`fp32_instream` が増加し `pytorch_fallback` が `0` のままであることを確認してください（入力 dtype を問わずここにカウントされます — 名前は dispatch 経路を指し、計算 dtype ではありません）。量子化された Z-Image のトレーニングでは代わりに `quantized_autograd` が増加します。`encoder_attention_mask` が all-true の場合は `mask_all_true_skipped` も増加します。融合 RoPE エントリポイント経由の呼び出しは `rope_instream` にカウントされます。
+
+## 融合 RoPE + SDPA
+
+拡張は `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)` を公開しています。これはアテンションの直前に GPU 上で Q/K へ interleaved-pair の rotary embeddings を適用します — command buffer の submit は 1 回、eager な回転パスも FP32 の実体化もありません。FLUX.1、FLUX.2、Krea2、Z-Image が共有する RoPE 規約をカバーします（Z-Image の complex-multiply 形式も同じ回転です）。モデル間の違いはテーブル形式だけで、呼び出し側が適合させます。
+
+- テンソルは BHSD。strided view（例：BSHD 射影の `transpose(1, 2)` や fused-QKV の `unbind` view）はコピーなしで使えます。
+- `rope_cos`/`rope_sin` は pair-duplicated テーブル（`cos[2i] == cos[2i+1]`）で、形状は `[S, D]`、`[1, S, D]`、またはサンプルごとの `[B, S, D]`。float dtype は内部で FP32 に正規化されます。
+- トレーニングは融合経路を通ります。カスタム autograd が backward で dQ/dK に逆回転（sin を負にした同じ pairwise 回転 — RoPE は直交）を適用し、pre-RoPE の Q/K に対する勾配を返します。FP32 では微分可能なリファレンスと厳密一致を検証済み（サンプルごとの batched テーブル含む）。causal は勾配ありでもサポートされます。勾配が必要な mask 付き・GQA の呼び出しは引き続き eager 回転を使います。
+- GQA 入力（K/V head が少ない場合）は K/V head 数で回転してから展開されます。
+
+Z-Image の DiT 形状 `(1, 30, 4128, 128)`・BF16 では、12 層チェーンのベンチマークで融合経路は eager 回転 + SDPA より 1 層あたり 4.4 ms 高速でした。SimpleTuner へのモデル統合は未了です。それまではエントリポイントを直接利用できます。
 
 ## FLUX Sequence Lengths
 
@@ -171,5 +180,5 @@ MPS backend out of memory (MPS allocated: 20.48 GiB, other allocations: 146.27 G
 
 - `metal_flash_attention_autograd` がない: autograd support 付き UMFA を rebuild して FFI package を reinstall します。
 - `available False`: `get_metal_flash_attention_unavailable_reason()` を確認します。
-- 予期しない fallback: MPS FP32 4D BHSD tensors、heads >= 4、sequence length >= 64、`dropout_p=0`、`is_causal=False`、GQA なしを確認します。quantized mask 付き path では、UMFA build が PyTorch `MPS` dispatch key を登録し、`get_dispatch_stats()` を公開していることを確認してください。`PrivateUse1` のみに登録された build は `torch.device("mps")` tensors から bypass されます。
+- トレーニングが静かにフォールバックする：テンソルが MPS FP32/FP16/BF16 の 4D BHSD であること（head 数・sequence length は任意、single-head もサポート）、`dropout_p=0` かつ `enable_gqa` が未設定であることを確認してください。最大 4D の bool/additive mask は対象です。causal 呼び出しは勾配の有無にかかわらず対象です。UMFA build が PyTorch の `MPS` dispatch key を登録し `get_dispatch_stats()` を公開していることを確認してください。`PrivateUse1` のみに登録された build は `torch.device("mps")` テンソルにバイパスされます。
 - 2048px が attention 前に fail する: UMFA attention memory ではなく VAE cache memory pressure の可能性が高いです。`vae_enable_tiling=true` を有効にするか、より低メモリの cache workflow で latents を生成または再利用してください。

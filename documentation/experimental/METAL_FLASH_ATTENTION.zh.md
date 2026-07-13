@@ -1,6 +1,6 @@
 # Metal Flash Attention
 
-`metal-flash-attention` 会把 Apple Silicon 上符合条件的 MPS SDPA 调用路由到 Universal Metal Flash Attention (UMFA) 的 PyTorch FFI 扩展。它仍是 experimental，当前主要面向 FLUX-style FP32 training paths，用于 PyTorch SDPA 占用更多内存或在长 sequence length 上触发 MPSGraph 限制的场景。
+`metal-flash-attention` 会把 Apple Silicon 上符合条件的 MPS SDPA 调用路由到 Universal Metal Flash Attention (UMFA) 的 PyTorch FFI 扩展。它仍是 experimental，当前主要面向 FLUX-style FP32/FP16/BF16 paths，用于 PyTorch SDPA 占用更多内存或在长 sequence length 上触发 MPSGraph 限制的场景。
 
 ## Requirements
 
@@ -9,7 +9,7 @@
 - 使用 Apple dependency set 安装的 SimpleTuner。Apple extra 要求 PyTorch `>=2.13.0`。
 - UMFA build 必须暴露 `metal_flash_attention_autograd`，注册 PyTorch `MPS` dispatch key，并暴露 `clear_quantization_mode`。量化 aliases 还需要 `metal_quantized_flash_attention_autograd`、`set_quantization_mode`、`QUANT_INT8`、`QUANT_INT4` 和 `QUANT_BLOCK_WISE`。
 
-SimpleTuner 会把至少四个 heads、sequence length 不小于 64 的未带 mask MPS FP32 4D attention calls 直接分发到 UMFA。其他 calls 会经过 PyTorch SDPA。使用当前 UMFA build 时，UMFA 会注册 PyTorch 的 MPS SDPA dispatcher，因此量化的带 mask calls 仍可通过 dispatcher 进入 UMFA；只注册 `PrivateUse1` 而不是 `MPS` 的旧 build 会被 `torch.device("mps")` tensors 静默绕过。
+SimpleTuner 通过 PyTorch 的 MPS SDPA dispatcher 路由注意力，当前的 UMFA build 会注册该 dispatcher。符合条件的调用为 MPS FP32/FP16/BF16 4D 注意力，支持任意 head 数量（single-head 可用）和任意 sequence length，包括 transposed FLUX-style layouts、最多 4D 的 bool/additive masks，以及 causal 调用。符合条件的调用会直接编码进 PyTorch 的 MPS command stream —— 没有每次调用的同步，FP16/BF16 输入也不会被提升为 FP32。causal 训练同样符合条件 —— causal backward 通过了精确的梯度一致性验证。带 dropout 或 `enable_gqa` 的调用会 fallback 到 PyTorch SDPA。注册在 `PrivateUse1` 而非 `MPS` 的旧 UMFA build 会被静默绕过，使用原生 PyTorch SDPA。
 
 ## Build And Install UMFA
 
@@ -74,13 +74,11 @@ reason None
 
 ```json
 {
-  "attention_mechanism": "metal-flash-attention",
-  "mixed_precision": "no",
-  "base_model_default_dtype": "fp32"
+  "attention_mechanism": "metal-flash-attention"
 }
 ```
 
-当前 integration 需要 `mixed_precision=no` 和 FP32 defaults。SimpleTuner 会 fallback，而不会把 BF16/FP16 attention 发送给 UMFA。
+FP32、FP16、BF16 注意力均为原生执行：FP16/BF16 输入使用低精度 kernel（BF16 的 softmax 仍以 FP32 累加），输出以输入 dtype 产出，因此 `mixed_precision: bf16` 可直接使用，任何环节都不会强制 FP32。带 dropout 或 `enable_gqa` 的调用仍会 fallback。
 
 也可以使用量化 aliases:
 
@@ -94,7 +92,7 @@ reason None
 
 切回 FP32 UMFA 或其他 attention backend 时，SimpleTuner 会清除该模式。SimpleTuner 还会在启用任一 alias 前执行额外的启动检查，确认输出连接到 autograd、multi-head gradients 有限、dispatcher-level masked SDPA 可用且没有 PyTorch fallback。
 
-量化 dispatcher 支持 bool masks（`True` 表示 attend）、additive float masks、`[B, H, S_q, S_kv]` batched masks，以及 `[B, 1, 1, S_kv]` 这类 broadcast masks。All-true bool masks 会被检测并跳过，作为 fast path。
+常规与量化 dispatcher 都支持 bool masks（`True` 表示参与注意力）、additive float masks、批量 masks（如 `[B, H, S_q, S_kv]`）以及广播 masks（如 `[B, 1, 1, S_kv]`）。all-true bool masks 会被检测并作为 fast path 跳过。带 mask 的调用仍走 in-stream 路径；mask 展开与注意力 kernel 编码在同一个 command buffer 上。
 
 要确认 MPS dispatcher 在实际运行中走了预期路径，可以查看 UMFA dispatch counters:
 
@@ -104,7 +102,18 @@ import metal_sdpa_extension as ext
 print(ext.get_dispatch_stats())
 ```
 
-Z-Image training 中，`quantized_autograd` 应该增加，而 `pytorch_fallback` 应保持为 `0`。如果 `encoder_attention_mask` 是 all-true，`mask_all_true_skipped` 也应该增加。
+对于未量化的推理/验证，`fp32_instream` 应增加且 `pytorch_fallback` 保持为 `0`（任何输入 dtype 的注意力都计入此项 —— 名称指的是 dispatch 路径而非计算 dtype）。量化的 Z-Image 训练则应看到 `quantized_autograd` 增加。若 `encoder_attention_mask` 为 all-true，`mask_all_true_skipped` 也会增加。经由融合 RoPE 入口的调用计入 `rope_instream`。
+
+## 融合 RoPE + SDPA
+
+扩展提供 `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)`，在注意力之前直接在 GPU 上对 Q/K 应用 interleaved-pair rotary embeddings —— 单次 command buffer 提交，没有 eager 旋转 pass，也没有 FP32 物化。它覆盖 FLUX.1、FLUX.2、Krea2 和 Z-Image 共享的 RoPE 约定（Z-Image 的 complex-multiply 写法是同一种旋转）；各模型仅在表格式上不同，由调用方适配。
+
+- 张量为 BHSD；strided views（例如 BSHD 投影的 `transpose(1, 2)`，或 fused-QKV 的 `unbind` views）无需拷贝即可使用。
+- `rope_cos`/`rope_sin` 为 pair-duplicated 表（`cos[2i] == cos[2i+1]`），形状为 `[S, D]`、`[1, S, D]` 或按样本的 `[B, S, D]`；任意 float dtype 会在内部归一化为 FP32。
+- 训练走融合路径：自定义 autograd 在 backward 中对 dQ/dK 应用逆旋转（同一 pairwise 旋转、sin 取负 —— RoPE 是正交的），因此返回的是相对 pre-RoPE Q/K 的梯度。已用可微分参考在 FP32 下验证为精确一致，含按样本的 batched 表。causal 在带梯度时同样支持；需要梯度的带 mask 或 GQA 调用仍使用 eager 旋转。
+- GQA 输入（K/V head 较少）按 K/V head 数量旋转后再扩展。
+
+在 Z-Image DiT 形状 `(1, 30, 4128, 128)`、BF16 下，融合路径在 12 层链式 benchmark 中比 eager 旋转 + SDPA 每层快 4.4 ms。SimpleTuner 的模型集成尚未完成；在此之前该入口可直接使用。
 
 ## FLUX Sequence Lengths
 
@@ -171,5 +180,5 @@ MPS backend out of memory (MPS allocated: 20.48 GiB, other allocations: 146.27 G
 
 - 缺少 `metal_flash_attention_autograd`: 重新构建带 autograd support 的 UMFA，并重新安装 FFI package。
 - `available False`: 查看 `get_metal_flash_attention_unavailable_reason()`。
-- Unexpected fallback: 确认 tensors 是 MPS FP32 4D BHSD，heads >= 4，sequence length >= 64，`dropout_p=0`，`is_causal=False`，且无 GQA。对于量化的带 mask paths，请确认 UMFA build 注册了 PyTorch `MPS` dispatch key 并暴露 `get_dispatch_stats()`；只注册到 `PrivateUse1` 的 build 会被 `torch.device("mps")` tensors 绕过。
+- 训练静默 fallback：确认张量为 MPS FP32/FP16/BF16 4D BHSD（任意 head 数量与 sequence length；支持 single-head），`dropout_p=0` 且未设置 `enable_gqa`。最多 4D 的 bool/additive masks 均符合条件。causal 调用在有无梯度时都符合条件。确认 UMFA build 注册了 PyTorch `MPS` dispatch key 并暴露 `get_dispatch_stats()`；仅注册在 `PrivateUse1` 的 build 会被 `torch.device("mps")` tensors 绕过。
 - 2048px 在 attention 前失败: 这通常是 VAE cache memory pressure，而不是 UMFA attention memory。启用 `vae_enable_tiling=true`，或使用更低内存的 cache workflow 生成/复用 latents。
