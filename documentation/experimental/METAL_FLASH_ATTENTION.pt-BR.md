@@ -102,11 +102,11 @@ import metal_sdpa_extension as ext
 print(ext.get_dispatch_stats())
 ```
 
-Para inferencia/validacao sem quantizacao, `fp32_instream` deve aumentar enquanto `pytorch_fallback` fica em `0` (atencao com qualquer dtype de entrada conta aqui — o nome se refere a rota de dispatch, nao ao dtype de computo). Para treinamento quantized do Z-Image, `quantized_autograd` deve aumentar no lugar. Se o `encoder_attention_mask` for all-true, `mask_all_true_skipped` tambem aumenta. Chamadas pelo entry point de RoPE fundido contam em `rope_instream`.
+Para inferencia/validacao sem quantizacao, `fp32_instream` deve aumentar enquanto `pytorch_fallback` fica em `0` (atencao com qualquer dtype de entrada conta aqui — o nome se refere a rota de dispatch, nao ao dtype de computo). Para treinamento quantized do Z-Image, `quantized_autograd` deve aumentar no lugar. Se o `encoder_attention_mask` for all-true, `mask_all_true_skipped` tambem aumenta. Chamadas no-grad pelo entry point de RoPE fundido contam em `rope_instream`; chamadas com gradiente contam em `rope_autograd`.
 
 ## RoPE + SDPA fundido
 
-A extensao expoe `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)`, que aplica rotary embeddings interleaved-pair a Q/K na GPU imediatamente antes da atencao — um unico submit de command buffer, sem passadas eager de rotacao, sem materializacoes FP32. Cobre a convencao RoPE compartilhada por FLUX.1, FLUX.2, Krea2 e Z-Image (a formulacao complex-multiply do Z-Image e a mesma rotacao); os modelos diferem apenas no formato da tabela, que o caller adapta.
+A extensao expoe `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)`, que aplica rotary embeddings interleaved-pair a Q/K na GPU imediatamente antes da atencao. Chamadas no-grad elegiveis ficam na rota in-stream attention, sem passadas eager de rotacao nem materializacoes FP32 de tensores. Cobre a convencao RoPE compartilhada por FLUX.1, FLUX.2, Krea2 e Z-Image (a formulacao complex-multiply do Z-Image e a mesma rotacao); os modelos diferem apenas no formato da tabela, que o caller adapta.
 
 - Os tensores sao BHSD; views strided (por exemplo `transpose(1, 2)` de uma projecao BSHD, ou views `unbind` de QKV fundido) sao consumidas sem copias.
 - `rope_cos`/`rope_sin` sao tabelas pair-duplicated (`cos[2i] == cos[2i+1]`), com formato `[S, D]`, `[1, S, D]` ou por amostra `[B, S, D]`; qualquer dtype float e normalizado para FP32 internamente.

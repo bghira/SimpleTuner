@@ -38,6 +38,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.attention_backend import maybe_metal_flash_rope_attention
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -100,19 +101,32 @@ class Krea2AttnProcessor:
         query = attn.norm_q(query)
         key = attn.norm_k(key)
 
-        if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
-            key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+        hidden_states = None
+        if image_rotary_emb is not None and self._parallel_config is None:
+            hidden_states = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                image_rotary_emb,
+                attn_mask=attention_mask,
+                backend=self._attention_backend,
+                layout="bshd",
+            )
 
-        hidden_states = dispatch_attention_fn(
-            query,
-            key,
-            value,
-            attn_mask=attention_mask,
-            enable_gqa=attn.num_heads != attn.num_kv_heads,
-            backend=self._attention_backend,
-            parallel_config=self._parallel_config,
-        )
+        if hidden_states is None:
+            if image_rotary_emb is not None:
+                query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
+                key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+
+            hidden_states = dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                enable_gqa=attn.num_heads != attn.num_kv_heads,
+                backend=self._attention_backend,
+                parallel_config=self._parallel_config,
+            )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states * torch.sigmoid(gate)
         return attn.to_out[0](hidden_states)

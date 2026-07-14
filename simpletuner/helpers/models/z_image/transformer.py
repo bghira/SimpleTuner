@@ -38,6 +38,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.attention_backend import maybe_metal_flash_rope_attention
 from simpletuner.helpers.training.context_parallel_tensors import (
     context_parallel_config,
     prepare_cp_attention_mask,
@@ -253,10 +254,6 @@ class ZSingleStreamAttnProcessor:
                 x_out = torch.view_as_real(x * freqs_cis).flatten(3)
                 return x_out.type_as(x_in)  # todo
 
-        if freqs_cis is not None:
-            query = apply_rotary_emb(query, freqs_cis)
-            key = apply_rotary_emb(key, freqs_cis)
-
         # Cast to correct dtype
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
@@ -264,24 +261,42 @@ class ZSingleStreamAttnProcessor:
         parallel_config = self._parallel_config if getattr(attn, "_zimage_allow_context_parallel", False) else None
         attention_mask = _zimage_prepare_attention_mask(attention_mask, hidden_states.shape[1], parallel_config)
 
-        # Compute joint attention
-        publish_attention_max_logits(
-            query,
-            key,
-            attention_mask,
-            getattr(attn, "to_q", None) and attn.to_q.weight,
-            getattr(attn, "to_k", None) and attn.to_k.weight,
-        )
-        hidden_states = dispatch_attention_fn(
-            query,
-            key,
-            value,
-            attn_mask=attention_mask,
-            dropout_p=0.0,
-            is_causal=False,
-            backend=self._attention_backend,
-            parallel_config=parallel_config,
-        )
+        hidden_states = None
+        if freqs_cis is not None and parallel_config is None:
+            hidden_states = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                freqs_cis,
+                attn_mask=attention_mask,
+                is_causal=False,
+                backend=self._attention_backend,
+                layout="bshd",
+            )
+
+        if hidden_states is None:
+            if freqs_cis is not None:
+                query = apply_rotary_emb(query, freqs_cis)
+                key = apply_rotary_emb(key, freqs_cis)
+
+            # Compute joint attention
+            publish_attention_max_logits(
+                query,
+                key,
+                attention_mask,
+                getattr(attn, "to_q", None) and attn.to_q.weight,
+                getattr(attn, "to_k", None) and attn.to_k.weight,
+            )
+            hidden_states = dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                dropout_p=0.0,
+                is_causal=False,
+                backend=self._attention_backend,
+                parallel_config=parallel_config,
+            )
 
         # Reshape back
         hidden_states = hidden_states.flatten(2, 3)
