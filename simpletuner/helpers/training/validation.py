@@ -570,8 +570,13 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     model_type = embed_cache.model_type
     validation_sample_images = None
+    deepfloyd_stage2_needs_validation_images = (
+        "deepfloyd" in args.model_family
+        and str(args.model_flavour).startswith("ii-")
+        and not model.supports_multistage_validation()
+    )
     if (
-        ("deepfloyd" in args.model_family and str(args.model_flavour).startswith("ii-"))
+        deepfloyd_stage2_needs_validation_images
         or model.requires_conditioning_validation_inputs()
         or args.controlnet
         or args.control
@@ -1624,7 +1629,10 @@ class Validation:
             logger.debug(f"Loaded {len(self.validation_image_inputs)} validation image inputs from metadata.")
         else:
             self._discover_validation_input_samples()
-        self.validation_resolutions = get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
+        if self.deepfloyd_stage2 and not self.model.supports_multistage_validation():
+            self.validation_resolutions = [(256, 256)]
+        else:
+            self.validation_resolutions = get_validation_resolutions()
         self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
         self.fsdp = is_fsdp
@@ -1829,7 +1837,7 @@ class Validation:
         """
         self.validation_image_inputs = None
         if (
-            self.deepfloyd_stage2
+            (self.deepfloyd_stage2 and not self.model.supports_multistage_validation())
             or self.config.validation_using_datasets
             or self.config.controlnet
             or self.config.control
@@ -2702,6 +2710,8 @@ class Validation:
         if self.model.pipeline is not None:
             del self.model.pipeline
             self.model.pipeline = None
+        if hasattr(self.model, "unload_validation_models"):
+            self.model.unload_validation_models()
         self._active_pipeline_type = None
 
     def _has_adapter_variants(self) -> bool:
@@ -3892,6 +3902,8 @@ class Validation:
                 pipeline_kwargs = {
                     "prompt": None,
                     "negative_prompt": None,
+                    "_validation_prompt_text": prompt,
+                    "_validation_negative_prompt_text": StateTracker.get_args().validation_negative_prompt or "",
                     "num_images_per_prompt": self.config.num_validation_images,
                     "num_inference_steps": num_inference_steps,
                     "guidance_scale": guidance_scale,
@@ -4066,12 +4078,22 @@ class Validation:
                         elif "callback_on_step_end" not in pipeline_kwargs:
                             pipeline_kwargs["callback_on_step_end"] = abort_check_callback
 
-                    # remove any kwargs that are not in the pipeline call
-                    removed_kwargs = [k for k in pipeline_kwargs.keys() if k not in call_kwargs]
-                    pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
-                    logger.debug(f"Running validations with inputs: {pipeline_kwargs.keys()}")
-                    if removed_kwargs:
-                        logger.debug(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
+                    def _pipeline_call(pipeline, kwargs):
+                        stage_kwargs = dict(kwargs)
+                        stage_call_kwargs = inspect.signature(pipeline.__call__).parameters
+                        if "num_videos_per_prompt" in stage_call_kwargs and "num_images_per_prompt" in stage_kwargs:
+                            stage_kwargs["num_videos_per_prompt"] = stage_kwargs.pop("num_images_per_prompt")
+                        removed_stage_kwargs = [k for k in stage_kwargs.keys() if k not in stage_call_kwargs]
+                        stage_kwargs = {k: v for k, v in stage_kwargs.items() if k in stage_call_kwargs}
+                        logger.debug(f"Running validations with inputs: {stage_kwargs.keys()}")
+                        if removed_stage_kwargs:
+                            logger.debug(
+                                "Removed the following kwargs from validation pipeline %s: %s",
+                                type(pipeline).__name__,
+                                removed_stage_kwargs,
+                            )
+                        return pipeline(**stage_kwargs)
+
                     # run in autocast ctx
                     preview_ctx = nullcontext()
                     if self.preview and current_validation_type == "checkpoint":
@@ -4087,6 +4109,16 @@ class Validation:
                             ),
                         )
                     with preview_ctx:
+                        filtered_pipeline_kwargs = pipeline_kwargs
+                        if not self.model.supports_multistage_validation():
+                            filtered_pipeline_kwargs = dict(pipeline_kwargs)
+                            removed_kwargs = [k for k in filtered_pipeline_kwargs.keys() if k not in call_kwargs]
+                            filtered_pipeline_kwargs = {
+                                k: v for k, v in filtered_pipeline_kwargs.items() if k in call_kwargs
+                            }
+                            logger.debug(f"Running validations with inputs: {filtered_pipeline_kwargs.keys()}")
+                            if removed_kwargs:
+                                logger.debug(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
                         autocast_ctx = (
                             torch.amp.autocast(
                                 self.inference_device.type,
@@ -4097,16 +4129,12 @@ class Validation:
                         )
                         with autocast_ctx:
                             if self.model.supports_multistage_validation():
-
-                                def _pipeline_call(kwargs):
-                                    return self.model.pipeline(**kwargs)
-
                                 pipeline_result = self.model.run_multistage_validation(
-                                    pipeline_kwargs,
+                                    filtered_pipeline_kwargs,
                                     _pipeline_call,
                                 )
                             else:
-                                pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                                pipeline_result = self.model.pipeline(**filtered_pipeline_kwargs)
                         current_results = None
                         if hasattr(pipeline_result, "frames"):
                             current_results = pipeline_result.frames

@@ -720,6 +720,64 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   --post_checkpoint_script='/opt/hooks/run_eval.sh {local_checkpoint_path} {global_step}'
   ```
 
+### `--deepfloyd_validation_pipeline_mode`
+
+- **What**: Controls DeepFloyd validation stage chaining.
+- **Choices**: `auto`, `trained-stage`, `full-pipeline`
+- **Default**: `auto`
+- **Why**: `auto` runs the full DeepFloyd stage I → stage II pipeline for prompt validation, while explicit dataset validation keeps using the trained stage directly. Use `trained-stage` to preserve single-stage validation, or `full-pipeline` to force peer-stage loading.
+
+### `--deepfloyd_validation_stage1_model`
+
+- **What**: Fixed DeepFloyd stage I model used when validating a trained stage II model through the full pipeline.
+- **Default**: `DeepFloyd/IF-I-XL-v1.0`
+
+### `--deepfloyd_validation_stage2_model`
+
+- **What**: Fixed DeepFloyd stage II model used when validating a trained stage I model through the full pipeline.
+- **Default**: `DeepFloyd/IF-II-M-v1.0`
+
+### `--deepfloyd_validation_stage3_mode`
+
+- **What**: Optional terminal upscaler after DeepFloyd stage II validation.
+- **Choices**: `none`, `sd-x4-upscaler`
+- **Default**: `none`
+- **Why**: DeepFloyd's unreleased third stage was effectively a 4x upscaler. `sd-x4-upscaler` uses `stabilityai/stable-diffusion-x4-upscaler` for that role.
+
+### `--deepfloyd_validation_stage3_model`
+
+- **What**: Model repository used when `--deepfloyd_validation_stage3_mode=sd-x4-upscaler`.
+- **Default**: `stabilityai/stable-diffusion-x4-upscaler`
+
+### `--deepfloyd_validation_stage1_num_inference_steps`
+
+- **What**: Optional stage I validation step override.
+- **Default**: Uses `--validation_num_inference_steps`, capped to 30 for stage I.
+
+### `--deepfloyd_validation_stage2_num_inference_steps`
+
+- **What**: Optional stage II validation step override.
+- **Default**: Uses `--validation_num_inference_steps`.
+
+### `--deepfloyd_validation_stage1_guidance`
+
+- **What**: Optional stage I validation guidance override.
+- **Default**: Uses `--validation_guidance`.
+
+### `--deepfloyd_validation_stage2_guidance`
+
+- **What**: Optional stage II validation guidance override.
+- **Default**: Uses `--validation_guidance`.
+
+### `--deepfloyd_validation_stage3_guidance`
+
+- **What**: Optional SD x4 upscaler guidance override.
+- **Default**: Uses `--validation_guidance`.
+
+### `--deepfloyd_validation_stage3_noise_level`
+
+- **What**: Noise level passed to the SD x4 upscaler.
+- **Default**: `100`
 
 ### `--validation_adapter_path`
 

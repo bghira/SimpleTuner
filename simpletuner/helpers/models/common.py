@@ -556,6 +556,14 @@ class ModelFoundation(ABC):
         """
         return
 
+    def unload_validation_models(self) -> None:
+        """
+        Optional hook for models to release validation-only components.
+
+        This is a no-op by default.
+        """
+        return
+
     def validation_audio_sample_rate(self) -> Optional[int]:
         """
         Optional hook for models that emit audio during validation.
@@ -3920,7 +3928,7 @@ class ModelFoundation(ABC):
     def run_multistage_validation(
         self,
         pipeline_kwargs: Dict[str, Any],
-        pipeline_call: Callable[[Dict[str, Any]], Any],
+        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
     ) -> Any:
         """
         Execute a multi-stage validation pipeline.
@@ -3929,8 +3937,8 @@ class ModelFoundation(ABC):
         supports_multistage_validation() returns True.
 
         Args:
-            pipeline_kwargs: The filtered kwargs for the initial pipeline call.
-            pipeline_call: Callable wrapping pipeline(**kwargs) within the
+            pipeline_kwargs: The validation kwargs for the initial pipeline call.
+            pipeline_call: Callable wrapping a pipeline invocation within the
                 active autocast context. Models call this for each stage.
 
         Returns:

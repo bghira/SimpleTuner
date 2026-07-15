@@ -717,6 +717,64 @@ TRAINING_DYNAMO_BACKEND=inductor
   --post_checkpoint_script='/opt/hooks/run_eval.sh {local_checkpoint_path} {global_step}'
   ```
 
+### `--deepfloyd_validation_pipeline_mode`
+
+- **内容**：控制 DeepFloyd 验证时的阶段串联方式。
+- **选项**：`auto`, `trained-stage`, `full-pipeline`
+- **默认值**：`auto`
+- **原因**：`auto` 在提示词验证中运行 DeepFloyd stage I → stage II；显式使用数据集图片验证时只运行正在训练的阶段。需要保持单阶段验证时使用 `trained-stage`，需要强制加载前后固定阶段时使用 `full-pipeline`。
+
+### `--deepfloyd_validation_stage1_model`
+
+- **内容**：通过完整管线验证正在训练的 stage II 时使用的固定 stage I 模型。
+- **默认值**：`DeepFloyd/IF-I-XL-v1.0`
+
+### `--deepfloyd_validation_stage2_model`
+
+- **内容**：通过完整管线验证正在训练的 stage I 时使用的固定 stage II 模型。
+- **默认值**：`DeepFloyd/IF-II-M-v1.0`
+
+### `--deepfloyd_validation_stage3_mode`
+
+- **内容**：DeepFloyd stage II 之后可选的最终放大器。
+- **选项**：`none`, `sd-x4-upscaler`
+- **默认值**：`none`
+- **原因**：DeepFloyd 未发布的 stage III 本质上是 4x 放大器。`sd-x4-upscaler` 使用 `stabilityai/stable-diffusion-x4-upscaler` 承担这个角色。
+
+### `--deepfloyd_validation_stage3_model`
+
+- **内容**：当 `--deepfloyd_validation_stage3_mode=sd-x4-upscaler` 时使用的模型仓库。
+- **默认值**：`stabilityai/stable-diffusion-x4-upscaler`
+
+### `--deepfloyd_validation_stage1_num_inference_steps`
+
+- **内容**：可选的 stage I 验证步数覆盖。
+- **默认值**：使用 `--validation_num_inference_steps`，stage I 最多 30 步。
+
+### `--deepfloyd_validation_stage2_num_inference_steps`
+
+- **内容**：可选的 stage II 验证步数覆盖。
+- **默认值**：使用 `--validation_num_inference_steps`
+
+### `--deepfloyd_validation_stage1_guidance`
+
+- **内容**：可选的 stage I 验证 guidance 覆盖。
+- **默认值**：使用 `--validation_guidance`
+
+### `--deepfloyd_validation_stage2_guidance`
+
+- **内容**：可选的 stage II 验证 guidance 覆盖。
+- **默认值**：使用 `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_guidance`
+
+- **内容**：可选的 SD x4 放大器 guidance 覆盖。
+- **默认值**：使用 `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_noise_level`
+
+- **内容**：传给 SD x4 放大器的噪声级别。
+- **默认值**：`100`
 
 ### `--validation_adapter_path`
 
