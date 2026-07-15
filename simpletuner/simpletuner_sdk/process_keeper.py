@@ -187,6 +187,7 @@ import marshal
 import signal
 import time
 import threading
+import queue
 import logging
 import types
 import importlib
@@ -293,6 +294,7 @@ should_abort = False
 command_check_thread = None
 manual_validation_event = threading.Event()
 manual_checkpoint_event = threading.Event()
+custom_command_queue = queue.Queue()
 
 
 def consume_manual_validation_request():
@@ -309,6 +311,14 @@ def consume_manual_checkpoint_request():
         manual_checkpoint_event.clear()
         return True
     return False
+
+
+def consume_process_command(timeout=0.1):
+    """Return the next command not handled by the training command bridge."""
+    try:
+        return custom_command_queue.get(timeout=timeout)
+    except queue.Empty:
+        return None
 
 
 def send_event(event_type, data=None):
@@ -423,6 +433,8 @@ def check_commands():
                 elif command_name == "trigger_checkpoint":
                     logger.info("Received manual checkpoint trigger")
                     manual_checkpoint_event.set()
+                else:
+                    custom_command_queue.put(cmd)
 
                 # Write back remaining commands
                 with open(command_file, 'w') as f:
@@ -490,6 +502,7 @@ class ConfigWrapper:
         self.should_abort = lambda: should_abort
         self.consume_manual_validation_request = consume_manual_validation_request
         self.consume_manual_checkpoint_request = consume_manual_checkpoint_request
+        self.consume_process_command = consume_process_command
 
 wrapped_config = ConfigWrapper(config)
 

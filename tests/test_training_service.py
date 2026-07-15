@@ -362,6 +362,17 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertEqual(captured["config"].get("accelerate_visible_devices"), [1])
         self.assertEqual(captured["config"].get("--num_processes"), 1)
 
+    def test_start_training_job_rejects_active_checkpoint_inference(self) -> None:
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service."
+            "CHECKPOINT_INFERENCE_SERVICE.active_session",
+            return_value={"session_id": "session-one"},
+        ):
+            result = training_service.start_training_job({})
+
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("checkpoint inference session", result.reason)
+
     def test_start_training_job_copies_prompt_library(self) -> None:
         captured = {}
 

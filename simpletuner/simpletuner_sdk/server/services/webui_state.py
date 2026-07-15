@@ -773,6 +773,18 @@ class WebUIStateStore:
         """Save UI element states (collapsed sections, etc.)."""
         self._write_json("ui_state", state)
 
+    def get_checkpoint_inference_settings(self) -> Dict[str, Any]:
+        """Get persisted checkpoint inference UI settings."""
+        ui_state = self.load_ui_state()
+        settings = ui_state.get("checkpoint_inference")
+        return settings if isinstance(settings, dict) else {}
+
+    def save_checkpoint_inference_settings(self, settings: Dict[str, Any]) -> None:
+        """Save checkpoint inference UI settings without replacing unrelated UI state."""
+        ui_state = self.load_ui_state()
+        ui_state["checkpoint_inference"] = settings
+        self.save_ui_state(ui_state)
+
     def get_collapsed_sections(self, tab_name: str) -> Dict[str, bool]:
         """Get collapsed state for sections in a specific tab."""
         ui_state = self.load_ui_state()

@@ -764,29 +764,50 @@ def get_validation_resolutions():
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
-    validation_resolution_parameter = StateTracker.get_args().validation_resolution
-    if type(validation_resolution_parameter) is str and "," in validation_resolution_parameter:
-        return [parse_validation_resolution(res) for res in validation_resolution_parameter.split(",")]
-    return [parse_validation_resolution(validation_resolution_parameter)]
+    return parse_validation_resolutions(
+        StateTracker.get_args().validation_resolution,
+        model_flavour=StateTracker.get_args().model_flavour,
+    )
 
 
-def parse_validation_resolution(input_str: str) -> tuple:
+_MODEL_FLAVOUR_FROM_STATE = object()
+
+
+def parse_validation_resolutions(
+    input_value, *, model_flavour: str | None | object = _MODEL_FLAVOUR_FROM_STATE
+) -> list[tuple[int, int]]:
+    values = str(input_value).split(",") if isinstance(input_value, str) else [input_value]
+    return [
+        parse_validation_resolution(value.strip() if isinstance(value, str) else value, model_flavour=model_flavour)
+        for value in values
+    ]
+
+
+def parse_validation_resolution(
+    input_str: str | int, *, model_flavour: str | None | object = _MODEL_FLAVOUR_FROM_STATE
+) -> tuple[int, int]:
     """
     If the args.validation_resolution:
      - is an int, we'll treat it as height and width square aspect
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
-    is_df_ii = True if str(StateTracker.get_args().model_flavour).startswith("ii-") else False
-    if isinstance(input_str, int) or input_str.isdigit():
-        if is_df_ii and int(input_str) < 256:
+    if model_flavour is _MODEL_FLAVOUR_FROM_STATE:
+        model_flavour = StateTracker.get_args().model_flavour
+    is_df_ii = str(model_flavour).startswith("ii-")
+    value = str(input_str).strip().lower()
+    if value.isdigit():
+        if is_df_ii and int(value) < 256:
             raise ValueError("Cannot use less than 256 resolution for DeepFloyd stage 2.")
-        return (int(input_str), int(input_str))
-    if "x" in input_str:
-        pieces = input_str.split("x")
+        return (int(value), int(value))
+    if "x" in value:
+        pieces = value.split("x")
+        if len(pieces) != 2 or not all(piece.isdigit() for piece in pieces):
+            raise ValueError(f"Invalid validation resolution '{input_str}'.")
         if is_df_ii and (int(pieces[0]) < 256 or int(pieces[1]) < 256):
             raise ValueError("Cannot use less than 256 resolution for DeepFloyd stage 2.")
         return (int(pieces[0]), int(pieces[1]))
+    raise ValueError(f"Invalid validation resolution '{input_str}'.")
 
 
 def load_video_frames(video_path):
@@ -1363,7 +1384,8 @@ class ValidationPreviewer:
         self._warned_unsupported = False
         self._warned_callback = False
         self._webhook_handler = StateTracker.get_webhook_handler()
-        if self.enabled and not self._webhook_handler:
+        self._preview_callback = getattr(config, "_validation_preview_callback", None)
+        if self.enabled and not self._webhook_handler and not callable(self._preview_callback):
             logger.warning("validation_preview is enabled but no webhook is configured; previews are disabled.")
             self.enabled = False
         if self.enabled and not self.model.supports_validation_preview():
@@ -1488,8 +1510,6 @@ class ValidationPreviewer:
         return [{"src": data_uri, "mime_type": "image/gif"}]
 
     def _emit_event(self, images, videos, metadata: _PreviewMetadata, step: int, timestep):
-        if self._webhook_handler is None:
-            return
         total_steps = metadata.total_steps
         if not total_steps:
             total_steps = getattr(self.config, "validation_num_inference_steps", None)
@@ -1512,13 +1532,16 @@ class ValidationPreviewer:
                 "step_label": step_label,
             },
         }
-        self._webhook_handler.send_raw(
-            structured_data=payload,
-            message_type="validation.image",
-            images=images,
-            videos=videos,
-            job_id=StateTracker.get_job_id(),
-        )
+        if callable(self._preview_callback):
+            self._preview_callback(structured_data=payload, images=images, videos=videos)
+        if self._webhook_handler is not None:
+            self._webhook_handler.send_raw(
+                structured_data=payload,
+                message_type="validation.image",
+                images=images,
+                videos=videos,
+                job_id=StateTracker.get_job_id(),
+            )
 
     def _should_emit_for_step(self, step: int) -> bool:
         """

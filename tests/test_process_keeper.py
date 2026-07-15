@@ -2,6 +2,7 @@
 process_keeper tests - subprocess lifecycle and termination guarantees.
 """
 
+import json
 import os
 import queue
 import signal
@@ -122,6 +123,21 @@ def simple_task(config):
     return "completed"
 
 
+def custom_command_task(config):
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        command = config.consume_process_command(timeout=0.1)
+        if command is not None:
+            return command
+    raise TimeoutError("custom command was not received")
+
+
+def empty_checkpoint_inference_task(config):
+    from simpletuner.inference import run_checkpoint_inference
+
+    return run_checkpoint_inference(config)
+
+
 def hanging_task(config):
     # ignores SIGTERM
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -214,6 +230,48 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         status = get_process_status(job_id)
         self.assertNotEqual(status, "running")
         self.assertIn(status, ["completed", "failed"])
+
+    def test_custom_command_reaches_worker(self):
+        job_id = "test_custom_command"
+        self.test_jobs.append(job_id)
+        submit_job(job_id, custom_command_task, {})
+
+        deadline = time.time() + 5
+        while time.time() < deadline and get_process_status(job_id) == "pending":
+            time.sleep(0.05)
+        send_process_command(job_id, "inference_generate", {"prompt": "test"})
+
+        while time.time() < deadline and get_process_status(job_id) in {"pending", "running"}:
+            time.sleep(0.05)
+
+        self.assertEqual(get_process_status(job_id), "completed")
+
+    def test_checkpoint_inference_worker_serializes_nested_state_writer(self):
+        job_id = "test_inference_state_writer"
+        self.test_jobs.append(job_id)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            session_dir = os.path.join(temporary_directory, "session-one")
+            os.mkdir(session_dir)
+            submit_job(
+                job_id,
+                empty_checkpoint_inference_task,
+                {
+                    "session_dir": session_dir,
+                    "job_id": job_id,
+                    "environment": "test",
+                    "checkpoint_names": [],
+                    "prompt_entries": [],
+                    "trainer_config": {},
+                },
+            )
+
+            deadline = time.time() + 30
+            while time.time() < deadline and get_process_status(job_id) in {"pending", "running"}:
+                time.sleep(0.05)
+
+            self.assertEqual(get_process_status(job_id), "completed")
+            with open(os.path.join(session_dir, "session.json"), encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["status"], "completed")
 
     def test_failure_event_updates_status_and_events(self):
         """A raised exception should surface as a failed status with error event."""
