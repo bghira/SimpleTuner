@@ -649,9 +649,10 @@ class TestRuntimeBaseResolution(unittest.TestCase):
             config = {"output_dir": tmpdir}
             process = TrainerProcess("test_job")
             ipc_path = process._resolve_runtime_base(config)
+            expected_base = os.path.realpath(os.path.join(tmpdir, ".simpletuner_runtime"))
 
             # Should be under tmpdir/.simpletuner_runtime/trainer_test_job_*
-            self.assertTrue(str(ipc_path).startswith(os.path.join(tmpdir, ".simpletuner_runtime")))
+            self.assertTrue(str(ipc_path).startswith(expected_base))
             self.assertIn("trainer_test_job_", str(ipc_path))
 
     def test_output_dir_key_with_dashes(self):
@@ -660,10 +661,11 @@ class TestRuntimeBaseResolution(unittest.TestCase):
             config = {"--output_dir": tmpdir}
             process = TrainerProcess("test_job_dashes")
             ipc_path = process._resolve_runtime_base(config)
+            expected_base = os.path.realpath(os.path.join(tmpdir, ".simpletuner_runtime"))
 
             # Should be under tmpdir/.simpletuner_runtime/trainer_test_job_dashes_*
             self.assertTrue(
-                str(ipc_path).startswith(os.path.join(tmpdir, ".simpletuner_runtime")),
+                str(ipc_path).startswith(expected_base),
                 f"Expected path under {tmpdir}/.simpletuner_runtime but got {ipc_path}",
             )
             self.assertIn("trainer_test_job_dashes_", str(ipc_path))
@@ -675,9 +677,10 @@ class TestRuntimeBaseResolution(unittest.TestCase):
                 config = {"output_dir": tmpdir1, "--output_dir": tmpdir2}
                 process = TrainerProcess("test_job_both")
                 ipc_path = process._resolve_runtime_base(config)
+                expected_base = os.path.realpath(os.path.join(tmpdir1, ".simpletuner_runtime"))
 
                 # Should prefer output_dir (without dashes)
-                self.assertTrue(str(ipc_path).startswith(os.path.join(tmpdir1, ".simpletuner_runtime")))
+                self.assertTrue(str(ipc_path).startswith(expected_base))
 
 
 def tearDownModule():

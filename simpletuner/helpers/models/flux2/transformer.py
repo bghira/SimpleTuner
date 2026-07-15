@@ -39,7 +39,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
-from simpletuner.helpers.training.attention_backend import get_packed_attention_backend
+from simpletuner.helpers.training.attention_backend import get_packed_attention_backend, maybe_metal_flash_rope_attention
 from simpletuner.helpers.training.context_parallel_tensors import context_parallel_config, prepare_cp_attention_mask
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 
@@ -218,18 +218,6 @@ class Flux2AttnProcessor:
             key = torch.cat([encoder_key, key], dim=1)
             value = torch.cat([encoder_value, value], dim=1)
 
-        if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
-            key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
-
-        publish_attention_max_logits(
-            query,
-            key,
-            attention_mask,
-            getattr(attn, "to_q", None) and attn.to_q.weight,
-            getattr(attn, "to_k", None) and getattr(attn, "to_k", None).weight,
-        )
-
         parallel_config = self._parallel_config
         cp_active = context_parallel_config(parallel_config) is not None
         if cp_active:
@@ -241,9 +229,34 @@ class Flux2AttnProcessor:
                 crop="right",
             )
 
-        if self._packed_attention_backend is not None and not cp_active:
+        hidden_states = None
+        if image_rotary_emb is not None and self._packed_attention_backend is None and not cp_active:
+            hidden_states = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                image_rotary_emb,
+                attn_mask=attention_mask,
+                backend=self._attention_backend,
+                layout="bshd",
+            )
+
+        if hidden_states is None:
+            if image_rotary_emb is not None:
+                query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
+                key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+
+            publish_attention_max_logits(
+                query,
+                key,
+                attention_mask,
+                getattr(attn, "to_q", None) and attn.to_q.weight,
+                getattr(attn, "to_k", None) and getattr(attn, "to_k", None).weight,
+            )
+
+        if hidden_states is None and self._packed_attention_backend is not None and not cp_active:
             hidden_states = _run_packed_qkv_attention(query, key, value, attention_mask, self._packed_attention_backend)
-        else:
+        elif hidden_states is None:
             hidden_states = dispatch_attention_fn(
                 query,
                 key,
@@ -377,18 +390,6 @@ class Flux2ParallelSelfAttnProcessor:
         query = attn.norm_q(query)
         key = attn.norm_k(key)
 
-        if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
-            key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
-
-        publish_attention_max_logits(
-            query,
-            key,
-            attention_mask,
-            getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
-            getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
-        )
-
         parallel_config = self._parallel_config
         cp_active = context_parallel_config(parallel_config) is not None
         if cp_active:
@@ -400,9 +401,34 @@ class Flux2ParallelSelfAttnProcessor:
                 crop="right",
             )
 
-        if self._packed_attention_backend is not None and not cp_active:
+        hidden_states = None
+        if image_rotary_emb is not None and self._packed_attention_backend is None and not cp_active:
+            hidden_states = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                image_rotary_emb,
+                attn_mask=attention_mask,
+                backend=self._attention_backend,
+                layout="bshd",
+            )
+
+        if hidden_states is None:
+            if image_rotary_emb is not None:
+                query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
+                key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+
+            publish_attention_max_logits(
+                query,
+                key,
+                attention_mask,
+                getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
+                getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
+            )
+
+        if hidden_states is None and self._packed_attention_backend is not None and not cp_active:
             hidden_states = _run_packed_qkv_attention(query, key, value, attention_mask, self._packed_attention_backend)
-        else:
+        elif hidden_states is None:
             hidden_states = dispatch_attention_fn(
                 query,
                 key,

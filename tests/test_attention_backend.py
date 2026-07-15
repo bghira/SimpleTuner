@@ -8,7 +8,12 @@ from unittest.mock import patch
 import torch
 
 from simpletuner.helpers.training import attention_backend as attention_backend_module
-from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase, PackedAttentionBackend
+from simpletuner.helpers.training.attention_backend import (
+    AttentionBackendController,
+    AttentionPhase,
+    PackedAttentionBackend,
+    maybe_metal_flash_rope_attention,
+)
 
 
 class TestAttentionBackendPersistence(unittest.TestCase):
@@ -30,6 +35,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._parameter_sink = None
         AttentionBackendController._sink_param_ids = set()
         AttentionBackendController._optimizer_param_ids = set()
+        AttentionBackendController._attention_logit_consumer = None
         AttentionBackendController._sla_state_store = {}
         AttentionBackendController._diffusers_backend_context = None
         AttentionBackendController._diffusers_backend_name = None
@@ -142,6 +148,106 @@ class TestAttentionBackendPersistence(unittest.TestCase):
                 "get_dispatch_stats",
                 attention_backend_module.get_metal_flash_attention_unavailable_reason("metal-flash-attention-int8"),
             )
+
+    def test_metal_flash_attention_requires_dispatch_stats(self):
+        package = SimpleNamespace(is_metal_sdpa_available=lambda: True)
+        extension = SimpleNamespace(
+            metal_flash_attention_autograd=lambda query, key, value, is_causal=False, scale=0.0: query,
+            clear_quantization_mode=lambda: None,
+        )
+
+        def fake_import(name):
+            if name == "pytorch_custom_op_ffi":
+                return package
+            if name == "metal_sdpa_extension":
+                return extension
+            return __import__(name)
+
+        with patch.object(attention_backend_module.importlib, "import_module", side_effect=fake_import):
+            self.assertFalse(attention_backend_module.is_metal_flash_attention_available())
+            self.assertIn(
+                "get_dispatch_stats",
+                attention_backend_module.get_metal_flash_attention_unavailable_reason(),
+            )
+
+    def test_maybe_metal_flash_rope_attention_dispatches_bshd_layout(self):
+        calls = []
+
+        def fake_rope_sdpa(query, key, value, cos, sin, attn_mask, is_causal, scale):
+            calls.append((query, key, value, cos, sin, attn_mask, is_causal, scale))
+            return query + 1
+
+        extension = SimpleNamespace(rope_scaled_dot_product_attention=fake_rope_sdpa)
+        query = torch.zeros(2, 3, 4, 6)
+        key = torch.zeros_like(query)
+        value = torch.zeros_like(query)
+        cos = torch.ones(3, 6)
+        sin = torch.zeros(3, 6)
+
+        with patch.object(attention_backend_module.importlib, "import_module", return_value=extension):
+            output = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                (cos, sin),
+                backend="metal-flash-attention",
+                layout="bshd",
+                scale=0.25,
+            )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(tuple(output.shape), tuple(query.shape))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(tuple(calls[0][0].shape), (2, 4, 3, 6))
+        self.assertIs(calls[0][3], cos)
+        self.assertIs(calls[0][4], sin)
+        self.assertFalse(calls[0][6])
+        self.assertEqual(calls[0][7], 0.25)
+
+    def test_maybe_metal_flash_rope_attention_converts_complex_tables(self):
+        calls = []
+
+        def fake_rope_sdpa(query, key, value, cos, sin, attn_mask, is_causal, scale):
+            calls.append((cos, sin))
+            return query
+
+        extension = SimpleNamespace(rope_scaled_dot_product_attention=fake_rope_sdpa)
+        query = torch.zeros(1, 2, 3, 4)
+        rotary = torch.tensor([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
+
+        with patch.object(attention_backend_module.importlib, "import_module", return_value=extension):
+            output = maybe_metal_flash_rope_attention(
+                query,
+                query,
+                query,
+                rotary,
+                backend="metal-flash-attention",
+                layout="bhsd",
+            )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(len(calls), 1)
+        cos, sin = calls[0]
+        self.assertTrue(torch.equal(cos, torch.tensor([[1, 1, 3, 3], [5, 5, 7, 7]], dtype=cos.dtype)))
+        self.assertTrue(torch.equal(sin, torch.tensor([[2, 2, 4, 4], [6, 6, 8, 8]], dtype=sin.dtype)))
+
+    def test_maybe_metal_flash_rope_attention_skips_when_logit_consumer_active(self):
+        query = torch.zeros(1, 2, 3, 4)
+        rotary = (torch.ones(2, 4), torch.zeros(2, 4))
+        AttentionBackendController.register_attention_logit_consumer(lambda payload: None)
+
+        with patch.object(attention_backend_module.importlib, "import_module") as import_module:
+            output = maybe_metal_flash_rope_attention(
+                query,
+                query,
+                query,
+                rotary,
+                backend="metal-flash-attention",
+                layout="bhsd",
+            )
+
+        self.assertIsNone(output)
+        import_module.assert_not_called()
 
     def test_metal_flash_attention_installs_sdpa_wrapper(self):
         calls = []

@@ -58,6 +58,67 @@ _METAL_FLASH_ATTENTION_PROFILES = {
 _METAL_FLASH_ATTENTION_ALIASES = set(_METAL_FLASH_ATTENTION_PROFILES)
 
 
+def _is_metal_flash_attention_backend_key(backend: Any) -> bool:
+    if not isinstance(backend, str):
+        return False
+    return _normalize_backend_key(backend.strip().lower()) in _METAL_FLASH_ATTENTION_ALIASES
+
+
+def _metal_flash_rope_tables(rotary_emb: Any) -> tuple[torch.Tensor, torch.Tensor] | None:
+    if isinstance(rotary_emb, tuple) and len(rotary_emb) == 2:
+        cos, sin = rotary_emb
+        if isinstance(cos, torch.Tensor) and isinstance(sin, torch.Tensor):
+            return cos, sin
+    if isinstance(rotary_emb, torch.Tensor) and torch.is_complex(rotary_emb):
+        return (
+            rotary_emb.real.repeat_interleave(2, dim=-1),
+            rotary_emb.imag.repeat_interleave(2, dim=-1),
+        )
+    return None
+
+
+def maybe_metal_flash_rope_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    rotary_emb: Any,
+    *,
+    attn_mask: Optional[torch.Tensor] = None,
+    is_causal: bool = False,
+    scale: Optional[float] = None,
+    backend: Optional[str] = None,
+    layout: str = "bshd",
+) -> Optional[torch.Tensor]:
+    active_backend = backend or AttentionBackendController.active_backend()
+    if not _is_metal_flash_attention_backend_key(active_backend):
+        return None
+    if AttentionBackendController.has_attention_logit_consumer():
+        return None
+
+    tables = _metal_flash_rope_tables(rotary_emb)
+    if tables is None:
+        return None
+    cos, sin = tables
+
+    try:
+        extension = importlib.import_module("metal_sdpa_extension")
+    except ImportError:
+        return None
+    rope_sdpa = getattr(extension, "rope_scaled_dot_product_attention", None)
+    if not callable(rope_sdpa):
+        return None
+
+    if layout == "bshd":
+        query_bhsd = query.transpose(1, 2)
+        key_bhsd = key.transpose(1, 2)
+        value_bhsd = value.transpose(1, 2)
+        output = rope_sdpa(query_bhsd, key_bhsd, value_bhsd, cos, sin, attn_mask, is_causal, scale)
+        return output.transpose(1, 2)
+    if layout == "bhsd":
+        return rope_sdpa(query, key, value, cos, sin, attn_mask, is_causal, scale)
+    raise ValueError(f"Unsupported Metal Flash RoPE layout '{layout}'.")
+
+
 def _resolve_metal_flash_attention_constant(extension, constant_name: str) -> int:
     value = getattr(extension, constant_name, None)
     if not isinstance(value, int) or isinstance(value, bool):
@@ -491,6 +552,8 @@ def get_metal_flash_attention_unavailable_reason(backend: str = "metal-flash-att
             return "metal_sdpa_extension does not expose metal_flash_attention_autograd()."
         if not callable(getattr(extension, "clear_quantization_mode", None)):
             return "metal_sdpa_extension does not expose clear_quantization_mode()."
+        if not callable(getattr(extension, "get_dispatch_stats", None)):
+            return "metal_sdpa_extension does not expose get_dispatch_stats()."
         return _metal_flash_attention_runtime_error()
 
     if not callable(getattr(extension, "metal_quantized_flash_attention_autograd", None)):
@@ -519,10 +582,18 @@ def _metal_flash_attention_runtime_error() -> Optional[str]:
     script = """
 import math
 import torch
+import torch.nn.functional as F
 import metal_sdpa_extension
 
 if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
     raise SystemExit("MPS is not available")
+
+get_dispatch_stats = getattr(metal_sdpa_extension, "get_dispatch_stats", None)
+if not callable(get_dispatch_stats):
+    raise SystemExit("metal_sdpa_extension does not expose get_dispatch_stats().")
+if not callable(getattr(metal_sdpa_extension, "clear_quantization_mode", None)):
+    raise SystemExit("metal_sdpa_extension does not expose clear_quantization_mode().")
+metal_sdpa_extension.clear_quantization_mode()
 
 
 def reference_attention_cpu(query, key, value, scale=None, is_causal=False):
@@ -645,6 +716,40 @@ def check_autograd(shape, rtol, atol, dtype=torch.float32):
             )
 
 
+def check_dispatcher(shape, *, is_causal=False, requires_grad=False):
+    torch.manual_seed(44)
+    query = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=requires_grad)
+    key = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=requires_grad)
+    value = torch.randn(shape, dtype=torch.float32, device="mps", requires_grad=requires_grad)
+    torch.mps.synchronize()
+    before = dict(get_dispatch_stats())
+    observed = F.scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        dropout_p=0.0,
+        is_causal=is_causal,
+    )
+    if requires_grad:
+        if not observed.requires_grad or observed.grad_fn is None:
+            raise SystemExit("UMFA dispatcher output is detached; autograd is required for training.")
+        observed.square().mean().backward()
+    torch.mps.synchronize()
+    after = dict(get_dispatch_stats())
+    before_umfa = sum(before.get(name, 0) for name in ("fp32_instream", "fp32_autograd", "fp32_direct"))
+    after_umfa = sum(after.get(name, 0) for name in ("fp32_instream", "fp32_autograd", "fp32_direct"))
+    if after.get("total", 0) <= before.get("total", 0) or after_umfa <= before_umfa:
+        raise SystemExit(
+            "UMFA MPS dispatcher was not used for SDPA. "
+            f"before={before} after={after}"
+        )
+    if after.get("pytorch_fallback", 0) > before.get("pytorch_fallback", 0):
+        raise SystemExit(
+            "UMFA MPS dispatcher fell back to PyTorch SDPA. "
+            f"before={before} after={after}"
+        )
+
+
 check((1, 4, 64, 64), 1e-4, 1e-4)
 check((1, 4, 64, 64), 1e-4, 1e-4, is_causal=True)
 check((1, 4, 64, 64), 5e-2, 5e-2, dtype=torch.float16)
@@ -652,6 +757,9 @@ check((1, 4, 64, 64), 5e-2, 5e-2, dtype=torch.bfloat16)
 check_autograd((1, 4, 64, 64), 1e-3, 1e-3)
 check_autograd((1, 4, 64, 64), 5e-2, 5e-2, dtype=torch.float16)
 check_autograd((1, 4, 64, 64), 5e-2, 5e-2, dtype=torch.bfloat16)
+check_dispatcher((1, 4, 64, 64))
+check_dispatcher((1, 4, 64, 64), requires_grad=True)
+check_dispatcher((1, 4, 64, 64), is_causal=True, requires_grad=True)
 check((1, 24, 512, 128), 1e-4, 1e-4)
 check((1, 24, 512, 128), 1e-4, 1e-4, transposed=True)
 check((1, 24, 512, 128), 1e-4, 1e-4, queued_producer=True)
@@ -933,6 +1041,14 @@ class AttentionBackendController:
     _diffusers_backend_name: Optional[str] = None
     _metal_flash_attention_extension: Optional[Any] = None
     _metal_flash_attention_health_checked: set[str] = set()
+
+    @classmethod
+    def active_backend(cls) -> Optional[str]:
+        return cls._active_backend
+
+    @classmethod
+    def has_attention_logit_consumer(cls) -> bool:
+        return cls._attention_logit_consumer is not None
 
     @classmethod
     def apply(cls, config, phase: AttentionPhase) -> None:

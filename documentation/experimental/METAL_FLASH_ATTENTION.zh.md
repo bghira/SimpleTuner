@@ -102,11 +102,11 @@ import metal_sdpa_extension as ext
 print(ext.get_dispatch_stats())
 ```
 
-对于未量化的推理/验证，`fp32_instream` 应增加且 `pytorch_fallback` 保持为 `0`（任何输入 dtype 的注意力都计入此项 —— 名称指的是 dispatch 路径而非计算 dtype）。量化的 Z-Image 训练则应看到 `quantized_autograd` 增加。若 `encoder_attention_mask` 为 all-true，`mask_all_true_skipped` 也会增加。经由融合 RoPE 入口的调用计入 `rope_instream`。
+对于未量化的推理/验证，`fp32_instream` 应增加且 `pytorch_fallback` 保持为 `0`（任何输入 dtype 的注意力都计入此项 —— 名称指的是 dispatch 路径而非计算 dtype）。量化的 Z-Image 训练则应看到 `quantized_autograd` 增加。若 `encoder_attention_mask` 为 all-true，`mask_all_true_skipped` 也会增加。经由融合 RoPE 入口的 no-grad 调用计入 `rope_instream`；带梯度调用计入 `rope_autograd`。
 
 ## 融合 RoPE + SDPA
 
-扩展提供 `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)`，在注意力之前直接在 GPU 上对 Q/K 应用 interleaved-pair rotary embeddings —— 单次 command buffer 提交，没有 eager 旋转 pass，也没有 FP32 物化。它覆盖 FLUX.1、FLUX.2、Krea2 和 Z-Image 共享的 RoPE 约定（Z-Image 的 complex-multiply 写法是同一种旋转）；各模型仅在表格式上不同，由调用方适配。
+扩展提供 `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)`，在注意力之前直接在 GPU 上对 Q/K 应用 interleaved-pair rotary embeddings。符合条件的 no-grad 调用会留在 in-stream attention 路径中，没有 eager 旋转 pass，也没有 FP32 tensor 物化。它覆盖 FLUX.1、FLUX.2、Krea2 和 Z-Image 共享的 RoPE 约定（Z-Image 的 complex-multiply 写法是同一种旋转）；各模型仅在表格式上不同，由调用方适配。
 
 - 张量为 BHSD；strided views（例如 BSHD 投影的 `transpose(1, 2)`，或 fused-QKV 的 `unbind` views）无需拷贝即可使用。
 - `rope_cos`/`rope_sin` 为 pair-duplicated 表（`cos[2i] == cos[2i+1]`），形状为 `[S, D]`、`[1, S, D]` 或按样本的 `[B, S, D]`；任意 float dtype 会在内部归一化为 FP32。

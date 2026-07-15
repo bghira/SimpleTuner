@@ -102,11 +102,11 @@ import metal_sdpa_extension as ext
 print(ext.get_dispatch_stats())
 ```
 
-量子化なしの推論/検証では、`fp32_instream` が増加し `pytorch_fallback` が `0` のままであることを確認してください（入力 dtype を問わずここにカウントされます — 名前は dispatch 経路を指し、計算 dtype ではありません）。量子化された Z-Image のトレーニングでは代わりに `quantized_autograd` が増加します。`encoder_attention_mask` が all-true の場合は `mask_all_true_skipped` も増加します。融合 RoPE エントリポイント経由の呼び出しは `rope_instream` にカウントされます。
+量子化なしの推論/検証では、`fp32_instream` が増加し `pytorch_fallback` が `0` のままであることを確認してください（入力 dtype を問わずここにカウントされます — 名前は dispatch 経路を指し、計算 dtype ではありません）。量子化された Z-Image のトレーニングでは代わりに `quantized_autograd` が増加します。`encoder_attention_mask` が all-true の場合は `mask_all_true_skipped` も増加します。融合 RoPE エントリポイント経由の no-grad 呼び出しは `rope_instream`、勾配ありの呼び出しは `rope_autograd` にカウントされます。
 
 ## 融合 RoPE + SDPA
 
-拡張は `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)` を公開しています。これはアテンションの直前に GPU 上で Q/K へ interleaved-pair の rotary embeddings を適用します — command buffer の submit は 1 回、eager な回転パスも FP32 の実体化もありません。FLUX.1、FLUX.2、Krea2、Z-Image が共有する RoPE 規約をカバーします（Z-Image の complex-multiply 形式も同じ回転です）。モデル間の違いはテーブル形式だけで、呼び出し側が適合させます。
+拡張は `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)` を公開しています。これはアテンションの直前に GPU 上で Q/K へ interleaved-pair の rotary embeddings を適用します。対象となる no-grad 呼び出しは in-stream attention 経路に留まり、eager な回転パスや FP32 tensor の実体化はありません。FLUX.1、FLUX.2、Krea2、Z-Image が共有する RoPE 規約をカバーします（Z-Image の complex-multiply 形式も同じ回転です）。モデル間の違いはテーブル形式だけで、呼び出し側が適合させます。
 
 - テンソルは BHSD。strided view（例：BSHD 射影の `transpose(1, 2)` や fused-QKV の `unbind` view）はコピーなしで使えます。
 - `rope_cos`/`rope_sin` は pair-duplicated テーブル（`cos[2i] == cos[2i+1]`）で、形状は `[S, D]`、`[1, S, D]`、またはサンプルごとの `[B, S, D]`。float dtype は内部で FP32 に正規化されます。

@@ -102,11 +102,11 @@ import metal_sdpa_extension as ext
 print(ext.get_dispatch_stats())
 ```
 
-बिना quantization वाली inference/validation में `fp32_instream` बढ़ना चाहिए और `pytorch_fallback` `0` पर रहना चाहिए (किसी भी input dtype की attention यहीं count होती है — नाम dispatch path का है, compute dtype का नहीं)। quantized Z-Image training में इसकी जगह `quantized_autograd` बढ़ता है। अगर `encoder_attention_mask` all-true है तो `mask_all_true_skipped` भी बढ़ेगा। fused RoPE entry point से गई calls `rope_instream` में count होती हैं।
+बिना quantization वाली inference/validation में `fp32_instream` बढ़ना चाहिए और `pytorch_fallback` `0` पर रहना चाहिए (किसी भी input dtype की attention यहीं count होती है — नाम dispatch path का है, compute dtype का नहीं)। quantized Z-Image training में इसकी जगह `quantized_autograd` बढ़ता है। अगर `encoder_attention_mask` all-true है तो `mask_all_true_skipped` भी बढ़ेगा। fused RoPE entry point से गई no-grad calls `rope_instream` में count होती हैं; gradient calls `rope_autograd` में count होती हैं।
 
 ## Fused RoPE + SDPA
 
-extension `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)` उपलब्ध कराता है, जो attention से ठीक पहले GPU पर Q/K पर interleaved-pair rotary embeddings लागू करता है — एक ही command buffer submit, कोई eager rotation pass नहीं, कोई FP32 materialization नहीं। यह FLUX.1, FLUX.2, Krea2 और Z-Image की साझा RoPE convention को cover करता है (Z-Image का complex-multiply रूप वही rotation है); मॉडल केवल table format में अलग हैं, जिसे caller adapt करता है।
+extension `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)` उपलब्ध कराता है, जो attention से ठीक पहले GPU पर Q/K पर interleaved-pair rotary embeddings लागू करता है। Eligible no-grad calls in-stream attention path पर रहती हैं, बिना eager rotation passes या FP32 tensor materializations के। यह FLUX.1, FLUX.2, Krea2 और Z-Image की साझा RoPE convention को cover करता है (Z-Image का complex-multiply रूप वही rotation है); मॉडल केवल table format में अलग हैं, जिसे caller adapt करता है।
 
 - tensors BHSD होते हैं; strided views (जैसे BSHD projection का `transpose(1, 2)`, या fused-QKV के `unbind` views) बिना copy के उपयोग होते हैं।
 - `rope_cos`/`rope_sin` pair-duplicated tables हैं (`cos[2i] == cos[2i+1]`), आकार `[S, D]`, `[1, S, D]` या per-sample `[B, S, D]`; कोई भी float dtype internally FP32 में normalize होता है।
