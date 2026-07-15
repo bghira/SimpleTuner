@@ -24,6 +24,19 @@ class _WorkerConfig:
 
 
 class TestCheckpointInferenceWorker(unittest.TestCase):
+    def test_flush_embed_cache_times_out_instead_of_blocking(self) -> None:
+        runtime = object.__new__(CheckpointInferenceRuntime)
+        thread = MagicMock()
+        thread.is_alive.return_value = True
+        runtime.embed_cache = SimpleNamespace(process_write_batches=True, batch_write_thread=thread)
+
+        with self.assertLogs("SimpleTuner-inference", level="WARNING") as logs:
+            with self.assertRaisesRegex(RuntimeError, "Timed out while flushing"):
+                runtime._flush_embed_cache()
+
+        thread.join.assert_called_once_with(timeout=CheckpointInferenceRuntime.EMBED_CACHE_FLUSH_TIMEOUT_SECONDS)
+        self.assertIn("Timed out after 10 seconds", logs.output[0])
+
     def test_apply_settings_updates_validation_resolutions(self) -> None:
         runtime = object.__new__(CheckpointInferenceRuntime)
         runtime.trainer = SimpleNamespace(

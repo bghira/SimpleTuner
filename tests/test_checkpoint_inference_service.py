@@ -23,6 +23,20 @@ class TestCheckpointInferenceService(unittest.TestCase):
         self.service = CheckpointInferenceService()
         self.service._load_environment = Mock(return_value=(self.config, self.output_dir))
 
+    @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.process_keeper")
+    def test_active_session_prunes_stale_records(self, process_keeper: MagicMock) -> None:
+        active = {"session_id": "active", "job_id": "active-job", "environment": "active-env"}
+        stale = {"session_id": "stale", "job_id": "stale-job", "environment": "stale-env"}
+        self.service._sessions = {"active": active, "stale": stale}
+        self.service._environment_sessions = {"active-env": "active", "stale-env": "stale"}
+        process_keeper.get_process_status.side_effect = lambda job_id: "running" if job_id == "active-job" else "completed"
+
+        result = self.service.active_session()
+
+        self.assertEqual(result, active)
+        self.assertEqual(self.service._sessions, {"active": active})
+        self.assertEqual(self.service._environment_sessions, {"active-env": "active"})
+
     @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.PromptLibraryService")
     @patch(
         "simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.built_in_prompts",
@@ -92,6 +106,8 @@ class TestCheckpointInferenceService(unittest.TestCase):
                 "validation_num_inference_steps": 24,
                 "--validation_guidance": 5.5,
                 "--validation_resolution": "512,768x512",
+                "--validation_multigpu": "batch-parallel",
+                "context_parallel_size": "2",
                 "--user_prompt_library": None,
             }
         )
@@ -106,6 +122,7 @@ class TestCheckpointInferenceService(unittest.TestCase):
                 "validation_resolution": "512,768x512",
             },
         )
+        self.assertEqual(result["unsupported_multigpu_modes"], ["batch-parallel", "context-parallel"])
 
     @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.PromptLibraryService")
     def test_prompt_sources_use_registered_defaults_when_environment_omits_values(
@@ -120,6 +137,7 @@ class TestCheckpointInferenceService(unittest.TestCase):
             result["inference_defaults"],
             {"num_inference_steps": 30, "guidance_scale": 7.5, "validation_resolution": "256"},
         )
+        self.assertEqual(result["unsupported_multigpu_modes"], [])
 
     @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.process_keeper")
     @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.CheckpointManager")
@@ -175,6 +193,7 @@ class TestCheckpointInferenceService(unittest.TestCase):
     def test_history_builds_environment_scoped_media_urls(self) -> None:
         sidecar = self.output_dir / "inference" / "session-one" / "checkpoint-100" / "output.png.json"
         sidecar.parent.mkdir(parents=True)
+        sidecar.with_suffix("").write_bytes(b"generated output")
         sidecar.write_text(
             json.dumps(
                 {
@@ -196,6 +215,16 @@ class TestCheckpointInferenceService(unittest.TestCase):
             "/api/checkpoints/inference/media/session-one/checkpoint-100/output.png?environment=environment%20with%20spaces",
         )
         self.assertEqual(result["items"][0]["media_path"], "session-one/checkpoint-100/output.png")
+
+    def test_history_ignores_orphaned_sidecars(self) -> None:
+        sidecar = self.output_dir / "inference" / "session-one" / "checkpoint-100" / "missing.png.json"
+        sidecar.parent.mkdir(parents=True)
+        sidecar.write_text(json.dumps({"created_at": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+
+        result = self.service.history("test", page=1, page_size=24)
+
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
 
     def test_delete_history_removes_selected_media_and_sidecars(self) -> None:
         session_dir = self.output_dir / "inference" / "session-one"
@@ -244,6 +273,42 @@ class TestCheckpointInferenceService(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 404)
 
+    def test_media_path_allows_generated_outputs_and_streaming_preview(self) -> None:
+        generated = self.output_dir / "inference" / "session-one" / "checkpoint-100" / "output.png"
+        generated.parent.mkdir(parents=True)
+        generated.write_bytes(b"png")
+        generated.with_suffix(".png.json").write_text("{}", encoding="utf-8")
+        preview = generated.parents[1] / "preview.png"
+        preview.write_bytes(b"png")
+        preview.with_suffix(".json").write_text("{}", encoding="utf-8")
+
+        self.assertEqual(
+            self.service.media_path("test", "session-one/checkpoint-100/output.png"),
+            generated.resolve(),
+        )
+        self.assertEqual(self.service.media_path("test", "session-one/preview.png"), preview.resolve())
+
+    def test_media_path_rejects_internal_and_untracked_files(self) -> None:
+        session_dir = self.output_dir / "inference" / "session-one"
+        cache_file = session_dir / ".prompt_cache" / "embedding.png"
+        cache_file.parent.mkdir(parents=True)
+        cache_file.write_bytes(b"internal")
+        cache_file.with_suffix(".png.json").write_text("{}", encoding="utf-8")
+        (session_dir / "session.json").write_text("{}", encoding="utf-8")
+        untracked = session_dir / "checkpoint-100" / "untracked.png"
+        untracked.parent.mkdir()
+        untracked.write_bytes(b"png")
+
+        for media_path in (
+            "session-one/session.json",
+            "session-one/.prompt_cache/embedding.png",
+            "session-one/checkpoint-100/untracked.png",
+        ):
+            with self.subTest(media_path=media_path):
+                with self.assertRaises(CheckpointInferenceServiceError) as context:
+                    self.service.media_path("test", media_path)
+                self.assertEqual(context.exception.status_code, 404)
+
     def test_status_includes_streaming_preview_and_latest_completed_output(self) -> None:
         session_dir = self.output_dir / "inference" / "session-one"
         output = session_dir / "checkpoint-100" / "output.png"
@@ -287,6 +352,26 @@ class TestCheckpointInferenceService(unittest.TestCase):
         self.assertTrue(result["preview"]["streaming"])
         self.assertIn("environment=test%20environment", result["preview"]["media_url"])
         self.assertIn("&v=", result["preview"]["media_url"])
+
+    def test_status_discards_completed_session_record(self) -> None:
+        session_id = "session-one"
+        session_dir = self.output_dir / "inference" / session_id
+        session_dir.mkdir(parents=True)
+        (session_dir / "session.json").write_text(
+            json.dumps({"session_id": session_id, "status": "completed"}),
+            encoding="utf-8",
+        )
+        self.service._sessions[session_id] = {
+            "session_id": session_id,
+            "job_id": "infer-one",
+            "environment": "test",
+        }
+        self.service._environment_sessions["test"] = session_id
+
+        self.service.status("test", session_id)
+
+        self.assertNotIn(session_id, self.service._sessions)
+        self.assertNotIn("test", self.service._environment_sessions)
 
     @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.process_keeper")
     def test_generate_queues_prompt_for_loaded_worker(self, process_keeper: MagicMock) -> None:

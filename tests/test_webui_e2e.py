@@ -456,6 +456,8 @@ class CheckpointInferenceFlowTestCase(_TrainerPageMixin, WebUITestCase):
                     "--validation_num_inference_steps": 18,
                     "--validation_guidance": 3.5,
                     "--validation_resolution": "512,768x512",
+                    "--validation_multigpu": "batch-parallel",
+                    "--context_parallel_size": 2,
                     "--report_to": "none",
                 }
             ),
@@ -556,6 +558,12 @@ class CheckpointInferenceFlowTestCase(_TrainerPageMixin, WebUITestCase):
                 modal.find_element(By.ID, "inference-resolution").get_attribute("value"),
                 "512,768x512",
             )
+            multigpu_warning = WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".inference-multigpu-warning"))
+            )
+            self.assertIn("batch parallel and context parallel validation modes", multigpu_warning.text)
+            modal_body = modal.find_element(By.CSS_SELECTOR, ".modal-body")
+            self.assertGreaterEqual(multigpu_warning.rect["y"], modal_body.rect["y"] + modal_body.rect["height"] - 1)
             filename_format = Select(modal.find_element(By.ID, "inference-filename-style"))
             self.assertEqual(filename_format.first_selected_option.get_attribute("value"), "descriptive")
             filename_format.select_by_value("prompt")

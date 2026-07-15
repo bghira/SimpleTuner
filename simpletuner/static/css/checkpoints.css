@@ -144,6 +144,21 @@ body:has(#checkpointInferenceModal.show) .content-wrapper {
     border-radius: 0 0 16px 16px;
 }
 
+.checkpoint-inference-modal .inference-multigpu-warning {
+    display: flex;
+    flex: 0 0 100%;
+    align-items: flex-start;
+    gap: 0.625rem;
+    width: 100%;
+    margin: 0;
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+}
+
+.checkpoint-inference-modal .inference-multigpu-warning i {
+    margin-top: 0.15rem;
+}
+
 .checkpoint-inference-modal .modal-title,
 .checkpoint-inference-modal h6,
 .checkpoint-inference-modal .form-label,

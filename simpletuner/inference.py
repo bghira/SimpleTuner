@@ -53,6 +53,8 @@ def _timestamp_slug() -> str:
 class CheckpointInferenceRuntime:
     """Own one loaded checkpoint and its validation pipeline."""
 
+    EMBED_CACHE_FLUSH_TIMEOUT_SECONDS = 10
+
     def __init__(
         self,
         *,
@@ -190,7 +192,13 @@ class CheckpointInferenceRuntime:
         if self.embed_cache is None:
             raise RuntimeError("Inference prompt cache is not initialized.")
         self.embed_cache.process_write_batches = False
-        self.embed_cache.batch_write_thread.join()
+        self.embed_cache.batch_write_thread.join(timeout=self.EMBED_CACHE_FLUSH_TIMEOUT_SECONDS)
+        if self.embed_cache.batch_write_thread.is_alive():
+            logger.warning(
+                "Timed out after %s seconds while flushing the inference prompt cache.",
+                self.EMBED_CACHE_FLUSH_TIMEOUT_SECONDS,
+            )
+            raise RuntimeError("Timed out while flushing the inference prompt cache.")
 
     def _prepare_prompt(self, entry: dict[str, Any]) -> None:
         if self.trainer is None or self.embed_cache is None:

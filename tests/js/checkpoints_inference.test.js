@@ -56,6 +56,17 @@ describe('checkpoint inference manager', () => {
         expect(manager.inferenceRunCount()).toBe(32);
     });
 
+    test('warns when configured validation multigpu modes are unsupported', () => {
+        manager.inference.promptSources.unsupported_multigpu_modes = ['batch-parallel', 'context-parallel'];
+
+        expect(manager.inferenceMultigpuWarning()).toBe(
+            "Checkpoint inference currently runs on one process and will not use this environment's configured batch parallel and context parallel validation modes."
+        );
+
+        manager.inference.promptSources.unsupported_multigpu_modes = [];
+        expect(manager.inferenceMultigpuWarning()).toBe('');
+    });
+
     test('submits the selected checkpoint and prompt settings', async () => {
         manager.inferenceSelection = ['checkpoint-100'];
         Object.assign(manager.inference.form, {

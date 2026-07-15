@@ -894,7 +894,14 @@
                     </div>
                 </div>
 
-                <div class="modal-footer" x-show="inference.activeTab === 'setup'">
+                <div class="modal-footer inference-modal-footer" x-show="inference.activeTab === 'setup'">
+                    <div class="alert alert-warning inference-multigpu-warning"
+                         x-show="inferenceMultigpuWarning()"
+                         x-cloak
+                         role="alert">
+                        <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+                        <span x-text="inferenceMultigpuWarning()"></span>
+                    </div>
                     <button type="button" class="btn btn-outline-danger me-auto" x-show="inferenceIsActive()" :disabled="loading.inferenceAction" @click="stopInference(true)">
                         <i class="fas fa-stop me-1"></i>Cancel
                     </button>

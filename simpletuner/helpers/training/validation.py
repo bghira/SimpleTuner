@@ -784,7 +784,7 @@ def parse_validation_resolutions(
 
 
 def parse_validation_resolution(
-    input_str: str, *, model_flavour: str | None | object = _MODEL_FLAVOUR_FROM_STATE
+    input_str: str | int, *, model_flavour: str | None | object = _MODEL_FLAVOUR_FROM_STATE
 ) -> tuple[int, int]:
     """
     If the args.validation_resolution:

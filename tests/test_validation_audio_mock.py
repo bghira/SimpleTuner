@@ -133,6 +133,9 @@ class TestAudioValidation(unittest.TestCase):
         mock_config.controlnet = False
         mock_config.control = False
         mock_config.should_abort.return_value = False
+        mock_config.validation_resolution = 256
+        mock_config.model_flavour = None
+        mock_state_tracker.get_args.return_value = mock_config
 
         mock_embed_cache = MagicMock()
         mock_embed_cache.compute_embeddings_for_prompts.return_value = None

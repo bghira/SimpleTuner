@@ -34,6 +34,7 @@ if (!window.checkpointsManager) {
                     builtin_count: 0,
                     configured_user_library: null,
                     user_libraries: [],
+                    unsupported_multigpu_modes: [],
                     inference_defaults: {
                         num_inference_steps: null,
                         guidance_scale: null,
@@ -634,6 +635,16 @@ if (!window.checkpointsManager) {
 
             inferenceRunCount() {
                 return this.inferencePromptCount() * this.inferenceSelection.length * this.inferenceResolutionCount();
+            },
+
+            inferenceMultigpuWarning() {
+                const modes = this.inference.promptSources.unsupported_multigpu_modes || [];
+                if (!modes.length) return '';
+                const labels = modes.map(mode => mode.replaceAll('-', ' '));
+                const configuredModes = labels.length === 1
+                    ? labels[0]
+                    : `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}`;
+                return `Checkpoint inference currently runs on one process and will not use this environment's configured ${configuredModes} validation ${labels.length === 1 ? 'mode' : 'modes'}.`;
             },
 
             inferenceResolutionCount() {

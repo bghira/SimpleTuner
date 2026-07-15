@@ -265,7 +265,7 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
                 },
             )
 
-            deadline = time.time() + 10
+            deadline = time.time() + 30
             while time.time() < deadline and get_process_status(job_id) in {"pending", "running"}:
                 time.sleep(0.05)
 

@@ -39,6 +39,7 @@ class ValidationPreviewerTests(unittest.TestCase):
             parse_validation_resolutions("512, 768x512", model_flavour=""),
             [(512, 512), (768, 512)],
         )
+        self.assertEqual(parse_validation_resolutions(512, model_flavour=""), [(512, 512)])
 
     def test_parse_validation_resolutions_rejects_invalid_items(self):
         with self.assertRaisesRegex(ValueError, "Invalid validation resolution"):

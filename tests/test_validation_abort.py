@@ -147,6 +147,9 @@ class TestValidationAbort(unittest.TestCase):
         mock_config.control = False
         mock_config.output_dir = "/tmp/test_validation"
         mock_config.validation_preview = False
+        mock_config.validation_resolution = 256
+        mock_config.model_flavour = None
+        mock_state_tracker.get_args.return_value = mock_config
 
         # Abort on second callback invocation
         def should_abort_check():

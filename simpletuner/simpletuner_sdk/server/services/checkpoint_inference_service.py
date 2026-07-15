@@ -34,9 +34,10 @@ class CheckpointInferenceServiceError(Exception):
 
 class CheckpointInferenceService:
     FILENAME_STYLES = {"descriptive", "compact", "prompt", "content-hash"}
+    MEDIA_SUFFIXES = {".png", ".mp4"}
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._sessions: dict[str, dict[str, str]] = {}
         self._environment_sessions: dict[str, str] = {}
 
@@ -73,6 +74,22 @@ class CheckpointInferenceService:
         return field.default_value
 
     @classmethod
+    def _unsupported_multigpu_modes(cls, config: dict[str, Any]) -> list[str]:
+        modes = []
+        if cls._config_value(config, "validation_multigpu") == "batch-parallel":
+            modes.append("batch-parallel")
+
+        context_parallel_size = cls._config_value(config, "context_parallel_size")
+        if context_parallel_size not in (None, ""):
+            try:
+                context_parallel_enabled = int(context_parallel_size) > 1
+            except (TypeError, ValueError) as exc:
+                raise CheckpointInferenceServiceError("context_parallel_size must be an integer.") from exc
+            if context_parallel_enabled:
+                modes.append("context-parallel")
+        return modes
+
+    @classmethod
     def _inference_resolutions(cls, config: dict[str, Any], settings: dict[str, Any]) -> list[tuple[int, int]]:
         value = settings.get("validation_resolution")
         if value is None:
@@ -100,12 +117,40 @@ class CheckpointInferenceService:
         return process_keeper.get_process_status(job_id) in {"pending", "running", "aborting"}
 
     def active_session(self) -> dict[str, str] | None:
-        for session_id, record in list(self._sessions.items()):
-            process_status = process_keeper.get_process_status(record["job_id"])
-            if process_status in {"pending", "running", "aborting"}:
-                return record
-            self._environment_sessions.pop(record["environment"], None)
-        return None
+        active = None
+        with self._lock:
+            for session_id, record in list(self._sessions.items()):
+                process_status = process_keeper.get_process_status(record["job_id"])
+                if process_status in {"pending", "running", "aborting"}:
+                    if active is None:
+                        active = record
+                    continue
+                self._discard_session(session_id)
+        return active
+
+    def _discard_session(self, session_id: str) -> None:
+        with self._lock:
+            record = self._sessions.pop(session_id, None)
+            if record and self._environment_sessions.get(record["environment"]) == session_id:
+                self._environment_sessions.pop(record["environment"], None)
+
+    @classmethod
+    def _is_generated_media_path(cls, relative: Path) -> bool:
+        return (
+            not relative.is_absolute()
+            and len(relative.parts) == 3
+            and not any(part.startswith(".") for part in relative.parts)
+            and relative.suffix.lower() in cls.MEDIA_SUFFIXES
+        )
+
+    @staticmethod
+    def _is_preview_media_path(relative: Path) -> bool:
+        return (
+            not relative.is_absolute()
+            and len(relative.parts) == 2
+            and not relative.parts[0].startswith(".")
+            and relative.parts[1] == "preview.png"
+        )
 
     @staticmethod
     def _normalise_entry(shortname: str, value: Any, source: str) -> dict[str, Any]:
@@ -215,6 +260,7 @@ class CheckpointInferenceService:
                 "guidance_scale": guidance_scale,
                 "validation_resolution": validation_resolution,
             },
+            "unsupported_multigpu_modes": self._unsupported_multigpu_modes(config),
         }
 
     def start(
@@ -318,13 +364,15 @@ class CheckpointInferenceService:
         session_path = self._session_path(environment, session_id)
         state_path = session_path / "session.json"
         if not state_path.exists():
-            record = self._sessions.get(session_id)
+            with self._lock:
+                record = self._sessions.get(session_id)
             if record:
                 return {**record, "status": process_keeper.get_process_status(record["job_id"])}
             raise CheckpointInferenceServiceError("Inference session not found.", status.HTTP_404_NOT_FOUND)
         with state_path.open("r", encoding="utf-8") as handle:
             state = json.load(handle)
-        record = self._sessions.get(session_id)
+        with self._lock:
+            record = self._sessions.get(session_id)
         if record and state.get("status") in {
             "pending",
             "queued",
@@ -339,6 +387,8 @@ class CheckpointInferenceService:
                 state["status"] = "cancelled" if process_status == "terminated" else "failed"
                 state["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._write_session_state(state_path, state)
+        if state.get("status") in {"completed", "failed", "cancelled"}:
+            self._discard_session(session_id)
         self._add_session_media(state, environment, session_path)
         return state
 
@@ -351,15 +401,20 @@ class CheckpointInferenceService:
 
     def _add_session_media(self, state: dict[str, Any], environment: str, session_path: Path) -> None:
         inference_root = session_path.parent
+        resolved_root = inference_root.resolve()
         outputs: list[dict[str, Any]] = []
         for sidecar in session_path.glob("*/*.*.json"):
+            if not sidecar.resolve().is_relative_to(resolved_root):
+                continue
             try:
                 with sidecar.open("r", encoding="utf-8") as handle:
                     record = json.load(handle)
             except (OSError, json.JSONDecodeError):
                 continue
             relative_media = sidecar.relative_to(inference_root).as_posix()[: -len(".json")]
-            if not (inference_root / relative_media).is_file():
+            relative = Path(relative_media)
+            media = (inference_root / relative).resolve()
+            if not self._is_generated_media_path(relative) or not media.is_relative_to(resolved_root) or not media.is_file():
                 continue
             record["media_path"] = relative_media
             record["media_url"] = self._media_url(environment, relative_media)
@@ -401,7 +456,8 @@ class CheckpointInferenceService:
             raise CheckpointInferenceServiceError(
                 "The inference session is not ready for custom prompts.", status.HTTP_409_CONFLICT
             )
-        record = self._sessions.get(session_id)
+        with self._lock:
+            record = self._sessions.get(session_id)
         if not record:
             raise CheckpointInferenceServiceError(
                 "The loaded inference worker is no longer available.", status.HTTP_409_CONFLICT
@@ -431,7 +487,8 @@ class CheckpointInferenceService:
         return {"session_id": session_id, "status": "queued", "prompt_count": len(entries)}
 
     def stop(self, environment: str, session_id: str, *, cancel: bool) -> dict[str, Any]:
-        record = self._sessions.get(session_id)
+        with self._lock:
+            record = self._sessions.get(session_id)
         if not record or record.get("environment") != environment:
             state = self.status(environment, session_id)
             return {"session_id": session_id, "status": state.get("status")}
@@ -444,15 +501,26 @@ class CheckpointInferenceService:
     def history(self, environment: str, *, page: int, page_size: int) -> dict[str, Any]:
         _, output_dir = self._load_environment(environment)
         inference_root = output_dir / "inference"
+        resolved_root = inference_root.resolve()
         records: list[dict[str, Any]] = []
         if inference_root.exists():
             for sidecar in inference_root.glob("*/*/*.*.json"):
+                if not sidecar.resolve().is_relative_to(resolved_root):
+                    continue
                 try:
                     with sidecar.open("r", encoding="utf-8") as handle:
                         record = json.load(handle)
                 except (OSError, json.JSONDecodeError):
                     continue
                 relative_media = sidecar.relative_to(inference_root).as_posix()[: -len(".json")]
+                relative = Path(relative_media)
+                media = (inference_root / relative).resolve()
+                if (
+                    not self._is_generated_media_path(relative)
+                    or not media.is_relative_to(resolved_root)
+                    or not media.is_file()
+                ):
+                    continue
                 record["media_path"] = relative_media
                 record["media_url"] = self._media_url(environment, relative_media)
                 records.append(record)
@@ -478,7 +546,7 @@ class CheckpointInferenceService:
             candidate = (root / relative).resolve()
             if relative.is_absolute() or not candidate.is_relative_to(root):
                 raise CheckpointInferenceServiceError("Invalid inference output path.")
-            if len(candidate.relative_to(root).parts) != 3:
+            if not self._is_generated_media_path(relative):
                 raise CheckpointInferenceServiceError("Invalid inference output path.")
 
             sidecar = candidate.with_suffix(f"{candidate.suffix}.json")
@@ -502,8 +570,14 @@ class CheckpointInferenceService:
     def media_path(self, environment: str, media_path: str) -> Path:
         _, output_dir = self._load_environment(environment)
         root = (output_dir / "inference").resolve()
-        candidate = (root / media_path).resolve()
-        if not candidate.is_relative_to(root) or not candidate.is_file():
+        relative = Path(media_path)
+        candidate = (root / relative).resolve()
+        is_generated = self._is_generated_media_path(relative)
+        is_preview = self._is_preview_media_path(relative)
+        if relative.is_absolute() or not candidate.is_relative_to(root) or not (is_generated or is_preview):
+            raise CheckpointInferenceServiceError("Inference output not found.", status.HTTP_404_NOT_FOUND)
+        sidecar = candidate.parent / "preview.json" if is_preview else candidate.with_suffix(f"{candidate.suffix}.json")
+        if not candidate.is_file() or not sidecar.is_file():
             raise CheckpointInferenceServiceError("Inference output not found.", status.HTTP_404_NOT_FOUND)
         return candidate
 
