@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
-from simpletuner.helpers.training.validation import ValidationPreviewer, _PreviewMetadata
+from simpletuner.helpers.training.validation import ValidationPreviewer, _PreviewMetadata, parse_validation_resolutions
 
 
 class _DummyModel:
@@ -34,6 +34,39 @@ class _DummyModel:
 
 
 class ValidationPreviewerTests(unittest.TestCase):
+    def test_parse_validation_resolutions_supports_comma_separated_formats(self):
+        self.assertEqual(
+            parse_validation_resolutions("512, 768x512", model_flavour=""),
+            [(512, 512), (768, 512)],
+        )
+
+    def test_parse_validation_resolutions_rejects_invalid_items(self):
+        with self.assertRaisesRegex(ValueError, "Invalid validation resolution"):
+            parse_validation_resolutions("512,wide", model_flavour="")
+
+    @patch("simpletuner.helpers.training.validation.StateTracker")
+    def test_internal_callback_enables_preview_without_webhook(self, mock_state_tracker):
+        mock_state_tracker.get_webhook_handler.return_value = None
+        callback = MagicMock()
+        config = types.SimpleNamespace(
+            validation_preview=True,
+            validation_preview_steps=1,
+            _validation_preview_callback=callback,
+        )
+        previewer = ValidationPreviewer(_DummyModel(), types.SimpleNamespace(is_main_process=True), config)
+        metadata = _PreviewMetadata(
+            shortname="inference",
+            prompt="preview prompt",
+            resolution=(512, 512),
+            validation_type="checkpoint",
+        )
+
+        previewer._emit_event([object()], None, metadata, step=0, timestep=1.0)
+
+        self.assertTrue(previewer.enabled)
+        callback.assert_called_once()
+        self.assertEqual(callback.call_args.kwargs["structured_data"]["data"]["step_label"], "1")
+
     @patch("simpletuner.helpers.training.validation.StateTracker")
     def test_should_emit_interval(self, mock_state_tracker):
         handler = MagicMock()

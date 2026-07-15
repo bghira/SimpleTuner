@@ -417,6 +417,265 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_config_json_modal_reflects_blank_fields", scenario)
 
 
+class CheckpointInferenceFlowTestCase(_TrainerPageMixin, WebUITestCase):
+    MAX_BROWSERS = 1
+
+    def test_checkpoint_selection_opens_inference_workspace(self) -> None:
+        output_dir = self.home_path / "inference-output"
+        (output_dir / "checkpoint-100").mkdir(parents=True)
+        history_media = output_dir / "inference" / "session-one" / "checkpoint-100" / "sample.png"
+        history_media.parent.mkdir(parents=True)
+        history_media.write_bytes(b"generated image")
+        history_sidecar = history_media.with_suffix(".png.json")
+        history_sidecar.write_text(
+            json.dumps(
+                {
+                    "session_id": "session-one",
+                    "checkpoint": "checkpoint-100",
+                    "filename": "sample.png",
+                    "prompt": "history prompt",
+                    "seed": 42,
+                    "media_type": "image",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+        env_dir = self.config_dir / "inference-env"
+        env_dir.mkdir(parents=True, exist_ok=True)
+        (env_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "--model_family": "flux",
+                    "--model_type": "lora",
+                    "--model_flavour": "libreflux",
+                    "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
+                    "--output_dir": str(output_dir),
+                    "--data_backend_config": str(env_dir / "multidatabackend.json"),
+                    "--validation_prompt": "a configured validation prompt",
+                    "--validation_num_inference_steps": 18,
+                    "--validation_guidance": 3.5,
+                    "--validation_resolution": "512,768x512",
+                    "--report_to": "none",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (env_dir / "multidatabackend.json").write_text("[]", encoding="utf-8")
+        self.seed_defaults(active_config="inference-env", output_dir=str(output_dir))
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            driver.find_element(By.CSS_SELECTOR, ".tab-btn[data-tab='checkpoints']").click()
+
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "checkpoints-tab-content")))
+            driver.execute_script(
+                "const comp = Alpine.$data(document.getElementById('checkpoints-tab-content'));" "comp.hints.hero = false;"
+            )
+            checkbox = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".checkpoint-inference-check input"))
+            )
+            history_button = driver.find_element(By.CSS_SELECTOR, "button[title='Inference history']")
+            driver.execute_script("arguments[0].scrollIntoView({ block: 'center' });", checkbox)
+            checkbox.click()
+
+            WebDriverWait(driver, 5).until(
+                lambda _driver: driver.find_element(By.CSS_SELECTOR, ".checkpoint-inference-launch-count").is_displayed()
+            )
+            launch_button = driver.find_element(By.CSS_SELECTOR, ".checkpoint-inference-launch")
+            launch_count = launch_button.find_element(By.CSS_SELECTOR, ".checkpoint-inference-launch-count")
+            button_center = launch_button.rect["y"] + launch_button.rect["height"] / 2
+            count_center = launch_count.rect["y"] + launch_count.rect["height"] / 2
+            history_center = history_button.rect["y"] + history_button.rect["height"] / 2
+            self.assertAlmostEqual(count_center, button_center, delta=2)
+            self.assertAlmostEqual(history_center, button_center, delta=2)
+
+            state = driver.execute_script(
+                "const comp = Alpine.$data(document.getElementById('checkpoints-tab-content'));"
+                "return { selection: comp.inferenceSelection.slice(), selected: comp.selectedCheckpoint };"
+            )
+            self.assertEqual(state["selection"], ["checkpoint-100"])
+            self.assertIsNone(state["selected"])
+
+            driver.execute_script("arguments[0].scrollIntoView({ block: 'center' });", launch_button)
+            launch_button.click()
+            modal = WebDriverWait(driver, 15).until(EC.visibility_of_element_located((By.ID, "checkpointInferenceModal")))
+            self.assertIn("checkpoint-100", modal.text)
+            keep_loaded = modal.find_element(By.ID, "inference-keep-loaded")
+            self.assertTrue(keep_loaded.is_enabled())
+            streaming_preview = modal.find_element(By.ID, "inference-streaming-preview")
+            self.assertGreater(streaming_preview.rect["y"], keep_loaded.rect["y"])
+            streaming_preview.click()
+            self.assertTrue(streaming_preview.is_selected())
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/checkpoint-inference",
+                    timeout=5,
+                ).json()["streaming_preview"]
+            )
+            streaming_preview.click()
+            self.assertFalse(streaming_preview.is_selected())
+            WebDriverWait(driver, 5).until(
+                lambda _driver: not requests.get(
+                    f"{self.base_url}/api/webui/ui-state/checkpoint-inference",
+                    timeout=5,
+                ).json()["streaming_preview"]
+            )
+            keep_loaded.click()
+            self.assertTrue(keep_loaded.is_selected())
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/checkpoint-inference",
+                    timeout=5,
+                ).json()["keep_loaded"]
+            )
+            streaming_preview.click()
+            WebDriverWait(driver, 5).until(
+                lambda _driver: all(
+                    requests.get(
+                        f"{self.base_url}/api/webui/ui-state/checkpoint-inference",
+                        timeout=5,
+                    ).json()[setting]
+                    for setting in ("keep_loaded", "streaming_preview")
+                )
+            )
+            configured_prompt = modal.find_element(By.ID, "inference-configured-prompt")
+            WebDriverWait(driver, 10).until(lambda _driver: configured_prompt.is_selected())
+            configured_label = modal.find_element(By.CSS_SELECTOR, "label[for='inference-configured-prompt']")
+            configured_preview = modal.find_element(By.CSS_SELECTOR, ".inference-source-preview")
+            self.assertEqual(configured_preview.tag_name, "pre")
+            self.assertEqual(configured_preview.text, "a configured validation prompt")
+            self.assertGreater(configured_preview.rect["y"], configured_label.rect["y"])
+            WebDriverWait(driver, 5).until(
+                lambda _driver: modal.find_element(By.ID, "inference-steps").get_attribute("value") == "18"
+            )
+            self.assertEqual(modal.find_element(By.ID, "inference-guidance").get_attribute("value"), "3.5")
+            self.assertEqual(
+                modal.find_element(By.ID, "inference-resolution").get_attribute("value"),
+                "512,768x512",
+            )
+            filename_format = Select(modal.find_element(By.ID, "inference-filename-style"))
+            self.assertEqual(filename_format.first_selected_option.get_attribute("value"), "descriptive")
+            filename_format.select_by_value("prompt")
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/checkpoint-inference",
+                    timeout=5,
+                ).json()["filename_style"]
+                == "prompt"
+            )
+            driver.execute_script(
+                "const comp = Alpine.$data(document.getElementById('checkpoints-tab-content'));"
+                "comp.inference.session = {"
+                "  session_id: 'session-one', status: 'running', streaming_preview: false,"
+                "  completed_prompts: 1, total_prompts: 2,"
+                "  latest_output: {"
+                "    media_type: 'image', streaming: false, checkpoint: 'checkpoint-100',"
+                "    prompt: 'latest completed prompt', created_at: '2026-01-01T00:00:00Z',"
+                "    media_url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='"
+                "  }"
+                "};"
+            )
+            current_output = WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".inference-current-output"))
+            )
+            self.assertIn("latest completed prompt", current_output.text)
+
+            close_geometry = driver.execute_script(
+                "const content = document.querySelector('#checkpointInferenceModal .modal-content').getBoundingClientRect();"
+                "const close = document.querySelector('#checkpointInferenceModal .inference-modal-close').getBoundingClientRect();"
+                "return { right: content.right - close.right, top: close.top - content.top };"
+            )
+            self.assertAlmostEqual(close_geometry["right"], 24, delta=3)
+            self.assertAlmostEqual(close_geometry["top"], 20, delta=3)
+
+            for width, height in (
+                (1440, 1000),
+                (390, 844),
+            ):
+                driver.set_window_size(width, height)
+                WebDriverWait(driver, 5).until(lambda _driver: modal.is_displayed())
+                bounds = driver.execute_script(
+                    "const content = document.querySelector('#checkpointInferenceModal .modal-content');"
+                    "const rect = content.getBoundingClientRect();"
+                    "const main = document.querySelector('.main-content').getBoundingClientRect();"
+                    "return {"
+                    "  left: rect.left, right: rect.right, viewport: window.innerWidth,"
+                    "  modalCenter: rect.left + rect.width / 2, mainCenter: main.left + main.width / 2"
+                    "};"
+                )
+                self.assertGreaterEqual(bounds["left"], -1)
+                self.assertLessEqual(bounds["right"], bounds["viewport"] + 1)
+                if width > 1024:
+                    self.assertAlmostEqual(bounds["modalCenter"], bounds["mainCenter"], delta=2)
+                output_bounds = driver.execute_script(
+                    "const root = document.querySelector('.inference-current-output').getBoundingClientRect();"
+                    "const media = document.querySelector('.inference-current-output-media').getBoundingClientRect();"
+                    "const details = document.querySelector('.inference-current-output-details').getBoundingClientRect();"
+                    "return {"
+                    "  rootLeft: root.left, rootRight: root.right, mediaLeft: media.left, mediaRight: media.right,"
+                    "  mediaBottom: media.bottom, detailsLeft: details.left, detailsRight: details.right,"
+                    "  detailsTop: details.top, width: window.innerWidth"
+                    "};"
+                )
+                self.assertGreaterEqual(output_bounds["mediaLeft"], output_bounds["rootLeft"] - 1)
+                self.assertLessEqual(output_bounds["detailsRight"], output_bounds["rootRight"] + 1)
+                if width <= 991:
+                    self.assertGreaterEqual(output_bounds["detailsTop"], output_bounds["mediaBottom"] - 1)
+                else:
+                    self.assertGreaterEqual(output_bounds["detailsLeft"], output_bounds["mediaRight"] - 1)
+
+            driver.set_window_size(1440, 1000)
+            trainer_page.navigate_to_trainer()
+            WebDriverWait(driver, 15).until(
+                lambda _driver: driver.execute_script(
+                    "const store = window.Alpine?.store?.('trainer');"
+                    "return Array.isArray(store?.onboardingSteps) && store.onboardingSteps.length > 0;"
+                )
+            )
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_basic_tab()
+            driver.find_element(By.CSS_SELECTOR, ".tab-btn[data-tab='checkpoints']").click()
+            trainer_page.wait_for_tab("checkpoints")
+            driver.execute_script(
+                "const comp = Alpine.$data(document.getElementById('checkpoints-tab-content'));" "comp.hints.hero = false;"
+            )
+            restored_format = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.ID, "inference-filename-style"))
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: Select(restored_format).first_selected_option.get_attribute("value") == "prompt"
+                and driver.find_element(By.ID, "inference-keep-loaded").is_selected()
+                and driver.find_element(By.ID, "inference-streaming-preview").is_selected()
+            )
+
+            history_button = driver.find_element(By.CSS_SELECTOR, "button[title='Inference history']")
+            driver.execute_script("arguments[0].scrollIntoView({ block: 'center' });", history_button)
+            history_button.click()
+            history_checkbox = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".inference-history-select input"))
+            )
+            history_checkbox.click()
+            delete_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Delete selected generations']"))
+            )
+            self.assertIn("Delete (1)", delete_button.text)
+            driver.execute_script("window.confirm = () => true;")
+            delete_button.click()
+            WebDriverWait(driver, 10).until(lambda _driver: not history_media.exists())
+            self.assertFalse(history_sidecar.exists())
+            WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    "const comp = Alpine.$data(document.getElementById('checkpoints-tab-content'));"
+                    "return comp.inference.historyTotal === 0 && comp.inference.historySelection.length === 0;"
+                )
+            )
+
+        self.for_each_browser("test_checkpoint_selection_opens_inference_workspace", scenario)
+
+
 class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
     """Test GPU health dashboard toggles."""
 

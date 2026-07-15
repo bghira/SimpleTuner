@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -564,6 +564,42 @@ class CollapsedSectionsPayload(BaseModel):
     """Payload for updating collapsed sections state."""
 
     sections: Dict[str, bool]
+
+
+class CheckpointInferenceSettingsPayload(BaseModel):
+    """Persisted settings for the checkpoint inference workspace."""
+
+    filename_style: Literal["descriptive", "compact", "prompt", "content-hash"] = "descriptive"
+    keep_loaded: bool = False
+    streaming_preview: bool = False
+
+
+@router.get("/ui-state/checkpoint-inference")
+async def get_checkpoint_inference_settings(
+    _user: User = Depends(get_current_user),
+) -> CheckpointInferenceSettingsPayload:
+    """Get checkpoint inference UI settings."""
+    store = WebUIStateStore()
+    try:
+        settings = store.get_checkpoint_inference_settings()
+        return CheckpointInferenceSettingsPayload.model_validate(settings)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@router.post("/ui-state/checkpoint-inference")
+async def save_checkpoint_inference_settings(
+    payload: CheckpointInferenceSettingsPayload,
+    _user: User = Depends(get_current_user),
+) -> CheckpointInferenceSettingsPayload:
+    """Save checkpoint inference UI settings."""
+    store = WebUIStateStore()
+    try:
+        settings = payload.model_dump()
+        store.save_checkpoint_inference_settings(settings)
+        return payload
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
 
 
 @router.get("/ui-state/collapsed-sections/{tab_name}")

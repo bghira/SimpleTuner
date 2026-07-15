@@ -1308,6 +1308,11 @@ class TestTrainer(unittest.TestCase):
         # FSDP validation is now supported - validation_disable should remain False
         self.assertFalse(trainer.config.validation_disable)
         mock_validation.assert_called_once()
+        validation_instance.clear_text_encoders.assert_called_once()
+
+        validation_instance.clear_text_encoders.reset_mock()
+        trainer.init_validations(preserve_text_encoders=True)
+        validation_instance.clear_text_encoders.assert_not_called()
 
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_creates_eval_for_epoch_interval(self, mock_validation):

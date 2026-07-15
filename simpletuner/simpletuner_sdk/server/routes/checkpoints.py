@@ -5,8 +5,13 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service import (
+    CHECKPOINT_INFERENCE_SERVICE,
+    CheckpointInferenceServiceError,
+)
 from simpletuner.simpletuner_sdk.server.services.checkpoints_service import CHECKPOINTS_SERVICE, CheckpointsServiceError
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
@@ -55,6 +60,43 @@ class UploadCheckpointsRequest(BaseModel):
     callback_url: Optional[str] = Field(None, description="Webhook URL for progress callbacks")
 
 
+class InferenceSettings(BaseModel):
+    seed: Optional[int] = None
+    num_inference_steps: Optional[int] = Field(None, ge=1, le=1000)
+    guidance_scale: Optional[float] = Field(None, ge=0, le=100)
+    validation_resolution: Optional[str] = Field(None, min_length=1, max_length=256)
+
+
+class StartInferenceRequest(BaseModel):
+    environment: str
+    checkpoint_names: List[str] = Field(..., min_length=1)
+    use_configured_prompt: bool = True
+    use_builtin_library: bool = False
+    user_library_filename: Optional[str] = None
+    custom_prompts: List[str] = Field(default_factory=list)
+    filename_style: str = "descriptive"
+    keep_loaded: bool = False
+    streaming_preview: bool = False
+    idle_timeout_minutes: int = Field(15, ge=1, le=1440)
+    settings: InferenceSettings = Field(default_factory=InferenceSettings)
+
+
+class GenerateInferenceRequest(BaseModel):
+    environment: str
+    custom_prompts: List[str] = Field(..., min_length=1)
+    filename_style: Optional[str] = None
+    settings: InferenceSettings = Field(default_factory=InferenceSettings)
+
+
+class InferenceSessionRequest(BaseModel):
+    environment: str
+
+
+class DeleteInferenceHistoryRequest(BaseModel):
+    environment: str
+    media_paths: List[str] = Field(..., min_length=1, max_length=100)
+
+
 def _call_service(func, *args, **kwargs):
     """Execute a service call and translate domain errors to HTTP errors."""
     try:
@@ -62,6 +104,8 @@ def _call_service(func, *args, **kwargs):
     except CheckpointsServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
     except HuggingfaceServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    except CheckpointInferenceServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
@@ -89,6 +133,106 @@ async def list_checkpoints(
         )
 
     return _call_service(CHECKPOINTS_SERVICE.list_checkpoints, environment, sort_by)
+
+
+@router.get("/inference/prompt-sources")
+async def inference_prompt_sources(
+    environment: str = Query(...),
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(CHECKPOINT_INFERENCE_SERVICE.prompt_sources, environment)
+
+
+@router.post("/inference/start")
+async def start_inference(
+    request: StartInferenceRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(
+        CHECKPOINT_INFERENCE_SERVICE.start,
+        environment=request.environment,
+        checkpoint_names=request.checkpoint_names,
+        use_configured_prompt=request.use_configured_prompt,
+        use_builtin_library=request.use_builtin_library,
+        user_library_filename=request.user_library_filename,
+        custom_prompts=request.custom_prompts,
+        filename_style=request.filename_style,
+        keep_loaded=request.keep_loaded,
+        streaming_preview=request.streaming_preview,
+        idle_timeout_minutes=request.idle_timeout_minutes,
+        settings=request.settings.model_dump(exclude_none=True),
+    )
+
+
+@router.get("/inference/{session_id}/status")
+async def inference_status(
+    session_id: str,
+    environment: str = Query(...),
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(CHECKPOINT_INFERENCE_SERVICE.status, environment, session_id)
+
+
+@router.post("/inference/{session_id}/generate")
+async def generate_inference(
+    session_id: str,
+    request: GenerateInferenceRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(
+        CHECKPOINT_INFERENCE_SERVICE.generate,
+        environment=request.environment,
+        session_id=session_id,
+        custom_prompts=request.custom_prompts,
+        filename_style=request.filename_style,
+        settings=request.settings.model_dump(exclude_none=True),
+    )
+
+
+@router.post("/inference/{session_id}/unload")
+async def unload_inference(
+    session_id: str,
+    request: InferenceSessionRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(CHECKPOINT_INFERENCE_SERVICE.stop, request.environment, session_id, cancel=False)
+
+
+@router.post("/inference/{session_id}/cancel")
+async def cancel_inference(
+    session_id: str,
+    request: InferenceSessionRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(CHECKPOINT_INFERENCE_SERVICE.stop, request.environment, session_id, cancel=True)
+
+
+@router.get("/inference/history")
+async def inference_history(
+    environment: str = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=100),
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(CHECKPOINT_INFERENCE_SERVICE.history, environment, page=page, page_size=page_size)
+
+
+@router.delete("/inference/history")
+async def delete_inference_history(
+    request: DeleteInferenceHistoryRequest,
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return _call_service(CHECKPOINT_INFERENCE_SERVICE.delete_history, request.environment, request.media_paths)
+
+
+@router.get("/inference/media/{media_path:path}")
+async def inference_media(
+    media_path: str,
+    environment: str = Query(...),
+    _user: User = Depends(get_current_user),
+):
+    path = _call_service(CHECKPOINT_INFERENCE_SERVICE.media_path, environment, media_path)
+    return FileResponse(path)
 
 
 @router.post("/{checkpoint_name}/validate")

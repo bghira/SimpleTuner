@@ -26,6 +26,43 @@ if (!window.checkpointsManager) {
             retentionDirty: false,
             cleanupPreview: null,
             validationResult: null,
+            inferenceSelection: [],
+            inference: {
+                activeTab: 'setup',
+                promptSources: {
+                    configured_prompt: null,
+                    builtin_count: 0,
+                    configured_user_library: null,
+                    user_libraries: [],
+                    inference_defaults: {
+                        num_inference_steps: null,
+                        guidance_scale: null,
+                        validation_resolution: null
+                    }
+                },
+                promptSourcesLoaded: false,
+                form: {
+                    use_configured_prompt: true,
+                    use_builtin_library: false,
+                    user_library_filename: '',
+                    custom_prompts: '',
+                    filename_style: 'descriptive',
+                    keep_loaded: false,
+                    streaming_preview: false,
+                    idle_timeout_minutes: 15,
+                    seed: '',
+                    num_inference_steps: '',
+                    guidance_scale: '',
+                    validation_resolution: ''
+                },
+                session: null,
+                interactivePrompt: '',
+                history: [],
+                historySelection: [],
+                historyPage: 1,
+                historyTotal: 0,
+                statusTimer: null
+            },
             markdownService: window.markdownService || null,
             loading: {
                 checkpoints: false,
@@ -34,7 +71,12 @@ if (!window.checkpointsManager) {
                 preview: false,
                 cleanup: false,
                 saveRetention: false,
-                cloudOutputs: false
+                cloudOutputs: false,
+                inferenceSources: false,
+                inferenceStart: false,
+                inferenceHistory: false,
+                inferenceDelete: false,
+                inferenceAction: false
             },
             cloudOutputs: [],
             visibilitySettings: {
@@ -94,6 +136,7 @@ if (!window.checkpointsManager) {
                 this.markdownService = window.markdownService || this.markdownService;
 
                 await this.loadVisibilitySettings();
+                await this.loadInferenceSettings();
                 await this.loadCheckpoints();
                 await this.loadRetentionConfig();
                 await this.checkHuggingFaceAuth();
@@ -225,6 +268,8 @@ if (!window.checkpointsManager) {
                     const data = await response.json();
                     const checkpoints = Array.isArray(data.checkpoints) ? data.checkpoints : [];
                     this.checkpoints = checkpoints.map((cp, idx) => this.normalizeCheckpoint(cp, idx));
+                    const availableNames = new Set(this.checkpoints.map(cp => cp.name));
+                    this.inferenceSelection = this.inferenceSelection.filter(name => availableNames.has(name));
                     this.sortCheckpoints();
 
                     // Calculate common aspect ratio from existing validation images
@@ -401,6 +446,7 @@ if (!window.checkpointsManager) {
                     }
 
                     this.checkpoints = this.checkpoints.filter(cp => cp.id !== checkpoint.id);
+                    this.inferenceSelection = this.inferenceSelection.filter(name => name !== checkpoint.name);
 
                     if (this.selectedCheckpoint && (this.selectedCheckpoint.id === checkpoint.id || this.selectedCheckpoint.name === checkpoint.name)) {
                         this.selectedCheckpoint = null;
@@ -442,6 +488,395 @@ if (!window.checkpointsManager) {
                 html = html.replace(/\n/g, '<br />');
 
                 return `<p>${html}</p>`;
+            },
+
+            // Checkpoint Inference
+            async loadInferenceSettings() {
+                try {
+                    const response = await ApiClient.fetch('/api/webui/ui-state/checkpoint-inference');
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to load checkpoint inference settings');
+                    }
+                    this.inference.form.filename_style = data.filename_style;
+                    this.inference.form.keep_loaded = data.keep_loaded;
+                    this.inference.form.streaming_preview = data.streaming_preview;
+                } catch (error) {
+                    console.error('Failed to load checkpoint inference settings:', error);
+                }
+            },
+
+            async saveInferenceSettings() {
+                try {
+                    const response = await ApiClient.fetch('/api/webui/ui-state/checkpoint-inference', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            filename_style: this.inference.form.filename_style,
+                            keep_loaded: this.inference.form.keep_loaded,
+                            streaming_preview: this.inference.form.streaming_preview
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to save checkpoint inference settings');
+                    }
+                } catch (error) {
+                    console.error('Failed to save checkpoint inference settings:', error);
+                    if (window.showToast) window.showToast(error.message, 'error');
+                }
+            },
+
+            isInferenceSelected(checkpointName) {
+                return this.inferenceSelection.includes(checkpointName);
+            },
+
+            toggleInferenceCheckpoint(checkpointName) {
+                if (this.isInferenceSelected(checkpointName)) {
+                    this.inferenceSelection = this.inferenceSelection.filter(name => name !== checkpointName);
+                } else {
+                    this.inferenceSelection = [...this.inferenceSelection, checkpointName];
+                }
+                if (this.inferenceSelection.length !== 1) {
+                    this.inference.form.keep_loaded = false;
+                }
+            },
+
+            selectedInferenceCheckpoints() {
+                return this.inferenceSelection
+                    .map(name => this.checkpoints.find(checkpoint => checkpoint.name === name))
+                    .filter(Boolean);
+            },
+
+            async openInferenceWorkspace(tab = 'setup') {
+                this.inference.activeTab = tab;
+                const modalElement = document.getElementById('checkpointInferenceModal');
+                if (modalElement && window.bootstrap) {
+                    window.bootstrap.Modal.getOrCreateInstance(modalElement).show();
+                }
+                const requests = [this.loadInferenceHistory(1)];
+                if (tab === 'setup') requests.push(this.loadInferencePromptSources());
+                await Promise.all(requests);
+            },
+
+            async loadInferencePromptSources() {
+                this.loading.inferenceSources = true;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch(
+                        `/api/checkpoints/inference/prompt-sources?environment=${encodeURIComponent(environment)}`
+                    );
+                    if (!response.ok) {
+                        throw new Error('Failed to load inference prompt sources');
+                    }
+                    const promptSources = await response.json();
+                    const previousDefaults = this.inference.promptSources.inference_defaults || {};
+                    const nextDefaults = promptSources.inference_defaults || {};
+                    const stepsMatchPrevious = String(this.inference.form.num_inference_steps) === String(
+                        previousDefaults.num_inference_steps ?? ''
+                    );
+                    const guidanceMatchesPrevious = String(this.inference.form.guidance_scale) === String(
+                        previousDefaults.guidance_scale ?? ''
+                    );
+                    const resolutionMatchesPrevious = String(this.inference.form.validation_resolution) === String(
+                        previousDefaults.validation_resolution ?? ''
+                    );
+                    if (!this.inference.promptSourcesLoaded
+                        || this.inference.form.num_inference_steps === ''
+                        || stepsMatchPrevious) {
+                        this.inference.form.num_inference_steps = nextDefaults.num_inference_steps ?? '';
+                    }
+                    if (!this.inference.promptSourcesLoaded
+                        || this.inference.form.guidance_scale === ''
+                        || guidanceMatchesPrevious) {
+                        this.inference.form.guidance_scale = nextDefaults.guidance_scale ?? '';
+                    }
+                    if (!this.inference.promptSourcesLoaded
+                        || this.inference.form.validation_resolution === ''
+                        || resolutionMatchesPrevious) {
+                        this.inference.form.validation_resolution = nextDefaults.validation_resolution ?? '';
+                    }
+                    this.inference.promptSources = promptSources;
+                    if (!this.inference.promptSourcesLoaded) {
+                        this.inference.form.user_library_filename = this.inference.promptSources.configured_user_library || '';
+                        this.inference.form.use_configured_prompt = Boolean(this.inference.promptSources.configured_prompt);
+                        this.inference.promptSourcesLoaded = true;
+                    }
+                } catch (error) {
+                    console.error('Failed to load inference prompt sources:', error);
+                    if (window.showToast) window.showToast(error.message, 'error');
+                } finally {
+                    this.loading.inferenceSources = false;
+                }
+            },
+
+            inferenceCustomPrompts() {
+                return this.inference.form.custom_prompts
+                    .split(/\r?\n/)
+                    .map(prompt => prompt.trim())
+                    .filter(Boolean);
+            },
+
+            selectedInferenceLibrary() {
+                return this.inference.promptSources.user_libraries.find(
+                    library => library.filename === this.inference.form.user_library_filename
+                ) || null;
+            },
+
+            inferencePromptCount() {
+                let count = this.inferenceCustomPrompts().length;
+                if (this.inference.form.use_configured_prompt && this.inference.promptSources.configured_prompt) count += 1;
+                if (this.inference.form.use_builtin_library) count += this.inference.promptSources.builtin_count || 0;
+                const library = this.selectedInferenceLibrary();
+                if (library) count += library.prompt_count || 0;
+                return count;
+            },
+
+            inferenceRunCount() {
+                return this.inferencePromptCount() * this.inferenceSelection.length * this.inferenceResolutionCount();
+            },
+
+            inferenceResolutionCount() {
+                const resolutions = String(this.inference.form.validation_resolution || '')
+                    .split(',')
+                    .map(resolution => resolution.trim())
+                    .filter(Boolean);
+                return Math.max(1, resolutions.length);
+            },
+
+            inferenceSettings() {
+                const settings = {};
+                if (this.inference.form.seed !== '') settings.seed = Number(this.inference.form.seed);
+                if (this.inference.form.num_inference_steps !== '') {
+                    settings.num_inference_steps = Number(this.inference.form.num_inference_steps);
+                }
+                if (this.inference.form.guidance_scale !== '') {
+                    settings.guidance_scale = Number(this.inference.form.guidance_scale);
+                }
+                if (this.inference.form.validation_resolution.trim() !== '') {
+                    settings.validation_resolution = this.inference.form.validation_resolution.trim();
+                }
+                return settings;
+            },
+
+            async _inferenceJson(response) {
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Inference request failed');
+                }
+                return data;
+            },
+
+            async startInference() {
+                if (this.loading.inferenceStart || !this.inferenceSelection.length || !this.inferencePromptCount()) return;
+                this.loading.inferenceStart = true;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch('/api/checkpoints/inference/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            environment,
+                            checkpoint_names: this.inferenceSelection,
+                            use_configured_prompt: this.inference.form.use_configured_prompt,
+                            use_builtin_library: this.inference.form.use_builtin_library,
+                            user_library_filename: this.inference.form.user_library_filename || null,
+                            custom_prompts: this.inferenceCustomPrompts(),
+                            filename_style: this.inference.form.filename_style,
+                            keep_loaded: this.inference.form.keep_loaded,
+                            streaming_preview: this.inference.form.streaming_preview,
+                            idle_timeout_minutes: Number(this.inference.form.idle_timeout_minutes),
+                            settings: this.inferenceSettings()
+                        })
+                    });
+                    this.inference.session = await this._inferenceJson(response);
+                    this.scheduleInferenceStatusPoll();
+                } catch (error) {
+                    console.error('Failed to start checkpoint inference:', error);
+                    if (window.showToast) window.showToast(error.message, 'error');
+                } finally {
+                    this.loading.inferenceStart = false;
+                }
+            },
+
+            scheduleInferenceStatusPoll() {
+                if (this.inference.statusTimer) window.clearTimeout(this.inference.statusTimer);
+                this.inference.statusTimer = window.setTimeout(() => this.pollInferenceStatus(), 1000);
+            },
+
+            async pollInferenceStatus() {
+                if (!this.inference.session?.session_id) return;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch(
+                        `/api/checkpoints/inference/${encodeURIComponent(this.inference.session.session_id)}/status?environment=${encodeURIComponent(environment)}`
+                    );
+                    this.inference.session = await this._inferenceJson(response);
+                    const active = ['pending', 'loading', 'running', 'unloading'].includes(this.inference.session.status);
+                    if (active) {
+                        this.scheduleInferenceStatusPoll();
+                    } else {
+                        await this.loadInferenceHistory(1);
+                    }
+                } catch (error) {
+                    console.error('Failed to poll inference status:', error);
+                    if (window.showToast) window.showToast(error.message, 'error');
+                }
+            },
+
+            inferenceProgressPercent() {
+                const session = this.inference.session;
+                if (!session?.total_prompts) return 0;
+                return Math.min(100, Math.round((session.completed_prompts || 0) / session.total_prompts * 100));
+            },
+
+            inferenceDisplayOutput() {
+                const session = this.inference.session;
+                if (!session) return null;
+                const latest = session.latest_output || null;
+                const preview = session.preview || null;
+                if (!session.streaming_preview || !preview) return latest;
+                if (!latest) return preview;
+                const previewTime = Date.parse(preview.updated_at || '') || 0;
+                const latestTime = Date.parse(latest.created_at || '') || 0;
+                return previewTime > latestTime ? preview : latest;
+            },
+
+            inferenceIsActive() {
+                return ['pending', 'queued', 'loading', 'running', 'unloading', 'cancelling']
+                    .includes(this.inference.session?.status);
+            },
+
+            inferenceHistoryPageCount() {
+                return Math.max(1, Math.ceil(this.inference.historyTotal / 24));
+            },
+
+            isInferenceHistorySelected(mediaPath) {
+                return this.inference.historySelection.includes(mediaPath);
+            },
+
+            toggleInferenceHistoryItem(mediaPath) {
+                if (this.isInferenceHistorySelected(mediaPath)) {
+                    this.inference.historySelection = this.inference.historySelection.filter(path => path !== mediaPath);
+                } else {
+                    this.inference.historySelection = [...this.inference.historySelection, mediaPath];
+                }
+            },
+
+            inferenceHistoryPageSelected() {
+                return this.inference.history.length > 0
+                    && this.inference.history.every(item => this.isInferenceHistorySelected(item.media_path));
+            },
+
+            toggleInferenceHistoryPage() {
+                if (this.inferenceHistoryPageSelected()) {
+                    this.inference.historySelection = [];
+                    return;
+                }
+                this.inference.historySelection = this.inference.history.map(item => item.media_path);
+            },
+
+            async deleteInferenceHistorySelection() {
+                const mediaPaths = this.inference.historySelection.slice();
+                if (!mediaPaths.length || this.loading.inferenceDelete) return;
+                const label = mediaPaths.length === 1 ? 'generation' : 'generations';
+                if (!confirm(`Delete ${mediaPaths.length} selected ${label}? This cannot be undone.`)) return;
+
+                this.loading.inferenceDelete = true;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch('/api/checkpoints/inference/history', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ environment, media_paths: mediaPaths })
+                    });
+                    const result = await this._inferenceJson(response);
+                    const remaining = Math.max(0, this.inference.historyTotal - result.deleted_count);
+                    const page = Math.min(this.inference.historyPage, Math.max(1, Math.ceil(remaining / 24)));
+                    this.inference.historySelection = [];
+                    await this.loadInferenceHistory(page);
+                    if (window.showToast) {
+                        window.showToast(`Deleted ${result.deleted_count} ${label}.`, 'success');
+                    }
+                } catch (error) {
+                    console.error('Failed to delete inference history:', error);
+                    if (window.showToast) window.showToast(error.message, 'error');
+                } finally {
+                    this.loading.inferenceDelete = false;
+                }
+            },
+
+            async queueInteractivePrompt() {
+                const prompt = this.inference.interactivePrompt.trim();
+                if (!prompt || this.loading.inferenceAction || this.inference.session?.status !== 'loaded') return;
+                this.loading.inferenceAction = true;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch(
+                        `/api/checkpoints/inference/${encodeURIComponent(this.inference.session.session_id)}/generate`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                environment,
+                                custom_prompts: [prompt],
+                                filename_style: this.inference.form.filename_style,
+                                settings: this.inferenceSettings()
+                            })
+                        }
+                    );
+                    await this._inferenceJson(response);
+                    this.inference.interactivePrompt = '';
+                    this.inference.session.status = 'running';
+                    this.scheduleInferenceStatusPoll();
+                } catch (error) {
+                    if (window.showToast) window.showToast(error.message, 'error');
+                } finally {
+                    this.loading.inferenceAction = false;
+                }
+            },
+
+            async stopInference(cancel = false) {
+                if (!this.inference.session?.session_id || this.loading.inferenceAction) return;
+                this.loading.inferenceAction = true;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const action = cancel ? 'cancel' : 'unload';
+                    const response = await ApiClient.fetch(
+                        `/api/checkpoints/inference/${encodeURIComponent(this.inference.session.session_id)}/${action}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ environment })
+                        }
+                    );
+                    const result = await this._inferenceJson(response);
+                    this.inference.session.status = result.status;
+                    this.scheduleInferenceStatusPoll();
+                } catch (error) {
+                    if (window.showToast) window.showToast(error.message, 'error');
+                } finally {
+                    this.loading.inferenceAction = false;
+                }
+            },
+
+            async loadInferenceHistory(page = 1) {
+                this.loading.inferenceHistory = true;
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch(
+                        `/api/checkpoints/inference/history?environment=${encodeURIComponent(environment)}&page=${page}&page_size=24`
+                    );
+                    const data = await this._inferenceJson(response);
+                    this.inference.history = data.items || [];
+                    this.inference.historySelection = [];
+                    this.inference.historyPage = data.page;
+                    this.inference.historyTotal = data.total;
+                } catch (error) {
+                    console.error('Failed to load inference history:', error);
+                } finally {
+                    this.loading.inferenceHistory = false;
+                }
             },
 
             // Retention Management

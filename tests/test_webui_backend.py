@@ -444,6 +444,32 @@ class WebUICollapsedSectionsTests(WebUIStateStoreTests):
 
         self.assertEqual(loaded, custom_state)
 
+    def test_checkpoint_inference_settings_persist_with_other_ui_state(self) -> None:
+        self.store.save_collapsed_sections("basic", {"section1": True})
+        self.store.save_checkpoint_inference_settings(
+            {
+                "filename_style": "content-hash",
+                "keep_loaded": True,
+                "streaming_preview": True,
+            }
+        )
+
+        reloaded_store = WebUIStateStore(base_dir=self.store.base_dir)
+        self.assertEqual(
+            reloaded_store.get_checkpoint_inference_settings(),
+            {
+                "filename_style": "content-hash",
+                "keep_loaded": True,
+                "streaming_preview": True,
+            },
+        )
+        self.assertEqual(reloaded_store.get_collapsed_sections("basic"), {"section1": True})
+
+        persisted = json.loads((self.store.base_dir / "ui_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["checkpoint_inference"]["filename_style"], "content-hash")
+        self.assertTrue(persisted["checkpoint_inference"]["keep_loaded"])
+        self.assertTrue(persisted["checkpoint_inference"]["streaming_preview"])
+
     def test_concurrent_collapsed_section_saves(self) -> None:
         """Test that concurrent saves to different tabs don't corrupt state.
 
