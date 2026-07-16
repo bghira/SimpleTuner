@@ -123,6 +123,15 @@ class TestTextJsonFieldRegistration(unittest.TestCase):
         self.assertEqual(field.field_type, FieldType.TEXT_JSON)
         self.assertEqual(field.arg_name, "--tread_config")
 
+    def test_validation_input_is_text_json(self):
+        """validation_input should be registered as TEXT_JSON field type."""
+        registry = FieldRegistry()
+        field = registry.get_field("validation_input")
+        self.assertIsNotNone(field, "validation_input field should be registered")
+        self.assertEqual(field.field_type, FieldType.TEXT_JSON)
+        self.assertEqual(field.arg_name, "--validation_input")
+        self.assertTrue(field.allow_empty)
+
 
 class TestTextJsonRoundTrip(unittest.TestCase):
     """Test TEXT_JSON values survive the config bundle round-trip."""

@@ -74,6 +74,7 @@ env_to_args_map = {
     "VALIDATION_GUIDANCE_RESCALE": "--validation_guidance_rescale",
     "VALIDATION_NUM_INFERENCE_STEPS": "--validation_num_inference_steps",
     "VALIDATION_PROMPT": "--validation_prompt",
+    "VALIDATION_INPUT": "--validation_input",
     "ALLOW_TF32": "--allow_tf32",
     "MIXED_PRECISION": "--mixed_precision",
     "OPTIMIZER": "--optimizer",

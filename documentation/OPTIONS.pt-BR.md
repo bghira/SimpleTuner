@@ -897,6 +897,15 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - Flux Kontext nao usa este flag para validacao; deixe-o desativado e use `--eval_dataset_id` para escolher o dataset de edicao enquanto o Kontext carrega automaticamente o dataset de referencia pareado
   - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
 
+### `--validation_input`
+
+- **O que**: Lista JSON de imagens de entrada e prompts para validacao, por exemplo `[{"path": "/data/val/frame.png", "prompt": "um movimento lento de camera para frente"}]`.
+- **Por que**: Permite validacao condicionada por imagem sem criar um dataset de validacao.
+- **Notas**:
+  - Cada entrada deve incluir `path` e `prompt`; `shortname` ou `name` sao opcionais para controlar o rotulo de saida.
+  - O caminho da imagem deve existir localmente quando os prompts de validacao forem preparados.
+  - Quando definido, estas entradas sao usadas como imagens de entrada de validacao em vez de descobrir amostras nos datasets.
+
 ### `--eval_dataset_id`
 
 - **O que**: ID especifico do dataset para usar no sourcing de imagens de avaliacao/validacao.
@@ -1755,6 +1764,7 @@ usage: train.py [-h] --model_family
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
+                [--validation_input VALIDATION_INPUT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
@@ -2161,6 +2171,8 @@ options:
                         training starts
   --validation_prompt VALIDATION_PROMPT
                         Prompt to use for validation images
+  --validation_input VALIDATION_INPUT
+                        JSON list of validation input image paths and prompts
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images to generate per validation
   --num_eval_images NUM_EVAL_IMAGES

@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import inspect
+import json
 import logging
 import math
 import os
@@ -116,8 +117,9 @@ def resize_validation_images(validation_images, edge_length):
     # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
     resized_validation_samples = []
     for _sample in validation_images:
+        image_path = None
         if len(_sample) == 4:
-            validation_shortname, validation_prompt, _, training_sample_image = _sample
+            validation_shortname, validation_prompt, image_path, training_sample_image = _sample
         elif len(_sample) == 3:
             validation_shortname, validation_prompt, training_sample_image = _sample
         resize_to, crop_to, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_edge(
@@ -127,7 +129,10 @@ def resize_validation_images(validation_images, edge_length):
         )
         # we can be less precise here
         training_sample_image = training_sample_image.resize(crop_to)
-        resized_validation_samples.append((validation_shortname, validation_prompt, training_sample_image))
+        if image_path is None:
+            resized_validation_samples.append((validation_shortname, validation_prompt, training_sample_image))
+        else:
+            resized_validation_samples.append((validation_shortname, validation_prompt, image_path, training_sample_image))
     return resized_validation_samples
 
 
@@ -245,6 +250,113 @@ def _normalise_validation_sample(sample):
     return sample
 
 
+def _validation_input_is_configured(args) -> bool:
+    validation_input = getattr(args, "validation_input", None)
+    return validation_input not in (None, "", "None", [])
+
+
+def _validation_input_payload(args) -> list[dict[str, str]]:
+    validation_input = getattr(args, "validation_input", None)
+    if isinstance(validation_input, str):
+        try:
+            validation_input = json.loads(validation_input)
+        except json.JSONDecodeError as exc:
+            raise ValueError("--validation_input must be a JSON list of objects with 'path' and 'prompt'.") from exc
+
+    if not isinstance(validation_input, list):
+        raise ValueError("--validation_input must be a list of objects with 'path' and 'prompt'.")
+
+    for idx, entry in enumerate(validation_input):
+        if not isinstance(entry, dict):
+            raise ValueError(f"--validation_input entry {idx} must be an object.")
+        image_path = entry.get("path")
+        prompt = entry.get("prompt")
+        if not isinstance(image_path, str) or not image_path.strip():
+            raise ValueError(f"--validation_input entry {idx} must include a non-empty 'path'.")
+        if not isinstance(prompt, str):
+            raise ValueError(f"--validation_input entry {idx} must include a string 'prompt'.")
+    return validation_input
+
+
+def _validation_input_shortname(entry: dict[str, str], idx: int) -> str:
+    explicit_shortname = entry.get("shortname") or entry.get("name")
+    if isinstance(explicit_shortname, str) and explicit_shortname.strip():
+        return explicit_shortname.strip()
+
+    safe_stem = "".join(
+        character if character.isalnum() or character in ("-", "_") else "_" for character in Path(entry["path"]).stem
+    ).strip("_")
+    return f"validation_input_{idx}_{safe_stem or 'image'}"
+
+
+def _load_validation_input_image(image_path: str) -> Image.Image:
+    resolved_path = Path(image_path).expanduser()
+    if not resolved_path.is_file():
+        raise FileNotFoundError(f"--validation_input image does not exist: {image_path}")
+    with Image.open(resolved_path) as image:
+        image.load()
+        return image.convert("RGB").copy()
+
+
+def retrieve_validation_input_images(args=None) -> list[tuple[str, str, str, Image.Image]]:
+    """
+    Convert --validation_input JSON entries into the same validation sample tuple used by dataset validation.
+    """
+    args = args or StateTracker.get_args()
+    validation_set = []
+    for idx, entry in enumerate(_validation_input_payload(args)):
+        image_path = str(Path(entry["path"]).expanduser())
+        image = _load_validation_input_image(image_path)
+        validation_set.append((_validation_input_shortname(entry, idx), entry["prompt"], image_path, image))
+    logger.info(f"Collected {len(validation_set)} validation input images.")
+    return validation_set
+
+
+def _validation_image_to_prompt_tensor(image_data):
+    image = _coerce_validation_image_input(image_data)
+    if not isinstance(image, Image.Image):
+        return None
+    array = np.array(image.convert("RGB"), copy=True)
+    return torch.from_numpy(array).permute(2, 0, 1).float() / 255.0
+
+
+def _validation_reference_prompt_metadata(reference_images, image_path: str | None = None) -> dict[str, Any]:
+    reference_samples = reference_images if isinstance(reference_images, list) else [reference_images]
+    reference_samples = [sample for sample in reference_samples if sample is not None]
+    metadata: dict[str, Any] = {}
+    image_paths: list[str] = []
+    data_backend_ids: list[str] = []
+    pixel_values = []
+
+    if image_path:
+        image_paths.append(image_path)
+
+    for sample in reference_samples:
+        sample_image_path = None
+        if hasattr(sample, "image_path") and callable(sample.image_path):
+            sample_image_path = sample.image_path()
+        if sample_image_path:
+            image_paths.append(sample_image_path)
+        data_backend_id = getattr(sample, "data_backend_id", None)
+        if data_backend_id:
+            data_backend_ids.append(data_backend_id)
+
+        image_data = getattr(sample, "image", sample)
+        tensor = _validation_image_to_prompt_tensor(image_data)
+        if tensor is not None:
+            pixel_values.append(tensor)
+
+    if image_paths:
+        metadata["image_path"] = image_paths[0]
+        metadata["image_paths"] = image_paths
+    if data_backend_ids:
+        metadata["data_backend_id"] = data_backend_ids[0]
+        metadata["data_backend_ids"] = data_backend_ids
+    if pixel_values:
+        metadata["conditioning_pixel_values"] = pixel_values[0] if len(pixel_values) == 1 else torch.stack(pixel_values)
+    return metadata
+
+
 def _assert_eval_dataset_exists(eval_dataset_config, available_backends: dict[str, dict], context: str) -> set[str]:
     """
     Make sure that every dataset requested via --eval_dataset_id exists among the loaded validation backends.
@@ -289,6 +401,8 @@ def retrieve_validation_images():
     """
     model = StateTracker.get_model()
     args = StateTracker.get_args()
+    if _validation_input_is_configured(args):
+        return retrieve_validation_input_images(args)
 
     # For i2v models, allow using simple image datasets when validation_using_datasets is True.
     # This bypasses the complex conditioning dataset pairing requirement.
@@ -582,6 +696,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         or args.controlnet
         or args.control
         or args.validation_using_datasets
+        or _validation_input_is_configured(args)
     ):
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
@@ -608,11 +723,12 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 validation_prompt = None
                 shortname = None
                 reference_images = None
+                image_path = None
                 if isinstance(_validation_sample, tuple):
                     if len(_validation_sample) == 3:
                         shortname, validation_prompt, reference_images = _validation_sample
                     elif len(_validation_sample) == 4:
-                        shortname, validation_prompt, reference_images, *_ = _validation_sample
+                        shortname, validation_prompt, image_path, reference_images = _validation_sample
                 if not validation_prompt:
                     logger.debug("Skipping validation sample without prompt while preparing embeds.")
                     continue
@@ -624,9 +740,8 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 # pass the reference image path so the model can load it from the backend
                 # Use shortname as cache key for stable validation embedding lookup
                 if reference_images and model.requires_text_embed_image_context():
-                    reference_samples = reference_images if isinstance(reference_images, list) else [reference_images]
-                    reference_samples = [sample for sample in reference_samples if sample is not None]
-                    if not reference_samples:
+                    metadata = _validation_reference_prompt_metadata(reference_images, image_path=image_path)
+                    if not metadata:
                         logger.debug(
                             "Skipping validation sample without reference images while preparing embeds for image-context encoding."
                         )
@@ -636,12 +751,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                     prompt_record = {
                         "prompt": validation_prompt,
                         "key": shortname,
-                        "metadata": {
-                            "image_path": reference_samples[0].image_path(),
-                            "data_backend_id": reference_samples[0].data_backend_id,
-                            "image_paths": [sample.image_path() for sample in reference_samples],
-                            "data_backend_ids": [sample.data_backend_id for sample in reference_samples],
-                        },
+                        "metadata": metadata,
                     }
                     embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
                 else:
@@ -1840,6 +1950,7 @@ class Validation:
         if (
             (self.deepfloyd_stage2 and not self.model.supports_multistage_validation())
             or self.config.validation_using_datasets
+            or _validation_input_is_configured(self.config)
             or self.config.controlnet
             or self.config.control
             or self.model.requires_conditioning_validation_inputs()
@@ -2614,6 +2725,11 @@ class Validation:
                     pipeline_type = PipelineTypes.IMG2IMG
                 elif PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
                     pipeline_type = PipelineTypes.IMG2VIDEO
+            elif _validation_input_is_configured(self.config):
+                if isinstance(self.model, VideoModelFoundation) and PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2VIDEO
+                elif PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.IMG2IMG
         self.model.load_validation_models(pipeline_type=pipeline_type)
         self.model.pipeline = self.model.get_pipeline(
             pipeline_type=pipeline_type,
