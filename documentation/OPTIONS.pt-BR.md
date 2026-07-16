@@ -847,6 +847,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - `path`: Repo Hugging Face ou caminho local (mesmos formatos de `--validation_adapter_path`).
   - `adapter_name`: Identificador opcional por adaptador.
   - `strength`: Override escalar opcional.
+  - `target_stage`: Alvo opcional de validacao multi-stage para este adaptador. Os aliases aceitos dependem do modelo; valores comuns incluem `one`, `two`, `stage1`, `stage2` e Wan `high`/`low`.
   - `adapters`/`paths`: Array de objetos/strings para carregar multiplos adaptadores em uma unica execucao.
 - **Notas**:
   - Quando fornecido, as opcoes de adaptador unico (`--validation_adapter_path`, `--validation_adapter_name`, `--validation_adapter_strength`, `--validation_adapter_mode`) sao ignoradas/desabilitadas na UI.

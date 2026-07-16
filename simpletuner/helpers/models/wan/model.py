@@ -3,7 +3,7 @@ import os
 import random
 import threading
 from functools import partial
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler, WanImageToVideoPipeline
@@ -24,6 +24,7 @@ from simpletuner.helpers.models.common import (
     PipelineConditioningImageEmbedder,
     PipelineTypes,
     PredictionTypes,
+    ValidationPipelineCall,
     VideoModelFoundation,
 )
 from simpletuner.helpers.models.foundation_mixins import VideoToTensor
@@ -911,8 +912,30 @@ class Wan(VideoModelFoundation):
     def supports_multistage_validation(self) -> bool:
         return self._should_load_other_stage()
 
-    def run_multistage_validation(self, pipeline_kwargs, pipeline_call):
-        return pipeline_call(self.pipeline, pipeline_kwargs)
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "high": {"high"},
+            "low": {"low"},
+        }
+
+    def validation_adapter_load_kwargs(self, target_stage: str) -> Dict[str, object]:
+        if target_stage == "low":
+            return {"load_into_transformer_2": True}
+        return {"load_into_transformer_2": False}
+
+    def validation_adapter_component(self, target_stage: str) -> Optional[str]:
+        if target_stage == "low":
+            return "transformer_2"
+        if target_stage == "high":
+            return "transformer"
+        return None
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: ValidationPipelineCall,
+    ) -> Any:
+        return pipeline_call(self.pipeline, pipeline_kwargs, target_stage=("high", "low"))
 
     def _get_or_load_wan_stage_module(
         self,

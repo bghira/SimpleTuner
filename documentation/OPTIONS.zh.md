@@ -852,6 +852,7 @@ TRAINING_DYNAMO_BACKEND=inductor
   - `path`: Hugging Face 仓库 ID 或本地路径（同 `--validation_adapter_path`）。
   - `adapter_name`: 每个适配器的可选标识。
   - `strength`: 可选标量覆盖。
+  - `target_stage`: 此适配器的可选多阶段验证目标。支持的别名取决于模型；常见值包括 `one`、`two`、`stage1`、`stage2` 以及 Wan 的 `high`/`low`。
   - `adapters`/`paths`: 在同一次运行中加载多个适配器的对象/字符串数组。
 - **说明**：
   - 提供该配置后，单适配器选项（`--validation_adapter_path`、`--validation_adapter_name`、`--validation_adapter_strength`、`--validation_adapter_mode`）在 UI 中会被忽略/禁用。

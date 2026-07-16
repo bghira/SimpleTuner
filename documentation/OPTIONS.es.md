@@ -849,6 +849,7 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
   - `path`: ID de repo de Hugging Face o ruta local (mismos formatos que `--validation_adapter_path`).
   - `adapter_name`: Identificador opcional por adaptador.
   - `strength`: Override escalar opcional.
+  - `target_stage`: Destino opcional de validación multi-etapa para este adaptador. Los alias admitidos dependen del modelo; valores comunes incluyen `one`, `two`, `stage1`, `stage2` y Wan `high`/`low`.
   - `adapters`/`paths`: Array de objetos/cadenas para cargar múltiples adaptadores en una sola ejecución.
 - **Notas**:
   - Cuando se proporciona, las opciones de adaptador único (`--validation_adapter_path`, `--validation_adapter_name`, `--validation_adapter_strength`, `--validation_adapter_mode`) se ignoran/deshabilitan en la UI.

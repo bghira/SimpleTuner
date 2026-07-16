@@ -93,7 +93,7 @@ class SDXLMultistageValidationTests(unittest.TestCase):
 
         result = model.run_multistage_validation(
             self._pipeline_kwargs(),
-            lambda pipeline, kwargs: pipeline(**kwargs),
+            lambda pipeline, kwargs, target_stage=None: pipeline(**kwargs),
         )
 
         self.assertEqual(result.images, ["stage2-image"])
@@ -119,7 +119,7 @@ class SDXLMultistageValidationTests(unittest.TestCase):
 
         result = model.run_multistage_validation(
             self._pipeline_kwargs(),
-            lambda pipeline, kwargs: pipeline(**kwargs),
+            lambda pipeline, kwargs, target_stage=None: pipeline(**kwargs),
         )
 
         self.assertEqual(result.images, ["stage2-image"])

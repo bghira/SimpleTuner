@@ -1,7 +1,7 @@
 import logging
 import os
 from types import SimpleNamespace
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 import torch
 from diffusers import AutoencoderKL, StableDiffusionUpscalePipeline
@@ -20,7 +20,13 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    ImageModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+)
 from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel as UNet2DConditionModel
 
 logger = logging.getLogger(__name__)
@@ -105,6 +111,13 @@ class DeepFloydIF(ImageModelFoundation):
 
     def supports_multistage_validation(self) -> bool:
         return self._deepfloyd_validation_mode() == "full-pipeline"
+
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one", "i", "stage_i"},
+            "stage2": {"stage2", "stage_2", "2", "two", "ii", "stage_ii"},
+            "stage3": {"stage3", "stage_3", "3", "three", "iii", "stage_iii"},
+        }
 
     def _deepfloyd_validation_stage3_mode(self) -> str:
         mode = getattr(self.config, "deepfloyd_validation_stage3_mode", "none") or "none"
@@ -231,7 +244,7 @@ class DeepFloydIF(ImageModelFoundation):
     def run_multistage_validation(
         self,
         pipeline_kwargs: Dict[str, Any],
-        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
+        pipeline_call: ValidationPipelineCall,
     ) -> Any:
         stage1 = self._deepfloyd_stage1_pipeline()
         stage2 = self._deepfloyd_stage2_pipeline()
@@ -253,7 +266,7 @@ class DeepFloydIF(ImageModelFoundation):
             "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
         }
         logger.info("Running DeepFloyd validation stage I at %sx%s.", stage1_width, stage1_height)
-        stage1_result = pipeline_call(stage1, stage1_kwargs)
+        stage1_result = pipeline_call(stage1, stage1_kwargs, target_stage="stage1")
         stage1_images = stage1_result.images
 
         stage2_kwargs = {
@@ -269,7 +282,7 @@ class DeepFloydIF(ImageModelFoundation):
             "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
         }
         logger.info("Running DeepFloyd validation stage II at %sx%s.", stage2_width, stage2_height)
-        stage2_result = pipeline_call(stage2, stage2_kwargs)
+        stage2_result = pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
         if self._deepfloyd_validation_stage3_mode() != "sd-x4-upscaler":
             return stage2_result
@@ -290,7 +303,7 @@ class DeepFloydIF(ImageModelFoundation):
             "guidance_scale": self._deepfloyd_stage_guidance(3, float(pipeline_kwargs.get("guidance_scale", 4.0))),
         }
         logger.info("Running DeepFloyd validation stage III with Stable Diffusion x4 upscaler.")
-        stage3_result = pipeline_call(stage3, stage3_kwargs)
+        stage3_result = pipeline_call(stage3, stage3_kwargs, target_stage="stage3")
         if hasattr(stage3_result, "images"):
             return stage3_result
         return SimpleNamespace(images=stage3_result)
