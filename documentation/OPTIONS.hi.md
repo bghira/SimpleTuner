@@ -1295,14 +1295,14 @@ CREPA एक regularization तकनीक है जो video diffusion models
 ### `--crepa_model`
 
 - **What**: feature extraction के लिए कौन‑सा pretrained encoder उपयोग हो।
-- **Why**: पेपर DINOv2‑g (ViT‑Giant) उपयोग करता है। `dinov2_vitb14` जैसे छोटे variants कम memory लेते हैं।
+- **Why**: पेपर DINOv2‑g (ViT‑Giant) उपयोग करता है। छोटे DINO variants कम memory लेते हैं, जबकि Qwen-VL teacher अधिक मजबूत semantic visual features दे सकते हैं।
 - **Default**: `dinov2_vitg14`
-- **Choices**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
+- **Choices**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`, `qwen3-vl-4b`, `qwen2.5-vl-7b`, या Hugging Face Qwen-VL model id।
 
 ### `--crepa_encoder_frames_batch_size`
 
 - **What**: external feature encoder parallel में कितने frames प्रोसेस करे। 0 या negative होने पर पूरे batch के सभी frames एक साथ प्रोसेस होते हैं। यदि संख्या divisor नहीं है, तो remainder छोटे batch के रूप में संभाला जाएगा।
-- **Why**: DINO‑like encoders image models हैं, इसलिए वे VRAM बचाने के लिए frames को sliced batches में प्रोसेस कर सकते हैं, गति की कीमत पर।
+- **Why**: external vision encoders VRAM बचाने के लिए frames को sliced batches में प्रोसेस कर सकते हैं, गति की कीमत पर।
 - **Default**: `-1`
 
 ### `--crepa_use_backbone_features`
@@ -1412,7 +1412,7 @@ crepa_cumulative_neighbors = false
 crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
-crepa_model = "dinov2_vitg14"
+crepa_model = "dinov2_vitg14"  # या Qwen-VL visual features के लिए "qwen3-vl-4b"
 crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
