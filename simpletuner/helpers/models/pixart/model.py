@@ -1,7 +1,7 @@
 import copy
 import logging
 import os
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 import torch
 from diffusers import AutoencoderKL
@@ -17,7 +17,13 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    ImageModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+)
 from simpletuner.helpers.models.pixart.pipeline import (
     PixArtSigmaControlNetLoraLoaderMixin,
     PixArtSigmaControlNetPipeline,
@@ -589,7 +595,7 @@ class PixartSigma(ImageModelFoundation):
     def run_multistage_validation(
         self,
         pipeline_kwargs: Dict[str, Any],
-        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
+        pipeline_call: ValidationPipelineCall,
     ) -> Any:
         stage1 = self._pixart_stage1_pipeline()
         stage2 = self._pixart_stage2_pipeline()

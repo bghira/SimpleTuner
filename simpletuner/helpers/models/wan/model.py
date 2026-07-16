@@ -3,7 +3,7 @@ import os
 import random
 import threading
 from functools import partial
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler, WanImageToVideoPipeline
@@ -24,6 +24,7 @@ from simpletuner.helpers.models.common import (
     PipelineConditioningImageEmbedder,
     PipelineTypes,
     PredictionTypes,
+    ValidationPipelineCall,
     VideoModelFoundation,
 )
 from simpletuner.helpers.models.foundation_mixins import VideoToTensor
@@ -929,7 +930,11 @@ class Wan(VideoModelFoundation):
             return "transformer"
         return None
 
-    def run_multistage_validation(self, pipeline_kwargs, pipeline_call):
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: ValidationPipelineCall,
+    ) -> Any:
         return pipeline_call(self.pipeline, pipeline_kwargs, target_stage=("high", "low"))
 
     def _get_or_load_wan_stage_module(

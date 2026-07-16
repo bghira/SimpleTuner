@@ -3033,25 +3033,31 @@ class Validation:
             adapter_names.append(adapter_name)
             adapter_scales.append(adapter.strength)
             adapter_components.append(self._validation_adapter_component(adapter))
-        self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales, adapter_components)
+        target_states = self._snapshot_validation_adapter_target_states(
+            pipeline,
+            adapter_names,
+            adapter_scales,
+            adapter_components,
+        )
+        self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales, adapter_components, target_states)
         try:
             yield
         finally:
             self._remove_validation_adapters(pipeline, adapter_names, adapter_components)
+            self._restore_validation_adapter_target_states(target_states)
             _restore_requires_grad(pipeline, requires_grad_snapshot)
             _restore_compiled_components()
 
-    def _set_validation_adapter_weights(
+    def _validation_adapter_weight_targets(
         self,
         pipeline,
         adapter_names: list[str],
         adapter_scales: list[float],
         adapter_components: list[str | None] | None = None,
-    ):
-        if not adapter_names:
-            return
+    ) -> list[tuple[Any, list[str], list[float], bool]]:
         adapter_components = adapter_components or [None] * len(adapter_names)
         component_names = {component for component in adapter_components if component is not None}
+        targets: list[tuple[Any, list[str], list[float], bool]] = []
         if component_names:
             pipeline_names = [
                 adapter_name for adapter_name, component in zip(adapter_names, adapter_components) if component is None
@@ -3060,7 +3066,7 @@ class Validation:
                 adapter_scale for adapter_scale, component in zip(adapter_scales, adapter_components) if component is None
             ]
             if pipeline_names:
-                self._set_validation_adapter_weights_on_target(pipeline, pipeline_names, pipeline_scales)
+                targets.append((pipeline, pipeline_names, pipeline_scales, True))
             for component_name in sorted(component_names):
                 component = getattr(pipeline, component_name, None)
                 if component is None:
@@ -3075,9 +3081,150 @@ class Validation:
                     for adapter_scale, adapter_component in zip(adapter_scales, adapter_components)
                     if adapter_component == component_name
                 ]
-                self._set_validation_adapter_weights_on_target(component, names, scales)
+                targets.append((component, names, scales, False))
+            return targets
+        return [(pipeline, adapter_names, adapter_scales, True)]
+
+    def _validation_adapter_stack_registry(self) -> dict[int, tuple[list[str], list[float]]]:
+        registry = getattr(self, "_validation_adapter_stacks", None)
+        if registry is None:
+            registry = {}
+            self._validation_adapter_stacks = registry
+        return registry
+
+    def _validation_adapter_child_targets(self, pipeline) -> list[Any]:
+        child_targets = []
+        seen = {id(pipeline)}
+        components = getattr(pipeline, "components", None)
+        if isinstance(components, dict):
+            for component in components.values():
+                if component is not None and id(component) not in seen:
+                    child_targets.append(component)
+                    seen.add(id(component))
+        for attr in (
+            "transformer",
+            "transformer_2",
+            "text_encoder",
+            "text_encoder_2",
+            "text_encoder_3",
+            "text_encoder_4",
+            "controlnet",
+            "unet",
+        ):
+            component = getattr(pipeline, attr, None)
+            if component is not None and id(component) not in seen:
+                child_targets.append(component)
+                seen.add(id(component))
+        return [
+            target
+            for target in child_targets
+            if hasattr(target, "set_adapters") or hasattr(target, "set_adapter") or hasattr(target, "delete_adapters")
+        ]
+
+    def _remember_validation_adapter_stack(
+        self,
+        target,
+        adapter_names: Sequence[str],
+        adapter_scales: Sequence[float],
+        propagate_to_children: bool = False,
+    ):
+        registry = self._validation_adapter_stack_registry()
+        target_ids = [id(target)]
+        if propagate_to_children:
+            target_ids.extend(id(child) for child in self._validation_adapter_child_targets(target))
+        for target_id in target_ids:
+            if adapter_names:
+                registry[target_id] = (list(adapter_names), list(adapter_scales))
+            else:
+                registry.pop(target_id, None)
+
+    def _active_validation_adapter_stack(self, target) -> tuple[list[str], list[float]]:
+        registry = self._validation_adapter_stack_registry()
+        tracked = registry.get(id(target))
+        if tracked is not None:
+            return list(tracked[0]), list(tracked[1])
+        active_adapters = None
+        if hasattr(target, "get_active_adapters"):
+            active_adapters = target.get_active_adapters()
+        elif hasattr(target, "active_adapters"):
+            active_adapters = target.active_adapters
+        if callable(active_adapters):
+            active_adapters = active_adapters()
+        if active_adapters is None:
+            return [], []
+        if isinstance(active_adapters, str):
+            names = [active_adapters]
+        else:
+            names = list(active_adapters)
+        return names, [1.0] * len(names)
+
+    def _merge_validation_adapter_stacks(
+        self,
+        active_names: Sequence[str],
+        active_scales: Sequence[float],
+        adapter_names: Sequence[str],
+        adapter_scales: Sequence[float],
+    ) -> tuple[list[str], list[float]]:
+        names = list(active_names)
+        scales = list(active_scales)
+        for adapter_name, adapter_scale in zip(adapter_names, adapter_scales):
+            if adapter_name in names:
+                scales[names.index(adapter_name)] = adapter_scale
+            else:
+                names.append(adapter_name)
+                scales.append(adapter_scale)
+        return names, scales
+
+    def _snapshot_validation_adapter_target_states(
+        self,
+        pipeline,
+        adapter_names: list[str],
+        adapter_scales: list[float],
+        adapter_components: list[str | None] | None = None,
+    ) -> list[tuple[Any, list[str], list[float], bool]]:
+        states = []
+        for target, _, _, propagate_to_children in self._validation_adapter_weight_targets(
+            pipeline,
+            adapter_names,
+            adapter_scales,
+            adapter_components,
+        ):
+            active_names, active_scales = self._active_validation_adapter_stack(target)
+            states.append((target, active_names, active_scales, propagate_to_children))
+        return states
+
+    def _restore_validation_adapter_target_states(self, states: list[tuple[Any, list[str], list[float], bool]]):
+        for target, adapter_names, adapter_scales, propagate_to_children in states:
+            if adapter_names:
+                self._set_validation_adapter_weights_on_target(target, adapter_names, adapter_scales)
+            self._remember_validation_adapter_stack(target, adapter_names, adapter_scales, propagate_to_children)
+
+    def _set_validation_adapter_weights(
+        self,
+        pipeline,
+        adapter_names: list[str],
+        adapter_scales: list[float],
+        adapter_components: list[str | None] | None = None,
+        target_states: list[tuple[Any, list[str], list[float], bool]] | None = None,
+    ):
+        if not adapter_names:
             return
-        self._set_validation_adapter_weights_on_target(pipeline, adapter_names, adapter_scales)
+        states = {id(target): (names, scales) for target, names, scales, _ in target_states or []}
+        for target, names, scales, propagate_to_children in self._validation_adapter_weight_targets(
+            pipeline,
+            adapter_names,
+            adapter_scales,
+            adapter_components,
+        ):
+            active_names, active_scales = states.get(id(target), ([], []))
+            merged_names, merged_scales = self._merge_validation_adapter_stacks(
+                active_names,
+                active_scales,
+                names,
+                scales,
+            )
+            self._set_validation_adapter_weights_on_target(target, merged_names, merged_scales)
+            self._remember_validation_adapter_stack(target, merged_names, merged_scales, propagate_to_children)
 
     def _set_validation_adapter_weights_on_target(self, target, adapter_names: list[str], adapter_scales: list[float]):
         if not adapter_names:

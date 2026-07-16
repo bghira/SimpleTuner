@@ -9,7 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol, Sequence
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -80,6 +80,15 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+class ValidationPipelineCall(Protocol):
+    def __call__(
+        self,
+        pipeline: Any,
+        pipeline_kwargs: Dict[str, Any],
+        target_stage: str | Sequence[str] | None = None,
+    ) -> Any: ...
 
 
 def _is_hf_repo_id(path: str) -> bool:
@@ -3949,7 +3958,7 @@ class ModelFoundation(ABC):
     def run_multistage_validation(
         self,
         pipeline_kwargs: Dict[str, Any],
-        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
+        pipeline_call: ValidationPipelineCall,
     ) -> Any:
         """
         Execute a multi-stage validation pipeline.

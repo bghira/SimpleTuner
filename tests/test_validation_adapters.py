@@ -231,6 +231,37 @@ class ValidationAdapterStageLoadingTests(unittest.TestCase):
 
         self.assertEqual(["low_noise_low"], pipeline.transformer_2.delete_calls)
 
+    def test_stage_adapter_preserves_global_adapter_on_component_target(self):
+        pipeline = _Pipeline()
+        validator = self._validator(_WanStageModel(pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [
+                {
+                    "label": "combo",
+                    "adapters": [
+                        {"path": "repo/global", "strength": 0.25},
+                        {"path": "repo/low", "target_stage": "low", "strength": 0.6},
+                    ],
+                }
+            ],
+        )[1]
+
+        with validator._temporary_validation_adapters(run):
+            self.assertEqual(("combo", 0.25), pipeline.set_calls[0])
+            with validator._temporary_validation_stage_adapters(pipeline, "low"):
+                self.assertEqual(
+                    [(["combo", "combo_low"], [0.25, 0.6])],
+                    pipeline.transformer_2.set_calls,
+                )
+            self.assertEqual(
+                [(["combo", "combo_low"], [0.25, 0.6]), ("combo", 0.25)],
+                pipeline.transformer_2.set_calls,
+            )
+
+        self.assertEqual("combo", pipeline.delete_calls[0])
+        self.assertEqual(["combo_low"], pipeline.transformer_2.delete_calls)
+
 
 if __name__ == "__main__":
     unittest.main()

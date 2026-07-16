@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import threading
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import safetensors.torch
 import torch
@@ -13,7 +13,13 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
-from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.common import (
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+    VideoModelFoundation,
+)
 from simpletuner.helpers.models.ltxvideo2 import (
     pack_ltx2_audio_latents,
     pack_ltx2_latents,
@@ -999,7 +1005,7 @@ class LTXVideo2(VideoModelFoundation):
     def run_multistage_validation(
         self,
         pipeline_kwargs: Dict[str, Any],
-        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
+        pipeline_call: ValidationPipelineCall,
     ) -> Any:
         if "image" in pipeline_kwargs:
             raise ValueError(

@@ -1,7 +1,7 @@
 import logging
 import os
 from types import SimpleNamespace
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 import torch
 from diffusers import AutoencoderKL, StableDiffusionUpscalePipeline
@@ -20,7 +20,13 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    ImageModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+)
 from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel as UNet2DConditionModel
 
 logger = logging.getLogger(__name__)
@@ -238,7 +244,7 @@ class DeepFloydIF(ImageModelFoundation):
     def run_multistage_validation(
         self,
         pipeline_kwargs: Dict[str, Any],
-        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
+        pipeline_call: ValidationPipelineCall,
     ) -> Any:
         stage1 = self._deepfloyd_stage1_pipeline()
         stage2 = self._deepfloyd_stage2_pipeline()
