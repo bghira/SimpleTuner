@@ -139,6 +139,19 @@ class WanModelTests(unittest.TestCase):
         self.assertIsNone(pipeline.config.boundary_ratio)
         model._get_or_load_wan_stage_module.assert_not_called()
 
+    def test_non_validation_pipeline_does_not_load_other_stage(self):
+        model = self._stage_model("i2v-14b-2.2-high", load_other=True)
+        pipeline = SimpleNamespace(config=SimpleNamespace(), transformer="trained-high", transformer_2="stale")
+        model._get_or_load_wan_stage_module = MagicMock()
+
+        with patch.object(VideoModelFoundation, "get_pipeline", return_value=pipeline):
+            Wan.get_pipeline(model, PipelineTypes.IMG2VIDEO, load_base_model=True)
+
+        self.assertEqual(pipeline.transformer, "trained-high")
+        self.assertIsNone(pipeline.transformer_2)
+        self.assertIsNone(pipeline.config.boundary_ratio)
+        model._get_or_load_wan_stage_module.assert_not_called()
+
     def test_update_pipeline_call_kwargs_includes_peer_stage_guidance(self):
         model = self._stage_model("i2v-14b-2.2-high", load_other=True)
 
@@ -172,8 +185,10 @@ class WanModelTests(unittest.TestCase):
         model = self._stage_model("i2v-14b-2.2-high", load_other=True)
         model._wan_cached_stage_modules["peer"] = object()
 
-        Wan.unload_validation_models(model)
+        with patch.object(VideoModelFoundation, "unload_validation_models", autospec=True) as super_unload:
+            Wan.unload_validation_models(model)
 
+        super_unload.assert_called_once_with(model)
         self.assertEqual(model._wan_cached_stage_modules, {})
 
 

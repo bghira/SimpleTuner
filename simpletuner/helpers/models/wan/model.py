@@ -952,6 +952,7 @@ class Wan(VideoModelFoundation):
         self._wan_cached_stage_modules.clear()
 
     def unload_validation_models(self) -> None:
+        super().unload_validation_models()
         self._wan_cached_stage_modules.clear()
 
     def set_prepared_model(self, model, base_model: bool = False):
@@ -966,7 +967,7 @@ class Wan(VideoModelFoundation):
             pipeline.config.expand_timesteps = bool(self._wan_expand_timesteps)
         stage_info = self._wan_stage_info()
         if stage_info is not None:
-            load_other = self._should_load_other_stage()
+            load_other = not load_base_model and self._should_load_other_stage()
             trained_stage = stage_info["trained_stage"]
             other_subfolder = stage_info["other_stage_subfolder"]
             other_model_path = stage_info.get("other_stage_model_path")
