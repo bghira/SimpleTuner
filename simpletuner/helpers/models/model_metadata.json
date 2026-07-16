@@ -2,7 +2,10 @@
     "ace_step": {
         "class_name": "ACEStep",
         "flavour_choices": [
-            "base"
+            "base",
+            "v15-turbo",
+            "v15-base",
+            "v15-sft"
         ],
         "module_path": "simpletuner.helpers.models.ace_step.model",
         "name": "ACE-Step",
@@ -11,6 +14,10 @@
     "anima": {
         "class_name": "Anima",
         "flavour_choices": [
+            "release",
+            "base-v1.0",
+            "preview-3",
+            "preview-2",
             "preview"
         ],
         "module_path": "simpletuner.helpers.models.anima.model",
