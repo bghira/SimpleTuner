@@ -12,6 +12,25 @@ logger = logging.getLogger("simpletuner.helpers.models")
 logger.setLevel(logging.ERROR)
 
 
+def extract_metadata_from_module(module, module_path: str, family_name: str) -> dict | None:
+    for name, obj in module.__dict__.items():
+        if isinstance(obj, type) and hasattr(obj, "NAME") and getattr(obj, "__module__", None) == module.__name__:
+            prediction_type = None
+            if hasattr(obj, "PREDICTION_TYPE"):
+                pt = getattr(obj, "PREDICTION_TYPE")
+                # Handle both enum and direct value
+                prediction_type = getattr(pt, "value", pt) if pt else None
+
+            return {
+                "class_name": name,
+                "flavour_choices": list(obj.get_flavour_choices()) if hasattr(obj, "get_flavour_choices") else [],
+                "module_path": module_path,
+                "name": getattr(obj, "NAME", family_name.replace("_", " ").title()),
+                "prediction_type": prediction_type,
+            }
+    return None
+
+
 def main():
     model_dir = Path("simpletuner/helpers/models")
     if not model_dir.exists():
@@ -23,7 +42,7 @@ def main():
     # We need to add the project root to sys.path to import simpletuner
     sys.path.insert(0, os.getcwd())
 
-    for subdir in model_dir.iterdir():
+    for subdir in sorted(model_dir.iterdir()):
         if subdir.is_dir() and not subdir.name.startswith("__"):
             model_file = subdir / "model.py"
             if model_file.exists():
@@ -31,37 +50,16 @@ def main():
                 try:
                     # Temporary import to extract NAME
                     module = importlib.import_module(module_path)
-                    # Find the class that inherits from VideoModelFoundation or similar
-                    # and was registered in ModelRegistry.
-                    # Since we can't easily peek into ModelRegistry without triggering more imports,
-                    # we'll look for classes in the module.
-                    for name, obj in module.__dict__.items():
-                        if isinstance(obj, type) and hasattr(obj, "NAME"):
-                            # This looks like our model class
-                            # Extract prediction_type if available
-                            prediction_type = None
-                            if hasattr(obj, "PREDICTION_TYPE"):
-                                pt = getattr(obj, "PREDICTION_TYPE")
-                                # Handle both enum and direct value
-                                prediction_type = getattr(pt, "value", pt) if pt else None
-
-                            metadata[subdir.name] = {
-                                "class_name": name,
-                                "module_path": module_path,
-                                "name": getattr(obj, "NAME", subdir.name.replace("_", " ").title()),
-                                "prediction_type": prediction_type,
-                                "flavour_choices": (
-                                    list(obj.get_flavour_choices()) if hasattr(obj, "get_flavour_choices") else []
-                                ),
-                            }
-                            # Assume one model per directory
-                            break
+                    module_metadata = extract_metadata_from_module(module, module_path, subdir.name)
+                    if module_metadata is not None:
+                        metadata[subdir.name] = module_metadata
                 except Exception as exc:
                     print(f"Failed to extract metadata for {subdir.name}: {exc}")
 
     output_path = model_dir / "model_metadata.json"
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=4)
+        f.write("\n")
 
     print(f"Wrote model metadata to {output_path}")
 
