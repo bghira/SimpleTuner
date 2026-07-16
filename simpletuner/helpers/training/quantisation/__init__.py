@@ -1006,31 +1006,9 @@ def _sdnq_model(
         logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
         return model
 
-    args = StateTracker.get_args()
-    sdnq_compile_mode = getattr(args, "sdnq_compile_mode", "auto")
-    if sdnq_compile_mode not in (None, "auto"):
-        if "sdnq.common" in sys.modules:
-            logger.warning(
-                "SDNQ was already imported before --sdnq_compile_mode=%s could be applied. "
-                "Set SDNQ_USE_TORCH_COMPILE before process startup to force this mode.",
-                sdnq_compile_mode,
-            )
-        else:
-            os.environ["SDNQ_USE_TORCH_COMPILE"] = "1" if sdnq_compile_mode == "compile" else "0"
-
-    try:
-        # Silence sdnq startup logs
-        logging.getLogger("sdnq").setLevel(logging.WARNING)
-        from sdnq.common import is_fp8_mm_supported as sdnq_fp8_mm_supported
-        from sdnq.common import use_tensorwise_fp8_matmul as sdnq_tensorwise_fp8_matmul
-        from sdnq.common import use_torch_compile as sdnq_use_torch_compile
-        from sdnq.training import sdnq_training_post_load_quant
-    except ImportError as e:
-        raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
-
-    logger.info(f"Quantising {model.__class__.__name__} using SDNQ. Precision: {model_precision}.")
-
-    # Map precision string to SDNQ weights_dtype
+    # Map precision string to SDNQ weights_dtype before importing SDNQ so invalid
+    # user input reports as a configuration error, not as an optional dependency
+    # error from the installed SDNQ package.
     sdnq_dtype_map = {
         "int8-sdnq": "int8",
         "uint8-sdnq": "uint8",
@@ -1048,6 +1026,34 @@ def _sdnq_model(
     weights_dtype = sdnq_dtype_map.get(model_precision)
     if weights_dtype is None:
         raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
+
+    args = StateTracker.get_args()
+    sdnq_compile_mode = getattr(args, "sdnq_compile_mode", "auto")
+    if sdnq_compile_mode not in (None, "auto"):
+        if "sdnq.common" in sys.modules:
+            logger.warning(
+                "SDNQ was already imported before --sdnq_compile_mode=%s could be applied. "
+                "Set SDNQ_USE_TORCH_COMPILE before process startup to force this mode.",
+                sdnq_compile_mode,
+            )
+        else:
+            os.environ["SDNQ_USE_TORCH_COMPILE"] = "1" if sdnq_compile_mode == "compile" else "0"
+
+    try:
+        # Silence sdnq startup logs
+        logging.getLogger("sdnq").setLevel(logging.WARNING)
+        import sdnq.common as sdnq_common
+        from sdnq.training import sdnq_training_post_load_quant
+    except ImportError as e:
+        raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
+
+    sdnq_fp8_mm_supported = getattr(sdnq_common, "is_fp8_mm_supported", False)
+    if callable(sdnq_fp8_mm_supported):
+        sdnq_fp8_mm_supported = sdnq_fp8_mm_supported()
+    sdnq_tensorwise_fp8_matmul = getattr(sdnq_common, "use_tensorwise_fp8_matmul", False)
+    sdnq_use_torch_compile = getattr(sdnq_common, "use_torch_compile", False)
+
+    logger.info(f"Quantising {model.__class__.__name__} using SDNQ. Precision: {model_precision}.")
     weights_dtype = getattr(args, "sdnq_weights_dtype", None) or weights_dtype
 
     # Determine bit depth for SVD recommendation

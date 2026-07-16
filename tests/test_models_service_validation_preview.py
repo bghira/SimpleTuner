@@ -75,10 +75,10 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         capabilities = details["capabilities"]
         self.assertIn("supports_multistage_validation", capabilities)
 
-    def test_sdxl_no_multistage(self):
-        """SDXL does not support multi-stage validation."""
+    def test_sdxl_supports_multistage(self):
+        """SDXL supports optional base/refiner multi-stage validation."""
         details = self.service.get_model_details("sdxl")
-        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+        self.assertTrue(details["capabilities"]["supports_multistage_validation"])
 
     def test_flux_no_multistage(self):
         """Flux does not support multi-stage validation."""

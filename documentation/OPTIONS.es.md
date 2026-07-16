@@ -778,6 +778,23 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 - **Predeterminado**: `false`
 - **Por qué**: Wan 2.2 y sabores por etapas compatibles, como AnimeGen, pueden entrenar cada etapa por separado. Al activarlo, se carga la etapa par fija para que la validación use la pipeline completa de dos etapas y cambie de denoiser en el límite configurado.
 
+### `--sdxl_validation_pipeline_mode`
+
+- **Opciones**: `trained-stage`, `full-pipeline`
+- **Predeterminado**: `trained-stage`
+- **Qué**: Elige si la validación de SDXL ejecuta solo la etapa entrenada o la pipeline dividida base/refiner.
+- **Por qué**: `full-pipeline` ejecuta la etapa 1 hasta `1 - refiner_training_strength` con salida latente y luego continúa por la etapa 2 desde el mismo límite de schedule.
+
+### `--sdxl_validation_stage1_model`
+
+- **Qué**: Modelo SDXL fijo de etapa 1/base usado cuando la validación full-pipeline refina con un modelo de etapa 2 entrenado.
+- **Predeterminado**: inferido de la versión SDXL seleccionada, normalmente `stabilityai/stable-diffusion-xl-base-1.0`
+
+### `--sdxl_validation_stage2_model`
+
+- **Qué**: Modelo SDXL fijo de etapa 2/refiner usado cuando la validación full-pipeline ejecuta primero un modelo de etapa 1 entrenado.
+- **Predeterminado**: inferido de la versión SDXL seleccionada, normalmente `stabilityai/stable-diffusion-xl-refiner-1.0`
+
 
 ### `--validation_adapter_path`
 

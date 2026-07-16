@@ -777,6 +777,23 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 - **Padrao**: `false`
 - **Por que**: Wan 2.2 e flavours staged compativeis, como AnimeGen, podem treinar cada stage separadamente. Ao ativar, o stage par fixo e carregado para que a validacao use a pipeline completa de dois stages e troque denoisers no boundary configurado.
 
+### `--sdxl_validation_pipeline_mode`
+
+- **Opcoes**: `trained-stage`, `full-pipeline`
+- **Padrao**: `trained-stage`
+- **O que**: Escolhe se a validacao SDXL executa apenas o stage treinado ou a pipeline dividida base/refiner.
+- **Por que**: `full-pipeline` executa o stage 1 ate `1 - refiner_training_strength` com saida latente e depois continua pelo stage 2 a partir do mesmo boundary do schedule.
+
+### `--sdxl_validation_stage1_model`
+
+- **O que**: Modelo SDXL fixo de stage 1/base usado quando a validacao full-pipeline refina com um modelo de stage 2 treinado.
+- **Padrao**: inferido da versao SDXL selecionada, normalmente `stabilityai/stable-diffusion-xl-base-1.0`
+
+### `--sdxl_validation_stage2_model`
+
+- **O que**: Modelo SDXL fixo de stage 2/refiner usado quando a validacao full-pipeline executa primeiro um modelo de stage 1 treinado.
+- **Padrao**: inferido da versao SDXL selecionada, normalmente `stabilityai/stable-diffusion-xl-refiner-1.0`
+
 ### `--validation_adapter_path`
 
 - **O que**: Carrega temporariamente um unico adaptador LoRA durante validacoes agendadas.
