@@ -772,6 +772,12 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - **What**: SD x4 upscaler को दिया जाने वाला noise level.
 - **Default**: `100`
 
+### `--wan_validation_load_other_stage`
+
+- **What**: Validation के दौरान Wan 2.2 का opposite stage लोड करता है।
+- **Default**: `false`
+- **Why**: Wan 2.2 और AnimeGen जैसे compatible staged flavours में किसी भी stage को अलग से train किया जा सकता है। इसे enable करने पर fixed peer stage लोड होता है, ताकि validation full paired-stage pipeline उपयोग करे और configured boundary पर denoiser switch करे।
+
 
 ### `--validation_adapter_path`
 
