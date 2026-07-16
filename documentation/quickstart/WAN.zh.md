@@ -49,6 +49,7 @@ Wan 2.1 **1.3B** 对系统内存**和** GPU 内存的要求都不高。同样支
 - `model_flavour=i2v-14b-2.2-high` 目标是 Wan 2.2 高噪声阶段。
 - `model_flavour=i2v-14b-2.2-low` 目标是低噪声阶段（相同的检查点，不同的子文件夹）。
 - 切换 `wan_validation_load_other_stage=true` 可在验证渲染时加载与训练阶段相反的阶段。
+  - 验证随后使用完整的 paired-stage pipeline，并在 Wan 2.2 边界切换 denoiser，因此 high-stage 与 low-stage LoRA 会按推理时的相同结构检查。AnimeGen 等兼容 staged flavour 使用同一验证路径。
 - 保持 flavour 未设置（或使用 `t2v-480p-1.3b-2.1`）以进行标准的 Wan 2.1 文生视频运行。
 
 #### 使用图像数据集进行 I2V 验证

@@ -50,6 +50,7 @@ flag `wan_force_2_1_time_embedding`. Isso força o transformer a usar time embed
 - `model_flavour=i2v-14b-2.2-high` mira no stage high-noise do Wan 2.2.
 - `model_flavour=i2v-14b-2.2-low` mira no stage low-noise (mesmos checkpoints, subpasta diferente).
 - Ative `wan_validation_load_other_stage=true` para carregar o stage oposto junto do que você treina para renderizações de validação.
+  - A validação passa a usar a pipeline paired-stage completa e troca de denoiser no limite do Wan 2.2, então LoRAs high-stage e low-stage são verificados no mesmo formato usado em inferência. Flavours staged compatíveis, como AnimeGen, usam o mesmo caminho de validação.
 - Deixe o flavour sem definir (ou use `t2v-480p-1.3b-2.1`) para o run padrão de texto-para-vídeo do Wan 2.1.
 
 #### Validação I2V com Datasets de Imagens
