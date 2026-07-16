@@ -51,6 +51,7 @@ resuelve el problema de compatibilidad.
 - `model_flavour=i2v-14b-2.2-high` apunta al high-noise stage de Wan 2.2.
 - `model_flavour=i2v-14b-2.2-low` apunta al low-noise stage (mismos checkpoints, distinto subfolder).
 - Activa `wan_validation_load_other_stage=true` para cargar el stage opuesto junto al que entrenas para renders de validación.
+  - La validación usa entonces la pipeline paired-stage completa y cambia de denoiser en el límite de Wan 2.2, así que los LoRAs high-stage y low-stage se comprueban con la misma forma que usarán en inferencia. Flavours staged compatibles como AnimeGen usan la misma ruta de validación.
 - Deja el flavour sin definir (o usa `t2v-480p-1.3b-2.1`) para la ejecución estándar de texto‑a‑video de Wan 2.1.
 
 #### Validación I2V con Datasets de Imágenes
