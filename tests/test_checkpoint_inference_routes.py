@@ -57,6 +57,19 @@ class CheckpointInferenceRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "accelerator busy")
 
+    def test_active_inference_session_returns_environment_session(self) -> None:
+        response_payload = {"session_id": "session-one", "status": "loaded"}
+        with patch.object(
+            CHECKPOINT_INFERENCE_SERVICE,
+            "active_environment_session",
+            return_value=response_payload,
+        ) as active_environment_session:
+            response = self.client.get("/api/checkpoints/inference/active?environment=test")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"session": response_payload})
+        active_environment_session.assert_called_once_with("test")
+
     def test_delete_history_forwards_selected_media_paths(self) -> None:
         response_payload = {"deleted_count": 2, "media_paths": ["one.png", "two.png"]}
         with patch.object(CHECKPOINT_INFERENCE_SERVICE, "delete_history", return_value=response_payload) as delete_history:
