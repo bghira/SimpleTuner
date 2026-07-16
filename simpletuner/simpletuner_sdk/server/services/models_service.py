@@ -217,10 +217,10 @@ class ModelsService:
         capabilities["supports_audio_inputs"] = supports_audio_inputs
 
         # Check if model supports multi-stage validation pipelines
-        supports_multistage = False
+        supports_multistage = bool(getattr(model_cls, "SUPPORTS_MULTISTAGE_VALIDATION", False))
         base_multistage_method = getattr(ModelFoundation, "supports_multistage_validation", None)
         current_multistage_method = getattr(model_cls, "supports_multistage_validation", base_multistage_method)
-        if current_multistage_method is not base_multistage_method:
+        if not supports_multistage and current_multistage_method is not base_multistage_method:
             try:
                 supports_multistage = bool(current_multistage_method(None))
             except Exception:

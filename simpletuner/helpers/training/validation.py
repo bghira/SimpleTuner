@@ -3052,6 +3052,36 @@ class Validation:
             dtype=self.config.weight_dtype,
         )
 
+    def _filter_pipeline_kwargs_for_call(self, pipeline, kwargs: dict) -> dict:
+        pipeline_kwargs = dict(kwargs)
+        call_kwargs = inspect.signature(pipeline.__call__).parameters
+        accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in call_kwargs.values())
+        if "num_videos_per_prompt" in call_kwargs and "num_images_per_prompt" in pipeline_kwargs:
+            pipeline_kwargs["num_videos_per_prompt"] = pipeline_kwargs.pop("num_images_per_prompt")
+
+        removed_kwargs = []
+        if not accepts_var_kwargs:
+            accepted_keywords = {
+                key
+                for key, parameter in call_kwargs.items()
+                if parameter.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            }
+            removed_kwargs = [key for key in pipeline_kwargs.keys() if key not in accepted_keywords]
+            pipeline_kwargs = {key: value for key, value in pipeline_kwargs.items() if key in accepted_keywords}
+
+        logger.debug(f"Running validations with inputs: {pipeline_kwargs.keys()}")
+        if removed_kwargs:
+            logger.debug(
+                "Removed the following kwargs from validation pipeline %s: %s",
+                type(pipeline).__name__,
+                removed_kwargs,
+            )
+        return pipeline_kwargs
+
     def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
         if content is None:
             return []
@@ -4079,19 +4109,7 @@ class Validation:
                             pipeline_kwargs["callback_on_step_end"] = abort_check_callback
 
                     def _pipeline_call(pipeline, kwargs):
-                        stage_kwargs = dict(kwargs)
-                        stage_call_kwargs = inspect.signature(pipeline.__call__).parameters
-                        if "num_videos_per_prompt" in stage_call_kwargs and "num_images_per_prompt" in stage_kwargs:
-                            stage_kwargs["num_videos_per_prompt"] = stage_kwargs.pop("num_images_per_prompt")
-                        removed_stage_kwargs = [k for k in stage_kwargs.keys() if k not in stage_call_kwargs]
-                        stage_kwargs = {k: v for k, v in stage_kwargs.items() if k in stage_call_kwargs}
-                        logger.debug(f"Running validations with inputs: {stage_kwargs.keys()}")
-                        if removed_stage_kwargs:
-                            logger.debug(
-                                "Removed the following kwargs from validation pipeline %s: %s",
-                                type(pipeline).__name__,
-                                removed_stage_kwargs,
-                            )
+                        stage_kwargs = self._filter_pipeline_kwargs_for_call(pipeline, kwargs)
                         return pipeline(**stage_kwargs)
 
                     # run in autocast ctx
@@ -4111,14 +4129,10 @@ class Validation:
                     with preview_ctx:
                         filtered_pipeline_kwargs = pipeline_kwargs
                         if not self.model.supports_multistage_validation():
-                            filtered_pipeline_kwargs = dict(pipeline_kwargs)
-                            removed_kwargs = [k for k in filtered_pipeline_kwargs.keys() if k not in call_kwargs]
-                            filtered_pipeline_kwargs = {
-                                k: v for k, v in filtered_pipeline_kwargs.items() if k in call_kwargs
-                            }
-                            logger.debug(f"Running validations with inputs: {filtered_pipeline_kwargs.keys()}")
-                            if removed_kwargs:
-                                logger.debug(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
+                            filtered_pipeline_kwargs = self._filter_pipeline_kwargs_for_call(
+                                self.model.pipeline,
+                                pipeline_kwargs,
+                            )
                         autocast_ctx = (
                             torch.amp.autocast(
                                 self.inference_device.type,

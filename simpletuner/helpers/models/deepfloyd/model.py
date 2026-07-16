@@ -68,6 +68,7 @@ class DeepFloydIF(ImageModelFoundation):
     DEFAULT_STAGE1_MODEL = "DeepFloyd/IF-I-XL-v1.0"
     DEFAULT_STAGE2_MODEL = "DeepFloyd/IF-II-M-v1.0"
     DEFAULT_STAGE3_MODEL = "stabilityai/stable-diffusion-x4-upscaler"
+    SUPPORTS_MULTISTAGE_VALIDATION = True
     DEEPFLOYD_VALIDATION_PIPELINE_MODES = {"auto", "trained-stage", "full-pipeline"}
     DEEPFLOYD_VALIDATION_STAGE3_MODES = {"none", "sd-x4-upscaler"}
 
@@ -103,8 +104,6 @@ class DeepFloydIF(ImageModelFoundation):
         return "full-pipeline" if mode == "auto" else mode
 
     def supports_multistage_validation(self) -> bool:
-        if self is None:
-            return True
         return self._deepfloyd_validation_mode() == "full-pipeline"
 
     def _deepfloyd_validation_stage3_mode(self) -> str:
