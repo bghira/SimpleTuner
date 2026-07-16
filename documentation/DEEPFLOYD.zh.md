@@ -160,6 +160,12 @@
 
 注记：图像每次会按 25% 逐步下采样，避免尺寸变化过大导致细节被不正确地平均。
 
+## 验证管线模式
+
+DeepFloyd validation 现在可以在 SimpleTuner 内直接串联阶段。`deepfloyd_validation_pipeline_mode=auto` 是默认值：prompt validation 会运行 stage I -> stage II，而 dataset-image validation 保持在训练中的 stage。使用 `trained-stage` 可强制单阶段验证，或使用 `full-pipeline` 始终加载固定 peer stage。可用 `deepfloyd_validation_stage1_model` 与 `deepfloyd_validation_stage2_model` 覆盖 peer checkpoint。
+
+可选 stage III validation 可通过 `deepfloyd_validation_stage3_mode=sd-x4-upscaler` 启用；它会在 stage II 之后使用 `deepfloyd_validation_stage3_model` 作为最终 4x upscaler。
+
 ## 运行推理
 
 目前 SimpleTuner 工具包中没有 DeepFloyd 专用的推理脚本。

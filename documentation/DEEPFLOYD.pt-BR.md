@@ -160,6 +160,12 @@ Acima esta uma configuracao basica de Dreambooth para DeepFloyd:
 
 Nota: as imagens sao reduzidas em 25% por vez para evitar saltos extremos no tamanho da imagem que causem uma media incorreta dos detalhes da cena.
 
+## Modos de pipeline de validacao
+
+A validacao do DeepFloyd agora pode encadear stages diretamente no SimpleTuner. `deepfloyd_validation_pipeline_mode=auto` e o padrao: prompt validation roda stage I -> stage II, enquanto dataset-image validation permanece no stage treinado. Use `trained-stage` para forcar validacao single-stage, ou `full-pipeline` para sempre carregar o peer stage fixo. Sobrescreva peer checkpoints com `deepfloyd_validation_stage1_model` e `deepfloyd_validation_stage2_model`.
+
+A validacao opcional de stage III pode ser ativada com `deepfloyd_validation_stage3_mode=sd-x4-upscaler`; isso usa `deepfloyd_validation_stage3_model` como upscaler terminal 4x depois do stage II.
+
 ## Rodando inferencia
 
 Atualmente, o DeepFloyd nao tem scripts de inferencia dedicados no toolkit do SimpleTuner.
