@@ -13,6 +13,82 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class QwenVLVisionEncoder(nn.Module):
+    """Adapter exposing Qwen-VL visual features through the same shape as DINO."""
+
+    preprocesses_frames = True
+
+    def __init__(self, model: nn.Module, processor, device: torch.device):
+        super().__init__()
+        self.model = model
+        self.processor = processor
+        self.device = device
+
+    @classmethod
+    def from_pretrained(cls, model_name: str, device: torch.device, dtype: torch.dtype) -> "QwenVLVisionEncoder":
+        from transformers import AutoProcessor, Qwen2_5_VLModel, Qwen2VLModel, Qwen3VLModel
+
+        normalized = model_name.lower()
+        if "qwen3" in normalized:
+            model_cls = Qwen3VLModel
+        elif "qwen2.5" in normalized or "qwen2_5" in normalized:
+            model_cls = Qwen2_5_VLModel
+        elif "qwen2" in normalized:
+            model_cls = Qwen2VLModel
+        else:
+            raise ValueError(f"Unsupported Qwen-VL encoder: {model_name}")
+
+        processor = AutoProcessor.from_pretrained(model_name)
+        model = model_cls.from_pretrained(model_name, torch_dtype=dtype)
+        model.eval().requires_grad_(False).to(device=device, dtype=dtype)
+        return cls(model=model, processor=processor, device=device)
+
+    def forward(self, frames: torch.Tensor) -> torch.Tensor:
+        frames = frames.detach().float().clamp(0, 1).cpu()
+        image_list = list(frames)
+        prompt = self._image_prompt()
+        batch = self.processor(
+            images=image_list,
+            text=[prompt] * len(image_list),
+            return_tensors="pt",
+        )
+        model_dtype = next(self.model.parameters()).dtype
+        pixel_values = batch["pixel_values"].to(device=self.device, dtype=model_dtype)
+        image_grid_thw = batch["image_grid_thw"].to(self.device)
+
+        with torch.no_grad():
+            output = self.model.get_image_features(
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
+                return_dict=True,
+            )
+        return self._stack_pooler_output(output.pooler_output)
+
+    def _image_prompt(self) -> str:
+        image_token = getattr(self.processor, "image_token", "<|image_pad|>")
+        vision_start = getattr(self.processor, "vision_start_token", "")
+        vision_end = getattr(self.processor, "vision_end_token", "")
+        return f"{vision_start}{image_token}{vision_end}"
+
+    def _stack_pooler_output(self, pooler_output) -> torch.Tensor:
+        if torch.is_tensor(pooler_output):
+            if pooler_output.ndim == 2:
+                return pooler_output.unsqueeze(0)
+            if pooler_output.ndim == 3:
+                return pooler_output
+            raise ValueError(f"Unexpected Qwen-VL pooler output shape: {pooler_output.shape}")
+
+        outputs = list(pooler_output)
+        if not outputs:
+            raise ValueError("Qwen-VL encoder returned no visual features.")
+
+        first_shape = outputs[0].shape
+        if any(output.shape != first_shape for output in outputs):
+            shapes = ", ".join(str(tuple(output.shape)) for output in outputs)
+            raise ValueError(f"Qwen-VL returned variable token counts for CREPA frames: {shapes}")
+        return torch.stack(outputs, dim=0)
+
+
 class CrepaMode(Enum):
     """Determines how hidden state shapes are interpreted for CREPA/REPA alignment.
 
@@ -515,9 +591,13 @@ class CrepaRegularizer:
     def _load_encoder(self):
         if self.encoder is not None:
             return
-        # Dinov2 torch hub exports lightweight models; user confirmed network usage is acceptable.
-        self.encoder = torch.hub.load("facebookresearch/dinov2", self.encoder_name)
-        self.encoder.eval().requires_grad_(False).to(self.device, dtype=torch.float32)
+        if self._is_qwen_vl_encoder(self.encoder_name):
+            dtype = self._encoder_dtype()
+            self.encoder = QwenVLVisionEncoder.from_pretrained(self.encoder_name, self.device, dtype)
+        else:
+            # Dinov2 torch hub exports lightweight models; user confirmed network usage is acceptable.
+            self.encoder = torch.hub.load("facebookresearch/dinov2", self.encoder_name)
+            self.encoder.eval().requires_grad_(False).to(self.device, dtype=torch.float32)
 
         dummy = torch.zeros(1, 3, self.encoder_image_size, self.encoder_image_size, device=self.device)
         with torch.no_grad():
@@ -599,14 +679,15 @@ class CrepaRegularizer:
         # video: (B, T, C, H, W) in [0,1]
         b, t, c, h, w = video.shape
         frames = video.reshape(b * t, c, h, w)
-        frames = F.interpolate(
-            frames, size=(self.encoder_image_size, self.encoder_image_size), mode="bilinear", align_corners=False
-        )
-        enc_dtype = next(self.encoder.parameters()).dtype
-        frames = frames.to(dtype=enc_dtype)
-        mean = torch.tensor([0.485, 0.456, 0.406], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
-        frames = (frames - mean) / std
+        if not getattr(self.encoder, "preprocesses_frames", False):
+            frames = F.interpolate(
+                frames, size=(self.encoder_image_size, self.encoder_image_size), mode="bilinear", align_corners=False
+            )
+            enc_dtype = next(self.encoder.parameters()).dtype
+            frames = frames.to(dtype=enc_dtype)
+            mean = torch.tensor([0.485, 0.456, 0.406], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
+            frames = (frames - mean) / std
 
         frames_batches = (
             list(torch.split(frames, self.encoder_frames_batch_size, dim=0))
@@ -640,8 +721,30 @@ class CrepaRegularizer:
             "dino_v2_s": "dinov2_vits14",
             "dinov2_s": "dinov2_vits14",
             "dinov2-vitb14": "dinov2_vitb14",
+            "qwen3_vl": "Qwen/Qwen3-VL-4B-Instruct",
+            "qwen3-vl": "Qwen/Qwen3-VL-4B-Instruct",
+            "qwen3_vl_4b": "Qwen/Qwen3-VL-4B-Instruct",
+            "qwen3-vl-4b": "Qwen/Qwen3-VL-4B-Instruct",
+            "qwen2.5_vl": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "qwen2.5-vl": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "qwen2.5_vl_7b": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "qwen2.5-vl-7b": "Qwen/Qwen2.5-VL-7B-Instruct",
         }
         return aliases.get(value.lower(), value)
+
+    def _is_qwen_vl_encoder(self, value: str) -> bool:
+        normalized = value.lower()
+        return "qwen" in normalized and "vl" in normalized
+
+    def _encoder_dtype(self) -> torch.dtype:
+        if self.device.type == "cpu":
+            return torch.float32
+        dtype = getattr(self.config, "weight_dtype", torch.float32)
+        if isinstance(dtype, str):
+            dtype = getattr(torch, dtype, None)
+        if dtype is None:
+            return torch.float32
+        return dtype
 
 
 class UrepaRegularizer:

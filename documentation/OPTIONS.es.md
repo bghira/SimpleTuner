@@ -1297,14 +1297,14 @@ CREPA es una técnica de regularización para fine-tuning de modelos de difusió
 ### `--crepa_model`
 
 - **Qué**: Qué encoder preentrenado usar para extracción de características.
-- **Por qué**: El paper usa DINOv2-g (ViT-Giant). Variantes más pequeñas como `dinov2_vitb14` usan menos memoria.
+- **Por qué**: El paper usa DINOv2-g (ViT-Giant). Las variantes DINO más pequeñas usan menos memoria, mientras que los maestros Qwen-VL pueden aportar características visuales semánticas más fuertes.
 - **Predeterminado**: `dinov2_vitg14`
-- **Opciones**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
+- **Opciones**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`, `qwen3-vl-4b`, `qwen2.5-vl-7b`, o un id de modelo Qwen-VL de Hugging Face.
 
 ### `--crepa_encoder_frames_batch_size`
 
 - **Qué**: Cuántos fotogramas procesa en paralelo el encoder de características externo. Cero o negativo para todos los fotogramas del batch completo simultáneamente. Si el número no es divisor, el resto se manejará como un batch más pequeño.
-- **Por qué**: Dado que los encoders tipo DINO son modelos de imagen, pueden procesar fotogramas en batches troceados para menor uso de VRAM a costa de velocidad.
+- **Por qué**: Los encoders visuales externos pueden procesar fotogramas en batches troceados para menor uso de VRAM a costa de velocidad.
 - **Predeterminado**: `-1`
 
 ### `--crepa_use_backbone_features`
@@ -1414,7 +1414,7 @@ crepa_cumulative_neighbors = false
 crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
-crepa_model = "dinov2_vitg14"
+crepa_model = "dinov2_vitg14"  # o "qwen3-vl-4b" para características visuales Qwen-VL
 crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
