@@ -105,6 +105,8 @@ popd
 - `validation_resolution` - この例では`1024x1024`に設定します。
   - さらに、Stable Diffusion XLはマルチアスペクトバケットでファインチューニングされており、カンマで区切って他の解像度を指定できます: `1024x1024,1280x768`
 - `validation_guidance` - 推論時にテストするための快適な値を使用します。`4.2`から`6.4`の間に設定します。
+- `sdxl_validation_pipeline_mode` - 通常の validation では `trained-stage` のままにします。`full-pipeline` を使うと SDXL base/refiner split で validation します。stage 1 は latent output で `1 - refiner_training_strength` まで実行され、stage 2 が同じ境界から再開します。
+  - 片方の stage だけを学習する場合、`sdxl_validation_stage1_model` と `sdxl_validation_stage2_model` で peer stage として使う固定 base/refiner checkpoint を上書きできます。
 - `use_gradient_checkpointing` - 大量のVRAMがあり、速度を上げるために一部を犠牲にしたい場合を除き、おそらく`true`にする必要があります。
 - `learning_rate` - `1e-4`は低ランクネットワークでかなり一般的ですが、「バーニング」や早期の過学習に気づいた場合は`1e-5`がより保守的な選択かもしれません。
 

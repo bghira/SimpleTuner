@@ -105,6 +105,8 @@ popd
 - `validation_resolution` - इस उदाहरण के लिए इसे `1024x1024` पर सेट करें।
   - साथ ही, Stable Diffusion XL को multi‑aspect buckets पर fine‑tune किया गया था, और अन्य resolutions को कॉमा से अलग कर के दिया जा सकता है: `1024x1024,1280x768`
 - `validation_guidance` - inference में परीक्षण के लिए जिस मान के साथ आप सहज हों, वही रखें। इसे `4.2` से `6.4` के बीच सेट करें।
+- `sdxl_validation_pipeline_mode` - सामान्य validation के लिए `trained-stage` रखें। SDXL base/refiner split से validate करने के लिए `full-pipeline` उपयोग करें: stage 1 latent output के साथ `1 - refiner_training_strength` तक चलता है, फिर stage 2 उसी boundary से resume करता है।
+  - केवल एक stage train करते समय, `sdxl_validation_stage1_model` और `sdxl_validation_stage2_model` peer stage के रूप में उपयोग होने वाले fixed base/refiner checkpoint को override कर सकते हैं।
 - `use_gradient_checkpointing` - यदि आपके पास बहुत VRAM नहीं है, तो इसे `true` रखें।
 - `learning_rate` - low‑rank नेटवर्क्स के लिए `1e-4` सामान्य है, लेकिन यदि "burning" या early overtraining दिखे तो `1e-5` अधिक conservative हो सकता है।
 

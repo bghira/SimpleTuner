@@ -105,6 +105,8 @@ Ahí, necesitarás modificar las siguientes variables:
 - `validation_resolution` - Configura esto en `1024x1024` para este ejemplo.
   - Además, Stable Diffusion XL fue afinado con buckets multi-aspect, y se pueden especificar otras resoluciones separándolas con comas: `1024x1024,1280x768`
 - `validation_guidance` - Usa el valor con el que estés cómodo para pruebas en inferencia. Configura entre `4.2` y `6.4`.
+- `sdxl_validation_pipeline_mode` - Mantén `trained-stage` para la validación normal. Usa `full-pipeline` para validar con la división SDXL base/refiner: stage 1 corre hasta `1 - refiner_training_strength` con salida latente y stage 2 continúa desde el mismo límite.
+  - Al entrenar solo un stage, `sdxl_validation_stage1_model` y `sdxl_validation_stage2_model` pueden sobrescribir el checkpoint fijo base/refiner usado como peer stage.
 - `use_gradient_checkpointing` - Probablemente esto debería ser `true` a menos que tengas MUCHÍSIMA VRAM y quieras sacrificar algo para hacerlo más rápido.
 - `learning_rate` - `1e-4` es bastante común para redes de bajo rango, aunque `1e-5` puede ser una opción más conservadora si notas "burning" o sobreentrenamiento temprano.
 
