@@ -107,6 +107,9 @@ Ajustes clave para LTX Video 2:
   - Para 5s (a ~12-24fps): Usa `61` o `49`.
   - Fórmula: `(frames - 1) % 4 == 0`.
 - `validation_guidance`: `5.0`.
+- `ltx2_validation_pipeline_mode`: Mantén `trained-stage` para la validación normal. Usa `spatial-upscale` para ejecutar el flujo LTX-2 en dos etapas: generación latente a media resolución, upscaling latente espacial y re-denoising a resolución completa.
+  - `spatial-upscale` requiere que `validation_resolution` sea divisible por 64.
+  - Overrides opcionales: `ltx2_validation_spatial_upsampler_model` y `ltx2_validation_spatial_upsampler_filename`. Los valores por defecto son `Lightricks/LTX-2.3` y `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
 - `frame_rate`: Por defecto es 25.
 
 Las variantes LTX-2 2.0 se distribuyen como un único checkpoint `.safetensors` que incluye el transformer, el VAE de video,
@@ -390,6 +393,7 @@ Coloca tus archivos de audio en `instance_data_dir` con los archivos `.txt` de s
 - **T2V (texto a video)**: Deja `validation_using_datasets: false` y usa `validation_prompt` o `validation_prompt_library`.
 - **I2V (imagen a video)**: Configura `validation_using_datasets: true` y apunta `eval_dataset_id` a un split de validación que proporcione una imagen de referencia. La validación cambiará al pipeline de imagen a video y usará esa imagen como condicionamiento.
 - **S2V (condicionado por audio)**: Con `validation_using_datasets: true`, asegúrate de que `eval_dataset_id` apunte a un dataset con `s2v_datasets` (o el comportamiento por defecto de `audio.auto_split`). La validación cargará los latentes de audio en caché automáticamente.
+- **Validación spatial upscale**: Define `ltx2_validation_pipeline_mode: "spatial-upscale"` para validar con el pase spatial upscaler de LTX-2. Stage 1 corre a media resolución, el upsampler duplica los latentes de video y stage 2 vuelve a denoise a la resolución solicitada. `validation_audio_only` se mantiene en la ruta single-stage.
 
 ### Adaptadores de validación (LoRAs)
 
