@@ -799,6 +799,23 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：full-pipeline 验证先运行已训练 stage 1 模型时加载的固定 SDXL stage 2/refiner 模型。
 - **默认值**：从所选 SDXL 版本推断，通常是 `stabilityai/stable-diffusion-xl-refiner-1.0`
 
+### `--pixart_validation_pipeline_mode`
+
+- **选项**：`trained-stage`, `full-pipeline`
+- **默认值**：`trained-stage`
+- **内容**：选择 PixArt 验证只运行已训练阶段，还是运行 v0.7 拆分管线。
+- **原因**：`full-pipeline` 会让 stage 1 以 latent 输出运行到 `1 - refiner_training_strength`，然后从同一 schedule 边界继续运行 stage 2。
+
+### `--pixart_validation_stage1_model`
+
+- **内容**：full-pipeline 验证使用已训练 stage 2 模型进行 refine 时加载的固定 PixArt stage 1 模型。
+- **默认值**：`terminusresearch/pixart-900m-1024-ft-v0.7-stage1`
+
+### `--pixart_validation_stage2_model`
+
+- **内容**：full-pipeline 验证先运行已训练 stage 1 模型时加载的固定 PixArt stage 2 模型。
+- **默认值**：`terminusresearch/pixart-900m-1024-ft-v0.7-stage2`
+
 ### `--validation_adapter_path`
 
 - **内容**：在计划验证时临时加载单个 LoRA 适配器。

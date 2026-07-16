@@ -795,6 +795,23 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 - **Qué**: Modelo SDXL fijo de etapa 2/refiner usado cuando la validación full-pipeline ejecuta primero un modelo de etapa 1 entrenado.
 - **Predeterminado**: inferido de la versión SDXL seleccionada, normalmente `stabilityai/stable-diffusion-xl-refiner-1.0`
 
+### `--pixart_validation_pipeline_mode`
+
+- **Opciones**: `trained-stage`, `full-pipeline`
+- **Predeterminado**: `trained-stage`
+- **Qué**: Elige si la validación de PixArt ejecuta solo la etapa entrenada o la pipeline dividida v0.7.
+- **Por qué**: `full-pipeline` ejecuta la etapa 1 hasta `1 - refiner_training_strength` con salida latente y luego continúa por la etapa 2 desde el mismo límite de schedule.
+
+### `--pixart_validation_stage1_model`
+
+- **Qué**: Modelo PixArt fijo de etapa 1 usado cuando la validación full-pipeline refina con un modelo de etapa 2 entrenado.
+- **Predeterminado**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage1`
+
+### `--pixart_validation_stage2_model`
+
+- **Qué**: Modelo PixArt fijo de etapa 2 usado cuando la validación full-pipeline ejecuta primero un modelo de etapa 1 entrenado.
+- **Predeterminado**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage2`
+
 
 ### `--validation_adapter_path`
 

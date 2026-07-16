@@ -14,6 +14,7 @@ class TestModelFieldRegistry(unittest.TestCase):
             "deepfloyd_validation_pipeline_mode",
             "wan_validation_load_other_stage",
             "sdxl_validation_pipeline_mode",
+            "pixart_validation_pipeline_mode",
             "validation_lyrics",
             "flux_lora_target",
             "ltx_train_mode",
