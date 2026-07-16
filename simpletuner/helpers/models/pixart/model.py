@@ -621,6 +621,8 @@ class PixartSigma(ImageModelFoundation):
             "guidance_scale": float(pipeline_kwargs.get("guidance_scale", 4.5)),
             "denoising_start": split_boundary,
             "output_type": "pil",
+            "width": pipeline_kwargs.get("width"),
+            "height": pipeline_kwargs.get("height"),
         }
         logger.info("Running PixArt validation stage 2 from %.2f of the schedule.", split_boundary)
         return pipeline_call(stage2, stage2_kwargs)

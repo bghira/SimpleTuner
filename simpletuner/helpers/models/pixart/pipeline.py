@@ -1222,7 +1222,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                 )
 
                 num_inference_steps = (timesteps < discrete_timestep_cutoff).sum().item()
-                print(f"Beginning inference for stage2 with {num_inference_steps} steps.")
+                logger.info("Beginning inference for stage2 with %s steps.", num_inference_steps)
 
             else:
                 raise ValueError(f"`denoising_start` must be a float between 0 and 1: {denoising_start}")
@@ -1235,7 +1235,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                     )
                 )
                 num_inference_steps = len(list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps)))
-                print(f"Beginning inference for stage1 with {num_inference_steps} steps.")
+                logger.info("Beginning inference for stage1 with %s steps.", num_inference_steps)
                 timesteps = timesteps[:num_inference_steps]
             else:
                 raise ValueError(f"`denoising_end` must be a float between 0 and 1: {denoising_end}")

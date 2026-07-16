@@ -795,6 +795,23 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - **What**: Full-pipeline validation में trained stage 1 model पहले चलाते समय उपयोग होने वाला fixed SDXL stage 2/refiner model.
 - **Default**: चुने गए SDXL version से infer होता है, आम तौर पर `stabilityai/stable-diffusion-xl-refiner-1.0`
 
+### `--pixart_validation_pipeline_mode`
+
+- **Choices**: `trained-stage`, `full-pipeline`
+- **Default**: `trained-stage`
+- **What**: PixArt validation में केवल trained stage चलाना है या v0.7 split pipeline चलानी है, यह चुनता है।
+- **Why**: `full-pipeline` stage 1 को `1 - refiner_training_strength` तक latent output के साथ चलाता है, फिर उसी schedule boundary से stage 2 resume करता है।
+
+### `--pixart_validation_stage1_model`
+
+- **What**: Full-pipeline validation में trained stage 2 model को refine कराते समय उपयोग होने वाला fixed PixArt stage 1 model.
+- **Default**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage1`
+
+### `--pixart_validation_stage2_model`
+
+- **What**: Full-pipeline validation में trained stage 1 model पहले चलाते समय उपयोग होने वाला fixed PixArt stage 2 model.
+- **Default**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage2`
+
 
 ### `--validation_adapter_path`
 

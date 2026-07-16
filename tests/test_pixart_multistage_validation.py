@@ -106,6 +106,8 @@ class PixArtMultistageValidationTests(unittest.TestCase):
         self.assertEqual(stage2_call["denoising_start"], 0.65)
         self.assertEqual(stage2_call["output_type"], "pil")
         self.assertEqual(stage2_call["num_images_per_prompt"], 2)
+        self.assertEqual(stage2_call["width"], 1024)
+        self.assertEqual(stage2_call["height"], 1024)
         self.assertIn("prompt_embeds", stage2_call)
 
     def test_stage2_training_runs_fixed_stage1_then_trained_stage2(self):
@@ -127,6 +129,8 @@ class PixArtMultistageValidationTests(unittest.TestCase):
         self.assertEqual(stage1_call["output_type"], "latent")
         self.assertEqual(stage2_call["image"], ["stage1-latents"])
         self.assertEqual(stage2_call["denoising_start"], 0.65)
+        self.assertEqual(stage2_call["width"], 1024)
+        self.assertEqual(stage2_call["height"], 1024)
         self.assertIn("prompt_embeds", stage1_call)
         self.assertIn("prompt_embeds", stage2_call)
 

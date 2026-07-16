@@ -794,6 +794,23 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 - **O que**: Modelo SDXL fixo de stage 2/refiner usado quando a validacao full-pipeline executa primeiro um modelo de stage 1 treinado.
 - **Padrao**: inferido da versao SDXL selecionada, normalmente `stabilityai/stable-diffusion-xl-refiner-1.0`
 
+### `--pixart_validation_pipeline_mode`
+
+- **Opcoes**: `trained-stage`, `full-pipeline`
+- **Padrao**: `trained-stage`
+- **O que**: Escolhe se a validacao PixArt executa apenas o stage treinado ou a pipeline dividida v0.7.
+- **Por que**: `full-pipeline` executa o stage 1 ate `1 - refiner_training_strength` com saida latente e depois continua pelo stage 2 a partir do mesmo boundary do schedule.
+
+### `--pixart_validation_stage1_model`
+
+- **O que**: Modelo PixArt fixo de stage 1 usado quando a validacao full-pipeline refina com um modelo de stage 2 treinado.
+- **Padrao**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage1`
+
+### `--pixart_validation_stage2_model`
+
+- **O que**: Modelo PixArt fixo de stage 2 usado quando a validacao full-pipeline executa primeiro um modelo de stage 1 treinado.
+- **Padrao**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage2`
+
 ### `--validation_adapter_path`
 
 - **O que**: Carrega temporariamente um unico adaptador LoRA durante validacoes agendadas.
