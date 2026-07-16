@@ -1,8 +1,10 @@
 import logging
 import os
+from types import SimpleNamespace
+from typing import Any, Callable, Dict
 
 import torch
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKL, StableDiffusionUpscalePipeline
 from diffusers.pipelines import IFPipeline, IFSuperResolutionPipeline
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from peft import set_peft_model_state_dict
@@ -63,6 +65,12 @@ class DeepFloydIF(ImageModelFoundation):
         "ii-large-1.2b": "DeepFloyd/IF-II-L-v1.0",
     }
     MODEL_LICENSE = "deepfloyd-if-license"
+    DEFAULT_STAGE1_MODEL = "DeepFloyd/IF-I-XL-v1.0"
+    DEFAULT_STAGE2_MODEL = "DeepFloyd/IF-II-M-v1.0"
+    DEFAULT_STAGE3_MODEL = "stabilityai/stable-diffusion-x4-upscaler"
+    SUPPORTS_MULTISTAGE_VALIDATION = True
+    DEEPFLOYD_VALIDATION_PIPELINE_MODES = {"auto", "trained-stage", "full-pipeline"}
+    DEEPFLOYD_VALIDATION_STAGE3_MODES = {"none", "sd-x4-upscaler"}
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -79,6 +87,213 @@ class DeepFloydIF(ImageModelFoundation):
         if self.config.model_flavour.startswith("ii-"):
             return 64
         return None
+
+    def _deepfloyd_current_stage(self) -> int:
+        return 2 if str(getattr(self.config, "model_flavour", "")).startswith("ii-") else 1
+
+    def _deepfloyd_validation_mode(self) -> str:
+        mode = getattr(self.config, "deepfloyd_validation_pipeline_mode", "auto") or "auto"
+        mode = str(mode).strip().lower()
+        if mode not in self.DEEPFLOYD_VALIDATION_PIPELINE_MODES:
+            raise ValueError(
+                "deepfloyd_validation_pipeline_mode must be one of: "
+                f"{', '.join(sorted(self.DEEPFLOYD_VALIDATION_PIPELINE_MODES))}"
+            )
+        if mode == "auto" and getattr(self.config, "validation_using_datasets", False):
+            return "trained-stage"
+        return "full-pipeline" if mode == "auto" else mode
+
+    def supports_multistage_validation(self) -> bool:
+        return self._deepfloyd_validation_mode() == "full-pipeline"
+
+    def _deepfloyd_validation_stage3_mode(self) -> str:
+        mode = getattr(self.config, "deepfloyd_validation_stage3_mode", "none") or "none"
+        mode = str(mode).strip().lower()
+        if mode not in self.DEEPFLOYD_VALIDATION_STAGE3_MODES:
+            raise ValueError(
+                "deepfloyd_validation_stage3_mode must be one of: "
+                f"{', '.join(sorted(self.DEEPFLOYD_VALIDATION_STAGE3_MODES))}"
+            )
+        return mode
+
+    def _deepfloyd_validation_repo(self, config_name: str, default_repo: str) -> str:
+        repo = getattr(self.config, config_name, None) or default_repo
+        return str(repo)
+
+    def _deepfloyd_from_pretrained_kwargs(self, *, load_text_encoder: bool) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "torch_dtype": self.config.weight_dtype,
+        }
+        if not load_text_encoder:
+            kwargs["text_encoder"] = None
+            kwargs["tokenizer"] = None
+        for attr in ("revision", "cache_dir", "local_files_only"):
+            value = getattr(self.config, attr, None)
+            if value is not None:
+                kwargs[attr] = value
+        variant = getattr(self.config, "variant", None)
+        if variant is not None:
+            kwargs["variant"] = variant
+        return kwargs
+
+    def _get_deepfloyd_validation_pipeline(
+        self,
+        cache_key: str,
+        pipeline_cls,
+        repo_id: str,
+        *,
+        load_text_encoder: bool = False,
+    ):
+        if cache_key in self.pipelines:
+            return self.pipelines[cache_key]
+
+        load_kwargs = self._deepfloyd_from_pretrained_kwargs(load_text_encoder=load_text_encoder)
+        signature = pipeline_cls.from_pretrained
+        logger.info("Loading DeepFloyd validation pipeline '%s' from %s.", cache_key, repo_id)
+        pipeline = signature(repo_id, **load_kwargs)
+        for attr in ("safety_checker", "watermarker", "feature_extractor"):
+            if hasattr(pipeline, attr):
+                setattr(pipeline, attr, None)
+        pipeline.to(self.accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+        self.pipelines[cache_key] = pipeline
+        return pipeline
+
+    def _deepfloyd_stage1_pipeline(self):
+        if self._deepfloyd_current_stage() == 1:
+            return self.pipeline
+        repo_id = self._deepfloyd_validation_repo(
+            "deepfloyd_validation_stage1_model",
+            self.DEFAULT_STAGE1_MODEL,
+        )
+        return self._get_deepfloyd_validation_pipeline(
+            "deepfloyd_validation_stage1",
+            IFPipeline,
+            repo_id,
+        )
+
+    def _deepfloyd_stage2_pipeline(self):
+        if self._deepfloyd_current_stage() == 2:
+            return self.pipeline
+        repo_id = self._deepfloyd_validation_repo(
+            "deepfloyd_validation_stage2_model",
+            self.DEFAULT_STAGE2_MODEL,
+        )
+        return self._get_deepfloyd_validation_pipeline(
+            "deepfloyd_validation_stage2",
+            IFSuperResolutionPipeline,
+            repo_id,
+        )
+
+    def _deepfloyd_stage3_pipeline(self):
+        repo_id = self._deepfloyd_validation_repo(
+            "deepfloyd_validation_stage3_model",
+            self.DEFAULT_STAGE3_MODEL,
+        )
+        return self._get_deepfloyd_validation_pipeline(
+            "deepfloyd_validation_stage3",
+            StableDiffusionUpscalePipeline,
+            repo_id,
+            load_text_encoder=True,
+        )
+
+    def unload_validation_models(self) -> None:
+        for key in (
+            "deepfloyd_validation_stage1",
+            "deepfloyd_validation_stage2",
+            "deepfloyd_validation_stage3",
+        ):
+            if key in self.pipelines:
+                del self.pipelines[key]
+
+    def _deepfloyd_stage1_resolution(self, requested_width: int, requested_height: int) -> tuple[int, int]:
+        stage3_scale = 4 if self._deepfloyd_validation_stage3_mode() == "sd-x4-upscaler" else 1
+        stage2_width = max(64, int(requested_width / stage3_scale))
+        stage2_height = max(64, int(requested_height / stage3_scale))
+        width = max(64, int(stage2_width / 4))
+        height = max(64, int(stage2_height / 4))
+        width = max(8, (width // 8) * 8)
+        height = max(8, (height // 8) * 8)
+        return width, height
+
+    def _deepfloyd_stage_steps(self, stage: int, default: int) -> int:
+        value = getattr(self.config, f"deepfloyd_validation_stage{stage}_num_inference_steps", None)
+        if value is None:
+            value = default
+        return max(1, int(value))
+
+    def _deepfloyd_stage_guidance(self, stage: int, default: float) -> float:
+        value = getattr(self.config, f"deepfloyd_validation_stage{stage}_guidance", None)
+        if value is None:
+            value = default
+        return float(value)
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: Callable[[Any, Dict[str, Any]], Any],
+    ) -> Any:
+        stage1 = self._deepfloyd_stage1_pipeline()
+        stage2 = self._deepfloyd_stage2_pipeline()
+        width = int(pipeline_kwargs.get("width", 256))
+        height = int(pipeline_kwargs.get("height", 256))
+        stage1_width, stage1_height = self._deepfloyd_stage1_resolution(width, height)
+        stage2_width = stage1_width * 4
+        stage2_height = stage1_height * 4
+
+        stage1_kwargs = {
+            "prompt_embeds": pipeline_kwargs["prompt_embeds"],
+            "negative_prompt_embeds": pipeline_kwargs.get("negative_prompt_embeds"),
+            "num_inference_steps": self._deepfloyd_stage_steps(1, min(int(pipeline_kwargs["num_inference_steps"]), 30)),
+            "generator": pipeline_kwargs.get("generator"),
+            "guidance_scale": self._deepfloyd_stage_guidance(1, float(pipeline_kwargs.get("guidance_scale", 7.0))),
+            "output_type": "pt",
+            "width": stage1_width,
+            "height": stage1_height,
+            "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
+        }
+        logger.info("Running DeepFloyd validation stage I at %sx%s.", stage1_width, stage1_height)
+        stage1_result = pipeline_call(stage1, stage1_kwargs)
+        stage1_images = stage1_result.images
+
+        stage2_kwargs = {
+            "image": stage1_images,
+            "prompt_embeds": pipeline_kwargs["prompt_embeds"],
+            "negative_prompt_embeds": pipeline_kwargs.get("negative_prompt_embeds"),
+            "num_inference_steps": self._deepfloyd_stage_steps(2, int(pipeline_kwargs["num_inference_steps"])),
+            "generator": pipeline_kwargs.get("generator"),
+            "guidance_scale": self._deepfloyd_stage_guidance(2, float(pipeline_kwargs.get("guidance_scale", 4.0))),
+            "output_type": "pil",
+            "width": stage2_width,
+            "height": stage2_height,
+            "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
+        }
+        logger.info("Running DeepFloyd validation stage II at %sx%s.", stage2_width, stage2_height)
+        stage2_result = pipeline_call(stage2, stage2_kwargs)
+
+        if self._deepfloyd_validation_stage3_mode() != "sd-x4-upscaler":
+            return stage2_result
+
+        stage3 = self._deepfloyd_stage3_pipeline()
+        prompt = pipeline_kwargs.get("_validation_prompt_text") or pipeline_kwargs.get("prompt") or ""
+        negative_prompt = (
+            pipeline_kwargs.get("_validation_negative_prompt_text") or pipeline_kwargs.get("negative_prompt") or ""
+        )
+        stage2_images = stage2_result.images
+        if not isinstance(stage2_images, list):
+            stage2_images = [stage2_images]
+        stage3_kwargs = {
+            "prompt": [prompt] * len(stage2_images),
+            "negative_prompt": [negative_prompt] * len(stage2_images),
+            "image": stage2_images,
+            "noise_level": int(getattr(self.config, "deepfloyd_validation_stage3_noise_level", 100) or 100),
+            "guidance_scale": self._deepfloyd_stage_guidance(3, float(pipeline_kwargs.get("guidance_scale", 4.0))),
+        }
+        logger.info("Running DeepFloyd validation stage III with Stable Diffusion x4 upscaler.")
+        stage3_result = pipeline_call(stage3, stage3_kwargs)
+        if hasattr(stage3_result, "images"):
+            return stage3_result
+        return SimpleNamespace(images=stage3_result)
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -184,6 +399,8 @@ class DeepFloydIF(ImageModelFoundation):
         """
         Checks self.config values against important issues. Optionally implemented in child class.
         """
+        self._deepfloyd_validation_mode()
+        self._deepfloyd_validation_stage3_mode()
         if self.config.base_model_precision == "fp8-quanto":
             raise ValueError(
                 "DeepFloyd does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."

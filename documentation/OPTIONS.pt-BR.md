@@ -712,6 +712,65 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   --post_checkpoint_script='/opt/hooks/run_eval.sh {local_checkpoint_path} {global_step}'
   ```
 
+### `--deepfloyd_validation_pipeline_mode`
+
+- **O que**: Controla o encadeamento de estagios na validacao do DeepFloyd.
+- **Opcoes**: `auto`, `trained-stage`, `full-pipeline`
+- **Padrao**: `auto`
+- **Por que**: `auto` executa DeepFloyd stage I -> stage II para validacao por prompt, enquanto validacao explicita com imagens de dataset usa apenas o estagio treinado. Use `trained-stage` para manter validacao de um unico estagio, ou `full-pipeline` para forcar o carregamento dos estagios fixos.
+
+### `--deepfloyd_validation_stage1_model`
+
+- **O que**: Modelo fixo de stage I usado ao validar um stage II treinado pela pipeline completa.
+- **Padrao**: `DeepFloyd/IF-I-XL-v1.0`
+
+### `--deepfloyd_validation_stage2_model`
+
+- **O que**: Modelo fixo de stage II usado ao validar um stage I treinado pela pipeline completa.
+- **Padrao**: `DeepFloyd/IF-II-M-v1.0`
+
+### `--deepfloyd_validation_stage3_mode`
+
+- **O que**: Upscaler terminal opcional apos o DeepFloyd stage II.
+- **Opcoes**: `none`, `sd-x4-upscaler`
+- **Padrao**: `none`
+- **Por que**: O stage III nao lancado do DeepFloyd era essencialmente um upscaler 4x. `sd-x4-upscaler` usa `stabilityai/stable-diffusion-x4-upscaler` nessa funcao.
+
+### `--deepfloyd_validation_stage3_model`
+
+- **O que**: Repositorio do modelo usado quando `--deepfloyd_validation_stage3_mode=sd-x4-upscaler`.
+- **Padrao**: `stabilityai/stable-diffusion-x4-upscaler`
+
+### `--deepfloyd_validation_stage1_num_inference_steps`
+
+- **O que**: Sobrescrita opcional do numero de passos de validacao do stage I.
+- **Padrao**: Usa `--validation_num_inference_steps`, limitado a 30 no stage I.
+
+### `--deepfloyd_validation_stage2_num_inference_steps`
+
+- **O que**: Sobrescrita opcional do numero de passos de validacao do stage II.
+- **Padrao**: Usa `--validation_num_inference_steps`
+
+### `--deepfloyd_validation_stage1_guidance`
+
+- **O que**: Sobrescrita opcional da guidance de validacao do stage I.
+- **Padrao**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage2_guidance`
+
+- **O que**: Sobrescrita opcional da guidance de validacao do stage II.
+- **Padrao**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_guidance`
+
+- **O que**: Sobrescrita opcional da guidance do upscaler SD x4.
+- **Padrao**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_noise_level`
+
+- **O que**: Nivel de ruido passado ao upscaler SD x4.
+- **Padrao**: `100`
+
 ### `--validation_adapter_path`
 
 - **O que**: Carrega temporariamente um unico adaptador LoRA durante validacoes agendadas.

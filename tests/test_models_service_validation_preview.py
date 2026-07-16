@@ -90,10 +90,10 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         details = self.service.get_model_details("ltxvideo2")
         self.assertFalse(details["capabilities"]["supports_multistage_validation"])
 
-    def test_deepfloyd_no_multistage(self):
-        """DeepFloyd does not yet support multi-stage validation."""
+    def test_deepfloyd_supports_multistage(self):
+        """DeepFloyd supports model-owned multi-stage validation."""
         details = self.service.get_model_details("deepfloyd")
-        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+        self.assertTrue(details["capabilities"]["supports_multistage_validation"])
 
     def test_evaluate_requirements_includes_multistage(self):
         """evaluate_requirements() must include supports_multistage_validation."""

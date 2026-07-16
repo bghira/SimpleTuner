@@ -713,6 +713,65 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
   --post_checkpoint_script='/opt/hooks/run_eval.sh {local_checkpoint_path} {global_step}'
   ```
 
+### `--deepfloyd_validation_pipeline_mode`
+
+- **Qué**: Controla el encadenamiento de etapas durante la validación de DeepFloyd.
+- **Opciones**: `auto`, `trained-stage`, `full-pipeline`
+- **Predeterminado**: `auto`
+- **Por qué**: `auto` ejecuta DeepFloyd stage I -> stage II para validación por prompt, mientras que la validación explícita con imágenes de dataset usa solo la etapa entrenada. Usa `trained-stage` para conservar validación de una sola etapa, o `full-pipeline` para forzar la carga de etapas fijas.
+
+### `--deepfloyd_validation_stage1_model`
+
+- **Qué**: Modelo fijo de stage I usado al validar un stage II entrenado mediante la pipeline completa.
+- **Predeterminado**: `DeepFloyd/IF-I-XL-v1.0`
+
+### `--deepfloyd_validation_stage2_model`
+
+- **Qué**: Modelo fijo de stage II usado al validar un stage I entrenado mediante la pipeline completa.
+- **Predeterminado**: `DeepFloyd/IF-II-M-v1.0`
+
+### `--deepfloyd_validation_stage3_mode`
+
+- **Qué**: Upscaler terminal opcional después de DeepFloyd stage II.
+- **Opciones**: `none`, `sd-x4-upscaler`
+- **Predeterminado**: `none`
+- **Por qué**: El stage III no publicado de DeepFloyd era esencialmente un upscaler 4x. `sd-x4-upscaler` usa `stabilityai/stable-diffusion-x4-upscaler` para ese papel.
+
+### `--deepfloyd_validation_stage3_model`
+
+- **Qué**: Repositorio del modelo usado cuando `--deepfloyd_validation_stage3_mode=sd-x4-upscaler`.
+- **Predeterminado**: `stabilityai/stable-diffusion-x4-upscaler`
+
+### `--deepfloyd_validation_stage1_num_inference_steps`
+
+- **Qué**: Reemplazo opcional del número de pasos de validación del stage I.
+- **Predeterminado**: Usa `--validation_num_inference_steps`, limitado a 30 para stage I.
+
+### `--deepfloyd_validation_stage2_num_inference_steps`
+
+- **Qué**: Reemplazo opcional del número de pasos de validación del stage II.
+- **Predeterminado**: Usa `--validation_num_inference_steps`
+
+### `--deepfloyd_validation_stage1_guidance`
+
+- **Qué**: Reemplazo opcional de guidance para validación del stage I.
+- **Predeterminado**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage2_guidance`
+
+- **Qué**: Reemplazo opcional de guidance para validación del stage II.
+- **Predeterminado**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_guidance`
+
+- **Qué**: Reemplazo opcional de guidance para el upscaler SD x4.
+- **Predeterminado**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_noise_level`
+
+- **Qué**: Nivel de ruido pasado al upscaler SD x4.
+- **Predeterminado**: `100`
+
 
 ### `--validation_adapter_path`
 
