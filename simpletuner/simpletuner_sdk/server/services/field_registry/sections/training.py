@@ -653,46 +653,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Feed-forward chunking (Wan)
-    registry._add_field(
-        ConfigField(
-            name="enable_chunked_feed_forward",
-            arg_name="--enable_chunked_feed_forward",
-            ui_label="Enable Feed-Forward Chunking",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            default_value=False,
-            help_text="Split Wan feed-forward layers into smaller chunks to reduce peak VRAM usage.",
-            tooltip="Available for Wan models. Breaks long MLPs into mini-batches so checkpoint recomputes allocate less memory.",
-            importance=ImportanceLevel.ADVANCED,
-            model_specific=["wan", "wan_s2v"],
-            order=8,
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="feed_forward_chunk_size",
-            arg_name="--feed_forward_chunk_size",
-            ui_label="Feed-Forward Chunk Size",
-            field_type=FieldType.NUMBER,
-            tab="model",
-            section="memory_optimization",
-            default_value=None,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Chunk size must be at least 1")],
-            help_text="Number of samples processed per chunk when feed-forward chunking is enabled.",
-            tooltip="Leave blank for auto. Lower values reduce memory further but increase wall-clock time.",
-            importance=ImportanceLevel.ADVANCED,
-            model_specific=["wan", "wan_s2v"],
-            order=9,
-            dependencies=[
-                FieldDependency(field="enable_chunked_feed_forward", operator="equals", value=True, action="show")
-            ],
-            allow_empty=True,
-        )
-    )
-
     # Train Text Encoder
     registry._add_field(
         ConfigField(
@@ -725,84 +685,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=4,
             dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
-        )
-    )
-
-    # Lyrics Embedder Training (ACE-Step)
-    registry._add_field(
-        ConfigField(
-            name="lyrics_embedder_train",
-            arg_name="--lyrics_embedder_train",
-            ui_label="Train Lyrics Embedder",
-            field_type=FieldType.CHECKBOX,
-            tab="training",
-            section="lyrics_embedder",
-            default_value=False,
-            help_text="Enable fine-tuning of the ACE-Step lyrics embedder components.",
-            tooltip="Unlocks lyric embedding layers for training. Recommended for ACE-Step only.",
-            importance=ImportanceLevel.ADVANCED,
-            model_specific=["ace_step"],
-            order=1,
-        )
-    )
-    registry._add_field(
-        ConfigField(
-            name="lyrics_embedder_optimizer",
-            arg_name="--lyrics_embedder_optimizer",
-            ui_label="Lyrics Embedder Optimizer",
-            field_type=FieldType.SELECT,
-            tab="training",
-            section="lyrics_embedder",
-            default_value=None,
-            choices=[{"value": opt, "label": opt} for opt in optimizer_choices],
-            dynamic_choices=True,
-            validation_rules=[ValidationRule(ValidationRuleType.CHOICES, value=optimizer_choices)],
-            dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
-            help_text="Optional optimizer override for the lyrics embedder (leave empty to reuse the main optimizer).",
-            tooltip="Pick a different optimizer just for the lyrics embedder, or leave blank to share the primary one.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            model_specific=["ace_step"],
-            allow_empty=True,
-            order=2,
-        )
-    )
-    registry._add_field(
-        ConfigField(
-            name="lyrics_embedder_lr",
-            arg_name="--lyrics_embedder_lr",
-            ui_label="Lyrics Embedder Learning Rate",
-            field_type=FieldType.NUMBER,
-            tab="training",
-            section="lyrics_embedder",
-            default_value=None,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
-            dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
-            help_text="Optional learning rate override for the lyrics embedder.",
-            tooltip="Leave empty to share the main learning rate. Set a value to use a dedicated rate.",
-            importance=ImportanceLevel.ADVANCED,
-            model_specific=["ace_step"],
-            allow_empty=True,
-            order=3,
-        )
-    )
-    registry._add_field(
-        ConfigField(
-            name="lyrics_embedder_lr_scheduler",
-            arg_name="--lyrics_embedder_lr_scheduler",
-            ui_label="Lyrics Embedder LR Scheduler",
-            field_type=FieldType.SELECT,
-            tab="training",
-            section="lyrics_embedder",
-            default_value=None,
-            choices=[{"value": s, "label": s.replace("_", " ").title()} for s in lr_scheduler_choices],
-            validation_rules=[ValidationRule(ValidationRuleType.CHOICES, value=lr_scheduler_choices)],
-            dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
-            help_text="Select a scheduler for the lyrics embedder (leave empty to mirror the main scheduler).",
-            tooltip="Use a distinct scheduler for lyric embeddings if needed, or leave blank to follow the primary plan.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            model_specific=["ace_step"],
-            allow_empty=True,
-            order=4,
         )
     )
 
