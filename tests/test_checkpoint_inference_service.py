@@ -374,6 +374,53 @@ class TestCheckpointInferenceService(unittest.TestCase):
         self.assertNotIn("test", self.service._environment_sessions)
 
     @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.process_keeper")
+    def test_active_environment_session_returns_loaded_worker_state(self, process_keeper: MagicMock) -> None:
+        session_id = "session-one"
+        session_dir = self.output_dir / "inference" / session_id
+        session_dir.mkdir(parents=True)
+        (session_dir / "session.json").write_text(
+            json.dumps(
+                {
+                    "session_id": session_id,
+                    "environment": "test",
+                    "status": "loaded",
+                    "loaded_checkpoint": "checkpoint-100",
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.service._sessions[session_id] = {
+            "session_id": session_id,
+            "job_id": "infer-one",
+            "environment": "test",
+        }
+        self.service._environment_sessions["test"] = session_id
+        process_keeper.get_process_status.return_value = "running"
+
+        result = self.service.active_environment_session("test")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "loaded")
+        self.assertEqual(result["loaded_checkpoint"], "checkpoint-100")
+
+    @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.process_keeper")
+    def test_active_environment_session_discards_stale_worker_record(self, process_keeper: MagicMock) -> None:
+        session_id = "session-one"
+        self.service._sessions[session_id] = {
+            "session_id": session_id,
+            "job_id": "infer-one",
+            "environment": "test",
+        }
+        self.service._environment_sessions["test"] = session_id
+        process_keeper.get_process_status.return_value = "completed"
+
+        result = self.service.active_environment_session("test")
+
+        self.assertIsNone(result)
+        self.assertNotIn(session_id, self.service._sessions)
+        self.assertNotIn("test", self.service._environment_sessions)
+
+    @patch("simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service.process_keeper")
     def test_generate_queues_prompt_for_loaded_worker(self, process_keeper: MagicMock) -> None:
         session_id = "session-one"
         session_dir = self.output_dir / "inference" / session_id

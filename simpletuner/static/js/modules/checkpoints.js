@@ -555,9 +555,38 @@ if (!window.checkpointsManager) {
                 if (modalElement && window.bootstrap) {
                     window.bootstrap.Modal.getOrCreateInstance(modalElement).show();
                 }
-                const requests = [this.loadInferenceHistory(1)];
+                const requests = [this.loadInferenceHistory(1), this.loadActiveInferenceSession()];
                 if (tab === 'setup') requests.push(this.loadInferencePromptSources());
                 await Promise.all(requests);
+            },
+
+            async loadActiveInferenceSession() {
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await ApiClient.fetch(
+                        `/api/checkpoints/inference/active?environment=${encodeURIComponent(environment)}`
+                    );
+                    const data = await this._inferenceJson(response);
+                    if (data.session) {
+                        this.inference.session = data.session;
+                        if (this.inferenceIsActive()) {
+                            this.scheduleInferenceStatusPoll();
+                        }
+                        return data.session;
+                    }
+
+                    const currentStatus = this.inference.session?.status;
+                    const currentLooksLive = ['pending', 'queued', 'loading', 'running', 'unloading', 'cancelling', 'loaded']
+                        .includes(currentStatus);
+                    const currentEnvironment = this.inference.session?.environment || environment;
+                    if (currentLooksLive && currentEnvironment === environment) {
+                        this.inference.session = null;
+                    }
+                    return null;
+                } catch (error) {
+                    console.error('Failed to load active checkpoint inference session:', error);
+                    return null;
+                }
             },
 
             async loadInferencePromptSources() {

@@ -205,6 +205,46 @@ describe('checkpoint inference manager', () => {
         );
     });
 
+    test('recovers active loaded inference session for current environment', async () => {
+        window.ApiClient.fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                session: {
+                    session_id: 'session-one',
+                    environment: 'test-environment',
+                    status: 'loaded',
+                    loaded_checkpoint: 'checkpoint-100',
+                },
+            }),
+        });
+
+        const result = await manager.loadActiveInferenceSession();
+
+        expect(result.session_id).toBe('session-one');
+        expect(manager.inference.session.status).toBe('loaded');
+        expect(manager.inference.session.loaded_checkpoint).toBe('checkpoint-100');
+        expect(window.ApiClient.fetch).toHaveBeenCalledWith(
+            '/api/checkpoints/inference/active?environment=test-environment'
+        );
+    });
+
+    test('clears stale loaded inference session when no active worker remains', async () => {
+        manager.inference.session = {
+            session_id: 'session-one',
+            environment: 'test-environment',
+            status: 'loaded',
+        };
+        window.ApiClient.fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ session: null }),
+        });
+
+        const result = await manager.loadActiveInferenceSession();
+
+        expect(result).toBeNull();
+        expect(manager.inference.session).toBeNull();
+    });
+
     test('selects and deletes inference history samples', async () => {
         manager.inference.history = [
             { media_path: 'session-one/checkpoint-100/one.png' },

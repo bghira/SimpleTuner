@@ -143,6 +143,14 @@ async def inference_prompt_sources(
     return _call_service(CHECKPOINT_INFERENCE_SERVICE.prompt_sources, environment)
 
 
+@router.get("/inference/active")
+async def active_inference_session(
+    environment: str = Query(...),
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return {"session": _call_service(CHECKPOINT_INFERENCE_SERVICE.active_environment_session, environment)}
+
+
 @router.post("/inference/start")
 async def start_inference(
     request: StartInferenceRequest,

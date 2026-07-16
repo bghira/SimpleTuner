@@ -128,6 +128,26 @@ class CheckpointInferenceService:
                 self._discard_session(session_id)
         return active
 
+    def active_environment_session(self, environment: str) -> dict[str, Any] | None:
+        with self._lock:
+            session_id = self._environment_sessions.get(environment)
+            if not session_id:
+                return None
+            record = self._sessions.get(session_id)
+            if not record:
+                self._environment_sessions.pop(environment, None)
+                return None
+
+            process_status = process_keeper.get_process_status(record["job_id"])
+            if process_status not in {"pending", "running", "aborting"}:
+                self._discard_session(session_id)
+                return None
+
+        state = self.status(environment, session_id)
+        if state.get("status") in {"completed", "failed", "cancelled"}:
+            return None
+        return state
+
     def _discard_session(self, session_id: str) -> None:
         with self._lock:
             record = self._sessions.pop(session_id, None)
