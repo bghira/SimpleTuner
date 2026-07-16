@@ -994,6 +994,14 @@ Diferentes modelos esperam diferentes dados de conditioning:
 - **Dataset**: Configure o dataset principal de imagens com `conditioning_data` apontando para um dataset de conditioning pareado. Os nomes dos arquivos devem coincidir entre imagens target e reference.
 - **Escopo**: Esta e uma opcao do lado do modelo Krea 2. Ela nao gera conditioning datasets; use as configuracoes normais de reference dataset do dataloader.
 
+### Opcoes de validacao do LTX-2
+
+- **`--ltx2_validation_pipeline_mode`**: Escolhe se a validacao LTX-2 roda apenas o modelo treinado (`trained-stage`) ou uma pipeline de validacao em dois estagios com spatial upscaler (`spatial-upscale`).
+- **`--ltx2_validation_spatial_upsampler_model`**: Repo Hugging Face, diretorio local ou arquivo `.safetensors` local para o spatial latent upsampler do LTX-2. Padrao: `Lightricks/LTX-2.3`.
+- **`--ltx2_validation_spatial_upsampler_filename`**: Nome do arquivo upsampler quando a opcao de modelo aponta para repo ou diretorio. Padrao: `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
+- **O que spatial-upscale faz**: O stage 1 gera video latents em metade da resolucao de validacao solicitada, o spatial upsampler dobra esses latents, e o stage 2 re-denoisa na resolucao solicitada com o stage-2 sigma schedule do LTX-2.
+- **Limite**: Spatial-upscale validation e para video; `--validation_audio_only` mantem o caminho normal de validacao single-stage.
+
 ### Opcoes de condicionamento do LTX-2
 
 Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON/TOML com os nomes abaixo, ou passe os flags CLI correspondentes, como `--ltx2_first_frame_conditioning_probability`.

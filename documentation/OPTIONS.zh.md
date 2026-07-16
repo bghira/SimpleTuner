@@ -999,6 +999,14 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **数据集设置**：主 image dataset 的 `conditioning_data` 应指向配对的 conditioning dataset。目标图像和参考图像的文件名必须匹配。
 - **范围**：这是 Krea 2 的模型侧选项。它不会生成 conditioning datasets；请使用常规 dataloader reference-dataset 设置。
 
+### LTX-2 验证选项
+
+- **`--ltx2_validation_pipeline_mode`**：选择 LTX-2 validation 只运行 trained model（`trained-stage`），还是运行两阶段 spatial upscaler validation pipeline（`spatial-upscale`）。
+- **`--ltx2_validation_spatial_upsampler_model`**：LTX-2 spatial latent upsampler 的 Hugging Face repo、本地目录或本地 `.safetensors` 文件。默认 `Lightricks/LTX-2.3`。
+- **`--ltx2_validation_spatial_upsampler_filename`**：当 model 选项指向 repo 或目录时使用的 upsampler 文件名。默认 `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`。
+- **spatial-upscale 的行为**：Stage 1 以请求的验证分辨率一半生成 video latents，spatial upsampler 将 latents 放大 2 倍，stage 2 使用 LTX-2 stage-2 sigma schedule 在请求分辨率重新去噪。
+- **限制**：Spatial-upscale validation 只用于 video；`--validation_audio_only` 会保持常规单阶段 validation 路径。
+
 ### LTX-2 条件选项
 
 这些是 LTX-2 训练的可选高级设置。可以在 JSON/TOML 配置中使用下面的名称，也可以使用对应的 CLI flag，例如 `--ltx2_first_frame_conditioning_probability`。

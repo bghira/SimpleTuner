@@ -996,6 +996,14 @@ Different models different conditioning data expect करते हैं:
 - **Dataset setup**: Main image dataset में `conditioning_data` को paired conditioning dataset की ओर point करें। Target और reference images के filenames match होने चाहिए।
 - **Scope**: यह Krea 2 model-side option है। यह conditioning datasets generate नहीं करता; उसके लिए normal dataloader reference-dataset settings use करें।
 
+### LTX-2 validation options
+
+- **`--ltx2_validation_pipeline_mode`**: चुनें कि LTX-2 validation केवल trained model चलाए (`trained-stage`) या spatial upscaler वाली two-stage validation pipeline चलाए (`spatial-upscale`)।
+- **`--ltx2_validation_spatial_upsampler_model`**: LTX-2 spatial latent upsampler के लिए Hugging Face repo, local directory, या local `.safetensors` file। Default `Lightricks/LTX-2.3` है।
+- **`--ltx2_validation_spatial_upsampler_filename`**: जब model option repo या directory की ओर point करे, तब upsampler filename। Default `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` है।
+- **spatial-upscale क्या करता है**: Stage 1 requested validation resolution की आधी resolution पर video latents बनाता है, spatial upsampler latents को 2x करता है, और stage 2 LTX-2 stage-2 sigma schedule से requested resolution पर re-denoise करता है।
+- **Limit**: Spatial-upscale validation video के लिए है; `--validation_audio_only` normal single-stage validation path रखता है।
+
 ### LTX-2 conditioning options
 
 ये LTX-2 training के optional advanced settings हैं। इन्हें JSON/TOML config files में नीचे दिए गए names से सेट करें, या matching CLI flags जैसे `--ltx2_first_frame_conditioning_probability` से पास करें।
