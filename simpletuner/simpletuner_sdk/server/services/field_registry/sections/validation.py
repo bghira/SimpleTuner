@@ -126,6 +126,25 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="validation_input",
+            arg_name="--validation_input",
+            ui_label="Validation Input Images",
+            field_type=FieldType.TEXT_JSON,
+            tab="validation",
+            section="prompt_management",
+            default_value=None,
+            placeholder='[{"path": "/path/to/image.png", "prompt": "a validation prompt"}]',
+            help_text="JSON list of validation input image paths and prompts",
+            tooltip="Use standalone input images for validation without requiring a validation dataset. Each entry must include path and prompt.",
+            importance=ImportanceLevel.ADVANCED,
+            order=1.5,
+            allow_empty=True,
+            documentation="OPTIONS.md#--validation_input",
+        )
+    )
+
     # Number of Validation Images
     registry._add_field(
         ConfigField(

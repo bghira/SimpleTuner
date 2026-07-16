@@ -901,6 +901,15 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
   - Flux Kontext no usa este flag para validación; déjalo desactivado y usa `--eval_dataset_id` para elegir el dataset de edición mientras Kontext carga automáticamente su dataset de referencia emparejado
   - La fuerza de des-ruido se controla con los ajustes normales de timestep de validación
 
+### `--validation_input`
+
+- **Qué**: Lista JSON de imágenes de entrada y prompts para validación, por ejemplo `[{"path": "/data/val/frame.png", "prompt": "un plano lento hacia adelante"}]`.
+- **Por qué**: Permite validación con conditioning de imagen sin crear un dataset de validación.
+- **Notas**:
+  - Cada entrada debe incluir `path` y `prompt`; `shortname` o `name` son opcionales para controlar la etiqueta de salida.
+  - La ruta de imagen debe existir localmente cuando se preparan los prompts de validación.
+  - Si se define, estas entradas se usan como imágenes de entrada de validación en lugar de descubrir muestras desde datasets.
+
 ### `--eval_dataset_id`
 
 - **Qué**: ID de dataset específico a usar para obtener imágenes de evaluación/validación.
@@ -1759,6 +1768,7 @@ usage: train.py [-h] --model_family
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
+                [--validation_input VALIDATION_INPUT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
@@ -2166,6 +2176,8 @@ options:
                         training starts
   --validation_prompt VALIDATION_PROMPT
                         Prompt to use for validation images
+  --validation_input VALIDATION_INPUT
+                        JSON list of validation input image paths and prompts
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images to generate per validation
   --num_eval_images NUM_EVAL_IMAGES

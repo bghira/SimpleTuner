@@ -899,6 +899,15 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
   - Flux Kontext validation के लिए इस flag का उपयोग नहीं करता; इसे disabled रखें और edit dataset चुनने के लिए `--eval_dataset_id` उपयोग करें, जबकि Kontext paired reference dataset अपने आप load कर लेता है
   - Denoising strength normal validation timestep settings से control होती है
 
+### `--validation_input`
+
+- **What**: Validation input image paths और prompts की JSON list, जैसे `[{"path": "/data/val/frame.png", "prompt": "a slow push-in shot"}]`।
+- **Why**: Validation dataset बनाए बिना image-conditioned validation चलाने देता है।
+- **Notes**:
+  - हर entry में `path` और `prompt` होना चाहिए; optional `shortname` या `name` output label control करता है।
+  - Validation prompts prepare होते समय image path local machine पर exist करना चाहिए।
+  - Set होने पर ये entries datasets से validation samples discover करने के बजाय validation input images के रूप में use होती हैं।
+
 ### `--eval_dataset_id`
 
 - **What**: Evaluation/validation image sourcing के लिए specific dataset ID।
@@ -1757,6 +1766,7 @@ usage: train.py [-h] --model_family
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
+                [--validation_input VALIDATION_INPUT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
@@ -2164,6 +2174,8 @@ options:
                         training starts
   --validation_prompt VALIDATION_PROMPT
                         Prompt to use for validation images
+  --validation_input VALIDATION_INPUT
+                        JSON list of validation input image paths and prompts
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images to generate per validation
   --num_eval_images NUM_EVAL_IMAGES

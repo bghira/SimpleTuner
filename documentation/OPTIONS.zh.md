@@ -902,6 +902,15 @@ TRAINING_DYNAMO_BACKEND=inductor
   - Flux Kontext 不使用此标志进行验证；请保持其关闭，并使用 `--eval_dataset_id` 选择编辑数据集，Kontext 会自动加载其配对的参考数据集
   - 去噪强度由正常的验证时间步设置控制
 
+### `--validation_input`
+
+- **内容**：验证输入图像路径和提示词的 JSON 列表，例如 `[{"path": "/data/val/frame.png", "prompt": "缓慢向前推进的镜头"}]`。
+- **原因**：无需创建验证数据集即可进行图像条件验证。
+- **注意**：
+  - 每个条目必须包含 `path` 和 `prompt`；可选的 `shortname` 或 `name` 用于控制输出标签。
+  - 准备验证提示词时，图像路径必须在本地存在。
+  - 设置后，这些条目会作为验证输入图像使用，而不是从数据集中发现验证样本。
+
 ### `--eval_dataset_id`
 
 - **内容**：用于评估/验证图像来源的特定数据集 ID。
@@ -1762,6 +1771,7 @@ usage: train.py [-h] --model_family
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
+                [--validation_input VALIDATION_INPUT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
@@ -2168,6 +2178,8 @@ options:
                         training starts
   --validation_prompt VALIDATION_PROMPT
                         Prompt to use for validation images
+  --validation_input VALIDATION_INPUT
+                        JSON list of validation input image paths and prompts
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images to generate per validation
   --num_eval_images NUM_EVAL_IMAGES
