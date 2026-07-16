@@ -63,11 +63,17 @@ class SetupPlatformDependencyTests(unittest.TestCase):
                 self.assertTrue(expected.issubset(set(extras_require[extra_name])))
                 self.assertIn("transformer_engine[pytorch]>=2.16.0,<2.17.0", extras_require[extra_name])
 
-    def test_cuda13_vllm_uses_torch_211_compatible_release(self):
+    def test_cuda13_vllm_is_limited_to_captioning_extras(self):
         extras_require = load_setup_kwargs()["extras_require"]
         expected = "vllm>=0.20.0,<0.26.0"
 
-        for extra_name in ("cuda13", "captioning-cuda13", "cuda13-captioning"):
+        for extra_name in ("cuda", "cuda13", "cuda-nightly", "cuda13-nightly", "rocm", "apple", "cpu"):
+            with self.subTest(extra=extra_name):
+                dependencies = extras_require[extra_name]
+                self.assertNotIn(expected, dependencies)
+                self.assertFalse(any(dependency.startswith("vllm") for dependency in dependencies))
+
+        for extra_name in ("captioning-cuda13", "cuda13-captioning"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
                 self.assertIn(expected, dependencies)

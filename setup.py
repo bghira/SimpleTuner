@@ -148,7 +148,6 @@ def get_cuda13_dependencies():
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
         "ramtorch",
-        VLLM_TORCH_211_DEPENDENCY,
     ]
 
 
