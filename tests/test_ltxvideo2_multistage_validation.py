@@ -37,13 +37,14 @@ class _RecordingLTX2Pipeline:
 
 
 class LTXVideo2MultistageValidationTests(unittest.TestCase):
-    def _model(self, *, mode="spatial-upscale", validation_audio_only=False):
+    def _model(self, *, mode="spatial-upscale", validation_audio_only=False, validation_using_datasets=False):
         model = LTXVideo2.__new__(LTXVideo2)
         model.config = SimpleNamespace(
             ltx2_validation_pipeline_mode=mode,
             ltx2_validation_spatial_upsampler_model="Lightricks/LTX-2.3",
             ltx2_validation_spatial_upsampler_filename="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
             validation_audio_only=validation_audio_only,
+            validation_using_datasets=validation_using_datasets,
             validation_num_video_frames=49,
             revision=None,
             weight_dtype=torch.float32,
@@ -69,7 +70,6 @@ class LTXVideo2MultistageValidationTests(unittest.TestCase):
             "height": 768,
             "num_frames": 49,
             "frame_rate": 24,
-            "image": "stage1-image-conditioning",
             "output_type": "np",
         }
 
@@ -78,6 +78,9 @@ class LTXVideo2MultistageValidationTests(unittest.TestCase):
 
     def test_audio_only_validation_does_not_use_spatial_upscale(self):
         self.assertFalse(self._model(validation_audio_only=True).supports_multistage_validation())
+
+    def test_dataset_validation_does_not_use_spatial_upscale(self):
+        self.assertFalse(self._model(validation_using_datasets=True).supports_multistage_validation())
 
     def test_spatial_upscale_runs_half_resolution_stage1_then_full_resolution_stage2(self):
         model = self._model()
@@ -112,9 +115,17 @@ class LTXVideo2MultistageValidationTests(unittest.TestCase):
     def test_stage1_resolution_requires_target_divisible_by_64(self):
         model = self._model()
         kwargs = self._pipeline_kwargs()
-        kwargs["width"] = 800
+        kwargs["width"] = 1025
 
         with self.assertRaisesRegex(ValueError, "divisible by 64"):
+            model.run_multistage_validation(kwargs, lambda pipeline, call_kwargs: pipeline(**call_kwargs))
+
+    def test_spatial_upscale_rejects_image_conditioning(self):
+        model = self._model()
+        kwargs = self._pipeline_kwargs()
+        kwargs["image"] = "stage1-image-conditioning"
+
+        with self.assertRaisesRegex(ValueError, "image-conditioned validation"):
             model.run_multistage_validation(kwargs, lambda pipeline, call_kwargs: pipeline(**call_kwargs))
 
     def test_unload_validation_models_clears_upsampler(self):

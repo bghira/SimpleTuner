@@ -926,7 +926,11 @@ class LTXVideo2(VideoModelFoundation):
         return mode
 
     def supports_multistage_validation(self) -> bool:
-        return self._ltx2_validation_mode() == "spatial-upscale" and not getattr(self.config, "validation_audio_only", False)
+        return (
+            self._ltx2_validation_mode() == "spatial-upscale"
+            and not getattr(self.config, "validation_audio_only", False)
+            and not getattr(self.config, "validation_using_datasets", False)
+        )
 
     def _ltx2_validation_upsampler_path(self) -> str:
         model_or_path = (
@@ -957,13 +961,13 @@ class LTXVideo2(VideoModelFoundation):
     def _ltx2_stage1_resolution(self, pipeline_kwargs: Dict[str, Any]) -> tuple[int, int]:
         width = int(pipeline_kwargs.get("width", 768))
         height = int(pipeline_kwargs.get("height", 512))
-        stage1_width = width // 2
-        stage1_height = height // 2
-        if stage1_width % 32 != 0 or stage1_height % 32 != 0:
+        if width % 64 != 0 or height % 64 != 0:
             raise ValueError(
                 "LTX-2 spatial-upscale validation requires target width and height divisible by 64. "
-                f"Received {width}x{height}, which would create stage 1 at {stage1_width}x{stage1_height}."
+                f"Received {width}x{height}."
             )
+        stage1_width = width // 2
+        stage1_height = height // 2
         return stage1_width, stage1_height
 
     def _ltx2_unpack_video_latents(self, pipeline, latents: torch.Tensor, width: int, height: int, num_frames: int):
@@ -991,6 +995,11 @@ class LTXVideo2(VideoModelFoundation):
         pipeline_kwargs: Dict[str, Any],
         pipeline_call: Callable[[Any, Dict[str, Any]], Any],
     ) -> Any:
+        if "image" in pipeline_kwargs:
+            raise ValueError(
+                "LTX-2 spatial-upscale validation does not support image-conditioned validation yet. "
+                "Disable ltx2_validation_pipeline_mode=spatial-upscale for dataset-driven validation."
+            )
         stage1_width, stage1_height = self._ltx2_stage1_resolution(pipeline_kwargs)
         num_frames = int(pipeline_kwargs.get("num_frames", self.config.validation_num_video_frames or 125))
         stage2_width = int(pipeline_kwargs.get("width", stage1_width * 2))
