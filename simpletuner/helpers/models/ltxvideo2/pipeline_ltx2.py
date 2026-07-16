@@ -764,9 +764,14 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         device: Optional[torch.device] = None,
         generator: Optional[torch.Generator] = None,
         latents: Optional[torch.Tensor] = None,
+        latent_noise_scale: Optional[float] = None,
     ) -> torch.Tensor:
         if latents is not None:
-            return latents.to(device=device, dtype=dtype)
+            latents = latents.to(device=device, dtype=dtype)
+            if latent_noise_scale is not None:
+                noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=dtype)
+                latents = torch.lerp(latents.float(), noise.float(), float(latent_noise_scale)).to(dtype)
+            return latents
 
         height = height // self.vae_spatial_compression_ratio
         width = width // self.vae_spatial_compression_ratio
@@ -877,13 +882,18 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         device: Optional[torch.device] = None,
         generator: Optional[torch.Generator] = None,
         latents: Optional[torch.Tensor] = None,
+        latent_noise_scale: Optional[float] = None,
     ) -> torch.Tensor:
         duration_s = num_frames / frame_rate
         latents_per_second = float(sampling_rate) / float(hop_length) / float(self.audio_vae_temporal_compression_ratio)
         latent_length = int(duration_s * latents_per_second)
 
         if latents is not None:
-            return latents.to(device=device, dtype=dtype), latent_length
+            latents = latents.to(device=device, dtype=dtype)
+            if latent_noise_scale is not None:
+                noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=dtype)
+                latents = torch.lerp(latents.float(), noise.float(), float(latent_noise_scale)).to(dtype)
+            return latents, latent_length
 
         # TODO: confirm whether this logic is correct
         latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
@@ -954,6 +964,9 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         decode_timestep: Union[float, List[float]] = 0.0,
         decode_noise_scale: Optional[Union[float, List[float]]] = None,
         audio_only: bool = False,
+        sigmas: Optional[List[float]] = None,
+        latent_noise_scale: Optional[float] = None,
+        audio_latent_noise_scale: Optional[float] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -1135,6 +1148,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
             device,
             generator,
             latents,
+            latent_noise_scale=latent_noise_scale,
         )
         reference_tokens = None
         conditioning_mask = None
@@ -1181,10 +1195,11 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
             device=device,
             generator=generator,
             latents=audio_latents,
+            latent_noise_scale=audio_latent_noise_scale,
         )
 
         # 5. Prepare timesteps
-        sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
+        sigmas = sigmas if sigmas is not None else np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
         mu = calculate_shift(
             video_sequence_length,
             self.scheduler.config.get("base_image_seq_len", 1024),

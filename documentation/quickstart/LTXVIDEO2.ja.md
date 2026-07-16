@@ -108,6 +108,9 @@ LTX Video 2 の主要設定:
   - 5 秒 (約 12-24fps) の場合は `61` か `49`。
   - 公式: `(frames - 1) % 4 == 0`。
 - `validation_guidance`: `5.0`。
+- `ltx2_validation_pipeline_mode`: 通常の validation では `trained-stage` のままにします。`spatial-upscale` にすると、半解像度 latent 生成、spatial latent upscaling、フル解像度 re-denoising の LTX-2 2 段 spatial upscaler path を使います。
+  - `spatial-upscale` では `validation_resolution` が 64 で割り切れる必要があります。
+  - 任意の上書き: `ltx2_validation_spatial_upsampler_model` と `ltx2_validation_spatial_upsampler_filename`。既定値は `Lightricks/LTX-2.3` と `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` です。
 - `frame_rate`: デフォルトは 25。
 
 LTX-2 2.0 系は transformer / video VAE / audio VAE / vocoder を含む `.safetensors` 単体チェックポイントで配布されます。
@@ -394,6 +397,7 @@ LoRA ターゲットを手動で上書きしたい場合は、`--peft_lora_targe
 - **T2V (text-to-video)**: `validation_using_datasets: false` のまま、`validation_prompt` または `validation_prompt_library` を使います。
 - **I2V (image-to-video)**: `validation_using_datasets: true` を設定し、`eval_dataset_id` を参照画像を含む検証スプリットに指定します。検証は image-to-video パイプラインに切り替わり、画像を条件として使用します。
 - **S2V (audio-conditioned)**: `validation_using_datasets: true` のとき、`eval_dataset_id` が `s2v_datasets`（またはデフォルトの `audio.auto_split`）を持つデータセットを指すようにします。検証はキャッシュ済み audio latents を自動で読み込みます。
+- **Spatial upscale validation**: `ltx2_validation_pipeline_mode: "spatial-upscale"` を設定すると、LTX-2 spatial upscaler pass で validation します。Stage 1 は半解像度で実行され、upsampler が video latents を 2 倍にし、stage 2 が指定解像度で re-denoise します。`validation_audio_only` は single-stage path のままです。
 
 ### Validation adapters (LoRAs)
 

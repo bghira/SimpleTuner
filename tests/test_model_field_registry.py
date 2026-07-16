@@ -19,6 +19,7 @@ class TestModelFieldRegistry(unittest.TestCase):
             "flux_lora_target",
             "ltx_train_mode",
             "ltx2_intrinsic_conditioning",
+            "ltx2_validation_pipeline_mode",
             "ideogram_auto_json",
             "sana_complex_human_instruction",
             "hidream_use_load_balancing_loss",

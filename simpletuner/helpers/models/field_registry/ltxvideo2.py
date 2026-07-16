@@ -10,6 +10,66 @@ from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
 def register_fields(registry) -> None:
     registry._add_field(
         ConfigField(
+            name="ltx2_validation_pipeline_mode",
+            arg_name="--ltx2_validation_pipeline_mode",
+            ui_label="LTX-2 Validation Pipeline Mode",
+            field_type=FieldType.SELECT,
+            tab="validation",
+            section="validation_options",
+            model_specific=["ltxvideo2"],
+            default_value="trained-stage",
+            choices=[
+                {"value": "trained-stage", "label": "Trained Stage Only"},
+                {"value": "spatial-upscale", "label": "Spatial Upscale Pipeline"},
+            ],
+            help_text="Choose whether LTX-2 validation runs only the trained model or runs a half-resolution generation plus latent spatial upscaler refinement.",
+            tooltip="Spatial upscale runs stage 1 at half resolution, applies the LTX-2 spatial latent upscaler, then re-denoises at the requested validation resolution.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            documentation="OPTIONS.md#--ltx2_validation_pipeline_mode",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ltx2_validation_spatial_upsampler_model",
+            arg_name="--ltx2_validation_spatial_upsampler_model",
+            ui_label="LTX-2 Validation Spatial Upsampler Model",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_options",
+            model_specific=["ltxvideo2"],
+            default_value="Lightricks/LTX-2.3",
+            placeholder="Lightricks/LTX-2.3 or /path/to/upsampler.safetensors",
+            help_text="Hugging Face repo, local directory, or local safetensors file for the LTX-2 spatial latent upsampler.",
+            tooltip="Used only when ltx2_validation_pipeline_mode is spatial-upscale.",
+            importance=ImportanceLevel.ADVANCED,
+            order=20,
+            documentation="OPTIONS.md#--ltx2_validation_spatial_upsampler_model",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ltx2_validation_spatial_upsampler_filename",
+            arg_name="--ltx2_validation_spatial_upsampler_filename",
+            ui_label="LTX-2 Validation Spatial Upsampler Filename",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_options",
+            model_specific=["ltxvideo2"],
+            default_value="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+            placeholder="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+            help_text="Upsampler safetensors filename when the spatial upsampler model is a repo or directory.",
+            tooltip="Ignored when ltx2_validation_spatial_upsampler_model points directly to a safetensors file.",
+            importance=ImportanceLevel.ADVANCED,
+            order=21,
+            documentation="OPTIONS.md#--ltx2_validation_spatial_upsampler_filename",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="ltx2_intrinsic_conditioning",
             arg_name="--ltx2_intrinsic_conditioning",
             ui_label="LTX-2 Intrinsic Conditioning",

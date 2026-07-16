@@ -85,10 +85,10 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         details = self.service.get_model_details("flux")
         self.assertFalse(details["capabilities"]["supports_multistage_validation"])
 
-    def test_ltxvideo2_no_multistage(self):
-        """LTX-Video 2 does not yet support multi-stage validation."""
+    def test_ltxvideo2_supports_multistage(self):
+        """LTX-Video 2 supports optional spatial-upscale validation."""
         details = self.service.get_model_details("ltxvideo2")
-        self.assertFalse(details["capabilities"]["supports_multistage_validation"])
+        self.assertTrue(details["capabilities"]["supports_multistage_validation"])
 
     def test_wan_supports_multistage(self):
         """Wan supports paired-stage validation for staged flavours."""

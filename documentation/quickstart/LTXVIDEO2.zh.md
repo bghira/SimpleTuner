@@ -108,6 +108,9 @@ LTX Video 2 的关键设置：
   - 5 秒（约 12-24fps）：使用 `61` 或 `49`。
   - 公式：`(frames - 1) % 4 == 0`。
 - `validation_guidance`: `5.0`。
+- `ltx2_validation_pipeline_mode`: 常规验证保持 `trained-stage`。使用 `spatial-upscale` 可运行 LTX-2 两阶段 spatial upscaler 路径：半分辨率 latent 生成、spatial latent upscaling，然后以完整分辨率重新去噪。
+  - `spatial-upscale` 要求 `validation_resolution` 可被 64 整除。
+  - 可选覆盖：`ltx2_validation_spatial_upsampler_model` 与 `ltx2_validation_spatial_upsampler_filename`。默认值为 `Lightricks/LTX-2.3` 和 `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`。
 - `frame_rate`: 默认 25。
 
 LTX-2 2.0 变体以单个 `.safetensors` checkpoint 形式发布，包含 transformer、视频 VAE、音频 VAE 和 vocoder。
@@ -392,6 +395,7 @@ SimpleTuner 支持常见音频格式（`.wav`、`.flac`、`.mp3`、`.ogg`、`.op
 - **T2V（文生视频）**：保持 `validation_using_datasets: false`，使用 `validation_prompt` 或 `validation_prompt_library`。
 - **I2V（图生视频）**：设置 `validation_using_datasets: true`，并将 `eval_dataset_id` 指向提供参考图像的验证集。验证会切换到图生视频管线，并使用该图像作为条件输入。
 - **S2V（音频条件）**：在 `validation_using_datasets: true` 下，确保 `eval_dataset_id` 指向带有 `s2v_datasets`（或默认的 `audio.auto_split`）的数据集。验证会自动加载缓存的音频 latents。
+- **Spatial upscale 验证**：设置 `ltx2_validation_pipeline_mode: "spatial-upscale"`，使用 LTX-2 spatial upscaler pass 验证。Stage 1 以半分辨率运行，upsampler 将 video latents 放大 2 倍，stage 2 在请求分辨率重新去噪。`validation_audio_only` 仍使用单阶段路径。
 
 ### 验证适配器（LoRAs）
 
