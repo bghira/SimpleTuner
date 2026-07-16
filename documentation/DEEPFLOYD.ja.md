@@ -160,6 +160,12 @@ SDXL または Stable Diffusion 1.x/2.x と比較すると、DeepFloyd の美的
 
 注記: 画像は 25% ずつダウンサンプルされるため、極端なサイズ変化でシーンの詳細が不正に平均化されるのを避けられます。
 
+## 検証パイプラインモード
+
+DeepFloyd validation は SimpleTuner 内で stage を直接つなげられます。`deepfloyd_validation_pipeline_mode=auto` が既定値です。prompt validation では stage I -> stage II を実行し、dataset-image validation では学習中の stage のままにします。単一 stage validation に固定する場合は `trained-stage`、固定 peer stage を常に読み込む場合は `full-pipeline` を使います。peer checkpoint は `deepfloyd_validation_stage1_model` と `deepfloyd_validation_stage2_model` で上書きできます。
+
+任意の stage III validation は `deepfloyd_validation_stage3_mode=sd-x4-upscaler` で有効化できます。stage II の後、`deepfloyd_validation_stage3_model` を terminal 4x upscaler として使います。
+
 ## 推論の実行
 
 現在、DeepFloyd 専用の推論スクリプトは SimpleTuner ツールキットにはありません。

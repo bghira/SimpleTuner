@@ -1,15 +1,15 @@
 # Metal Flash Attention
 
-`metal-flash-attention` envia chamadas SDPA MPS elegiveis em Apple Silicon para a extensao PyTorch FFI do Universal Metal Flash Attention (UMFA). E experimental e atualmente voltado para caminhos FLUX FP32 onde PyTorch SDPA usa mais memoria ou atinge limites do MPSGraph em sequence lengths longos.
+`metal-flash-attention` envia chamadas SDPA MPS elegiveis em Apple Silicon para a extensao PyTorch FFI do Universal Metal Flash Attention (UMFA). E experimental e atualmente voltado para caminhos FLUX FP32/FP16/BF16 onde PyTorch SDPA usa mais memoria ou atinge limites do MPSGraph em sequence lengths longos.
 
 ## Requisitos
 
 - Apple Silicon com MPS disponivel.
 - Xcode command line tools com toolchain Metal.
 - SimpleTuner instalado com dependencias Apple. O extra Apple requer PyTorch `>=2.13.0`.
-- Um build UMFA que exponha `metal_flash_attention_autograd`. Builds antigos somente-forward sao rejeitados pelo SimpleTuner.
+- Um build UMFA que exponha `metal_flash_attention_autograd`, registre a dispatch key PyTorch `MPS` e exponha `clear_quantization_mode`. Os aliases quantizados tambem exigem `metal_quantized_flash_attention_autograd`, `set_quantization_mode`, `QUANT_INT8`, `QUANT_INT4` e `QUANT_BLOCK_WISE`.
 
-SimpleTuner despacha para UMFA apenas chamadas MPS FP32 4D com pelo menos quatro heads e sequence length 64 ou maior. FP16/BF16, masked, causal, grouped-query, tiny, 2D e chamadas nao-MPS fazem fallback para PyTorch SDPA.
+O SimpleTuner roteia a atencao pelo dispatcher MPS SDPA do PyTorch, que os builds UMFA atuais registram. Sao elegiveis chamadas MPS FP32/FP16/BF16 4D com qualquer quantidade de heads (single-head funciona) e qualquer sequence length, incluindo layouts transposed estilo FLUX, masks bool/additive de ate 4D e chamadas causais. As chamadas elegiveis sao codificadas diretamente no command stream MPS do PyTorch — sem sincronizacao por chamada e sem promocao a FP32 para entradas FP16/BF16. O treinamento causal tambem e elegivel — o backward causal passa paridade exata de gradientes. Chamadas com dropout ou `enable_gqa` fazem fallback para PyTorch SDPA. Builds UMFA antigos registrados em `PrivateUse1` em vez de `MPS` usam silenciosamente o PyTorch SDPA nativo.
 
 ## Build E Instalacao Do UMFA
 
@@ -74,20 +74,46 @@ Configure o mecanismo de atencao:
 
 ```json
 {
-  "attention_mechanism": "metal-flash-attention",
-  "mixed_precision": "no",
-  "base_model_default_dtype": "fp32"
+  "attention_mechanism": "metal-flash-attention"
 }
 ```
 
-`mixed_precision=no` e defaults FP32 sao importantes para a integracao atual. SimpleTuner faz fallback em vez de enviar atencao BF16/FP16 para UMFA.
+A atencao FP32, FP16 e BF16 roda de forma nativa: entradas FP16/BF16 usam kernels de baixa precisao (BF16 mantem acumulacao do softmax em FP32) e a saida e produzida no dtype de entrada, entao `mixed_precision: bf16` funciona sem forcar FP32 em lugar nenhum. O SimpleTuner ainda faz fallback com dropout e `enable_gqa`.
 
 Aliases quantizados tambem estao disponiveis:
 
 - `metal-flash-attention-int8`
 - `metal-flash-attention-int4`
 
-Eles chamam `metal_quantized_flash_attention_autograd` do UMFA com quantizacao blockwise (`quant_mode=2`). SimpleTuner executa um check inicial adicional que verifica saidas ligadas ao autograd e gradientes multi-head finitos antes de habilitar qualquer alias.
+Eles configuram o modo global de quantizacao do UMFA com quantizacao blockwise (`quant_mode=2`) e usam a entrada autograd quantizada para chamadas despachadas diretamente:
+
+- `metal-flash-attention-int8`: `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)`
+- `metal-flash-attention-int4`: `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`
+
+SimpleTuner limpa esse modo ao voltar para UMFA FP32 ou outro backend de atencao. Ele tambem executa um check inicial adicional que verifica saidas ligadas ao autograd, gradientes multi-head finitos, SDPA masked no dispatcher e ausencia de fallback PyTorch antes de habilitar qualquer alias.
+
+Tanto o dispatcher regular quanto o quantized suportam bool masks (`True` significa atender), additive float masks, batched masks como `[B, H, S_q, S_kv]` e broadcast masks como `[B, 1, 1, S_kv]`. Bool masks all-true sao detectadas e puladas como fast path. Chamadas com mask permanecem na rota in-stream; a expansao da mask e codificada no mesmo command buffer do kernel de atencao.
+
+Para verificar se o dispatcher MPS esta usando o caminho esperado durante uma execucao, inspecione os contadores de dispatch do UMFA:
+
+```python
+import metal_sdpa_extension as ext
+
+print(ext.get_dispatch_stats())
+```
+
+Para inferencia/validacao sem quantizacao, `fp32_instream` deve aumentar enquanto `pytorch_fallback` fica em `0` (atencao com qualquer dtype de entrada conta aqui — o nome se refere a rota de dispatch, nao ao dtype de computo). Para treinamento quantized do Z-Image, `quantized_autograd` deve aumentar no lugar. Se o `encoder_attention_mask` for all-true, `mask_all_true_skipped` tambem aumenta. Chamadas no-grad pelo entry point de RoPE fundido contam em `rope_instream`; chamadas com gradiente contam em `rope_autograd`.
+
+## RoPE + SDPA fundido
+
+A extensao expoe `metal_sdpa_extension.rope_scaled_dot_product_attention(query, key, value, rope_cos, rope_sin, attn_mask=None, is_causal=False, scale=None)`, que aplica rotary embeddings interleaved-pair a Q/K na GPU imediatamente antes da atencao. Chamadas no-grad elegiveis ficam na rota in-stream attention, sem passadas eager de rotacao nem materializacoes FP32 de tensores. Cobre a convencao RoPE compartilhada por FLUX.1, FLUX.2, Krea2 e Z-Image (a formulacao complex-multiply do Z-Image e a mesma rotacao); os modelos diferem apenas no formato da tabela, que o caller adapta.
+
+- Os tensores sao BHSD; views strided (por exemplo `transpose(1, 2)` de uma projecao BSHD, ou views `unbind` de QKV fundido) sao consumidas sem copias.
+- `rope_cos`/`rope_sin` sao tabelas pair-duplicated (`cos[2i] == cos[2i+1]`), com formato `[S, D]`, `[1, S, D]` ou por amostra `[B, S, D]`; qualquer dtype float e normalizado para FP32 internamente.
+- O treinamento flui pela rota fundida: um autograd custom aplica a rotacao inversa (a mesma rotacao pairwise com sin negado — RoPE e ortonormal) a dQ/dK no backward, devolvendo gradientes em relacao a Q/K pre-RoPE. Verificado exato contra uma referencia diferenciavel em FP32, incluindo tabelas batched por amostra. Causal tambem e suportado com gradientes; chamadas com mask ou GQA que exigem gradientes ainda usam rotacao eager.
+- Entradas GQA (menos heads de K/V) sao rotacionadas na quantidade de heads de K/V e expandidas depois.
+
+No shape DiT do Z-Image `(1, 30, 4128, 128)` em BF16, a rota fundida mediu 4.4 ms/layer mais rapida que rotacao eager + SDPA em um benchmark de cadeia de 12 layers. A integracao por modelo no SimpleTuner esta pendente; ate la o entry point esta disponivel para uso direto.
 
 ## Sequence Lengths Do FLUX
 
@@ -154,5 +180,5 @@ Com `vae_enable_tiling=true`, a cache VAE 2048px completou e a execucao UMFA com
 
 - `metal_flash_attention_autograd` ausente: recompile UMFA com suporte autograd e reinstale o pacote FFI.
 - `available False`: leia `get_metal_flash_attention_unavailable_reason()`.
-- Fallback inesperado: verifique tensores MPS FP32 4D BHSD, heads >= 4, sequence length >= 64, `dropout_p=0`, `is_causal=False`, sem mask e sem GQA.
+- Fallback inesperado: verifique tensores MPS FP32/FP16/BF16 4D BHSD (qualquer quantidade de heads e sequence length; single-head e suportado), `dropout_p=0` e `enable_gqa` desativado. Masks bool/additive de ate 4D sao elegiveis. Chamadas causais sao elegiveis com e sem gradientes. Confirme que o build UMFA registra a dispatch key PyTorch `MPS` e expoe `get_dispatch_stats()`; builds registrados apenas em `PrivateUse1` sao ignorados por tensores `torch.device("mps")`.
 - 2048px falha antes da atencao: provavelmente e pressao de memoria da cache VAE, nao memoria de atencao UMFA. Ative `vae_enable_tiling=true` ou gere/reuse latentes com um cache workflow de menor memoria.

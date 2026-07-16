@@ -68,12 +68,28 @@
     <!-- Checkpoint List Section -->
     <div class="card mb-4">
         <div class="card-header">
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex flex-wrap gap-3 justify-content-between align-items-center">
                 <div>
                     <h5 class="mb-1"><i class="fas fa-save me-2"></i>Training Checkpoints</h5>
                     <p class="text-muted mb-0">Browse and manage saved model checkpoints from training runs.</p>
                 </div>
-                <div class="d-flex gap-2 align-items-center">
+                <div class="d-flex flex-wrap gap-2 align-items-center justify-content-end">
+                    <button type="button"
+                            class="btn btn-sm btn-primary checkpoint-inference-launch"
+                            :disabled="inferenceSelection.length === 0"
+                            @click="openInferenceWorkspace('setup')">
+                        <i class="fas fa-wand-magic-sparkles me-1"></i>
+                        Run Inference
+                        <span class="badge text-bg-light checkpoint-inference-launch-count"
+                              x-show="inferenceSelection.length"
+                              x-text="inferenceSelection.length"></span>
+                    </button>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            title="Inference history"
+                            @click="openInferenceWorkspace('history')">
+                        <i class="fas fa-images"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-secondary"
                             @click="restoreHeroCTA()"
                             title="Show introduction">
@@ -164,7 +180,10 @@
             <div x-show="checkpoints.length > 0" x-cloak class="checkpoint-grid">
                 <template x-for="checkpoint in checkpoints" :key="checkpoint.id">
                     <div class="checkpoint-card"
-                         :class="{ 'selected': selectedCheckpoint?.id === checkpoint.id }"
+                         :class="{
+                             'selected': selectedCheckpoint?.id === checkpoint.id,
+                             'inference-selected': isInferenceSelected(checkpoint.name)
+                         }"
                          @click="selectCheckpoint(checkpoint.id)">
                         <div class="checkpoint-card-content">
                             <div class="checkpoint-header">
@@ -173,6 +192,15 @@
                                     <span x-text="`Step ${checkpoint.step}`"></span>
                                 </div>
                                 <div class="d-flex align-items-center gap-2">
+                                    <div class="form-check checkpoint-inference-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               :id="`inference-${checkpoint.id}`"
+                                               :checked="isInferenceSelected(checkpoint.name)"
+                                               :aria-label="`Select ${checkpoint.name} for inference`"
+                                               @click.stop
+                                               @change="toggleInferenceCheckpoint(checkpoint.name)">
+                                    </div>
                                     <button type="button"
                                             class="btn btn-sm"
                                             :class="canUpload() ? 'btn-success' : 'btn-secondary'"
@@ -550,6 +578,346 @@
                     </template>
                 </div>
             </template>
+        </div>
+    </div>
+
+    <!-- Checkpoint Inference Workspace -->
+    <div class="modal fade"
+         id="checkpointInferenceModal"
+         tabindex="-1"
+         aria-labelledby="checkpointInferenceModalLabel"
+         aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-md-down">
+            <div class="modal-content checkpoint-inference-modal">
+                <div class="modal-header align-items-start">
+                    <div>
+                        <h5 class="modal-title" id="checkpointInferenceModalLabel">
+                            <i class="fas fa-wand-magic-sparkles me-2"></i>Checkpoint Inference
+                        </h5>
+                        <div class="small text-muted mt-1" x-show="inference.session">
+                            <span class="text-capitalize" x-text="inference.session?.status"></span>
+                            <span x-show="inference.session?.loaded_checkpoint"> · <span x-text="inference.session?.loaded_checkpoint"></span></span>
+                        </div>
+                    </div>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary inference-modal-close"
+                            data-bs-dismiss="modal"
+                            title="Close"
+                            aria-label="Close">
+                        <i class="fas fa-times" aria-hidden="true"></i>
+                    </button>
+                </div>
+
+                <div class="inference-modal-tabs">
+                    <ul class="nav nav-tabs border-0">
+                        <li class="nav-item">
+                            <button type="button"
+                                    class="nav-link"
+                                    :class="{ 'active': inference.activeTab === 'setup' }"
+                                    @click="inference.activeTab = 'setup'; loadInferencePromptSources()">
+                                Setup
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button"
+                                    class="nav-link"
+                                    :class="{ 'active': inference.activeTab === 'history' }"
+                                    @click="inference.activeTab = 'history'; loadInferenceHistory(1)">
+                                History
+                                <span class="badge text-bg-secondary ms-1" x-text="inference.historyTotal"></span>
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="modal-body">
+                    <div x-show="inference.activeTab === 'setup'" x-cloak>
+                        <div class="row g-4">
+                            <section class="col-lg-4 inference-section">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="mb-0">Checkpoints</h6>
+                                    <span class="badge text-bg-secondary" x-text="inferenceSelection.length"></span>
+                                </div>
+                                <div class="inference-checkpoint-list">
+                                    <template x-for="checkpoint in selectedInferenceCheckpoints()" :key="`selected-inference-${checkpoint.id}`">
+                                        <div class="inference-checkpoint-row">
+                                            <div>
+                                                <div class="fw-semibold" x-text="checkpoint.name"></div>
+                                                <div class="small text-muted" x-text="formatSize(checkpoint.size)"></div>
+                                            </div>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-secondary inference-icon-button"
+                                                    title="Remove checkpoint"
+                                                    @click="toggleInferenceCheckpoint(checkpoint.name)">
+                                                <i class="fas fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <div class="text-muted small py-3" x-show="inferenceSelection.length === 0">
+                                        Select checkpoints from the grid.
+                                    </div>
+                                </div>
+
+                                <hr>
+
+                                <h6 class="mb-3">Output</h6>
+                                <label class="form-label small" for="inference-filename-style">Filename format</label>
+                                <select id="inference-filename-style"
+                                        class="form-select form-select-sm mb-3"
+                                        x-model="inference.form.filename_style"
+                                        @change="saveInferenceSettings()">
+                                    <option value="descriptive">Timestamp + prompt + seed</option>
+                                    <option value="compact">Timestamp + seed</option>
+                                    <option value="prompt">Prompt + timestamp</option>
+                                    <option value="content-hash">Content hash</option>
+                                </select>
+
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="inference-keep-loaded"
+                                           x-model="inference.form.keep_loaded"
+                                           @change="saveInferenceSettings()"
+                                           :disabled="inferenceSelection.length !== 1">
+                                    <label class="form-check-label" for="inference-keep-loaded">Keep model loaded</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="inference-streaming-preview"
+                                           x-model="inference.form.streaming_preview"
+                                           @change="saveInferenceSettings()"
+                                           :disabled="inferenceIsActive() || inference.session?.status === 'loaded'">
+                                    <label class="form-check-label" for="inference-streaming-preview">Streaming preview</label>
+                                </div>
+                                <div x-show="inference.form.keep_loaded" x-cloak>
+                                    <label class="form-label small" for="inference-idle-timeout">Idle timeout (minutes)</label>
+                                    <input id="inference-idle-timeout"
+                                           type="number"
+                                           min="1"
+                                           max="1440"
+                                           class="form-control form-control-sm"
+                                           x-model.number="inference.form.idle_timeout_minutes">
+                                </div>
+                            </section>
+
+                            <section class="col-lg-8 inference-section inference-section-divider">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="mb-0">Prompts</h6>
+                                    <span class="small text-muted"><span x-text="inferencePromptCount()"></span> prompts · <span x-text="inferenceRunCount()"></span> runs</span>
+                                </div>
+
+                                <div class="form-check mb-1">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="inference-configured-prompt"
+                                           x-model="inference.form.use_configured_prompt"
+                                           :disabled="!inference.promptSources.configured_prompt">
+                                    <label class="form-check-label" for="inference-configured-prompt">Configured validation prompt</label>
+                                </div>
+                                <pre class="inference-source-preview mb-3"><code x-text="inference.promptSources.configured_prompt || 'Not configured'"></code></pre>
+
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="inference-builtin-library"
+                                           x-model="inference.form.use_builtin_library">
+                                    <label class="form-check-label" for="inference-builtin-library">
+                                        Built-in validation library
+                                        <span class="text-muted" x-text="`(${inference.promptSources.builtin_count})`"></span>
+                                    </label>
+                                </div>
+
+                                <label class="form-label" for="inference-user-library">User prompt library</label>
+                                <select id="inference-user-library" class="form-select form-select-sm mb-3" x-model="inference.form.user_library_filename">
+                                    <option value="">None</option>
+                                    <template x-for="library in inference.promptSources.user_libraries" :key="library.filename">
+                                        <option :value="library.filename" x-text="`${library.display_name} (${library.prompt_count})`"></option>
+                                    </template>
+                                </select>
+
+                                <label class="form-label" for="inference-custom-prompts">Custom prompts</label>
+                                <textarea id="inference-custom-prompts"
+                                          class="form-control inference-prompt-textarea"
+                                          rows="5"
+                                          placeholder="One prompt per line"
+                                          x-model="inference.form.custom_prompts"></textarea>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-sm-4">
+                                        <label class="form-label small" for="inference-seed">Seed</label>
+                                        <input id="inference-seed" type="number" class="form-control form-control-sm" placeholder="Config default" x-model="inference.form.seed">
+                                    </div>
+                                    <div class="col-sm-4">
+                                        <label class="form-label small" for="inference-steps">Steps</label>
+                                        <input id="inference-steps" type="number" min="1" max="1000" class="form-control form-control-sm" x-model="inference.form.num_inference_steps">
+                                    </div>
+                                    <div class="col-sm-4">
+                                        <label class="form-label small" for="inference-guidance">CFG</label>
+                                        <input id="inference-guidance" type="number" min="0" max="100" step="0.1" class="form-control form-control-sm" x-model="inference.form.guidance_scale">
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <label class="form-label small" for="inference-resolution">Resolution</label>
+                                    <input id="inference-resolution"
+                                           type="text"
+                                           class="form-control form-control-sm"
+                                           x-model="inference.form.validation_resolution">
+                                </div>
+                            </section>
+                        </div>
+
+                        <div class="inference-session-panel mt-4" x-show="inference.session" x-cloak>
+                            <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+                                <div>
+                                    <span class="fw-semibold text-capitalize" x-text="inference.session?.status"></span>
+                                    <span class="small text-muted ms-2" x-text="`${inference.session?.completed_prompts || 0} / ${inference.session?.total_prompts || inference.session?.generation_count || 0}`"></span>
+                                </div>
+                                <span class="small text-danger text-end" x-show="inference.session?.message" x-text="inference.session?.message"></span>
+                            </div>
+                            <div class="progress" role="progressbar" aria-label="Inference progress" :aria-valuenow="inferenceProgressPercent()" aria-valuemin="0" aria-valuemax="100">
+                                <div class="progress-bar progress-bar-striped"
+                                     :class="{ 'progress-bar-animated': inferenceIsActive() }"
+                                     :style="`width: ${inferenceProgressPercent()}%`"></div>
+                            </div>
+
+                            <template x-if="inferenceDisplayOutput()">
+                                <div class="inference-current-output mt-3">
+                                    <div class="inference-current-output-media">
+                                        <template x-if="inferenceDisplayOutput()?.media_type === 'video'">
+                                            <video :src="inferenceDisplayOutput().media_url" controls muted playsinline loop></video>
+                                        </template>
+                                        <template x-if="inferenceDisplayOutput()?.media_type !== 'video'">
+                                            <img :src="inferenceDisplayOutput().media_url"
+                                                 :alt="inferenceDisplayOutput().prompt || 'Inference output'">
+                                        </template>
+                                        <span class="badge inference-current-output-badge"
+                                              :class="inferenceDisplayOutput().streaming ? 'text-bg-primary' : 'text-bg-success'"
+                                              x-text="inferenceDisplayOutput().streaming ? (inferenceDisplayOutput().step_label || 'Streaming') : 'Latest output'"></span>
+                                    </div>
+                                    <div class="inference-current-output-details">
+                                        <h6 class="mb-2">Current output</h6>
+                                        <div class="small text-muted mb-2" x-text="inferenceDisplayOutput().checkpoint || ''"></div>
+                                        <div class="inference-current-output-prompt" x-text="inferenceDisplayOutput().prompt || ''"></div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div class="input-group mt-3" x-show="inference.session?.status === 'loaded'" x-cloak>
+                                <textarea class="form-control"
+                                          rows="2"
+                                          placeholder="Enter another prompt"
+                                          x-model="inference.interactivePrompt"
+                                          @keydown.ctrl.enter.prevent="queueInteractivePrompt()"></textarea>
+                                <button class="btn btn-primary"
+                                        type="button"
+                                        title="Generate"
+                                        :disabled="!inference.interactivePrompt.trim() || loading.inferenceAction"
+                                        @click="queueInteractivePrompt()">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="inference.activeTab === 'history'" x-cloak>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div class="d-flex align-items-center gap-2">
+                                <input class="form-check-input inference-history-select-page"
+                                       type="checkbox"
+                                       title="Select page"
+                                       aria-label="Select all generations on this page"
+                                       :checked="inferenceHistoryPageSelected()"
+                                       :disabled="inference.history.length === 0 || loading.inferenceDelete"
+                                       @change="toggleInferenceHistoryPage()">
+                                <h6 class="mb-0">Generations</h6>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-danger"
+                                        title="Delete selected generations"
+                                        :disabled="inference.historySelection.length === 0 || loading.inferenceDelete"
+                                        @click="deleteInferenceHistorySelection()">
+                                    <i class="fas fa-trash-alt me-1"></i>
+                                    <span x-text="inference.historySelection.length ? `Delete (${inference.historySelection.length})` : 'Delete'"></span>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        title="Refresh history"
+                                        :disabled="loading.inferenceHistory || loading.inferenceDelete"
+                                        @click="loadInferenceHistory(inference.historyPage)">
+                                    <i class="fas fa-sync-alt" :class="{ 'fa-spin': loading.inferenceHistory }"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="text-center py-5 text-muted" x-show="loading.inferenceHistory && inference.history.length === 0">
+                            <i class="fas fa-spinner fa-spin"></i>
+                        </div>
+                        <div class="text-center py-5 text-muted" x-show="!loading.inferenceHistory && inference.history.length === 0">
+                            No inference outputs yet.
+                        </div>
+                        <div class="inference-history-grid" x-show="inference.history.length">
+                            <template x-for="item in inference.history" :key="`${item.session_id}-${item.checkpoint}-${item.filename}`">
+                                <article class="inference-history-item"
+                                         :class="{ 'selected': isInferenceHistorySelected(item.media_path) }">
+                                    <label class="inference-history-select" title="Select generation">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               :checked="isInferenceHistorySelected(item.media_path)"
+                                               :disabled="loading.inferenceDelete"
+                                               @change="toggleInferenceHistoryItem(item.media_path)">
+                                        <span class="visually-hidden">Select generation</span>
+                                    </label>
+                                    <template x-if="item.media_type === 'video'">
+                                        <video :src="item.media_url" controls preload="metadata"></video>
+                                    </template>
+                                    <template x-if="item.media_type !== 'video'">
+                                        <img :src="item.media_url" :alt="item.prompt" loading="lazy">
+                                    </template>
+                                    <div class="inference-history-caption">
+                                        <div class="small fw-semibold text-truncate" x-text="item.checkpoint"></div>
+                                        <div class="small text-muted inference-history-prompt" x-text="item.prompt"></div>
+                                        <div class="small text-muted" x-text="`Seed ${item.seed}`"></div>
+                                    </div>
+                                </article>
+                            </template>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mt-3" x-show="inference.historyTotal > 24">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="inference.historyPage <= 1" @click="loadInferenceHistory(inference.historyPage - 1)">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <span class="small text-muted" x-text="`${inference.historyPage} / ${inferenceHistoryPageCount()}`"></span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="inference.historyPage >= inferenceHistoryPageCount()" @click="loadInferenceHistory(inference.historyPage + 1)">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer inference-modal-footer" x-show="inference.activeTab === 'setup'">
+                    <div class="alert alert-warning inference-multigpu-warning"
+                         x-show="inferenceMultigpuWarning()"
+                         x-cloak
+                         role="alert">
+                        <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+                        <span x-text="inferenceMultigpuWarning()"></span>
+                    </div>
+                    <button type="button" class="btn btn-outline-danger me-auto" x-show="inferenceIsActive()" :disabled="loading.inferenceAction" @click="stopInference(true)">
+                        <i class="fas fa-stop me-1"></i>Cancel
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" x-show="inference.session?.status === 'loaded'" :disabled="loading.inferenceAction" @click="stopInference(false)">
+                        <i class="fas fa-power-off me-1"></i>Unload
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            x-show="!inferenceIsActive() && inference.session?.status !== 'loaded'"
+                            :disabled="loading.inferenceStart || inferenceSelection.length === 0 || inferencePromptCount() === 0"
+                            @click="startInference()">
+                        <i class="fas fa-play me-1"></i>
+                        <span x-text="loading.inferenceStart ? 'Starting...' : `Run ${inferenceRunCount()} generation${inferenceRunCount() === 1 ? '' : 's'}`"></span>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 

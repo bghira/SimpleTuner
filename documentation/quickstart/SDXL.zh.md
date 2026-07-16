@@ -105,6 +105,8 @@ popd
 - `validation_resolution` - 本示例设置为 `1024x1024`。
   - 此外，Stable Diffusion XL 在多宽高比桶上进行了微调，可以使用逗号分隔指定其他分辨率：`1024x1024,1280x768`
 - `validation_guidance` - 使用您在推理时习惯使用的值。设置在 `4.2` 到 `6.4` 之间。
+- `sdxl_validation_pipeline_mode` - 常规验证保持 `trained-stage`。使用 `full-pipeline` 可通过 SDXL base/refiner split 进行验证：stage 1 以 latent 输出运行到 `1 - refiner_training_strength`，然后 stage 2 从同一边界继续。
+  - 只训练一个 stage 时，`sdxl_validation_stage1_model` 和 `sdxl_validation_stage2_model` 可覆盖验证中作为 peer stage 使用的固定 base/refiner checkpoint。
 - `use_gradient_checkpointing` - 除非您有大量 VRAM 并想牺牲一些来加快速度，否则这应该是 `true`。
 - `learning_rate` - `1e-4` 对于低秩网络来说相当常见，但如果您注意到任何"烧焦"或早期过度训练，`1e-5` 可能是更保守的选择。
 

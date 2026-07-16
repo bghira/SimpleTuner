@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING, Callable, Iterable
 
+from simpletuner.helpers.models.field_registry import register_model_field_registries
+
 from . import advanced, data, logging_fields, lora, loss, memory, model, optimizer, publishing, training, validation
 
 if TYPE_CHECKING:
@@ -28,3 +30,4 @@ def register_all_sections(registry: "FieldRegistry") -> None:
 
     for registrar in _REGISTRARS:
         registrar(registry)
+    register_model_field_registries(registry)

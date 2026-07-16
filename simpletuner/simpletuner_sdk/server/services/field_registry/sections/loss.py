@@ -117,42 +117,6 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # HiDream Load Balancing Loss Toggle
-    registry._add_field(
-        ConfigField(
-            name="hidream_use_load_balancing_loss",
-            arg_name="--hidream_use_load_balancing_loss",
-            ui_label="Enable HiDream Load Balancing Loss",
-            field_type=FieldType.CHECKBOX,
-            tab="training",
-            section="loss_functions",
-            default_value=False,
-            dependencies=[FieldDependency(field="model_family", operator="equals", value="hidream")],
-            help_text="Apply experimental load balancing loss when training HiDream models.",
-            tooltip="Balances expert contributions during HiDream training. Only available for HiDream model family.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=6,
-        )
-    )
-
-    # HiDream Load Balancing Weight
-    registry._add_field(
-        ConfigField(
-            name="hidream_load_balancing_loss_weight",
-            arg_name="--hidream_load_balancing_loss_weight",
-            ui_label="HiDream Load Balancing Weight",
-            field_type=FieldType.NUMBER,
-            tab="training",
-            section="loss_functions",
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
-            dependencies=[FieldDependency(field="hidream_use_load_balancing_loss", operator="equals", value=True)],
-            help_text="Strength multiplier for HiDream load balancing loss.",
-            tooltip="Adjust if you need stronger balancing between experts. Leave blank to use the trainer default.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=7,
-        )
-    )
-
     registry._add_field(
         ConfigField(
             name="crepa_enabled",
@@ -256,8 +220,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             section="loss_functions",
             default_value="dinov2_vitg14",
             dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
-            help_text="Torch hub identifier for the frozen vision encoder (default: DINOv2 ViT-G/14, per CREPA paper).",
-            tooltip='Passes directly to torch.hub.load("facebookresearch/dinov2", <id>); e.g., dinov2_vitg14 or dinov2_vits14.',
+            help_text="Frozen vision encoder for CREPA feature extraction (DINOv2 by default; Qwen-VL aliases are supported).",
+            tooltip="Use DINOv2 ids like dinov2_vitg14 or Qwen-VL aliases like qwen3-vl-4b and qwen2.5-vl-7b.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=13,
             documentation="OPTIONS.md#--crepa_model",
@@ -275,7 +239,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             default_value=-1,
             dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
             help_text="How many frames the external feature encoder processes in parallel. Zero or negative for all frames of the whole batch simultaneously.",
-            tooltip="Since DINO-like encoders are image models, they can process frames in sliced batches for lower VRAM usage at cost of speed.",
+            tooltip="External vision encoders can process frames in sliced batches for lower VRAM usage at cost of speed.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=14,
             documentation="OPTIONS.md#--crepa_encoder_frames_batch_size",

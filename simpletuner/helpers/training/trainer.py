@@ -4206,6 +4206,18 @@ class Trainer:
             )
         )
 
+    def prepare_model_for_inference(self) -> None:
+        """Register the trained component with Accelerator without training state."""
+        primary_model = self.model.get_trained_component(unwrap_model=False)
+        if primary_model is None:
+            raise ValueError("No trained model component is available for inference.")
+        if hasattr(self.model, "before_accelerator_prepare"):
+            self.model.before_accelerator_prepare()
+
+        prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
+        self.model.set_prepared_model(prepared_model)
+        prepared_model.eval()
+
     def init_unload_vae(self):
         if self.config.keep_vae_loaded or self.config.vae_cache_ondemand or getattr(self.config, "vae_cache_disable", False):
             return
@@ -4225,7 +4237,7 @@ class Trainer:
 
         delete_all_model_caches(self.accelerator)
 
-    def init_validations(self):
+    def init_validations(self, preserve_text_encoders: bool = False):
         if (
             hasattr(self.accelerator, "state")
             and hasattr(self.accelerator.state, "deepspeed_plugin")
@@ -4281,7 +4293,7 @@ class Trainer:
             is_fsdp=self.config.use_fsdp,
             publishing_manager=self.publishing_manager,
         )
-        if not self.config.train_text_encoder and self.validation is not None:
+        if not preserve_text_encoders and not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
         self.init_benchmark_base_model()
         self.accelerator.wait_for_everyone()

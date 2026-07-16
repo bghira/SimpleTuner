@@ -433,7 +433,7 @@ Mecanismos de atencao alternativos sao suportados, com diferentes niveis de comp
 - `xformers` habilita o kernel de atencao [xformers](https://github.com/facebookresearch/xformers) (treino + inferencia) quando o modelo expõe `enable_xformers_memory_efficient_attention`.
 - `flash-attn`, `flash-attn-2`, `flash-attn-3` e `flash-attn-3-varlen` usam o helper `attention_backend` do Diffusers para rotear atencao para kernels FlashAttention v1/2/3. Instale os wheels `flash-attn` / `flash-attn-interface` correspondentes e note que FA3 exige GPUs Hopper.
 - `flex` seleciona o backend FlexAttention do PyTorch 2.5 (FP16/BF16 em CUDA). Voce deve compilar/instalar os kernels Flex separadamente — veja [documentation/attention/FLEX.md](attention/FLEX.md).
-- `metal-flash-attention` usa o backend PyTorch custom-op do Universal Metal Flash Attention em Apple Silicon. Instale primeiro o pacote UMFA `examples/pytorch-custom-op-ffi`; chamadas SDPA MPS FP32 4D elegiveis com pelo menos quatro heads e sequence length 64 ou maior, incluindo layouts transposed estilo FLUX, sao despachadas por `metal_sdpa_extension`, enquanto FP16/BF16, chamadas com mascara, causais, pequenas e 2D fazem fallback para PyTorch SDPA. SimpleTuner executa verificacoes iniciais de paridade FP32 forward e autograd, e rejeita builds UMFA que nao correspondam numericamente. `metal-flash-attention-int8` e `metal-flash-attention-int4` usam a entrada autograd quantizada do UMFA com quantizacao blockwise (`quant_mode=2`) e exigem um check inicial adicional para saidas com autograd e gradientes multi-head finitos.
+- `metal-flash-attention` usa o backend PyTorch custom-op do Universal Metal Flash Attention no Apple Silicon. Instale primeiro o pacote UMFA `examples/pytorch-custom-op-ffi`; o SimpleTuner roteia a atencao pelo dispatcher MPS SDPA do PyTorch, que os builds UMFA atuais registram. Chamadas SDPA MPS FP32/FP16/BF16 4D elegiveis — qualquer quantidade de heads incluindo single-head, qualquer sequence length, layouts transposed estilo FLUX, masks bool/additive de ate 4D e chamadas causais (treinamento incluido — o backward causal passa paridade exata de gradientes) — sao codificadas diretamente no command stream MPS do PyTorch sem sincronizacao por chamada, e entradas FP16/BF16 usam kernels nativos de baixa precisao sem promocao a FP32. Chamadas com dropout ou `enable_gqa` fazem fallback para PyTorch SDPA; builds antigos `PrivateUse1` sao ignorados por tensores `torch.device("mps")`. O SimpleTuner executa verificacoes iniciais de paridade FP32/FP16/BF16 forward e autograd, alem de paridade causal forward, e rejeita builds UMFA que nao batam numericamente ou que nao exponham `get_dispatch_stats()`. `metal-flash-attention-int8` e `metal-flash-attention-int4` definem o modo global de quantizacao blockwise do UMFA com `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)` ou `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`, limpam esse modo ao trocar de backend e exigem uma verificacao inicial adicional de saidas com autograd, gradientes multi-head finitos, suporte dispatcher-level a bool/additive masks e nenhum fallback PyTorch. Use `metal_sdpa_extension.get_dispatch_stats()` durante uma execucao para confirmar que `fp32_instream` (ou `quantized_autograd` para os aliases quantized) aumenta e `pytorch_fallback` fica em `0`; bool masks all-true tambem aumentam `mask_all_true_skipped`. A extensao tambem expoe `rope_scaled_dot_product_attention`, um entry point RoPE+SDPA fundido seguindo a convencao rotary interleaved-pair de FLUX.1/FLUX.2/Krea2/Z-Image; o treinamento flui por um autograd fundido (rotacao inversa em dQ/dK no backward); chamadas com gradientes usando mask ou GQA fazem fallback para rotacao eager.
 - `cudnn`, `native-efficient`, `native-flash`, `native-math`, `native-npu` e `native-xla` selecionam o backend SDPA correspondente exposto por `torch.nn.attention.sdpa_kernel`. Esses sao úteis para determinismo (`native-math`), kernel SDPA do CuDNN ou aceleradores nativos (NPU/XLA).
 - `sla` habilita [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA), fornecendo um kernel hibrido esparso/linear ajustavel para treino e validacao sem gating adicional.
   - Instale o pacote SLA (por exemplo via `pip install -e ~/src/SLA`) antes de selecionar esse backend.
@@ -712,6 +712,105 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   --post_checkpoint_script='/opt/hooks/run_eval.sh {local_checkpoint_path} {global_step}'
   ```
 
+### `--deepfloyd_validation_pipeline_mode`
+
+- **O que**: Controla o encadeamento de estagios na validacao do DeepFloyd.
+- **Opcoes**: `auto`, `trained-stage`, `full-pipeline`
+- **Padrao**: `auto`
+- **Por que**: `auto` executa DeepFloyd stage I -> stage II para validacao por prompt, enquanto validacao explicita com imagens de dataset usa apenas o estagio treinado. Use `trained-stage` para manter validacao de um unico estagio, ou `full-pipeline` para forcar o carregamento dos estagios fixos.
+
+### `--deepfloyd_validation_stage1_model`
+
+- **O que**: Modelo fixo de stage I usado ao validar um stage II treinado pela pipeline completa.
+- **Padrao**: `DeepFloyd/IF-I-XL-v1.0`
+
+### `--deepfloyd_validation_stage2_model`
+
+- **O que**: Modelo fixo de stage II usado ao validar um stage I treinado pela pipeline completa.
+- **Padrao**: `DeepFloyd/IF-II-M-v1.0`
+
+### `--deepfloyd_validation_stage3_mode`
+
+- **O que**: Upscaler terminal opcional apos o DeepFloyd stage II.
+- **Opcoes**: `none`, `sd-x4-upscaler`
+- **Padrao**: `none`
+- **Por que**: O stage III nao lancado do DeepFloyd era essencialmente um upscaler 4x. `sd-x4-upscaler` usa `stabilityai/stable-diffusion-x4-upscaler` nessa funcao.
+
+### `--deepfloyd_validation_stage3_model`
+
+- **O que**: Repositorio do modelo usado quando `--deepfloyd_validation_stage3_mode=sd-x4-upscaler`.
+- **Padrao**: `stabilityai/stable-diffusion-x4-upscaler`
+
+### `--deepfloyd_validation_stage1_num_inference_steps`
+
+- **O que**: Sobrescrita opcional do numero de passos de validacao do stage I.
+- **Padrao**: Usa `--validation_num_inference_steps`, limitado a 30 no stage I.
+
+### `--deepfloyd_validation_stage2_num_inference_steps`
+
+- **O que**: Sobrescrita opcional do numero de passos de validacao do stage II.
+- **Padrao**: Usa `--validation_num_inference_steps`
+
+### `--deepfloyd_validation_stage1_guidance`
+
+- **O que**: Sobrescrita opcional da guidance de validacao do stage I.
+- **Padrao**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage2_guidance`
+
+- **O que**: Sobrescrita opcional da guidance de validacao do stage II.
+- **Padrao**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_guidance`
+
+- **O que**: Sobrescrita opcional da guidance do upscaler SD x4.
+- **Padrao**: Usa `--validation_guidance`
+
+### `--deepfloyd_validation_stage3_noise_level`
+
+- **O que**: Nivel de ruido passado ao upscaler SD x4.
+- **Padrao**: `100`
+
+### `--wan_validation_load_other_stage`
+
+- **O que**: Carrega o stage oposto do Wan 2.2 durante a validacao.
+- **Padrao**: `false`
+- **Por que**: Wan 2.2 e flavours staged compativeis, como AnimeGen, podem treinar cada stage separadamente. Ao ativar, o stage par fixo e carregado para que a validacao use a pipeline completa de dois stages e troque denoisers no boundary configurado.
+
+### `--sdxl_validation_pipeline_mode`
+
+- **Opcoes**: `trained-stage`, `full-pipeline`
+- **Padrao**: `trained-stage`
+- **O que**: Escolhe se a validacao SDXL executa apenas o stage treinado ou a pipeline dividida base/refiner.
+- **Por que**: `full-pipeline` executa o stage 1 ate `1 - refiner_training_strength` com saida latente e depois continua pelo stage 2 a partir do mesmo boundary do schedule.
+
+### `--sdxl_validation_stage1_model`
+
+- **O que**: Modelo SDXL fixo de stage 1/base usado quando a validacao full-pipeline refina com um modelo de stage 2 treinado.
+- **Padrao**: inferido da versao SDXL selecionada, normalmente `stabilityai/stable-diffusion-xl-base-1.0`
+
+### `--sdxl_validation_stage2_model`
+
+- **O que**: Modelo SDXL fixo de stage 2/refiner usado quando a validacao full-pipeline executa primeiro um modelo de stage 1 treinado.
+- **Padrao**: inferido da versao SDXL selecionada, normalmente `stabilityai/stable-diffusion-xl-refiner-1.0`
+
+### `--pixart_validation_pipeline_mode`
+
+- **Opcoes**: `trained-stage`, `full-pipeline`
+- **Padrao**: `trained-stage`
+- **O que**: Escolhe se a validacao PixArt executa apenas o stage treinado ou a pipeline dividida v0.7.
+- **Por que**: `full-pipeline` executa o stage 1 ate `1 - refiner_training_strength` com saida latente e depois continua pelo stage 2 a partir do mesmo boundary do schedule.
+
+### `--pixart_validation_stage1_model`
+
+- **O que**: Modelo PixArt fixo de stage 1 usado quando a validacao full-pipeline refina com um modelo de stage 2 treinado.
+- **Padrao**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage1`
+
+### `--pixart_validation_stage2_model`
+
+- **O que**: Modelo PixArt fixo de stage 2 usado quando a validacao full-pipeline executa primeiro um modelo de stage 1 treinado.
+- **Padrao**: `terminusresearch/pixart-900m-1024-ft-v0.7-stage2`
+
 ### `--validation_adapter_path`
 
 - **O que**: Carrega temporariamente um unico adaptador LoRA durante validacoes agendadas.
@@ -748,6 +847,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - `path`: Repo Hugging Face ou caminho local (mesmos formatos de `--validation_adapter_path`).
   - `adapter_name`: Identificador opcional por adaptador.
   - `strength`: Override escalar opcional.
+  - `target_stage`: Alvo opcional de validacao multi-stage para este adaptador. Os aliases aceitos dependem do modelo; valores comuns incluem `one`, `two`, `stage1`, `stage2` e Wan `high`/`low`.
   - `adapters`/`paths`: Array de objetos/strings para carregar multiplos adaptadores em uma unica execucao.
 - **Notas**:
   - Quando fornecido, as opcoes de adaptador unico (`--validation_adapter_path`, `--validation_adapter_name`, `--validation_adapter_strength`, `--validation_adapter_mode`) sao ignoradas/desabilitadas na UI.
@@ -796,6 +896,15 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
   - Para modelos i2v, permite usar um dataset de imagens simples para validacao sem a configuracao complexa de pareamento de datasets de conditioning usada durante o treinamento
   - Flux Kontext nao usa este flag para validacao; deixe-o desativado e use `--eval_dataset_id` para escolher o dataset de edicao enquanto o Kontext carrega automaticamente o dataset de referencia pareado
   - A intensidade do denoise e controlada pelas configuracoes normais de timestep de validacao
+
+### `--validation_input`
+
+- **O que**: Lista JSON de imagens de entrada e prompts para validacao, por exemplo `[{"path": "/data/val/frame.png", "prompt": "um movimento lento de camera para frente"}]`.
+- **Por que**: Permite validacao condicionada por imagem sem criar um dataset de validacao.
+- **Notas**:
+  - Cada entrada deve incluir `path` e `prompt`; `shortname` ou `name` sao opcionais para controlar o rotulo de saida.
+  - O caminho da imagem deve existir localmente quando os prompts de validacao forem preparados.
+  - Quando definido, estas entradas sao usadas como imagens de entrada de validacao em vez de descobrir amostras nos datasets.
 
 ### `--eval_dataset_id`
 
@@ -894,6 +1003,14 @@ Diferentes modelos esperam diferentes dados de conditioning:
 - **Por que**: Quando habilitado, Krea 2 usa a imagem de condicionamento pareada ao cachear os prompt embeddings Qwen3VL, e adiciona os latentes VAE limpos dessa imagem ao fluxo de tokens do transformer durante o treino.
 - **Dataset**: Configure o dataset principal de imagens com `conditioning_data` apontando para um dataset de conditioning pareado. Os nomes dos arquivos devem coincidir entre imagens target e reference.
 - **Escopo**: Esta e uma opcao do lado do modelo Krea 2. Ela nao gera conditioning datasets; use as configuracoes normais de reference dataset do dataloader.
+
+### Opcoes de validacao do LTX-2
+
+- **`--ltx2_validation_pipeline_mode`**: Escolhe se a validacao LTX-2 roda apenas o modelo treinado (`trained-stage`) ou uma pipeline de validacao em dois estagios com spatial upscaler (`spatial-upscale`).
+- **`--ltx2_validation_spatial_upsampler_model`**: Repo Hugging Face, diretorio local ou arquivo `.safetensors` local para o spatial latent upsampler do LTX-2. Padrao: `Lightricks/LTX-2.3`.
+- **`--ltx2_validation_spatial_upsampler_filename`**: Nome do arquivo upsampler quando a opcao de modelo aponta para repo ou diretorio. Padrao: `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
+- **O que spatial-upscale faz**: O stage 1 gera video latents em metade da resolucao de validacao solicitada, o spatial upsampler dobra esses latents, e o stage 2 re-denoisa na resolucao solicitada com o stage-2 sigma schedule do LTX-2.
+- **Limite**: Spatial-upscale validation e para video; `--validation_audio_only` mantem o caminho normal de validacao single-stage.
 
 ### Opcoes de condicionamento do LTX-2
 
@@ -1185,14 +1302,14 @@ CREPA e uma tecnica de regularizacao para fine-tuning de modelos de difusao de v
 ### `--crepa_model`
 
 - **O que**: Qual encoder pre-treinado usar para extrair features.
-- **Por que**: O paper usa DINOv2-g (ViT-Giant). Variantes menores como `dinov2_vitb14` usam menos memoria.
+- **Por que**: O paper usa DINOv2-g (ViT-Giant). Variantes DINO menores usam menos memoria, enquanto professores Qwen-VL podem fornecer features visuais semanticas mais fortes.
 - **Padrao**: `dinov2_vitg14`
-- **Opcoes**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
+- **Opcoes**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`, `qwen3-vl-4b`, `qwen2.5-vl-7b`, ou um id de modelo Qwen-VL do Hugging Face.
 
 ### `--crepa_encoder_frames_batch_size`
 
 - **O que**: Quantos frames o encoder externo processa em paralelo. Zero ou negativo para todos os frames do batch de uma vez. Se nao for divisor, o restante sera processado como batch menor.
-- **Por que**: Como encoders tipo DINO sao modelos de imagem, podem processar frames em batches fatiados para reduzir VRAM ao custo de velocidade.
+- **Por que**: Encoders visuais externos podem processar frames em batches fatiados para reduzir VRAM ao custo de velocidade.
 - **Padrao**: `-1`
 
 ### `--crepa_use_backbone_features`
@@ -1302,7 +1419,7 @@ crepa_cumulative_neighbors = false
 crepa_normalize_neighbour_sum = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
-crepa_model = "dinov2_vitg14"
+crepa_model = "dinov2_vitg14"  # ou "qwen3-vl-4b" para features visuais Qwen-VL
 crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
@@ -1647,6 +1764,7 @@ usage: train.py [-h] --model_family
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
+                [--validation_input VALIDATION_INPUT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
@@ -2053,6 +2171,8 @@ options:
                         training starts
   --validation_prompt VALIDATION_PROMPT
                         Prompt to use for validation images
+  --validation_input VALIDATION_INPUT
+                        JSON list of validation input image paths and prompts
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images to generate per validation
   --num_eval_images NUM_EVAL_IMAGES

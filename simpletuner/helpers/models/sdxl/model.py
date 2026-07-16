@@ -1,5 +1,7 @@
+import copy
 import logging
 import os
+from typing import Any, Dict
 
 import torch
 from diffusers import AutoencoderKL
@@ -14,7 +16,13 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    ImageModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+)
 from simpletuner.helpers.models.sdxl.controlnet import ControlNetModel
 from simpletuner.helpers.models.sdxl.pipeline import (
     StableDiffusionXLControlNetPipeline,
@@ -67,6 +75,12 @@ class SDXL(ImageModelFoundation):
         "refiner-0.9": "stabilityai/stable-diffusion-xl-refiner-0.9",
     }
     MODEL_LICENSE = "creativeml-openrail-m"
+    SUPPORTS_MULTISTAGE_VALIDATION = True
+    SDXL_VALIDATION_PIPELINE_MODES = {"trained-stage", "full-pipeline"}
+    SDXL_VALIDATION_PIPELINE_KEYS = {
+        "stage1": "sdxl_validation_stage1",
+        "stage2": "sdxl_validation_stage2",
+    }
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -333,6 +347,228 @@ class SDXL(ImageModelFoundation):
         if self.model.config.cross_attention_dim == 1280:
             logger.info(f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings.")
             self.config.refiner_training = True
+
+    def _sdxl_validation_mode(self) -> str:
+        mode = getattr(self.config, "sdxl_validation_pipeline_mode", "trained-stage") or "trained-stage"
+        mode = str(mode).strip().lower()
+        if mode not in self.SDXL_VALIDATION_PIPELINE_MODES:
+            raise ValueError(
+                "sdxl_validation_pipeline_mode must be one of: " f"{', '.join(sorted(self.SDXL_VALIDATION_PIPELINE_MODES))}"
+            )
+        return mode
+
+    def supports_multistage_validation(self) -> bool:
+        if self._sdxl_validation_mode() != "full-pipeline":
+            return False
+        if getattr(self.config, "validation_using_datasets", False):
+            return False
+        if getattr(self.config, "controlnet", False) or getattr(self.config, "control", False):
+            return False
+        return True
+
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one", "base"},
+            "stage2": {"stage2", "stage_2", "2", "two", "refiner"},
+        }
+
+    def _sdxl_current_stage(self) -> int:
+        model_flavour = str(getattr(self.config, "model_flavour", "") or "").lower()
+        model_path = str(getattr(self.config, "pretrained_model_name_or_path", "") or "").lower()
+        if "refiner" in model_flavour or "refiner" in model_path:
+            return 2
+        if getattr(self.config, "refiner_training", False) and not getattr(
+            self.config, "refiner_training_invert_schedule", False
+        ):
+            return 2
+        return 1
+
+    def _sdxl_version_suffix(self) -> str:
+        model_flavour = str(getattr(self.config, "model_flavour", "") or "")
+        model_path = str(getattr(self.config, "pretrained_model_name_or_path", "") or "")
+        if "0.9" in model_flavour or "0.9" in model_path:
+            return "0.9"
+        return "1.0"
+
+    def _sdxl_validation_stage_model(self, stage: int) -> str:
+        if stage == 1:
+            configured = getattr(self.config, "sdxl_validation_stage1_model", None)
+            default = self.HUGGINGFACE_PATHS[f"base-{self._sdxl_version_suffix()}"]
+        elif stage == 2:
+            configured = getattr(self.config, "sdxl_validation_stage2_model", None)
+            default = self.HUGGINGFACE_PATHS[f"refiner-{self._sdxl_version_suffix()}"]
+        else:
+            raise ValueError(f"Unsupported SDXL validation stage: {stage}")
+        return str(configured or default)
+
+    def _sdxl_from_pretrained_kwargs(self) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "torch_dtype": self.config.weight_dtype,
+        }
+        vae = self.get_vae()
+        if vae is not None:
+            kwargs["vae"] = vae
+        for attr in ("revision", "cache_dir", "local_files_only", "variant"):
+            value = getattr(self.config, attr, None)
+            if value is not None:
+                kwargs[attr] = value
+        return kwargs
+
+    def _sdxl_clone_validation_scheduler(self):
+        scheduler = getattr(getattr(self, "pipeline", None), "scheduler", None)
+        if scheduler is None:
+            return None
+        try:
+            return scheduler.__class__.from_config(scheduler.config)
+        except Exception:
+            return copy.deepcopy(scheduler)
+
+    def _get_sdxl_validation_pipeline(self, cache_key: str, pipeline_cls, repo_id: str):
+        if cache_key in self.pipelines:
+            return self.pipelines[cache_key]
+
+        logger.info("Loading SDXL validation pipeline '%s' from %s.", cache_key, repo_id)
+        pipeline = pipeline_cls.from_pretrained(repo_id, **self._sdxl_from_pretrained_kwargs())
+        for attr in ("watermarker", "watermark"):
+            if hasattr(pipeline, attr):
+                setattr(pipeline, attr, None)
+        scheduler = self._sdxl_clone_validation_scheduler()
+        if scheduler is not None:
+            pipeline.scheduler = scheduler
+        pipeline.to(self.accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+        self.pipelines[cache_key] = pipeline
+        return pipeline
+
+    def _sdxl_stage1_pipeline(self):
+        if self._sdxl_current_stage() == 1:
+            return self.pipeline
+        repo_id = self._sdxl_validation_stage_model(1)
+        return self._get_sdxl_validation_pipeline(
+            self.SDXL_VALIDATION_PIPELINE_KEYS["stage1"],
+            StableDiffusionXLPipeline,
+            repo_id,
+        )
+
+    def _sdxl_stage2_pipeline(self):
+        if self._sdxl_current_stage() == 2:
+            pipeline = self.get_pipeline(PipelineTypes.IMG2IMG, load_base_model=False)
+            scheduler = self._sdxl_clone_validation_scheduler()
+            if scheduler is not None:
+                pipeline.scheduler = scheduler
+            pipeline.to(self.accelerator.device)
+            pipeline.set_progress_bar_config(disable=True)
+            return pipeline
+        repo_id = self._sdxl_validation_stage_model(2)
+        return self._get_sdxl_validation_pipeline(
+            self.SDXL_VALIDATION_PIPELINE_KEYS["stage2"],
+            StableDiffusionXLImg2ImgPipeline,
+            repo_id,
+        )
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        if (
+            not load_base_model
+            and pipeline_type is PipelineTypes.TEXT2IMG
+            and self.supports_multistage_validation()
+            and self._sdxl_current_stage() == 2
+        ):
+            pipeline_type = PipelineTypes.IMG2IMG
+        return super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
+
+    def unload_validation_models(self) -> None:
+        super().unload_validation_models()
+        for key in (*self.SDXL_VALIDATION_PIPELINE_KEYS.values(), PipelineTypes.IMG2IMG):
+            if key in self.pipelines:
+                del self.pipelines[key]
+
+    def _sdxl_split_schedule_boundary(self) -> float:
+        strength = float(getattr(self.config, "refiner_training_strength", 0.2) or 0.0)
+        if strength <= 0.0 or strength >= 1.0:
+            raise ValueError(
+                "refiner_training_strength must be greater than 0 and less than 1 for SDXL full-pipeline validation."
+            )
+        return 1.0 - strength
+
+    def _sdxl_prompt_kwargs(self, pipeline_kwargs: Dict[str, Any], *, use_embeds: bool) -> Dict[str, Any]:
+        if use_embeds and "prompt_embeds" in pipeline_kwargs:
+            keys = (
+                "prompt_embeds",
+                "negative_prompt_embeds",
+                "pooled_prompt_embeds",
+                "negative_pooled_prompt_embeds",
+            )
+            return {key: pipeline_kwargs[key] for key in keys if key in pipeline_kwargs}
+        return {
+            "prompt": pipeline_kwargs.get("_validation_prompt_text") or pipeline_kwargs.get("prompt") or "",
+            "negative_prompt": (
+                pipeline_kwargs.get("_validation_negative_prompt_text") or pipeline_kwargs.get("negative_prompt") or ""
+            ),
+        }
+
+    def _sdxl_copy_optional_kwargs(self, pipeline_kwargs: Dict[str, Any], keys: tuple[str, ...]) -> Dict[str, Any]:
+        return {key: pipeline_kwargs[key] for key in keys if key in pipeline_kwargs}
+
+    def _sdxl_result_count(self, images) -> int:
+        if isinstance(images, torch.Tensor) and images.ndim > 0:
+            return int(images.shape[0])
+        try:
+            return len(images)
+        except TypeError:
+            return 1
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: ValidationPipelineCall,
+    ) -> Any:
+        stage1 = self._sdxl_stage1_pipeline()
+        stage2 = self._sdxl_stage2_pipeline()
+        trained_stage = self._sdxl_current_stage()
+        split_boundary = self._sdxl_split_schedule_boundary()
+        common_optional = (
+            "generator",
+            "guidance_rescale",
+            "callback",
+            "callback_steps",
+            "callback_on_step_end",
+            "callback_on_step_end_tensor_inputs",
+        )
+
+        stage1_kwargs = {
+            **self._sdxl_prompt_kwargs(pipeline_kwargs, use_embeds=trained_stage == 1),
+            **self._sdxl_copy_optional_kwargs(pipeline_kwargs, common_optional),
+            "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
+            "num_inference_steps": int(pipeline_kwargs["num_inference_steps"]),
+            "guidance_scale": float(pipeline_kwargs.get("guidance_scale", 7.5)),
+            "denoising_end": split_boundary,
+            "output_type": "latent",
+            "width": pipeline_kwargs.get("width"),
+            "height": pipeline_kwargs.get("height"),
+        }
+        logger.info("Running SDXL validation stage 1 to %.2f of the schedule.", split_boundary)
+        stage1_result = pipeline_call(stage1, stage1_kwargs, target_stage="stage1")
+        stage1_images = stage1_result.images
+        use_stage2_embeds = trained_stage == 2
+        stage2_prompt_kwargs = self._sdxl_prompt_kwargs(pipeline_kwargs, use_embeds=use_stage2_embeds)
+        if not use_stage2_embeds:
+            image_count = self._sdxl_result_count(stage1_images)
+            for key in ("prompt", "negative_prompt"):
+                if isinstance(stage2_prompt_kwargs.get(key), str):
+                    stage2_prompt_kwargs[key] = [stage2_prompt_kwargs[key]] * image_count
+
+        stage2_kwargs = {
+            **stage2_prompt_kwargs,
+            **self._sdxl_copy_optional_kwargs(pipeline_kwargs, common_optional),
+            "image": stage1_images,
+            "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1) if use_stage2_embeds else 1,
+            "num_inference_steps": int(pipeline_kwargs["num_inference_steps"]),
+            "guidance_scale": float(pipeline_kwargs.get("guidance_scale", 7.5)),
+            "denoising_start": split_boundary,
+            "output_type": "pil",
+        }
+        logger.info("Running SDXL validation stage 2 from %.2f of the schedule.", split_boundary)
+        return pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
     def check_user_config(self):
         """

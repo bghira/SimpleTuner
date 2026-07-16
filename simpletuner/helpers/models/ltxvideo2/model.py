@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import threading
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import safetensors.torch
 import torch
@@ -13,7 +13,13 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
-from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.common import (
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+    VideoModelFoundation,
+)
 from simpletuner.helpers.models.ltxvideo2 import (
     pack_ltx2_audio_latents,
     pack_ltx2_latents,
@@ -36,6 +42,11 @@ from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+from simpletuner.helpers.models.ltxvideo2.upsampler import (
+    load_ltx2_latent_upsampler,
+    resolve_ltx2_upsampler_path,
+    upsample_ltx2_video_latents,
+)
 from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
@@ -124,6 +135,11 @@ class LTXVideo2(VideoModelFoundation):
         "audio_ff.net.0.proj",
         "audio_ff.net.2",
     ]
+    SUPPORTS_MULTISTAGE_VALIDATION = True
+    LTX2_VALIDATION_PIPELINE_MODES = {"trained-stage", "spatial-upscale"}
+    LTX2_STAGE2_SIGMAS = [0.909375, 0.725, 0.421875]
+    DEFAULT_SPATIAL_UPSAMPLER_MODEL = "Lightricks/LTX-2.3"
+    DEFAULT_SPATIAL_UPSAMPLER_FILENAME = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
@@ -905,6 +921,161 @@ class LTXVideo2(VideoModelFoundation):
             pipeline.audio_vae_sample_rate = audio_vae.config.sample_rate
         if hasattr(pipeline, "audio_hop_length"):
             pipeline.audio_hop_length = audio_vae.config.mel_hop_length
+
+    def _ltx2_validation_mode(self) -> str:
+        mode = getattr(self.config, "ltx2_validation_pipeline_mode", "trained-stage") or "trained-stage"
+        mode = str(mode).strip().lower()
+        if mode not in self.LTX2_VALIDATION_PIPELINE_MODES:
+            raise ValueError(
+                "ltx2_validation_pipeline_mode must be one of: " f"{', '.join(sorted(self.LTX2_VALIDATION_PIPELINE_MODES))}"
+            )
+        return mode
+
+    def supports_multistage_validation(self) -> bool:
+        return (
+            self._ltx2_validation_mode() == "spatial-upscale"
+            and not getattr(self.config, "validation_audio_only", False)
+            and not getattr(self.config, "validation_using_datasets", False)
+        )
+
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one"},
+            "stage2": {"stage2", "stage_2", "2", "two"},
+        }
+
+    def _ltx2_validation_upsampler_path(self) -> str:
+        model_or_path = (
+            getattr(self.config, "ltx2_validation_spatial_upsampler_model", None) or self.DEFAULT_SPATIAL_UPSAMPLER_MODEL
+        )
+        filename = (
+            getattr(self.config, "ltx2_validation_spatial_upsampler_filename", None)
+            or self.DEFAULT_SPATIAL_UPSAMPLER_FILENAME
+        )
+        return resolve_ltx2_upsampler_path(model_or_path, filename, revision=getattr(self.config, "revision", None))
+
+    def _ltx2_spatial_upsampler(self):
+        if getattr(self, "_ltx2_validation_spatial_upsampler", None) is None:
+            upsampler_path = self._ltx2_validation_upsampler_path()
+            logger.info("Loading LTX-2 validation spatial upsampler from %s", upsampler_path)
+            self._ltx2_validation_spatial_upsampler = load_ltx2_latent_upsampler(
+                upsampler_path,
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+            )
+        return self._ltx2_validation_spatial_upsampler
+
+    def unload_validation_models(self) -> None:
+        super().unload_validation_models()
+        if hasattr(self, "_ltx2_validation_spatial_upsampler"):
+            del self._ltx2_validation_spatial_upsampler
+
+    def _ltx2_stage1_resolution(self, pipeline_kwargs: Dict[str, Any]) -> tuple[int, int]:
+        width = int(pipeline_kwargs.get("width", 768))
+        height = int(pipeline_kwargs.get("height", 512))
+        if width % 64 != 0 or height % 64 != 0:
+            raise ValueError(
+                "LTX-2 spatial-upscale validation requires target width and height divisible by 64. "
+                f"Received {width}x{height}."
+            )
+        stage1_width = width // 2
+        stage1_height = height // 2
+        return stage1_width, stage1_height
+
+    def _ltx2_unpack_video_latents(self, pipeline, latents: torch.Tensor, width: int, height: int, num_frames: int):
+        latent_num_frames = (int(num_frames) - 1) // pipeline.vae_temporal_compression_ratio + 1
+        latent_height = int(height) // pipeline.vae_spatial_compression_ratio
+        latent_width = int(width) // pipeline.vae_spatial_compression_ratio
+        return pipeline._unpack_latents(
+            latents,
+            latent_num_frames,
+            latent_height,
+            latent_width,
+            pipeline.transformer_spatial_patch_size,
+            pipeline.transformer_temporal_patch_size,
+        )
+
+    def _ltx2_pack_video_latents(self, pipeline, latents: torch.Tensor) -> torch.Tensor:
+        return pipeline._pack_latents(
+            latents,
+            pipeline.transformer_spatial_patch_size,
+            pipeline.transformer_temporal_patch_size,
+        )
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: ValidationPipelineCall,
+    ) -> Any:
+        if "image" in pipeline_kwargs:
+            raise ValueError(
+                "LTX-2 spatial-upscale validation does not support image-conditioned validation yet. "
+                "Disable ltx2_validation_pipeline_mode=spatial-upscale for dataset-driven validation."
+            )
+        stage1_width, stage1_height = self._ltx2_stage1_resolution(pipeline_kwargs)
+        num_frames = int(pipeline_kwargs.get("num_frames", self.config.validation_num_video_frames or 125))
+        stage2_width = int(pipeline_kwargs.get("width", stage1_width * 2))
+        stage2_height = int(pipeline_kwargs.get("height", stage1_height * 2))
+
+        stage1_kwargs = dict(pipeline_kwargs)
+        stage1_kwargs.update(
+            {
+                "width": stage1_width,
+                "height": stage1_height,
+                "num_frames": num_frames,
+                "output_type": "latent",
+            }
+        )
+        logger.info(
+            "Running LTX-2 validation stage 1 at %sx%s before spatial upscaling.",
+            stage1_width,
+            stage1_height,
+        )
+        stage1_result = pipeline_call(self.pipeline, stage1_kwargs, target_stage="stage1")
+        video_latents = getattr(stage1_result, "frames", None)
+        if video_latents is None:
+            raise ValueError("LTX-2 spatial-upscale validation stage 1 did not return video latents.")
+
+        stage2 = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        unpacked_latents = self._ltx2_unpack_video_latents(
+            self.pipeline,
+            video_latents,
+            width=stage1_width,
+            height=stage1_height,
+            num_frames=num_frames,
+        )
+        upsampler = self._ltx2_spatial_upsampler()
+        with torch.no_grad():
+            upscaled_latents = upsample_ltx2_video_latents(
+                unpacked_latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype),
+                vae=self.get_vae(),
+                upsampler=upsampler,
+            )
+        stage2_video_latents = self._ltx2_pack_video_latents(stage2, upscaled_latents)
+        stage2_sigmas = list(self.LTX2_STAGE2_SIGMAS)
+
+        stage2_kwargs = dict(pipeline_kwargs)
+        stage2_kwargs.pop("image", None)
+        stage2_kwargs.update(
+            {
+                "width": stage2_width,
+                "height": stage2_height,
+                "num_frames": num_frames,
+                "latents": stage2_video_latents,
+                "audio_latents": getattr(stage1_result, "audio", None),
+                "sigmas": stage2_sigmas,
+                "num_inference_steps": len(stage2_sigmas),
+                "latent_noise_scale": stage2_sigmas[0],
+                "audio_latent_noise_scale": stage2_sigmas[0],
+                "output_type": pipeline_kwargs.get("output_type", "pil"),
+            }
+        )
+        logger.info(
+            "Running LTX-2 validation stage 2 at %sx%s with spatially upscaled latents.",
+            stage2_width,
+            stage2_height,
+        )
+        return pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
         if isinstance(vae, AutoencoderKLLTX2Audio):

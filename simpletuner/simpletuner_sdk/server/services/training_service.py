@@ -1112,7 +1112,15 @@ def start_training_job(
     """
     import asyncio
 
+    from .checkpoint_inference_service import CHECKPOINT_INFERENCE_SERVICE
     from .local_gpu_allocator import get_gpu_allocator
+
+    if CHECKPOINT_INFERENCE_SERVICE.active_session():
+        return TrainingJobResult(
+            job_id=None,
+            status="rejected",
+            reason="A checkpoint inference session is using the accelerator. Unload it before starting training.",
+        )
 
     # Check for active cache or scan jobs that hold GPU resources
     try:

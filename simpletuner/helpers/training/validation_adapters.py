@@ -30,6 +30,7 @@ class ValidationAdapterSpec:
     weight_name: str | None
     strength: float
     adapter_name: str | None = None
+    target_stage: str | None = None
 
     @property
     def repo_id(self) -> str | None:
@@ -62,7 +63,22 @@ def _extract_repo_and_weight(raw_value: str) -> Tuple[str, str]:
     return repo_id.strip(), weight_name.strip() or DEFAULT_LORA_WEIGHT_NAME
 
 
-def _build_adapter_spec(raw_value: str, strength: float, adapter_name: str | None = None) -> ValidationAdapterSpec:
+def normalize_validation_adapter_stage(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if cleaned == "":
+        raise ValueError("Adapter target_stage cannot be empty.")
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", cleaned.lower()).strip("_")
+    return normalized or None
+
+
+def _build_adapter_spec(
+    raw_value: str,
+    strength: float,
+    adapter_name: str | None = None,
+    target_stage: str | None = None,
+) -> ValidationAdapterSpec:
     if raw_value is None:
         raise ValueError("Adapter path cannot be None.")
     cleaned = str(raw_value).strip()
@@ -81,6 +97,7 @@ def _build_adapter_spec(raw_value: str, strength: float, adapter_name: str | Non
             weight_name=None,
             strength=float(strength),
             adapter_name=adapter_name,
+            target_stage=normalize_validation_adapter_stage(target_stage),
         )
 
     repo_id, weight_name = _extract_repo_and_weight(cleaned)
@@ -90,6 +107,7 @@ def _build_adapter_spec(raw_value: str, strength: float, adapter_name: str | Non
         weight_name=weight_name,
         strength=float(strength),
         adapter_name=adapter_name,
+        target_stage=normalize_validation_adapter_stage(target_stage),
     )
 
 
@@ -124,10 +142,14 @@ def _normalize_run_entry(entry: Any) -> Tuple[str | None, List[ValidationAdapter
     label = entry.get("label") or entry.get("name")
     base_strength = _norm_strength(entry.get("strength", entry.get("scale")), 1.0)
     base_adapter_name = entry.get("adapter_name")
+    base_target_stage = entry.get("target_stage")
 
     if "path" in entry and "paths" not in entry and "adapters" not in entry:
         spec = _build_adapter_spec(
-            entry["path"], entry.get("strength", entry.get("scale", base_strength)), base_adapter_name
+            entry["path"],
+            entry.get("strength", entry.get("scale", base_strength)),
+            base_adapter_name,
+            base_target_stage,
         )
         return label or _stem_from_path(entry["path"]), [spec]
 
@@ -139,7 +161,7 @@ def _normalize_run_entry(entry: Any) -> Tuple[str | None, List[ValidationAdapter
     specs: List[ValidationAdapterSpec] = []
     for adapter in adapter_entries:
         if isinstance(adapter, str):
-            specs.append(_build_adapter_spec(adapter, base_strength, base_adapter_name))
+            specs.append(_build_adapter_spec(adapter, base_strength, base_adapter_name, base_target_stage))
             continue
         if not isinstance(adapter, dict):
             raise ValueError(f"Invalid adapter specification: {adapter!r}")
@@ -148,7 +170,8 @@ def _normalize_run_entry(entry: Any) -> Tuple[str | None, List[ValidationAdapter
             raise ValueError(f"Adapter specification is missing 'path': {adapter!r}")
         adapter_strength = _norm_strength(adapter.get("strength", adapter.get("scale")), base_strength)
         adapter_name = adapter.get("adapter_name") or base_adapter_name
-        specs.append(_build_adapter_spec(path_value, adapter_strength, adapter_name))
+        target_stage = adapter.get("target_stage", base_target_stage)
+        specs.append(_build_adapter_spec(path_value, adapter_strength, adapter_name, target_stage))
 
     if not specs:
         raise ValueError("Adapter run must include at least one adapter path.")

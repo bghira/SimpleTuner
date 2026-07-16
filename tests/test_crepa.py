@@ -1,6 +1,7 @@
 import math
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -43,6 +44,50 @@ class _DummyEncoder(torch.nn.Module):
         bt = x.shape[0]
         tokens = torch.ones(bt, 2, 4, device=x.device, dtype=x.dtype)
         return {"x_norm_patchtokens": tokens}
+
+
+class _DummyQwenProcessor:
+    image_token = "<image>"
+    vision_start_token = "<vision_start>"
+    vision_end_token = "<vision_end>"
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *, images, text, return_tensors):
+        self.calls.append(
+            {
+                "image_count": len(images),
+                "text": text,
+                "return_tensors": return_tensors,
+            }
+        )
+        return {
+            "pixel_values": torch.ones(len(images), 4),
+            "image_grid_thw": torch.tensor([[1, 2, 2]] * len(images), dtype=torch.long),
+        }
+
+
+class _DummyQwenVLModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.register_parameter("_w", torch.nn.Parameter(torch.ones(1), requires_grad=False))
+        self.feature_calls = []
+
+    def get_image_features(self, *, pixel_values, image_grid_thw, return_dict):
+        self.feature_calls.append(
+            {
+                "pixel_values_shape": pixel_values.shape,
+                "pixel_values_dtype": pixel_values.dtype,
+                "image_grid_thw": image_grid_thw.detach().cpu().clone(),
+                "return_dict": return_dict,
+            }
+        )
+        features = tuple(
+            torch.full((2, 6), float(index + 1), device=pixel_values.device, dtype=pixel_values.dtype)
+            for index in range(image_grid_thw.shape[0])
+        )
+        return SimpleNamespace(pooler_output=features)
 
 
 class CrepaDecodeTests(unittest.TestCase):
@@ -117,6 +162,66 @@ class CrepaDecodeTests(unittest.TestCase):
         projected = reg._project_hidden_states(hidden)
         self.assertEqual(projected.dtype, torch.float32)
         self.assertEqual(projected.shape, (1, 2, 3, 4))
+
+
+class CrepaQwenVLEncoderTests(unittest.TestCase):
+    def _make_config(self, **kwargs):
+        defaults = {
+            "crepa_enabled": True,
+            "crepa_block_index": 0,
+            "crepa_adjacent_distance": 1,
+            "crepa_adjacent_tau": 1.0,
+            "crepa_lambda": 0.5,
+            "crepa_model": "qwen3-vl-4b",
+            "crepa_encoder_image_size": 8,
+            "crepa_encoder_frames_batch_size": -1,
+            "crepa_normalize_by_frames": True,
+            "crepa_spatial_align": True,
+            "crepa_cumulative_neighbors": False,
+            "weight_dtype": torch.bfloat16,
+        }
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_qwen3_alias_resolves_to_huggingface_model(self):
+        config = self._make_config(crepa_model="qwen3-vl-4b")
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8)
+
+        self.assertEqual(reg.encoder_name, "Qwen/Qwen3-VL-4B-Instruct")
+
+    def test_qwen_vl_encoder_uses_fp32_on_cpu(self):
+        config = self._make_config(weight_dtype=torch.bfloat16)
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8)
+
+        self.assertEqual(reg._encoder_dtype(), torch.float32)
+
+    def test_qwen_vl_encoder_processes_frames_through_transformers(self):
+        config = self._make_config()
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8)
+        processor = _DummyQwenProcessor()
+        model = _DummyQwenVLModel()
+
+        with (
+            patch("transformers.AutoProcessor.from_pretrained", return_value=processor) as processor_from_pretrained,
+            patch("transformers.Qwen3VLModel.from_pretrained", return_value=model) as model_from_pretrained,
+        ):
+            reg._load_encoder()
+            video = torch.rand(1, 2, 3, 4, 4)
+            tokens = reg._encode_frames(video)
+
+        processor_from_pretrained.assert_called_once_with("Qwen/Qwen3-VL-4B-Instruct")
+        model_from_pretrained.assert_called_once_with("Qwen/Qwen3-VL-4B-Instruct", torch_dtype=torch.float32)
+        self.assertEqual(tokens.shape, (1, 2, 2, 6))
+        self.assertEqual(processor.calls[-1]["image_count"], 2)
+        self.assertEqual(
+            processor.calls[-1]["text"],
+            ["<vision_start><image><vision_end>", "<vision_start><image><vision_end>"],
+        )
+        self.assertEqual(model.feature_calls[-1]["pixel_values_shape"], torch.Size([2, 4]))
+        self.assertEqual(model.feature_calls[-1]["pixel_values_dtype"], torch.float32)
 
 
 class CrepaSchedulerTests(unittest.TestCase):

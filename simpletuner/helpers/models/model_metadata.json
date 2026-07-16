@@ -1,9 +1,43 @@
 {
+    "ace_step": {
+        "class_name": "ACEStep",
+        "flavour_choices": [
+            "base",
+            "v15-turbo",
+            "v15-base",
+            "v15-sft"
+        ],
+        "module_path": "simpletuner.helpers.models.ace_step.model",
+        "name": "ACE-Step",
+        "prediction_type": "flow_matching"
+    },
+    "anima": {
+        "class_name": "Anima",
+        "flavour_choices": [
+            "release",
+            "base-v1.0",
+            "preview-3",
+            "preview-2",
+            "preview"
+        ],
+        "module_path": "simpletuner.helpers.models.anima.model",
+        "name": "Anima",
+        "prediction_type": "flow_matching"
+    },
+    "auraflow": {
+        "class_name": "Auraflow",
+        "flavour_choices": [
+            "pony",
+            "v0.3",
+            "v0.2",
+            "v0.1"
+        ],
+        "module_path": "simpletuner.helpers.models.auraflow.model",
+        "name": "Auraflow",
+        "prediction_type": "flow_matching"
+    },
     "boogu_image": {
         "class_name": "BooguImage",
-        "module_path": "simpletuner.helpers.models.boogu_image.model",
-        "name": "Boogu-Image",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "v0.1-base",
             "v0.1-base-fp8",
@@ -11,155 +45,102 @@
             "v0.1-turbo-fp8",
             "v0.1-edit",
             "v0.1-edit-fp8"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.boogu_image.model",
+        "name": "Boogu-Image",
+        "prediction_type": "flow_matching"
     },
-    "zlab_i1": {
-        "class_name": "ZLabI1",
-        "module_path": "simpletuner.helpers.models.zlab_i1.model",
-        "name": "zlab i1",
-        "prediction_type": "flow_matching",
+    "chroma": {
+        "class_name": "Chroma",
         "flavour_choices": [
-            "3b"
-        ]
+            "base",
+            "hd",
+            "flash"
+        ],
+        "module_path": "simpletuner.helpers.models.chroma.model",
+        "name": "Chroma 1",
+        "prediction_type": "flow_matching"
     },
-    "ideogram": {
-        "class_name": "Ideogram4",
-        "module_path": "simpletuner.helpers.models.ideogram.model",
-        "name": "Ideogram 4",
-        "prediction_type": "flow_matching",
+    "cosmos": {
+        "class_name": "Cosmos2Image",
         "flavour_choices": [
-            "fp8",
-            "nf4"
-        ]
+            "2b",
+            "14b"
+        ],
+        "module_path": "simpletuner.helpers.models.cosmos.model",
+        "name": "Cosmos (T2I)",
+        "prediction_type": "sample"
+    },
+    "deepfloyd": {
+        "class_name": "DeepFloydIF",
+        "flavour_choices": [
+            "i-medium-400m",
+            "i-large-900m",
+            "i-xlarge-4.3b",
+            "ii-medium-450m",
+            "ii-large-1.2b"
+        ],
+        "module_path": "simpletuner.helpers.models.deepfloyd.model",
+        "name": "DeepFloyd IF",
+        "prediction_type": "epsilon"
+    },
+    "ernie": {
+        "class_name": "Ernie",
+        "flavour_choices": [
+            "base",
+            "turbo"
+        ],
+        "module_path": "simpletuner.helpers.models.ernie.model",
+        "name": "ERNIE-Image",
+        "prediction_type": "flow_matching"
+    },
+    "flux": {
+        "class_name": "Flux",
+        "flavour_choices": [
+            "dev",
+            "krea",
+            "schnell",
+            "kontext",
+            "fluxbooru",
+            "libreflux"
+        ],
+        "module_path": "simpletuner.helpers.models.flux.model",
+        "name": "Flux.1",
+        "prediction_type": "flow_matching"
     },
     "flux2": {
         "class_name": "Flux2",
-        "module_path": "simpletuner.helpers.models.flux2.model",
-        "name": "Flux.2",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "dev",
             "klein-4b",
             "klein-9b"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.flux2.model",
+        "name": "Flux.2",
+        "prediction_type": "flow_matching"
     },
-    "krea2": {
-        "class_name": "Krea2",
-        "module_path": "simpletuner.helpers.models.krea2.model",
-        "name": "Krea 2",
-        "prediction_type": "flow_matching",
+    "heartmula": {
+        "class_name": "HeartMuLa",
         "flavour_choices": [
-            "raw",
-            "turbo"
-        ]
-    },
-    "ltxvideo2": {
-        "class_name": "LTXVideo2",
-        "module_path": "simpletuner.helpers.models.ltxvideo2.model",
-        "name": "LTXVideo2",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "dev",
-            "dev-fp4",
-            "dev-fp8",
-            "2.3-dev",
-            "2.3-distilled"
-        ]
-    },
-    "sana": {
-        "class_name": "Sana",
-        "module_path": "simpletuner.helpers.models.sana.model",
-        "name": "Sana",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "sana1.5-4.8b-1024",
-            "sana1.5-1.6b-1024",
-            "sana1.0-1.6b-2048",
-            "sana1.0-1.6b-1024",
-            "sana1.0-600m-1024",
-            "sana1.0-600m-512"
-        ]
-    },
-    "kandinsky5_image": {
-        "class_name": "Kandinsky5Image",
-        "module_path": "simpletuner.helpers.models.kandinsky5_image.model",
-        "name": "Kandinsky5-Image",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "t2i-lite-sft",
-            "t2i-lite-pretrain",
-            "i2i-lite-sft",
-            "i2i-lite-pretrain"
-        ]
+            "3b"
+        ],
+        "module_path": "simpletuner.helpers.models.heartmula.model",
+        "name": "HeartMuLa",
+        "prediction_type": "autoregressive_next_token"
     },
     "hidream": {
         "class_name": "HiDream",
-        "module_path": "simpletuner.helpers.models.hidream.model",
-        "name": "HiDream",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "dev",
             "full",
             "fast"
-        ]
-    },
-    "qwen_image": {
-        "class_name": "QwenImage",
-        "module_path": "simpletuner.helpers.models.qwen_image.model",
-        "name": "Qwen-Image",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "v1.0",
-            "v2.0",
-            "edit-v1",
-            "edit-v2",
-            "edit-v2+",
-            "edit-v3"
-        ]
-    },
-    "ernie": {
-        "class_name": "Ernie",
-        "module_path": "simpletuner.helpers.models.ernie.model",
-        "name": "ERNIE-Image",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "base",
-            "turbo"
-        ]
-    },
-    "z_image_omni": {
-        "class_name": "ZImageOmni",
-        "module_path": "simpletuner.helpers.models.z_image_omni.model",
-        "name": "Z-Image Omni",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "base",
-            "edit"
-        ]
-    },
-    "ace_step": {
-        "class_name": "ACEStep",
-        "module_path": "simpletuner.helpers.models.ace_step.model",
-        "name": "ACE-Step",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "base"
-        ]
-    },
-    "omnigen": {
-        "class_name": "OmniGen",
-        "module_path": "simpletuner.helpers.models.omnigen.model",
-        "name": "OmniGen",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "v1"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.hidream.model",
+        "name": "HiDream",
+        "prediction_type": "flow_matching"
     },
     "hunyuanvideo": {
         "class_name": "HunyuanVideo",
-        "module_path": "simpletuner.helpers.models.hunyuanvideo.model",
-        "name": "HunyuanVideo",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "t2v-480p",
             "t2v-720p",
@@ -168,206 +149,35 @@
             "i2v-720p",
             "i2v-480p-distilled",
             "i2v-720p-distilled"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.hunyuanvideo.model",
+        "name": "HunyuanVideo",
+        "prediction_type": "flow_matching"
     },
-    "sd1x": {
-        "class_name": "StableDiffusion1",
-        "module_path": "simpletuner.helpers.models.sd1x.model",
-        "name": "Stable Diffusion 1.x",
-        "prediction_type": "epsilon",
+    "ideogram": {
+        "class_name": "Ideogram4",
         "flavour_choices": [
-            "1.5",
-            "1.4",
-            "dreamshaper",
-            "realvis"
-        ]
+            "fp8",
+            "nf4"
+        ],
+        "module_path": "simpletuner.helpers.models.ideogram.model",
+        "name": "Ideogram 4",
+        "prediction_type": "flow_matching"
     },
-    "flux": {
-        "class_name": "Flux",
-        "module_path": "simpletuner.helpers.models.flux.model",
-        "name": "Flux.1",
-        "prediction_type": "flow_matching",
+    "kandinsky5_image": {
+        "class_name": "Kandinsky5Image",
         "flavour_choices": [
-            "dev",
-            "krea",
-            "schnell",
-            "kontext",
-            "fluxbooru",
-            "libreflux"
-        ]
-    },
-    "deepfloyd": {
-        "class_name": "DeepFloydIF",
-        "module_path": "simpletuner.helpers.models.deepfloyd.model",
-        "name": "DeepFloyd IF",
-        "prediction_type": "epsilon",
-        "flavour_choices": [
-            "i-medium-400m",
-            "i-large-900m",
-            "i-xlarge-4.3b",
-            "ii-medium-450m",
-            "ii-large-1.2b"
-        ]
-    },
-    "stable_cascade": {
-        "class_name": "StableCascadeStageC",
-        "module_path": "simpletuner.helpers.models.stable_cascade.model",
-        "name": "Stable Cascade (Stage C)",
-        "prediction_type": "epsilon",
-        "flavour_choices": [
-            "stage-c",
-            "stage-c-lite"
-        ]
-    },
-    "longcat_image": {
-        "class_name": "LongCatImage",
-        "module_path": "simpletuner.helpers.models.longcat_image.model",
-        "name": "LongCat-Image",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "final",
-            "dev",
-            "edit"
-        ]
-    },
-    "ltxvideo": {
-        "class_name": "LTXVideo",
-        "module_path": "simpletuner.helpers.models.ltxvideo.model",
-        "name": "LTXVideo",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "0.9.5",
-            "0.9.0"
-        ]
-    },
-    "heartmula": {
-        "class_name": "HeartMuLa",
-        "module_path": "simpletuner.helpers.models.heartmula.model",
-        "name": "HeartMuLa",
-        "prediction_type": "autoregressive_next_token",
-        "flavour_choices": [
-            "3b"
-        ]
-    },
-    "longcat_video": {
-        "class_name": "LongCatVideo",
-        "module_path": "simpletuner.helpers.models.longcat_video.model",
-        "name": "LongCat-Video",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "final"
-        ]
-    },
-    "pixart": {
-        "class_name": "PixartSigma",
-        "module_path": "simpletuner.helpers.models.pixart.model",
-        "name": "PixArt Sigma",
-        "prediction_type": "epsilon",
-        "flavour_choices": [
-            "900M-1024-v0.6",
-            "900M-1024-v0.7-stage1",
-            "900M-1024-v0.7-stage2",
-            "600M-512",
-            "600M-1024",
-            "600M-2048"
-        ]
-    },
-    "z_image": {
-        "class_name": "ZImage",
-        "module_path": "simpletuner.helpers.models.z_image.model",
-        "name": "Z-Image",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "base",
-            "turbo",
-            "turbo-ostris-v2",
-            "ostris-de-turbo"
-        ]
-    },
-    "sdxl": {
-        "class_name": "SDXL",
-        "module_path": "simpletuner.helpers.models.sdxl.model",
-        "name": "Stable Diffusion XL",
-        "prediction_type": "epsilon",
-        "flavour_choices": [
-            "base-1.0",
-            "refiner-1.0",
-            "base-0.9",
-            "refiner-0.9"
-        ]
-    },
-    "wan": {
-        "class_name": "Wan",
-        "module_path": "simpletuner.helpers.models.wan.model",
-        "name": "Wan",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "t2v-480p-1.3b-2.1",
-            "t2v-480p-14b-2.1",
-            "i2v-14b-2.1",
-            "i2v-14b-2.1-720p",
-            "i2v-14b-2.2-high",
-            "i2v-14b-2.2-low",
-            "flf2v-14b-2.1",
-            "vace-1.3b-2.1",
-            "vace-14b-2.1",
-            "ti2v-5b-2.2"
-        ]
-    },
-    "lumina2": {
-        "class_name": "Lumina2",
-        "module_path": "simpletuner.helpers.models.lumina2.model",
-        "name": "Lumina-T2I",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "2.0",
-            "neta-lumina"
-        ]
-    },
-    "chroma": {
-        "class_name": "Chroma",
-        "module_path": "simpletuner.helpers.models.chroma.model",
-        "name": "Chroma 1",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "base",
-            "hd",
-            "flash"
-        ]
-    },
-    "wan_s2v": {
-        "class_name": "WanS2V",
-        "module_path": "simpletuner.helpers.models.wan_s2v.model",
-        "name": "WanS2V",
-        "prediction_type": "flow_matching",
-        "flavour_choices": [
-            "s2v-14b-2.2"
-        ]
-    },
-    "cosmos": {
-        "class_name": "Cosmos2Image",
-        "module_path": "simpletuner.helpers.models.cosmos.model",
-        "name": "Cosmos (T2I)",
-        "prediction_type": "sample",
-        "flavour_choices": [
-            "2b",
-            "14b"
-        ]
-    },
-    "kolors": {
-        "class_name": "Kolors",
-        "module_path": "simpletuner.helpers.models.kolors.model",
-        "name": "Kwai Kolors",
-        "prediction_type": "epsilon",
-        "flavour_choices": [
-            "1.0"
-        ]
+            "t2i-lite-sft",
+            "t2i-lite-pretrain",
+            "i2i-lite-sft",
+            "i2i-lite-pretrain"
+        ],
+        "module_path": "simpletuner.helpers.models.kandinsky5_image.model",
+        "name": "Kandinsky5-Image",
+        "prediction_type": "flow_matching"
     },
     "kandinsky5_video": {
         "class_name": "Kandinsky5Video",
-        "module_path": "simpletuner.helpers.models.kandinsky5_video.model",
-        "name": "Kandinsky5-Video",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "t2v-lite-sft-5s",
             "t2v-lite-pretrain-5s",
@@ -379,46 +189,245 @@
             "t2v-pro-pretrain-10s-hd",
             "i2v-lite-5s",
             "i2v-pro-sft-5s"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.kandinsky5_video.model",
+        "name": "Kandinsky5-Video",
+        "prediction_type": "flow_matching"
     },
-    "auraflow": {
-        "class_name": "Auraflow",
-        "module_path": "simpletuner.helpers.models.auraflow.model",
-        "name": "Auraflow",
-        "prediction_type": "flow_matching",
+    "kolors": {
+        "class_name": "Kolors",
         "flavour_choices": [
-            "pony",
-            "v0.3",
-            "v0.2",
-            "v0.1"
-        ]
+            "1.0"
+        ],
+        "module_path": "simpletuner.helpers.models.kolors.model",
+        "name": "Kwai Kolors",
+        "prediction_type": "epsilon"
+    },
+    "krea2": {
+        "class_name": "Krea2",
+        "flavour_choices": [
+            "raw",
+            "turbo"
+        ],
+        "module_path": "simpletuner.helpers.models.krea2.model",
+        "name": "Krea 2",
+        "prediction_type": "flow_matching"
+    },
+    "longcat_image": {
+        "class_name": "LongCatImage",
+        "flavour_choices": [
+            "final",
+            "dev",
+            "edit"
+        ],
+        "module_path": "simpletuner.helpers.models.longcat_image.model",
+        "name": "LongCat-Image",
+        "prediction_type": "flow_matching"
+    },
+    "longcat_video": {
+        "class_name": "LongCatVideo",
+        "flavour_choices": [
+            "final"
+        ],
+        "module_path": "simpletuner.helpers.models.longcat_video.model",
+        "name": "LongCat-Video",
+        "prediction_type": "flow_matching"
+    },
+    "ltxvideo": {
+        "class_name": "LTXVideo",
+        "flavour_choices": [
+            "0.9.5",
+            "0.9.0"
+        ],
+        "module_path": "simpletuner.helpers.models.ltxvideo.model",
+        "name": "LTXVideo",
+        "prediction_type": "flow_matching"
+    },
+    "ltxvideo2": {
+        "class_name": "LTXVideo2",
+        "flavour_choices": [
+            "dev",
+            "dev-fp4",
+            "dev-fp8",
+            "2.3-dev",
+            "2.3-distilled"
+        ],
+        "module_path": "simpletuner.helpers.models.ltxvideo2.model",
+        "name": "LTXVideo2",
+        "prediction_type": "flow_matching"
+    },
+    "lumina2": {
+        "class_name": "Lumina2",
+        "flavour_choices": [
+            "2.0",
+            "neta-lumina"
+        ],
+        "module_path": "simpletuner.helpers.models.lumina2.model",
+        "name": "Lumina-T2I",
+        "prediction_type": "flow_matching"
+    },
+    "omnigen": {
+        "class_name": "OmniGen",
+        "flavour_choices": [
+            "v1"
+        ],
+        "module_path": "simpletuner.helpers.models.omnigen.model",
+        "name": "OmniGen",
+        "prediction_type": "flow_matching"
+    },
+    "pixart": {
+        "class_name": "PixartSigma",
+        "flavour_choices": [
+            "900M-1024-v0.6",
+            "900M-1024-v0.7-stage1",
+            "900M-1024-v0.7-stage2",
+            "600M-512",
+            "600M-1024",
+            "600M-2048"
+        ],
+        "module_path": "simpletuner.helpers.models.pixart.model",
+        "name": "PixArt Sigma",
+        "prediction_type": "epsilon"
+    },
+    "qwen_image": {
+        "class_name": "QwenImage",
+        "flavour_choices": [
+            "v1.0",
+            "v2.0",
+            "edit-v1",
+            "edit-v2",
+            "edit-v2+",
+            "edit-v3"
+        ],
+        "module_path": "simpletuner.helpers.models.qwen_image.model",
+        "name": "Qwen-Image",
+        "prediction_type": "flow_matching"
+    },
+    "sana": {
+        "class_name": "Sana",
+        "flavour_choices": [
+            "sana1.5-4.8b-1024",
+            "sana1.5-1.6b-1024",
+            "sana1.0-1.6b-2048",
+            "sana1.0-1.6b-1024",
+            "sana1.0-600m-1024",
+            "sana1.0-600m-512"
+        ],
+        "module_path": "simpletuner.helpers.models.sana.model",
+        "name": "Sana",
+        "prediction_type": "flow_matching"
     },
     "sanavideo": {
         "class_name": "SanaVideo",
-        "module_path": "simpletuner.helpers.models.sanavideo.model",
-        "name": "SanaVideo",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "2b-480p"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.sanavideo.model",
+        "name": "SanaVideo",
+        "prediction_type": "flow_matching"
     },
-    "anima": {
-        "class_name": "Anima",
-        "module_path": "simpletuner.helpers.models.anima.model",
-        "name": "Anima",
-        "prediction_type": "flow_matching",
+    "sd1x": {
+        "class_name": "StableDiffusion1",
         "flavour_choices": [
-            "preview"
-        ]
+            "1.5",
+            "1.4",
+            "dreamshaper",
+            "realvis"
+        ],
+        "module_path": "simpletuner.helpers.models.sd1x.model",
+        "name": "Stable Diffusion 1.x",
+        "prediction_type": "epsilon"
     },
     "sd3": {
         "class_name": "SD3",
-        "module_path": "simpletuner.helpers.models.sd3.model",
-        "name": "Stable Diffusion 3.x",
-        "prediction_type": "flow_matching",
         "flavour_choices": [
             "medium",
             "large"
-        ]
+        ],
+        "module_path": "simpletuner.helpers.models.sd3.model",
+        "name": "Stable Diffusion 3.x",
+        "prediction_type": "flow_matching"
+    },
+    "sdxl": {
+        "class_name": "SDXL",
+        "flavour_choices": [
+            "base-1.0",
+            "refiner-1.0",
+            "base-0.9",
+            "refiner-0.9"
+        ],
+        "module_path": "simpletuner.helpers.models.sdxl.model",
+        "name": "Stable Diffusion XL",
+        "prediction_type": "epsilon"
+    },
+    "stable_cascade": {
+        "class_name": "StableCascadeStageC",
+        "flavour_choices": [
+            "stage-c",
+            "stage-c-lite"
+        ],
+        "module_path": "simpletuner.helpers.models.stable_cascade.model",
+        "name": "Stable Cascade (Stage C)",
+        "prediction_type": "epsilon"
+    },
+    "wan": {
+        "class_name": "Wan",
+        "flavour_choices": [
+            "t2v-480p-1.3b-2.1",
+            "t2v-480p-14b-2.1",
+            "i2v-14b-2.1",
+            "i2v-14b-2.1-720p",
+            "i2v-14b-2.2-high",
+            "i2v-14b-2.2-low",
+            "animegen-t2v-high",
+            "animegen-t2v-low",
+            "flf2v-14b-2.1",
+            "vace-1.3b-2.1",
+            "vace-14b-2.1",
+            "ti2v-5b-2.2"
+        ],
+        "module_path": "simpletuner.helpers.models.wan.model",
+        "name": "Wan",
+        "prediction_type": "flow_matching"
+    },
+    "wan_s2v": {
+        "class_name": "WanS2V",
+        "flavour_choices": [
+            "s2v-14b-2.2"
+        ],
+        "module_path": "simpletuner.helpers.models.wan_s2v.model",
+        "name": "WanS2V",
+        "prediction_type": "flow_matching"
+    },
+    "z_image": {
+        "class_name": "ZImage",
+        "flavour_choices": [
+            "base",
+            "turbo",
+            "turbo-ostris-v2",
+            "ostris-de-turbo"
+        ],
+        "module_path": "simpletuner.helpers.models.z_image.model",
+        "name": "Z-Image",
+        "prediction_type": "flow_matching"
+    },
+    "z_image_omni": {
+        "class_name": "ZImageOmni",
+        "flavour_choices": [
+            "base",
+            "edit"
+        ],
+        "module_path": "simpletuner.helpers.models.z_image_omni.model",
+        "name": "Z-Image Omni",
+        "prediction_type": "flow_matching"
+    },
+    "zlab_i1": {
+        "class_name": "ZLabI1",
+        "flavour_choices": [
+            "3b"
+        ],
+        "module_path": "simpletuner.helpers.models.zlab_i1.model",
+        "name": "zlab i1",
+        "prediction_type": "flow_matching"
     }
 }

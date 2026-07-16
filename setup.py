@@ -132,35 +132,23 @@ def build_triton_wheel_url(version: str, base_url: str) -> str:
     return f"triton @ {base_url}/{filename}"
 
 
-def build_vllm_cuda13_wheel_url() -> str:
-    """Build a direct wheel URL for vLLM's CUDA 13 release wheel."""
-    version = os.environ.get("SIMPLETUNER_VLLM_CUDA13_VERSION", "0.19.1")
-    cpu_arch = os.environ.get("SIMPLETUNER_VLLM_CUDA13_ARCH", platform.machine())
-    if cpu_arch == "AMD64":
-        cpu_arch = "x86_64"
-    platform_tag = os.environ.get("SIMPLETUNER_VLLM_CUDA13_PLATFORM_TAG", f"manylinux_2_35_{cpu_arch}")
-    filename = f"vllm-{version}%2Bcu130-cp38-abi3-{platform_tag}.whl"
-    return f"vllm @ https://github.com/vllm-project/vllm/releases/download/v{version}/{filename}"
+VLLM_TORCH_211_DEPENDENCY = "vllm>=0.20.0,<0.26.0"
 
 
 def get_cuda13_dependencies():
     """Get CUDA 13 specific dependencies (use --extra-index-url https://download.pytorch.org/whl/cu130)."""
-    dependencies = [
+    return [
         *PYTORCH_DEPENDENCIES,
         "triton>=3.3.0",
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
-        *CUDA13_RUNTIME_DEPENDENCIES,
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
         "ramtorch",
     ]
-    if not _is_building_dist:
-        dependencies.append(build_vllm_cuda13_wheel_url())
-    return dependencies
 
 
 def get_cuda_nightly_dependencies():
@@ -203,7 +191,6 @@ def get_cuda13_nightly_dependencies():
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
-        *CUDA13_RUNTIME_DEPENDENCIES,
         "nvidia-cudnn-cu13",
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
@@ -253,17 +240,13 @@ def get_cpu_dependencies():
 
 
 def get_captioning_cuda13_dependencies():
-    """CaptionFlow dependencies with the vLLM CUDA 13 wheel selected explicitly."""
-    dependencies = [
+    """CaptionFlow dependencies with a vLLM release compatible with the PyTorch 2.11 stack."""
+    return [
         "caption-flow>=0.5.2",
         "numpy>=2.2.0,<2.3.0",
         "transformers>=5.5.1,<6.0.0",
+        VLLM_TORCH_211_DEPENDENCY,
     ]
-    if not _is_building_dist:
-        dependencies.append(build_vllm_cuda13_wheel_url())
-    else:
-        dependencies.append("vllm>=0.19.1,<0.20.0")
-    return dependencies
 
 
 PLATFORM_DEPENDENCIES = {
@@ -372,7 +355,7 @@ base_deps = [
     "webshart>=0.4.6",
 ]
 
-# CUDA-specific extras contain direct URLs that PyPI rejects, so only include them
+# Nightly CUDA extras contain direct URLs that PyPI rejects, so only include them
 # for editable / local installs, not when building distributable wheels / sdists.
 _is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "build"))
 

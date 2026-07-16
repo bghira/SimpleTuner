@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
-from simpletuner.helpers.training.validation import Validation, ValidationAbortedException
+from simpletuner.helpers.training.validation import Validation, ValidationAbortedException, ValidationPrompt
 
 
 class MockAudioModel(AudioModelFoundation):
@@ -74,7 +74,7 @@ class TestValidationAbort(unittest.TestCase):
         # Setup mocks
         mock_tqdm.side_effect = lambda x, **kwargs: x
         mock_setup_scheduler.return_value = None
-        mock_normalise.return_value = "mock_sample"
+        mock_normalise.return_value = ValidationPrompt(shortname="test", prompt="test prompt")
         mock_prepare_prompts.return_value = {
             "validation_prompts": ["test prompt"],
             "validation_shortnames": ["test"],
@@ -147,6 +147,9 @@ class TestValidationAbort(unittest.TestCase):
         mock_config.control = False
         mock_config.output_dir = "/tmp/test_validation"
         mock_config.validation_preview = False
+        mock_config.validation_resolution = 256
+        mock_config.model_flavour = None
+        mock_state_tracker.get_args.return_value = mock_config
 
         # Abort on second callback invocation
         def should_abort_check():

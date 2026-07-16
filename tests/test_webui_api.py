@@ -402,6 +402,39 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         data = response.json()
         self.assertEqual(data, {})
 
+    def test_checkpoint_inference_settings_persist(self) -> None:
+        response = self.client.get("/api/webui/ui-state/checkpoint-inference")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"filename_style": "descriptive", "keep_loaded": False, "streaming_preview": False},
+        )
+
+        response = self.client.post(
+            "/api/webui/ui-state/checkpoint-inference",
+            json={"filename_style": "prompt", "keep_loaded": True, "streaming_preview": True},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"filename_style": "prompt", "keep_loaded": True, "streaming_preview": True},
+        )
+
+        response = self.client.get("/api/webui/ui-state/checkpoint-inference")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"filename_style": "prompt", "keep_loaded": True, "streaming_preview": True},
+        )
+
+    def test_checkpoint_inference_settings_reject_unknown_filename_style(self) -> None:
+        response = self.client.post(
+            "/api/webui/ui-state/checkpoint-inference",
+            json={"filename_style": "unknown"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
     def test_save_and_get_collapsed_sections(self) -> None:
         """Test POST saves sections and GET retrieves them."""
         sections = {"section1": True, "section2": False, "section3": True}

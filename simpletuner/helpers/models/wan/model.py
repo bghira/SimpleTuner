@@ -3,7 +3,7 @@ import os
 import random
 import threading
 from functools import partial
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler, WanImageToVideoPipeline
@@ -24,6 +24,7 @@ from simpletuner.helpers.models.common import (
     PipelineConditioningImageEmbedder,
     PipelineTypes,
     PredictionTypes,
+    ValidationPipelineCall,
     VideoModelFoundation,
 )
 from simpletuner.helpers.models.foundation_mixins import VideoToTensor
@@ -251,6 +252,10 @@ class Wan(VideoModelFoundation):
 
     # The default model flavor to use when none is specified.
     DEFAULT_MODEL_FLAVOUR = "t2v-480p-1.3b-2.1"
+    WAN22_T2V_A14B_PATH = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    ANIMEGEN_T2V_HIGH_PATH = "https://huggingface.co/aidealab/AnimeGen-T2V/resolve/main/high_noise.safetensors"
+    ANIMEGEN_T2V_LOW_PATH = "https://huggingface.co/aidealab/AnimeGen-T2V/resolve/main/low_noise.safetensors"
+    SUPPORTS_MULTISTAGE_VALIDATION = True
     HUGGINGFACE_PATHS = {
         "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
@@ -258,6 +263,8 @@ class Wan(VideoModelFoundation):
         "i2v-14b-2.1-720p": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
         "i2v-14b-2.2-high": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "i2v-14b-2.2-low": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "animegen-t2v-high": WAN22_T2V_A14B_PATH,
+        "animegen-t2v-low": WAN22_T2V_A14B_PATH,
         "flf2v-14b-2.1": "Wan-AI/Wan2.1-FLF2V-14B-720P-diffusers",
         "vace-1.3b-2.1": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
         "vace-14b-2.1": "Wan-AI/Wan2.1-VACE-14B-diffusers",
@@ -303,6 +310,28 @@ class Wan(VideoModelFoundation):
             "sample_steps": 40,
             "boundary_ratio": 0.90,
             "guidance": {"high": 3.5, "low": 3.5},
+        },
+        "animegen-t2v-high": {
+            "trained_stage": "high",
+            "stage_subfolder": None,
+            "other_stage_subfolder": None,
+            "stage_model_path": ANIMEGEN_T2V_HIGH_PATH,
+            "other_stage_model_path": ANIMEGEN_T2V_LOW_PATH,
+            "flow_shift": 3.0,
+            "sample_steps": 8,
+            "boundary_ratio": 0.875,
+            "guidance": {"high": 1.0, "low": 1.0},
+        },
+        "animegen-t2v-low": {
+            "trained_stage": "low",
+            "stage_subfolder": None,
+            "other_stage_subfolder": None,
+            "stage_model_path": ANIMEGEN_T2V_LOW_PATH,
+            "other_stage_model_path": ANIMEGEN_T2V_HIGH_PATH,
+            "flow_shift": 3.0,
+            "sample_steps": 8,
+            "boundary_ratio": 0.875,
+            "guidance": {"high": 1.0, "low": 1.0},
         },
     }
 
@@ -826,8 +855,11 @@ class Wan(VideoModelFoundation):
         if stage_info is None:
             return
 
+        stage_model_path = stage_info.get("stage_model_path")
         if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None:
-            self.config.pretrained_transformer_model_name_or_path = self.config.pretrained_model_name_or_path
+            self.config.pretrained_transformer_model_name_or_path = (
+                stage_model_path if stage_model_path is not None else self.config.pretrained_model_name_or_path
+            )
         self.config.pretrained_transformer_subfolder = stage_info["stage_subfolder"]
 
         self.config.wan_trained_stage = stage_info["trained_stage"]
@@ -877,27 +909,73 @@ class Wan(VideoModelFoundation):
             return False
         return bool(getattr(self.config, "wan_validation_load_other_stage", False))
 
-    def _get_or_load_wan_stage_module(self, subfolder: str) -> WanTransformer3DModel:
-        if subfolder in self._wan_cached_stage_modules:
-            return self._wan_cached_stage_modules[subfolder]
+    def supports_multistage_validation(self) -> bool:
+        return self._should_load_other_stage()
 
-        logger.info("Loading Wan stage weights for validation from subfolder '%s'.", subfolder)
-        stage = self.MODEL_CLASS.from_pretrained(
-            self.config.pretrained_model_name_or_path,
-            subfolder=subfolder,
-            torch_dtype=self.config.weight_dtype,
-            use_safetensors=True,
-        )
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "high": {"high"},
+            "low": {"low"},
+        }
+
+    def validation_adapter_load_kwargs(self, target_stage: str) -> Dict[str, object]:
+        if target_stage == "low":
+            return {"load_into_transformer_2": True}
+        return {"load_into_transformer_2": False}
+
+    def validation_adapter_component(self, target_stage: str) -> Optional[str]:
+        if target_stage == "low":
+            return "transformer_2"
+        if target_stage == "high":
+            return "transformer"
+        return None
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: ValidationPipelineCall,
+    ) -> Any:
+        return pipeline_call(self.pipeline, pipeline_kwargs, target_stage=("high", "low"))
+
+    def _get_or_load_wan_stage_module(
+        self,
+        subfolder: Optional[str],
+        model_path: Optional[str] = None,
+    ) -> WanTransformer3DModel:
+        model_path = model_path or self.config.pretrained_model_name_or_path
+        cache_key = f"{model_path}:{subfolder}"
+        if cache_key in self._wan_cached_stage_modules:
+            return self._wan_cached_stage_modules[cache_key]
+
+        if isinstance(model_path, str) and model_path.lower().endswith(".safetensors"):
+            logger.info("Loading Wan stage weights for validation from single-file checkpoint '%s'.", model_path)
+            stage = self.MODEL_CLASS.from_single_file(
+                model_path,
+                torch_dtype=self.config.weight_dtype,
+                use_safetensors=True,
+            )
+        else:
+            logger.info("Loading Wan stage weights for validation from subfolder '%s'.", subfolder)
+            stage = self.MODEL_CLASS.from_pretrained(
+                model_path,
+                subfolder=subfolder,
+                torch_dtype=self.config.weight_dtype,
+                use_safetensors=True,
+            )
         stage.requires_grad_(False)
         stage.to(self.accelerator.device, dtype=self.config.weight_dtype)
         stage.eval()
         self._apply_time_embedding_override(stage)
         self._patch_condition_embedder(stage)
-        self._wan_cached_stage_modules[subfolder] = stage
+        self._wan_cached_stage_modules[cache_key] = stage
         return stage
 
     def unload_model(self):
         super().unload_model()
+        self._wan_cached_stage_modules.clear()
+
+    def unload_validation_models(self) -> None:
+        super().unload_validation_models()
         self._wan_cached_stage_modules.clear()
 
     def set_prepared_model(self, model, base_model: bool = False):
@@ -912,19 +990,20 @@ class Wan(VideoModelFoundation):
             pipeline.config.expand_timesteps = bool(self._wan_expand_timesteps)
         stage_info = self._wan_stage_info()
         if stage_info is not None:
-            load_other = self._should_load_other_stage()
+            load_other = not load_base_model and self._should_load_other_stage()
             trained_stage = stage_info["trained_stage"]
             other_subfolder = stage_info["other_stage_subfolder"]
+            other_model_path = stage_info.get("other_stage_model_path")
 
             if trained_stage == "low":
                 if load_other:
                     pipeline.transformer_2 = pipeline.transformer
-                    pipeline.transformer = self._get_or_load_wan_stage_module(other_subfolder)
+                    pipeline.transformer = self._get_or_load_wan_stage_module(other_subfolder, other_model_path)
                 else:
                     pipeline.transformer_2 = None
             else:
                 if load_other:
-                    pipeline.transformer_2 = self._get_or_load_wan_stage_module(other_subfolder)
+                    pipeline.transformer_2 = self._get_or_load_wan_stage_module(other_subfolder, other_model_path)
                 else:
                     pipeline.transformer_2 = None
 
@@ -1331,11 +1410,11 @@ class Wan(VideoModelFoundation):
         if self.config.tokenizer_max_length is not None:
             logger.warning(f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-")
         self.config.tokenizer_max_length = 512
-        if self.config.validation_num_inference_steps > 50:
+        if stage_info is None and self.config.validation_num_inference_steps > 50:
             logger.warning(
                 f"{self.NAME} {self.config.model_flavour} may be wasting compute with more than 50 steps. Consider reducing the value to save time."
             )
-        if self.config.validation_num_inference_steps < 40:
+        if stage_info is None and self.config.validation_num_inference_steps < 40:
             logger.warning(
                 f"{self.NAME} {self.config.model_flavour} expects around 40 or more inference steps. Consider increasing --validation_num_inference_steps to 40."
             )

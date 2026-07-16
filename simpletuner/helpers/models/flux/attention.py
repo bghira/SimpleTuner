@@ -5,7 +5,7 @@ from einops import rearrange
 from torch import FloatTensor, Tensor
 from torch.nn import functional as F
 
-from simpletuner.helpers.training.attention_backend import get_packed_attention_backend
+from simpletuner.helpers.training.attention_backend import get_packed_attention_backend, maybe_metal_flash_rope_attention
 
 try:
     from flash_attn_interface import flash_attn_func, flash_attn_qkvpacked_func
@@ -393,20 +393,33 @@ class FluxFusedSDPAProcessor:
             if attn.norm_k is not None:
                 key = attn.norm_k(key)
 
-            # Apply RoPE if needed
+            hidden_states = None
             if image_rotary_emb is not None:
-                query = apply_rotary_emb(query, image_rotary_emb)
-                key = apply_rotary_emb(key, image_rotary_emb)
+                hidden_states = maybe_metal_flash_rope_attention(
+                    query,
+                    key,
+                    value,
+                    image_rotary_emb,
+                    attn_mask=attention_mask,
+                    is_causal=False,
+                    layout="bhsd",
+                )
 
-            # SDPA
-            hidden_states = F.scaled_dot_product_attention(
-                query,
-                key,
-                value,
-                attn_mask=attention_mask,
-                dropout_p=0.0,
-                is_causal=False,
-            )
+            if hidden_states is None:
+                # Apply RoPE if needed
+                if image_rotary_emb is not None:
+                    query = apply_rotary_emb(query, image_rotary_emb)
+                    key = apply_rotary_emb(key, image_rotary_emb)
+
+                # SDPA
+                hidden_states = F.scaled_dot_product_attention(
+                    query,
+                    key,
+                    value,
+                    attn_mask=attention_mask,
+                    dropout_p=0.0,
+                    is_causal=False,
+                )
 
             # Reshape back
             hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
@@ -461,20 +474,33 @@ class FluxFusedSDPAProcessor:
             key = torch.cat([encoder_key, key], dim=2)
             value = torch.cat([encoder_value, value], dim=2)
 
-            # Apply RoPE if needed
+            hidden_states = None
             if image_rotary_emb is not None:
-                query = apply_rotary_emb(query, image_rotary_emb)
-                key = apply_rotary_emb(key, image_rotary_emb)
+                hidden_states = maybe_metal_flash_rope_attention(
+                    query,
+                    key,
+                    value,
+                    image_rotary_emb,
+                    attn_mask=attention_mask,
+                    is_causal=False,
+                    layout="bhsd",
+                )
 
-            # SDPA
-            hidden_states = F.scaled_dot_product_attention(
-                query,
-                key,
-                value,
-                attn_mask=attention_mask,
-                dropout_p=0.0,
-                is_causal=False,
-            )
+            if hidden_states is None:
+                # Apply RoPE if needed
+                if image_rotary_emb is not None:
+                    query = apply_rotary_emb(query, image_rotary_emb)
+                    key = apply_rotary_emb(key, image_rotary_emb)
+
+                # SDPA
+                hidden_states = F.scaled_dot_product_attention(
+                    query,
+                    key,
+                    value,
+                    attn_mask=attention_mask,
+                    dropout_p=0.0,
+                    is_causal=False,
+                )
 
             # Reshape: (batch, heads, seq_len, head_dim) -> (batch, seq_len, heads * head_dim)
             hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
@@ -540,15 +566,28 @@ class FluxSingleFusedSDPAProcessor:
         if attn.norm_k is not None:
             key = attn.norm_k(key)
 
-        # Apply RoPE if needed
+        hidden_states = None
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb)
-            key = apply_rotary_emb(key, image_rotary_emb)
+            hidden_states = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                image_rotary_emb,
+                attn_mask=attention_mask,
+                is_causal=False,
+                layout="bhsd",
+            )
 
-        # SDPA
-        hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
-        )
+        if hidden_states is None:
+            # Apply RoPE if needed
+            if image_rotary_emb is not None:
+                query = apply_rotary_emb(query, image_rotary_emb)
+                key = apply_rotary_emb(key, image_rotary_emb)
+
+            # SDPA
+            hidden_states = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+            )
 
         # Reshape back
         hidden_states = rearrange(hidden_states, "B H L D -> B L (H D)")

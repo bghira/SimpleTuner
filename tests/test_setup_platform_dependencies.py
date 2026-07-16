@@ -46,7 +46,7 @@ class SetupPlatformDependencyTests(unittest.TestCase):
             with self.subTest(extra=extra_name):
                 self.assertIn("torchao>=0.17.0,<0.18.0", extras_require[extra_name])
 
-    def test_cuda13_extras_include_transformerengine_runtime_dependencies(self):
+    def test_cuda13_runtime_pins_are_limited_to_transformerengine_extras(self):
         extras_require = load_setup_kwargs()["extras_require"]
         expected = {
             "nvidia-cublas>=13.3.0.5",
@@ -54,12 +54,31 @@ class SetupPlatformDependencyTests(unittest.TestCase):
             "nvidia-cuda-runtime>=13.3.29",
         }
 
-        for extra_name in ("cuda13", "cuda13-nightly", "transformerengine-cuda13", "cuda13-transformerengine"):
+        for extra_name in ("cuda13", "cuda13-nightly"):
+            with self.subTest(extra=extra_name):
+                self.assertTrue(expected.isdisjoint(set(extras_require[extra_name])))
+
+        for extra_name in ("transformerengine-cuda13", "cuda13-transformerengine"):
             with self.subTest(extra=extra_name):
                 self.assertTrue(expected.issubset(set(extras_require[extra_name])))
+                self.assertIn("transformer_engine[pytorch]>=2.16.0,<2.17.0", extras_require[extra_name])
 
-        self.assertIn("transformer_engine[pytorch]>=2.16.0,<2.17.0", extras_require["transformerengine-cuda13"])
-        self.assertIn("transformer_engine[pytorch]>=2.16.0,<2.17.0", extras_require["cuda13-transformerengine"])
+    def test_cuda13_vllm_is_limited_to_captioning_extras(self):
+        extras_require = load_setup_kwargs()["extras_require"]
+        expected = "vllm>=0.20.0,<0.26.0"
+
+        for extra_name in ("cuda", "cuda13", "cuda-nightly", "cuda13-nightly", "rocm", "apple", "cpu"):
+            with self.subTest(extra=extra_name):
+                dependencies = extras_require[extra_name]
+                self.assertNotIn(expected, dependencies)
+                self.assertFalse(any(dependency.startswith("vllm") for dependency in dependencies))
+
+        for extra_name in ("captioning-cuda13", "cuda13-captioning"):
+            with self.subTest(extra=extra_name):
+                dependencies = extras_require[extra_name]
+                self.assertIn(expected, dependencies)
+                self.assertFalse(any(dependency.startswith("vllm @ ") for dependency in dependencies))
+                self.assertNotIn("vllm>=0.19.1,<0.20.0", dependencies)
 
 
 if __name__ == "__main__":

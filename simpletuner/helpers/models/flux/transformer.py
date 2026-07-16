@@ -44,6 +44,7 @@ from simpletuner.helpers.models.flowmap import (
 )
 from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.attention_backend import maybe_metal_flash_rope_attention
 from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
@@ -164,31 +165,44 @@ class FluxAttnProcessor2_0:
             key = torch.cat([encoder_hidden_states_key_proj, key], dim=2)
             value = torch.cat([encoder_hidden_states_value_proj, value], dim=2)
 
-        if image_rotary_emb is not None:
-            query = _apply_rotary_emb_anyshape(query, image_rotary_emb)
-            key = _apply_rotary_emb_anyshape(key, image_rotary_emb)
-
         if attention_mask is not None:
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             attention_mask = (attention_mask > 0).bool()
             attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
 
-        publish_attention_max_logits(
-            query,
-            key,
-            attention_mask,
-            getattr(attn, "to_q", None) and attn.to_q.weight,
-            getattr(attn, "to_k", None) and attn.to_k.weight,
-        )
+        hidden_states = None
+        if image_rotary_emb is not None:
+            hidden_states = maybe_metal_flash_rope_attention(
+                query,
+                key,
+                value,
+                image_rotary_emb,
+                attn_mask=attention_mask,
+                is_causal=False,
+                layout="bhsd",
+            )
 
-        hidden_states = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            dropout_p=0.0,
-            is_causal=False,
-            attn_mask=attention_mask,
-        )
+        if hidden_states is None:
+            if image_rotary_emb is not None:
+                query = _apply_rotary_emb_anyshape(query, image_rotary_emb)
+                key = _apply_rotary_emb_anyshape(key, image_rotary_emb)
+
+            publish_attention_max_logits(
+                query,
+                key,
+                attention_mask,
+                getattr(attn, "to_q", None) and attn.to_q.weight,
+                getattr(attn, "to_k", None) and attn.to_k.weight,
+            )
+
+            hidden_states = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                dropout_p=0.0,
+                is_causal=False,
+                attn_mask=attention_mask,
+            )
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
 

@@ -1,5 +1,7 @@
+import copy
 import logging
 import os
+from typing import Any, Dict
 
 import torch
 from diffusers import AutoencoderKL
@@ -15,7 +17,13 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    ImageModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    ValidationPipelineCall,
+)
 from simpletuner.helpers.models.pixart.pipeline import (
     PixArtSigmaControlNetLoraLoaderMixin,
     PixArtSigmaControlNetPipeline,
@@ -71,6 +79,12 @@ class PixartSigma(ImageModelFoundation):
         "600M-2048": "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS",
     }
     MODEL_LICENSE = "openrail++"
+    SUPPORTS_MULTISTAGE_VALIDATION = True
+    PIXART_VALIDATION_PIPELINE_MODES = {"trained-stage", "full-pipeline"}
+    PIXART_VALIDATION_PIPELINE_KEYS = {
+        "stage1": "pixart_validation_stage1",
+        "stage2": "pixart_validation_stage2",
+    }
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -435,6 +449,195 @@ class PixartSigma(ImageModelFoundation):
         elif "stage2" in self.config.model_flavour or "stage2" in self.config.pretrained_model_name_or_path:
             logger.info(f"{self.NAME} stage2 eDiffi model is detected, enabling special training configuration settings.")
             self.config.refiner_training = True
+
+    def _pixart_validation_mode(self) -> str:
+        mode = getattr(self.config, "pixart_validation_pipeline_mode", "trained-stage") or "trained-stage"
+        mode = str(mode).strip().lower()
+        if mode not in self.PIXART_VALIDATION_PIPELINE_MODES:
+            raise ValueError(
+                "pixart_validation_pipeline_mode must be one of: "
+                f"{', '.join(sorted(self.PIXART_VALIDATION_PIPELINE_MODES))}"
+            )
+        return mode
+
+    def supports_multistage_validation(self) -> bool:
+        if self._pixart_validation_mode() != "full-pipeline":
+            return False
+        if getattr(self.config, "validation_using_datasets", False):
+            return False
+        if getattr(self.config, "controlnet", False) or getattr(self.config, "control", False):
+            return False
+        return True
+
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one"},
+            "stage2": {"stage2", "stage_2", "2", "two"},
+        }
+
+    def _pixart_current_stage(self) -> int:
+        model_flavour = str(getattr(self.config, "model_flavour", "") or "").lower()
+        model_path = str(getattr(self.config, "pretrained_model_name_or_path", "") or "").lower()
+        if "stage2" in model_flavour or "stage2" in model_path:
+            return 2
+        if "stage1" in model_flavour or "stage1" in model_path:
+            return 1
+        if getattr(self.config, "refiner_training", False) and not getattr(
+            self.config, "refiner_training_invert_schedule", False
+        ):
+            return 2
+        return 1
+
+    def _pixart_validation_stage_model(self, stage: int) -> str:
+        if stage == 1:
+            configured = getattr(self.config, "pixart_validation_stage1_model", None)
+            default = self.HUGGINGFACE_PATHS["900M-1024-v0.7-stage1"]
+        elif stage == 2:
+            configured = getattr(self.config, "pixart_validation_stage2_model", None)
+            default = self.HUGGINGFACE_PATHS["900M-1024-v0.7-stage2"]
+        else:
+            raise ValueError(f"Unsupported PixArt validation stage: {stage}")
+        return str(configured or default)
+
+    def _pixart_from_pretrained_kwargs(self) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "torch_dtype": self.config.weight_dtype,
+        }
+        vae = self.get_vae()
+        if vae is not None:
+            kwargs["vae"] = vae
+        text_encoders = getattr(self, "text_encoders", None)
+        if text_encoders and text_encoders[0] is not None:
+            kwargs["text_encoder"] = self.unwrap_model(text_encoders[0])
+        tokenizers = getattr(self, "tokenizers", None)
+        if tokenizers and tokenizers[0] is not None:
+            kwargs["tokenizer"] = tokenizers[0]
+        for attr in ("revision", "cache_dir", "local_files_only", "variant"):
+            value = getattr(self.config, attr, None)
+            if value is not None:
+                kwargs[attr] = value
+        return kwargs
+
+    def _pixart_clone_validation_scheduler(self):
+        scheduler = getattr(getattr(self, "pipeline", None), "scheduler", None)
+        if scheduler is None:
+            scheduler = getattr(self, "noise_schedule", None)
+        if scheduler is None:
+            return None
+        try:
+            return scheduler.__class__.from_config(scheduler.config)
+        except Exception:
+            return copy.deepcopy(scheduler)
+
+    def _get_pixart_validation_pipeline(self, cache_key: str, repo_id: str):
+        if cache_key in self.pipelines:
+            return self.pipelines[cache_key]
+
+        logger.info("Loading PixArt validation pipeline '%s' from %s.", cache_key, repo_id)
+        pipeline = PixArtSigmaPipeline.from_pretrained(repo_id, **self._pixart_from_pretrained_kwargs())
+        scheduler = self._pixart_clone_validation_scheduler()
+        if scheduler is not None:
+            pipeline.scheduler = scheduler
+        pipeline.to(self.accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+        self.pipelines[cache_key] = pipeline
+        return pipeline
+
+    def _pixart_stage1_pipeline(self):
+        if self._pixart_current_stage() == 1:
+            return self.pipeline
+        return self._get_pixart_validation_pipeline(
+            self.PIXART_VALIDATION_PIPELINE_KEYS["stage1"],
+            self._pixart_validation_stage_model(1),
+        )
+
+    def _pixart_stage2_pipeline(self):
+        if self._pixart_current_stage() == 2:
+            return self.pipeline
+        return self._get_pixart_validation_pipeline(
+            self.PIXART_VALIDATION_PIPELINE_KEYS["stage2"],
+            self._pixart_validation_stage_model(2),
+        )
+
+    def unload_validation_models(self) -> None:
+        super().unload_validation_models()
+        for key in self.PIXART_VALIDATION_PIPELINE_KEYS.values():
+            if key in self.pipelines:
+                del self.pipelines[key]
+
+    def _pixart_split_schedule_boundary(self) -> float:
+        strength = float(getattr(self.config, "refiner_training_strength", 0.2) or 0.0)
+        if strength <= 0.0 or strength >= 1.0:
+            raise ValueError(
+                "refiner_training_strength must be greater than 0 and less than 1 for PixArt full-pipeline validation."
+            )
+        return 1.0 - strength
+
+    def _pixart_prompt_kwargs(self, pipeline_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        if "prompt_embeds" in pipeline_kwargs:
+            keys = (
+                "prompt_embeds",
+                "prompt_attention_mask",
+                "negative_prompt_embeds",
+                "negative_prompt_attention_mask",
+            )
+            return {key: pipeline_kwargs[key] for key in keys if key in pipeline_kwargs}
+        return {
+            "prompt": pipeline_kwargs.get("_validation_prompt_text") or pipeline_kwargs.get("prompt") or "",
+            "negative_prompt": (
+                pipeline_kwargs.get("_validation_negative_prompt_text") or pipeline_kwargs.get("negative_prompt") or ""
+            ),
+        }
+
+    def _pixart_copy_optional_kwargs(self, pipeline_kwargs: Dict[str, Any], keys: tuple[str, ...]) -> Dict[str, Any]:
+        return {key: pipeline_kwargs[key] for key in keys if key in pipeline_kwargs}
+
+    def run_multistage_validation(
+        self,
+        pipeline_kwargs: Dict[str, Any],
+        pipeline_call: ValidationPipelineCall,
+    ) -> Any:
+        stage1 = self._pixart_stage1_pipeline()
+        stage2 = self._pixart_stage2_pipeline()
+        split_boundary = self._pixart_split_schedule_boundary()
+        common_optional = (
+            "generator",
+            "eta",
+            "callback",
+            "callback_steps",
+            "clean_caption",
+            "use_resolution_binning",
+            "max_sequence_length",
+        )
+
+        stage1_kwargs = {
+            **self._pixart_prompt_kwargs(pipeline_kwargs),
+            **self._pixart_copy_optional_kwargs(pipeline_kwargs, common_optional),
+            "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
+            "num_inference_steps": int(pipeline_kwargs["num_inference_steps"]),
+            "guidance_scale": float(pipeline_kwargs.get("guidance_scale", 4.5)),
+            "denoising_end": split_boundary,
+            "output_type": "latent",
+            "width": pipeline_kwargs.get("width"),
+            "height": pipeline_kwargs.get("height"),
+        }
+        logger.info("Running PixArt validation stage 1 to %.2f of the schedule.", split_boundary)
+        stage1_result = pipeline_call(stage1, stage1_kwargs, target_stage="stage1")
+
+        stage2_kwargs = {
+            **self._pixart_prompt_kwargs(pipeline_kwargs),
+            **self._pixart_copy_optional_kwargs(pipeline_kwargs, common_optional),
+            "image": stage1_result.images,
+            "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
+            "num_inference_steps": int(pipeline_kwargs["num_inference_steps"]),
+            "guidance_scale": float(pipeline_kwargs.get("guidance_scale", 4.5)),
+            "denoising_start": split_boundary,
+            "output_type": "pil",
+            "width": pipeline_kwargs.get("width"),
+            "height": pipeline_kwargs.get("height"),
+        }
+        logger.info("Running PixArt validation stage 2 from %.2f of the schedule.", split_boundary)
+        return pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
     def check_user_config(self):
         """

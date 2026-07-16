@@ -126,44 +126,22 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Validation Lyrics
     registry._add_field(
         ConfigField(
-            name="validation_lyrics",
-            arg_name="--validation_lyrics",
-            ui_label="Validation Lyrics",
-            field_type=FieldType.TEXTAREA,
+            name="validation_input",
+            arg_name="--validation_input",
+            ui_label="Validation Input Images",
+            field_type=FieldType.TEXT_JSON,
             tab="validation",
             section="prompt_management",
-            placeholder="Enter lyrics for audio validation",
-            help_text="Lyrics to use for audio validation",
-            tooltip="Provide lyrics for music generation validation. Only used by audio models.",
+            default_value=None,
+            placeholder='[{"path": "/path/to/image.png", "prompt": "a validation prompt"}]',
+            help_text="JSON list of validation input image paths and prompts",
+            tooltip="Use standalone input images for validation without requiring a validation dataset. Each entry must include path and prompt.",
             importance=ImportanceLevel.ADVANCED,
-            order=2,
+            order=1.5,
             allow_empty=True,
-            model_specific=["ace_step"],
-        )
-    )
-
-    # Validation Audio Duration
-    registry._add_field(
-        ConfigField(
-            name="validation_audio_duration",
-            arg_name="--validation_audio_duration",
-            ui_label="Validation Audio Duration",
-            field_type=FieldType.NUMBER,
-            tab="validation",
-            section="validation_schedule",
-            default_value=30.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1.0, message="Duration must be at least 1 second"),
-                ValidationRule(ValidationRuleType.MAX, value=300.0, message="Duration recommended to be under 300s"),
-            ],
-            help_text="Duration of generated audio for validation (seconds)",
-            tooltip="Length of the audio clip to generate during validation runs.",
-            importance=ImportanceLevel.ADVANCED,
-            order=6,
-            model_specific=["ace_step"],
+            documentation="OPTIONS.md#--validation_input",
         )
     )
 
@@ -476,44 +454,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=3,
             subsection="advanced",
-        )
-    )
-
-    # Validation Guidance Real
-    registry._add_field(
-        ConfigField(
-            name="validation_guidance_real",
-            arg_name="--validation_guidance_real",
-            ui_label="Real CFG (Distilled Models)",
-            field_type=FieldType.NUMBER,
-            tab="validation",
-            section="validation_guidance",
-            default_value=1.0,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1.0, message="Must be at least 1.0")],
-            help_text="CFG value for distilled models (e.g., FLUX schnell)",
-            tooltip="Use 1.0 for no CFG (distilled models). Higher values for real CFG sampling.",
-            importance=ImportanceLevel.ADVANCED,
-            order=2,
-            model_specific=["flux", "flux2"],
-        )
-    )
-
-    # Validation No CFG Until Timestep
-    registry._add_field(
-        ConfigField(
-            name="validation_no_cfg_until_timestep",
-            arg_name="--validation_no_cfg_until_timestep",
-            ui_label="Skip CFG Until Timestep",
-            field_type=FieldType.NUMBER,
-            tab="validation",
-            section="validation_guidance",
-            default_value=2,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
-            help_text="Skip CFG for initial timesteps (Flux only)",
-            tooltip="For Flux real CFG: skip CFG on these initial timesteps. Default: 2",
-            importance=ImportanceLevel.ADVANCED,
-            order=3,
-            model_specific=["flux", "flux2"],
         )
     )
 
@@ -879,42 +819,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Validation Audio Only (LTX-2)
-    registry._add_field(
-        ConfigField(
-            name="validation_audio_only",
-            arg_name="--validation_audio_only",
-            ui_label="Validation Audio Only",
-            field_type=FieldType.CHECKBOX,
-            tab="validation",
-            section="validation_options",
-            default_value=False,
-            help_text="Disable video generation during validation and emit audio only.",
-            tooltip="LTX-2 only: skips video generation during validation so only audio outputs are produced.",
-            importance=ImportanceLevel.ADVANCED,
-            order=17,
-            model_specific=["ltxvideo2"],
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="validation_ltx2_video_conditioning",
-            arg_name="--validation_ltx2_video_conditioning",
-            ui_label="LTX-2 Validation Video Conditioning",
-            field_type=FieldType.TEXT_JSON,
-            tab="validation",
-            section="validation_options",
-            default_value=None,
-            help_text="JSON list of IC-LoRA reference videos for LTX-2 validation",
-            tooltip="LTX-2 only: pass reference videos as paths, [path, strength] pairs, or objects with path/video_path and optional strength.",
-            importance=ImportanceLevel.ADVANCED,
-            order=18,
-            model_specific=["ltxvideo2"],
-            documentation="OPTIONS.md#ltx-2-conditioning-options",
-        )
-    )
-
     # Validation Resolution
     registry._add_field(
         ConfigField(
@@ -1044,7 +948,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             placeholder="/path/to/validation_adapters.json",
             help_text="JSON file or inline JSON describing multiple adapter combinations to evaluate during validation.",
-            tooltip="Each entry can define 'label' and a list of adapter paths so multiple validation runs are automated.",
+            tooltip="Each entry can define 'label', adapter paths, strength, and optional 'target_stage' for multi-stage validation.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=5,
             documentation="OPTIONS.md#--validation_adapter_config",
