@@ -78,6 +78,7 @@ class _DummyQwenVLModel(torch.nn.Module):
         self.feature_calls.append(
             {
                 "pixel_values_shape": pixel_values.shape,
+                "pixel_values_dtype": pixel_values.dtype,
                 "image_grid_thw": image_grid_thw.detach().cpu().clone(),
                 "return_dict": return_dict,
             }
@@ -189,6 +190,13 @@ class CrepaQwenVLEncoderTests(unittest.TestCase):
 
         self.assertEqual(reg.encoder_name, "Qwen/Qwen3-VL-4B-Instruct")
 
+    def test_qwen_vl_encoder_uses_fp32_on_cpu(self):
+        config = self._make_config(weight_dtype=torch.bfloat16)
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8)
+
+        self.assertEqual(reg._encoder_dtype(), torch.float32)
+
     def test_qwen_vl_encoder_processes_frames_through_transformers(self):
         config = self._make_config()
         accelerator = SimpleNamespace(device=torch.device("cpu"))
@@ -205,7 +213,7 @@ class CrepaQwenVLEncoderTests(unittest.TestCase):
             tokens = reg._encode_frames(video)
 
         processor_from_pretrained.assert_called_once_with("Qwen/Qwen3-VL-4B-Instruct")
-        model_from_pretrained.assert_called_once_with("Qwen/Qwen3-VL-4B-Instruct", torch_dtype=torch.bfloat16)
+        model_from_pretrained.assert_called_once_with("Qwen/Qwen3-VL-4B-Instruct", torch_dtype=torch.float32)
         self.assertEqual(tokens.shape, (1, 2, 2, 6))
         self.assertEqual(processor.calls[-1]["image_count"], 2)
         self.assertEqual(
@@ -213,6 +221,7 @@ class CrepaQwenVLEncoderTests(unittest.TestCase):
             ["<vision_start><image><vision_end>", "<vision_start><image><vision_end>"],
         )
         self.assertEqual(model.feature_calls[-1]["pixel_values_shape"], torch.Size([2, 4]))
+        self.assertEqual(model.feature_calls[-1]["pixel_values_dtype"], torch.float32)
 
 
 class CrepaSchedulerTests(unittest.TestCase):

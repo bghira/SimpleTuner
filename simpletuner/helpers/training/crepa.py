@@ -52,7 +52,8 @@ class QwenVLVisionEncoder(nn.Module):
             text=[prompt] * len(image_list),
             return_tensors="pt",
         )
-        pixel_values = batch["pixel_values"].to(self.device)
+        model_dtype = next(self.model.parameters()).dtype
+        pixel_values = batch["pixel_values"].to(device=self.device, dtype=model_dtype)
         image_grid_thw = batch["image_grid_thw"].to(self.device)
 
         with torch.no_grad():
@@ -736,6 +737,8 @@ class CrepaRegularizer:
         return "qwen" in normalized and "vl" in normalized
 
     def _encoder_dtype(self) -> torch.dtype:
+        if self.device.type == "cpu":
+            return torch.float32
         dtype = getattr(self.config, "weight_dtype", torch.float32)
         if isinstance(dtype, str):
             dtype = getattr(torch, dtype, None)
