@@ -932,6 +932,12 @@ class LTXVideo2(VideoModelFoundation):
             and not getattr(self.config, "validation_using_datasets", False)
         )
 
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one"},
+            "stage2": {"stage2", "stage_2", "2", "two"},
+        }
+
     def _ltx2_validation_upsampler_path(self) -> str:
         model_or_path = (
             getattr(self.config, "ltx2_validation_spatial_upsampler_model", None) or self.DEFAULT_SPATIAL_UPSAMPLER_MODEL
@@ -1019,7 +1025,7 @@ class LTXVideo2(VideoModelFoundation):
             stage1_width,
             stage1_height,
         )
-        stage1_result = pipeline_call(self.pipeline, stage1_kwargs)
+        stage1_result = pipeline_call(self.pipeline, stage1_kwargs, target_stage="stage1")
         video_latents = getattr(stage1_result, "frames", None)
         if video_latents is None:
             raise ValueError("LTX-2 spatial-upscale validation stage 1 did not return video latents.")
@@ -1063,7 +1069,7 @@ class LTXVideo2(VideoModelFoundation):
             stage2_width,
             stage2_height,
         )
-        return pipeline_call(stage2, stage2_kwargs)
+        return pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
         if isinstance(vae, AutoencoderKLLTX2Audio):

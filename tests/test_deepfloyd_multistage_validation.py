@@ -90,6 +90,8 @@ class DeepFloydMultistageValidationTests(unittest.TestCase):
         model._deepfloyd_stage1_pipeline = MagicMock(return_value=stage1)
         model._deepfloyd_stage2_pipeline = MagicMock(return_value=stage2)
 
+        stages = []
+
         result = model.run_multistage_validation(
             {
                 "prompt_embeds": torch.zeros(1, 4, 8),
@@ -100,10 +102,11 @@ class DeepFloydMultistageValidationTests(unittest.TestCase):
                 "height": 256,
                 "num_images_per_prompt": 1,
             },
-            lambda pipeline, kwargs: pipeline(**kwargs),
+            lambda pipeline, kwargs, target_stage=None: stages.append(target_stage) or pipeline(**kwargs),
         )
 
         self.assertEqual(result.images, ["stage2-image"])
+        self.assertEqual(stages, ["stage1", "stage2"])
         self.assertEqual(stage1.calls[0]["width"], 64)
         self.assertEqual(stage1.calls[0]["height"], 64)
         self.assertEqual(stage1.calls[0]["output_type"], "pt")
@@ -121,6 +124,8 @@ class DeepFloydMultistageValidationTests(unittest.TestCase):
         model._deepfloyd_stage2_pipeline = MagicMock(return_value=stage2)
         model._deepfloyd_stage3_pipeline = MagicMock(return_value=stage3)
 
+        stages = []
+
         result = model.run_multistage_validation(
             {
                 "prompt_embeds": torch.zeros(1, 4, 8),
@@ -133,10 +138,11 @@ class DeepFloydMultistageValidationTests(unittest.TestCase):
                 "_validation_prompt_text": "a painted castle",
                 "_validation_negative_prompt_text": "blur",
             },
-            lambda pipeline, kwargs: pipeline(**kwargs),
+            lambda pipeline, kwargs, target_stage=None: stages.append(target_stage) or pipeline(**kwargs),
         )
 
         self.assertEqual(result.images, ["stage3-image"])
+        self.assertEqual(stages, ["stage1", "stage2", "stage3"])
         self.assertEqual(stage1.calls[0]["width"], 64)
         self.assertEqual(stage2.calls[0]["width"], 256)
         self.assertEqual(stage3.calls[0]["prompt"], ["a painted castle"])

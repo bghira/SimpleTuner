@@ -360,6 +360,12 @@ class SDXL(ImageModelFoundation):
             return False
         return True
 
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one", "base"},
+            "stage2": {"stage2", "stage_2", "2", "two", "refiner"},
+        }
+
     def _sdxl_current_stage(self) -> int:
         model_flavour = str(getattr(self.config, "model_flavour", "") or "").lower()
         model_path = str(getattr(self.config, "pretrained_model_name_or_path", "") or "").lower()
@@ -535,7 +541,7 @@ class SDXL(ImageModelFoundation):
             "height": pipeline_kwargs.get("height"),
         }
         logger.info("Running SDXL validation stage 1 to %.2f of the schedule.", split_boundary)
-        stage1_result = pipeline_call(stage1, stage1_kwargs)
+        stage1_result = pipeline_call(stage1, stage1_kwargs, target_stage="stage1")
         stage1_images = stage1_result.images
         use_stage2_embeds = trained_stage == 2
         stage2_prompt_kwargs = self._sdxl_prompt_kwargs(pipeline_kwargs, use_embeds=use_stage2_embeds)
@@ -556,7 +562,7 @@ class SDXL(ImageModelFoundation):
             "output_type": "pil",
         }
         logger.info("Running SDXL validation stage 2 from %.2f of the schedule.", split_boundary)
-        return pipeline_call(stage2, stage2_kwargs)
+        return pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
     def check_user_config(self):
         """

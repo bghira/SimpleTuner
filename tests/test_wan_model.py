@@ -175,11 +175,11 @@ class WanModelTests(unittest.TestCase):
         result = Wan.run_multistage_validation(
             model,
             {"prompt_embeds": "embeds"},
-            lambda pipeline, kwargs: calls.append((pipeline, kwargs)) or "result",
+            lambda pipeline, kwargs, target_stage=None: calls.append((pipeline, kwargs, target_stage)) or "result",
         )
 
         self.assertEqual(result, "result")
-        self.assertEqual(calls, [(model.pipeline, {"prompt_embeds": "embeds"})])
+        self.assertEqual(calls, [(model.pipeline, {"prompt_embeds": "embeds"}, ("high", "low"))])
 
     def test_unload_validation_models_clears_cached_peer_stages(self):
         model = self._stage_model("i2v-14b-2.2-high", load_other=True)

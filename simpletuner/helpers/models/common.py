@@ -1308,6 +1308,27 @@ class ModelFoundation(ABC):
         """
         return False
 
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        """
+        Return supported target_stage names for validation adapters.
+
+        Keys are canonical stage names passed to the validation pipeline_call;
+        values are user-facing aliases accepted in validation_adapter_config.
+        """
+        return {}
+
+    def validation_adapter_load_kwargs(self, target_stage: str) -> Dict[str, Any]:
+        """
+        Return extra load_lora_weights kwargs for a validation adapter stage.
+        """
+        return {}
+
+    def validation_adapter_component(self, target_stage: str) -> Optional[str]:
+        """
+        Return the pipeline component that owns adapters for target_stage.
+        """
+        return None
+
     def supports_grounding(self) -> bool:
         """Returns True when the model supports spatial grounding annotations."""
         val = getattr(self.config, "max_grounding_entities", 0)

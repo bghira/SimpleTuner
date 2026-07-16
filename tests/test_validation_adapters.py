@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+from simpletuner.helpers.training.validation import Validation
 from simpletuner.helpers.training.validation_adapters import ValidationAdapterRun, build_validation_adapter_runs
 
 
@@ -96,6 +97,139 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
         adapter = run.adapters[0]
         self.assertEqual("hero_adapter", adapter.adapter_name)
         self.assertAlmostEqual(1.25, adapter.strength)
+
+    def test_config_entry_supports_run_level_target_stage(self):
+        config = [
+            {
+                "label": "refiner",
+                "target_stage": "Two",
+                "adapters": [
+                    {"path": "repo/detail", "scale": 0.7},
+                    {"path": "repo/color", "target_stage": "one"},
+                ],
+            }
+        ]
+        runs = build_validation_adapter_runs(None, config)
+
+        run = runs[1]
+        self.assertEqual("repo/detail", run.adapters[0].repo_id)
+        self.assertEqual("two", run.adapters[0].target_stage)
+        self.assertEqual("one", run.adapters[1].target_stage)
+
+
+class _AdapterTarget:
+    def __init__(self):
+        self.set_calls = []
+        self.delete_calls = []
+
+    def set_adapters(self, names, scales):
+        self.set_calls.append((names, scales))
+
+    def delete_adapters(self, names):
+        self.delete_calls.append(names)
+
+
+class _Pipeline:
+    def __init__(self):
+        self.load_calls = []
+        self.set_calls = []
+        self.delete_calls = []
+        self.transformer = _AdapterTarget()
+        self.transformer_2 = _AdapterTarget()
+        self.components = {
+            "transformer": self.transformer,
+            "transformer_2": self.transformer_2,
+        }
+
+    def load_lora_weights(self, location, **kwargs):
+        self.load_calls.append((location, kwargs))
+
+    def set_adapters(self, names, scales):
+        self.set_calls.append((names, scales))
+
+    def delete_adapters(self, names):
+        self.delete_calls.append(names)
+
+
+class _StageModel:
+    NAME = "test-model"
+
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+
+    def supports_multistage_validation(self):
+        return True
+
+    def validation_adapter_stage_aliases(self):
+        return {
+            "stage1": {"stage1", "one"},
+            "stage2": {"stage2", "two"},
+        }
+
+    def validation_adapter_load_kwargs(self, target_stage):
+        return {}
+
+    def validation_adapter_component(self, target_stage):
+        return None
+
+
+class _WanStageModel(_StageModel):
+    NAME = "wan"
+
+    def validation_adapter_stage_aliases(self):
+        return {"high": {"high"}, "low": {"low"}}
+
+    def validation_adapter_load_kwargs(self, target_stage):
+        return {"load_into_transformer_2": target_stage == "low"}
+
+    def validation_adapter_component(self, target_stage):
+        return "transformer_2" if target_stage == "low" else "transformer"
+
+
+class ValidationAdapterStageLoadingTests(unittest.TestCase):
+    def _validator(self, model):
+        validator = Validation.__new__(Validation)
+        validator.model = model
+        validator._active_validation_adapter_run = None
+        return validator
+
+    def test_targeted_adapter_loads_only_for_matching_stage(self):
+        base_pipeline = _Pipeline()
+        stage2_pipeline = _Pipeline()
+        validator = self._validator(_StageModel(base_pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [{"label": "refiner", "path": "repo/refiner", "target_stage": "two", "strength": 0.4}],
+        )[1]
+
+        with validator._temporary_validation_adapters(run):
+            self.assertEqual([], base_pipeline.load_calls)
+            with validator._temporary_validation_stage_adapters(base_pipeline, "stage1"):
+                self.assertEqual([], base_pipeline.load_calls)
+            with validator._temporary_validation_stage_adapters(stage2_pipeline, "stage2"):
+                self.assertEqual(1, len(stage2_pipeline.load_calls))
+                self.assertEqual("repo/refiner", stage2_pipeline.load_calls[0][0])
+                self.assertEqual("refiner_two", stage2_pipeline.load_calls[0][1]["adapter_name"])
+                self.assertEqual(("refiner_two", 0.4), stage2_pipeline.set_calls[0])
+
+        self.assertEqual("refiner_two", stage2_pipeline.delete_calls[0])
+
+    def test_wan_low_stage_uses_transformer_2_component(self):
+        pipeline = _Pipeline()
+        validator = self._validator(_WanStageModel(pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [{"label": "low-noise", "path": "repo/low", "target_stage": "low", "strength": 0.6}],
+        )[1]
+
+        with validator._temporary_validation_adapters(run):
+            with validator._temporary_validation_stage_adapters(pipeline, ("high", "low")):
+                self.assertEqual(1, len(pipeline.load_calls))
+                self.assertTrue(pipeline.load_calls[0][1]["load_into_transformer_2"])
+                self.assertEqual([], pipeline.set_calls)
+                self.assertEqual([("low_noise_low", 0.6)], pipeline.transformer_2.set_calls)
+
+        self.assertEqual(["low_noise_low"], pipeline.transformer_2.delete_calls)
 
 
 if __name__ == "__main__":

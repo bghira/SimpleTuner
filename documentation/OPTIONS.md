@@ -855,6 +855,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
   - `path`: Hugging Face repo ID or local path (same formats as `--validation_adapter_path`).
   - `adapter_name`: Optional identifier per adapter.
   - `strength`: Optional scalar override.
+  - `target_stage`: Optional multi-stage validation target for this adapter. Supported aliases depend on the model; common values include `one`, `two`, `stage1`, `stage2`, and Wan `high`/`low`.
   - `adapters`/`paths`: Array of objects/strings to load multiple adapters in a single run.
 - **Notes**:
   - When provided, the single-adapter options (`--validation_adapter_path`, `--validation_adapter_name`, `--validation_adapter_strength`, `--validation_adapter_mode`) are ignored/disabled in the UI.

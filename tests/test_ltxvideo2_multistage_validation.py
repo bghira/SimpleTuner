@@ -92,7 +92,7 @@ class LTXVideo2MultistageValidationTests(unittest.TestCase):
         ) as upsample:
             result = model.run_multistage_validation(
                 self._pipeline_kwargs(),
-                lambda pipeline, kwargs: pipeline(**kwargs),
+                lambda pipeline, kwargs, target_stage=None: pipeline(**kwargs),
             )
 
         self.assertEqual(result.frames, ["stage2-frames"])
@@ -118,7 +118,10 @@ class LTXVideo2MultistageValidationTests(unittest.TestCase):
         kwargs["width"] = 1025
 
         with self.assertRaisesRegex(ValueError, "divisible by 64"):
-            model.run_multistage_validation(kwargs, lambda pipeline, call_kwargs: pipeline(**call_kwargs))
+            model.run_multistage_validation(
+                kwargs,
+                lambda pipeline, call_kwargs, target_stage=None: pipeline(**call_kwargs),
+            )
 
     def test_spatial_upscale_rejects_image_conditioning(self):
         model = self._model()
@@ -126,7 +129,10 @@ class LTXVideo2MultistageValidationTests(unittest.TestCase):
         kwargs["image"] = "stage1-image-conditioning"
 
         with self.assertRaisesRegex(ValueError, "image-conditioned validation"):
-            model.run_multistage_validation(kwargs, lambda pipeline, call_kwargs: pipeline(**call_kwargs))
+            model.run_multistage_validation(
+                kwargs,
+                lambda pipeline, call_kwargs, target_stage=None: pipeline(**call_kwargs),
+            )
 
     def test_unload_validation_models_clears_upsampler(self):
         model = self._model()

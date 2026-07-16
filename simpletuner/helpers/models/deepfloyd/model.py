@@ -106,6 +106,13 @@ class DeepFloydIF(ImageModelFoundation):
     def supports_multistage_validation(self) -> bool:
         return self._deepfloyd_validation_mode() == "full-pipeline"
 
+    def validation_adapter_stage_aliases(self) -> Dict[str, set[str]]:
+        return {
+            "stage1": {"stage1", "stage_1", "1", "one", "i", "stage_i"},
+            "stage2": {"stage2", "stage_2", "2", "two", "ii", "stage_ii"},
+            "stage3": {"stage3", "stage_3", "3", "three", "iii", "stage_iii"},
+        }
+
     def _deepfloyd_validation_stage3_mode(self) -> str:
         mode = getattr(self.config, "deepfloyd_validation_stage3_mode", "none") or "none"
         mode = str(mode).strip().lower()
@@ -253,7 +260,7 @@ class DeepFloydIF(ImageModelFoundation):
             "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
         }
         logger.info("Running DeepFloyd validation stage I at %sx%s.", stage1_width, stage1_height)
-        stage1_result = pipeline_call(stage1, stage1_kwargs)
+        stage1_result = pipeline_call(stage1, stage1_kwargs, target_stage="stage1")
         stage1_images = stage1_result.images
 
         stage2_kwargs = {
@@ -269,7 +276,7 @@ class DeepFloydIF(ImageModelFoundation):
             "num_images_per_prompt": pipeline_kwargs.get("num_images_per_prompt", 1),
         }
         logger.info("Running DeepFloyd validation stage II at %sx%s.", stage2_width, stage2_height)
-        stage2_result = pipeline_call(stage2, stage2_kwargs)
+        stage2_result = pipeline_call(stage2, stage2_kwargs, target_stage="stage2")
 
         if self._deepfloyd_validation_stage3_mode() != "sd-x4-upscaler":
             return stage2_result
@@ -290,7 +297,7 @@ class DeepFloydIF(ImageModelFoundation):
             "guidance_scale": self._deepfloyd_stage_guidance(3, float(pipeline_kwargs.get("guidance_scale", 4.0))),
         }
         logger.info("Running DeepFloyd validation stage III with Stable Diffusion x4 upscaler.")
-        stage3_result = pipeline_call(stage3, stage3_kwargs)
+        stage3_result = pipeline_call(stage3, stage3_kwargs, target_stage="stage3")
         if hasattr(stage3_result, "images"):
             return stage3_result
         return SimpleNamespace(images=stage3_result)

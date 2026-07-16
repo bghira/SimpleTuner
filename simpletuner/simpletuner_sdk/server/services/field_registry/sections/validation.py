@@ -929,7 +929,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             placeholder="/path/to/validation_adapters.json",
             help_text="JSON file or inline JSON describing multiple adapter combinations to evaluate during validation.",
-            tooltip="Each entry can define 'label' and a list of adapter paths so multiple validation runs are automated.",
+            tooltip="Each entry can define 'label', adapter paths, strength, and optional 'target_stage' for multi-stage validation.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=5,
             documentation="OPTIONS.md#--validation_adapter_config",

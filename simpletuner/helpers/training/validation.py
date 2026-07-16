@@ -10,7 +10,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 import diffusers
 import numpy as np
@@ -70,6 +70,7 @@ from simpletuner.helpers.training.validation_adapters import (
     ValidationAdapterRun,
     ValidationAdapterSpec,
     build_validation_adapter_runs,
+    normalize_validation_adapter_stage,
 )
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
@@ -2740,7 +2741,12 @@ class Validation:
     def _next_adapter_name(
         self, adapter_run: ValidationAdapterRun, adapter_spec: ValidationAdapterSpec, idx: int, existing: list[str]
     ) -> str:
-        base_name = adapter_spec.adapter_name or (adapter_run.slug or f"validation_adapter_{idx}")
+        if adapter_spec.adapter_name:
+            base_name = adapter_spec.adapter_name
+        elif adapter_spec.target_stage:
+            base_name = f"{adapter_run.slug or 'validation_adapter'}_{adapter_spec.target_stage}"
+        else:
+            base_name = adapter_run.slug or f"validation_adapter_{idx}"
         candidate = base_name.strip() or f"validation_adapter_{idx}"
         suffix = 2
         while candidate in existing:
@@ -2748,12 +2754,116 @@ class Validation:
             suffix += 1
         return candidate
 
+    def _validation_adapter_stage_aliases(self) -> dict[str, set[str]]:
+        provider = getattr(self.model, "validation_adapter_stage_aliases", None)
+        raw_aliases = provider() if callable(provider) else {}
+        aliases: dict[str, set[str]] = {}
+        for canonical, values in raw_aliases.items():
+            canonical_stage = normalize_validation_adapter_stage(canonical)
+            if canonical_stage is None:
+                continue
+            normalized_values = {canonical_stage}
+            for value in values:
+                normalized_value = normalize_validation_adapter_stage(value)
+                if normalized_value is not None:
+                    normalized_values.add(normalized_value)
+            aliases[canonical_stage] = normalized_values
+        return aliases
+
+    def _canonical_validation_adapter_stage(self, target_stage: str) -> str:
+        normalized = normalize_validation_adapter_stage(target_stage)
+        aliases = self._validation_adapter_stage_aliases()
+        for canonical, values in aliases.items():
+            if normalized in values:
+                return canonical
+        supported = ", ".join(sorted(aliases)) or "none"
+        raise ValueError(
+            f"Unsupported validation adapter target_stage '{target_stage}' for {self.model.NAME}. "
+            f"Supported target stages: {supported}."
+        )
+
+    def _validate_adapter_stage_targets(self, adapter_run: ValidationAdapterRun):
+        targets = [adapter.target_stage for adapter in adapter_run.adapters if adapter.target_stage is not None]
+        if not targets:
+            return
+        if not self.model.supports_multistage_validation():
+            raise ValueError("validation_adapter_config target_stage requires multi-stage validation to be enabled.")
+        if not self._validation_adapter_stage_aliases():
+            raise ValueError(f"{self.model.NAME} does not expose validation adapter target stages.")
+        for target_stage in targets:
+            self._canonical_validation_adapter_stage(target_stage)
+
+    def _validation_adapter_specs_for_stage(
+        self,
+        adapter_run: ValidationAdapterRun,
+        target_stage: str | Sequence[str] | None,
+    ) -> list[ValidationAdapterSpec]:
+        if target_stage is None:
+            return []
+        if isinstance(target_stage, str):
+            stage_values = [target_stage]
+        else:
+            stage_values = list(target_stage)
+        canonical_stages = {self._canonical_validation_adapter_stage(stage) for stage in stage_values}
+        return [
+            adapter
+            for adapter in adapter_run.adapters
+            if adapter.target_stage is not None
+            and self._canonical_validation_adapter_stage(adapter.target_stage) in canonical_stages
+        ]
+
+    def _validation_adapter_load_kwargs(self, adapter_spec: ValidationAdapterSpec) -> dict[str, Any]:
+        if adapter_spec.target_stage is None:
+            return {}
+        target_stage = self._canonical_validation_adapter_stage(adapter_spec.target_stage)
+        provider = getattr(self.model, "validation_adapter_load_kwargs", None)
+        return dict(provider(target_stage)) if callable(provider) else {}
+
+    def _validation_adapter_component(self, adapter_spec: ValidationAdapterSpec) -> str | None:
+        if adapter_spec.target_stage is None:
+            return None
+        target_stage = self._canonical_validation_adapter_stage(adapter_spec.target_stage)
+        provider = getattr(self.model, "validation_adapter_component", None)
+        component = provider(target_stage) if callable(provider) else None
+        if component is None:
+            return None
+        return str(component)
+
     @contextmanager
     def _temporary_validation_adapters(self, adapter_run: ValidationAdapterRun):
         if adapter_run is None or not adapter_run.adapters:
             yield
             return
+        self._validate_adapter_stage_targets(adapter_run)
+        adapters = [adapter for adapter in adapter_run.adapters if adapter.target_stage is None]
         pipeline = getattr(self.model, "pipeline", None)
+        self._active_validation_adapter_run = adapter_run
+        try:
+            with self._temporary_validation_adapter_specs(adapter_run, adapters, pipeline):
+                yield
+        finally:
+            self._active_validation_adapter_run = None
+
+    @contextmanager
+    def _temporary_validation_stage_adapters(self, pipeline, target_stage: str | Sequence[str] | None):
+        adapter_run = self._active_validation_adapter_run
+        if adapter_run is None or not adapter_run.adapters:
+            yield
+            return
+        adapters = self._validation_adapter_specs_for_stage(adapter_run, target_stage)
+        with self._temporary_validation_adapter_specs(adapter_run, adapters, pipeline):
+            yield
+
+    @contextmanager
+    def _temporary_validation_adapter_specs(
+        self,
+        adapter_run: ValidationAdapterRun,
+        adapters: Sequence[ValidationAdapterSpec],
+        pipeline,
+    ):
+        if not adapters:
+            yield
+            return
         if pipeline is None:
             yield
             return
@@ -2905,11 +3015,13 @@ class Validation:
         requires_grad_snapshot = _snapshot_requires_grad(pipeline)
         adapter_names: list[str] = []
         adapter_scales: list[float] = []
-        for idx, adapter in enumerate(adapter_run.adapters):
+        adapter_components: list[str | None] = []
+        for idx, adapter in enumerate(adapters):
             adapter_name = self._next_adapter_name(adapter_run, adapter, idx, adapter_names)
             load_kwargs = {"adapter_name": adapter_name}
             if adapter.weight_name:
                 load_kwargs["weight_name"] = adapter.weight_name
+            load_kwargs.update(self._validation_adapter_load_kwargs(adapter))
             try:
                 if adapter.is_local:
                     pipeline.load_lora_weights(adapter.location, **load_kwargs)
@@ -2920,32 +3032,101 @@ class Validation:
                 raise
             adapter_names.append(adapter_name)
             adapter_scales.append(adapter.strength)
-        self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales)
+            adapter_components.append(self._validation_adapter_component(adapter))
+        self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales, adapter_components)
         try:
-            self._active_validation_adapter_run = adapter_run
             yield
         finally:
-            self._active_validation_adapter_run = None
-            self._remove_validation_adapters(pipeline, adapter_names)
+            self._remove_validation_adapters(pipeline, adapter_names, adapter_components)
             _restore_requires_grad(pipeline, requires_grad_snapshot)
             _restore_compiled_components()
 
-    def _set_validation_adapter_weights(self, pipeline, adapter_names: list[str], adapter_scales: list[float]):
+    def _set_validation_adapter_weights(
+        self,
+        pipeline,
+        adapter_names: list[str],
+        adapter_scales: list[float],
+        adapter_components: list[str | None] | None = None,
+    ):
         if not adapter_names:
             return
-        if hasattr(pipeline, "set_adapters"):
+        adapter_components = adapter_components or [None] * len(adapter_names)
+        component_names = {component for component in adapter_components if component is not None}
+        if component_names:
+            pipeline_names = [
+                adapter_name for adapter_name, component in zip(adapter_names, adapter_components) if component is None
+            ]
+            pipeline_scales = [
+                adapter_scale for adapter_scale, component in zip(adapter_scales, adapter_components) if component is None
+            ]
+            if pipeline_names:
+                self._set_validation_adapter_weights_on_target(pipeline, pipeline_names, pipeline_scales)
+            for component_name in sorted(component_names):
+                component = getattr(pipeline, component_name, None)
+                if component is None:
+                    raise ValueError(f"Pipeline component '{component_name}' is not available for validation adapters.")
+                names = [
+                    adapter_name
+                    for adapter_name, adapter_component in zip(adapter_names, adapter_components)
+                    if adapter_component == component_name
+                ]
+                scales = [
+                    adapter_scale
+                    for adapter_scale, adapter_component in zip(adapter_scales, adapter_components)
+                    if adapter_component == component_name
+                ]
+                self._set_validation_adapter_weights_on_target(component, names, scales)
+            return
+        self._set_validation_adapter_weights_on_target(pipeline, adapter_names, adapter_scales)
+
+    def _set_validation_adapter_weights_on_target(self, target, adapter_names: list[str], adapter_scales: list[float]):
+        if not adapter_names:
+            return
+        if hasattr(target, "set_adapters"):
             names = adapter_names if len(adapter_names) > 1 else adapter_names[0]
             scales = adapter_scales if len(adapter_scales) > 1 else adapter_scales[0]
-            pipeline.set_adapters(names, scales)
-        elif hasattr(pipeline, "set_adapter"):
-            pipeline.set_adapter(adapter_names[0], adapter_scales[0])
+            target.set_adapters(names, scales)
+        elif hasattr(target, "set_adapter"):
+            target.set_adapter(adapter_names[0], adapter_scales[0])
         else:
             logger.warning("Pipeline does not expose set_adapters; using adapter defaults.")
 
-    def _remove_validation_adapters(self, pipeline, adapter_names: list[str]):
+    def _remove_validation_adapters(
+        self,
+        pipeline,
+        adapter_names: list[str],
+        adapter_components: list[str | None] | None = None,
+    ):
         if not adapter_names:
             return
-        if hasattr(pipeline, "delete_adapters"):
+        adapter_components = adapter_components or [None] * len(adapter_names)
+        component_names = {component for component in adapter_components if component is not None}
+        if component_names:
+            pipeline_names = [
+                adapter_name for adapter_name, component in zip(adapter_names, adapter_components) if component is None
+            ]
+            if pipeline_names:
+                if hasattr(pipeline, "delete_adapters"):
+                    delete_names = pipeline_names if len(pipeline_names) > 1 else pipeline_names[0]
+                    pipeline.delete_adapters(delete_names)
+                else:
+                    logger.warning("Could not delete temporary validation adapters: %s", pipeline_names)
+            for component_name in sorted(component_names):
+                component = getattr(pipeline, component_name, None)
+                names = [
+                    adapter_name
+                    for adapter_name, adapter_component in zip(adapter_names, adapter_components)
+                    if adapter_component == component_name
+                ]
+                if component is not None and hasattr(component, "delete_adapters"):
+                    delete_names = names if len(names) > 1 else names[0]
+                    component.delete_adapters(delete_names)
+                elif hasattr(pipeline, "delete_adapters"):
+                    delete_names = names if len(names) > 1 else names[0]
+                    pipeline.delete_adapters(delete_names)
+                else:
+                    logger.warning("Could not delete temporary validation adapters: %s", names)
+        elif hasattr(pipeline, "delete_adapters"):
             names = adapter_names if len(adapter_names) > 1 else adapter_names[0]
             pipeline.delete_adapters(names)
         else:
@@ -4108,9 +4289,10 @@ class Validation:
                         elif "callback_on_step_end" not in pipeline_kwargs:
                             pipeline_kwargs["callback_on_step_end"] = abort_check_callback
 
-                    def _pipeline_call(pipeline, kwargs):
+                    def _pipeline_call(pipeline, kwargs, target_stage: str | Sequence[str] | None = None):
                         stage_kwargs = self._filter_pipeline_kwargs_for_call(pipeline, kwargs)
-                        return pipeline(**stage_kwargs)
+                        with self._temporary_validation_stage_adapters(pipeline, target_stage):
+                            return pipeline(**stage_kwargs)
 
                     # run in autocast ctx
                     preview_ctx = nullcontext()
