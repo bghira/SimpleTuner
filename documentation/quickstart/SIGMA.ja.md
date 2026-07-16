@@ -102,6 +102,8 @@ cp config/config.json.example config/config.json
 - `VALIDATION_RESOLUTION` - PixArt Sigma は 1024px または 2048px のモデル形式なので、この例では `1024x1024` に慎重に設定してください。
   - PixArt はマルチアスペクトバケットでファインチューニングされているため、カンマ区切りで他の解像度を指定できます: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - PixArt は非常に低い値が有効です。`3.6`〜`4.4` の範囲に設定してください。
+- `pixart_validation_pipeline_mode` - 通常の validation では `trained-stage` のままにします。v0.7 split pipeline（900M MoE-style stage split を含む）を検証する場合は `full-pipeline` を使います。stage 1 は `1 - refiner_training_strength` まで latents として実行され、stage 2 が同じ境界から再開します。
+  - 片方の stage だけを学習する場合、validation で使う固定 peer-stage checkpoint を上書きするには `pixart_validation_stage1_model` または `pixart_validation_stage2_model` を設定します。
 
 Mac M-series を使用している場合の追加設定:
 

@@ -102,6 +102,8 @@ cp config/config.json.example config/config.json
 - `VALIDATION_RESOLUTION` - PixArt Sigma 有 1024px 或 2048px 模型，应在此示例中设置为 `1024x1024`。
   - PixArt 也在多宽高比桶上微调，可用逗号分隔指定其他分辨率：`1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - PixArt 适合较低值。设置为 `3.6` 到 `4.4` 之间。
+- `pixart_validation_pipeline_mode` - 常规验证保持 `trained-stage`。验证 v0.7 split pipeline（包括 900M MoE-style stage split）时使用 `full-pipeline`：stage 1 以 latents 运行到 `1 - refiner_training_strength`，然后 stage 2 从同一边界继续。
+  - 如果只训练一个 stage，需要覆盖验证时使用的固定 peer-stage checkpoint，可设置 `pixart_validation_stage1_model` 或 `pixart_validation_stage2_model`。
 
 如果使用 Mac M 系列机器，还有一些额外设置：
 

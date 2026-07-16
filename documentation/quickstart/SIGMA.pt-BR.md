@@ -102,6 +102,8 @@ Lá, você precisará modificar as seguintes variáveis:
 - `VALIDATION_RESOLUTION` - Como PixArt Sigma vem em formato 1024px ou 2048px, você deve definir com cuidado para `1024x1024` neste exemplo.
   - Além disso, o PixArt foi fine-tuned em buckets multi-aspect, e outras resoluções podem ser especificadas usando vírgulas: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - PixArt se beneficia de um valor bem baixo. Defina entre `3.6` e `4.4`.
+- `pixart_validation_pipeline_mode` - Mantenha `trained-stage` para validação normal. Use `full-pipeline` ao validar a pipeline dividida v0.7, incluindo o stage split estilo MoE de 900M: o stage 1 roda até `1 - refiner_training_strength` como latents, e o stage 2 continua a partir desse limite.
+  - Se você treinar apenas um stage, defina `pixart_validation_stage1_model` ou `pixart_validation_stage2_model` quando precisar sobrescrever o checkpoint fixo do peer-stage usado na validação.
 
 Há mais alguns ajustes se estiver usando um Mac M-series:
 
