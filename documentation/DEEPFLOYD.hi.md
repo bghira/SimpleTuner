@@ -160,6 +160,12 @@ SDXL या Stable Diffusion 1.x/2.x की तुलना में, DeepFloyd
 
 Note: images को 25% के चरणों में downsample किया जाता है ताकि image size में बड़े jump से scene details का गलत averaging न हो।
 
+## Validation pipeline modes
+
+DeepFloyd validation अब SimpleTuner में stages को सीधे chain कर सकता है। `deepfloyd_validation_pipeline_mode=auto` default है: prompt validation stage I -> stage II चलाता है, जबकि dataset-image validation trained stage पर रहता है। single-stage validation force करने के लिए `trained-stage` उपयोग करें, या fixed peer stage हमेशा load करने के लिए `full-pipeline` उपयोग करें। peer checkpoints को `deepfloyd_validation_stage1_model` और `deepfloyd_validation_stage2_model` से override करें।
+
+Optional stage III validation को `deepfloyd_validation_stage3_mode=sd-x4-upscaler` से enable किया जा सकता है; यह stage II के बाद `deepfloyd_validation_stage3_model` को terminal 4x upscaler के रूप में उपयोग करता है।
+
 ## इनफेरेंस चलाना
 
 फिलहाल, SimpleTuner toolkit में DeepFloyd के लिए कोई dedicated inference scripts नहीं हैं।
