@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 from simpletuner.helpers.training.validation import (
+    _validation_input_is_configured,
     _validation_reference_prompt_metadata,
     retrieve_validation_edit_images,
     retrieve_validation_images,
@@ -97,7 +98,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
                 "simpletuner.helpers.training.validation.StateTracker.get_data_backend",
                 side_effect=lambda k: image_backends.get(k, {}),
             ),
-            patch("simpletuner.helpers.training.validation._normalise_validation_sample", side_effect=lambda x: x),
+            patch("simpletuner.helpers.training.validation._normalise_validation_sample", side_effect=lambda x, **_: x),
         ):
             result = retrieve_validation_images()
             self.assertEqual(len(result), 1)
@@ -153,12 +154,55 @@ class EvalDatasetSelectionTests(unittest.TestCase):
                 result = retrieve_validation_images()
 
             self.assertEqual(len(result), 1)
-            shortname, prompt, sample_path, image = result[0]
-            self.assertTrue(shortname.startswith("validation_input_0_input"))
-            self.assertEqual(prompt, "move the camera forward")
-            self.assertEqual(sample_path, str(image_path))
-            self.assertEqual(image.size, (32, 24))
+            validation_prompt = result[0]
+            self.assertTrue(validation_prompt.shortname.startswith("validation_input_0_input"))
+            self.assertEqual(validation_prompt.prompt, "move the camera forward")
+            self.assertEqual(validation_prompt.image_path, str(image_path))
+            self.assertEqual(validation_prompt.conditioning.size, (32, 24))
             mock_get_backends.assert_not_called()
+
+    def test_empty_validation_input_json_list_is_unset(self):
+        self.assertFalse(_validation_input_is_configured(SimpleNamespace(validation_input="[]")))
+        self.assertFalse(_validation_input_is_configured(SimpleNamespace(validation_input="  []  ")))
+
+    def test_empty_validation_input_json_list_uses_dataset_selection(self):
+        model = self._build_base_model_mock()
+        args = SimpleNamespace(
+            eval_dataset_id=None,
+            controlnet=False,
+            control=False,
+            num_eval_images=4,
+            validation_using_datasets=False,
+            validation_input="[]",
+        )
+
+        mock_sampler = MagicMock()
+        mock_sampler.retrieve_validation_set.return_value = [
+            ("shortname1", "prompt1", "/path/to/image1.jpg", Image.new("RGB", (16, 16))),
+        ]
+        image_backends = {
+            "my-image-dataset": {
+                "id": "my-image-dataset",
+                "dataset_type": "image",
+                "config": {},
+                "sampler": mock_sampler,
+            }
+        }
+
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=image_backends),
+            patch(
+                "simpletuner.helpers.training.validation.StateTracker.get_data_backend",
+                side_effect=lambda k: image_backends.get(k, {}),
+            ),
+        ):
+            result = retrieve_validation_images()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].prompt, "prompt1")
+        mock_sampler.retrieve_validation_set.assert_called_once_with(batch_size=4)
 
     def test_validation_input_requires_json_list(self):
         model = self._build_base_model_mock()
@@ -169,6 +213,17 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
         ):
             with self.assertRaisesRegex(ValueError, "must be a list"):
+                retrieve_validation_images()
+
+    def test_validation_input_requires_non_empty_prompt(self):
+        model = self._build_base_model_mock()
+        args = SimpleNamespace(validation_input='[{"path": "/tmp/input.png", "prompt": ""}]')
+
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+        ):
+            with self.assertRaisesRegex(ValueError, "non-empty"):
                 retrieve_validation_images()
 
     def test_validation_reference_metadata_includes_direct_conditioning_pixels(self):

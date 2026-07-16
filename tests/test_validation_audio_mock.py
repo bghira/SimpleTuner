@@ -6,7 +6,7 @@ import torch
 
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.training import validation_audio
-from simpletuner.helpers.training.validation import Validation
+from simpletuner.helpers.training.validation import Validation, ValidationPrompt
 
 
 class MockAudioModel(AudioModelFoundation):
@@ -86,7 +86,7 @@ class TestAudioValidation(unittest.TestCase):
         # Setup mocks
         mock_tqdm.side_effect = lambda x, **kwargs: x
         mock_setup_scheduler.return_value = None
-        mock_normalise.return_value = "mock_sample"
+        mock_normalise.return_value = ValidationPrompt(shortname="test", prompt="test prompt")
         mock_prepare_prompts.return_value = {
             "validation_prompts": ["test prompt"],
             "validation_shortnames": ["test"],

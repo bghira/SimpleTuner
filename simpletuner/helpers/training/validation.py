@@ -9,6 +9,7 @@ import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
+from enum import Enum
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional, Sequence, Union
@@ -113,15 +114,35 @@ if is_wandb_available():
     import wandb
 
 
+class ValidationConditioningType(str, Enum):
+    TEXT_ONLY = "text_only"
+    IMAGE = "image"
+    EDIT_REFERENCES = "edit_references"
+    S2V = "s2v"
+
+
+@dataclass(frozen=True)
+class ValidationPrompt:
+    shortname: str
+    prompt: str
+    type: ValidationConditioningType = ValidationConditioningType.TEXT_ONLY
+    conditioning: Any = None
+    image_path: str | None = None
+    data_backend_id: str | None = None
+    adapter_strength: float | None = None
+    bbox_entities: list[dict] | None = None
+    bbox_keyframes: list[dict] | None = None
+
+
 def resize_validation_images(validation_images, edge_length):
     # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
     resized_validation_samples = []
-    for _sample in validation_images:
-        image_path = None
-        if len(_sample) == 4:
-            validation_shortname, validation_prompt, image_path, training_sample_image = _sample
-        elif len(_sample) == 3:
-            validation_shortname, validation_prompt, training_sample_image = _sample
+    for idx, _sample in enumerate(validation_images):
+        validation_prompt = _normalise_validation_sample(_sample, idx=idx)
+        training_sample_image = _coerce_validation_image_input(validation_prompt.conditioning)
+        if not isinstance(training_sample_image, Image.Image):
+            resized_validation_samples.append(validation_prompt)
+            continue
         resize_to, crop_to, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_edge(
             aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(training_sample_image),
             resolution=int(edge_length),
@@ -129,10 +150,19 @@ def resize_validation_images(validation_images, edge_length):
         )
         # we can be less precise here
         training_sample_image = training_sample_image.resize(crop_to)
-        if image_path is None:
-            resized_validation_samples.append((validation_shortname, validation_prompt, training_sample_image))
-        else:
-            resized_validation_samples.append((validation_shortname, validation_prompt, image_path, training_sample_image))
+        resized_validation_samples.append(
+            ValidationPrompt(
+                shortname=validation_prompt.shortname,
+                prompt=validation_prompt.prompt,
+                type=validation_prompt.type,
+                conditioning=training_sample_image,
+                image_path=validation_prompt.image_path,
+                data_backend_id=validation_prompt.data_backend_id,
+                adapter_strength=validation_prompt.adapter_strength,
+                bbox_entities=validation_prompt.bbox_entities,
+                bbox_keyframes=validation_prompt.bbox_keyframes,
+            )
+        )
     return resized_validation_samples
 
 
@@ -236,23 +266,95 @@ def _coerce_validation_image_input(image_data):
     return image_data
 
 
-def _normalise_validation_sample(sample):
+def _validation_type_for_conditioning(conditioning: Any) -> ValidationConditioningType:
+    if isinstance(conditioning, dict) and "audio_path" in conditioning:
+        return ValidationConditioningType.S2V
+    if isinstance(conditioning, list):
+        return ValidationConditioningType.EDIT_REFERENCES
+    if conditioning is not None:
+        return ValidationConditioningType.IMAGE
+    return ValidationConditioningType.TEXT_ONLY
+
+
+def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str | None = None) -> ValidationPrompt:
     """
-    Ensure validation samples carry Image inputs (or lists/tuples of Images) instead of raw tensors/arrays.
+    Convert legacy validation samples into a ValidationPrompt object.
     """
-    if isinstance(sample, tuple):
+    if isinstance(sample, ValidationPrompt):
+        return sample
+
+    shortname = fallback_shortname or f"validation_{idx}"
+    prompt: Any = sample
+    conditioning: Any = None
+    image_path: str | None = None
+    data_backend_id: str | None = None
+    adapter_strength: float | None = None
+    bbox_entities: list[dict] | None = None
+    bbox_keyframes: list[dict] | None = None
+
+    if isinstance(sample, PromptLibraryEntry):
+        prompt = sample.prompt
+        adapter_strength = sample.adapter_strength
+        bbox_entities = sample.bbox_entities
+        bbox_keyframes = sample.bbox_keyframes
+    elif isinstance(sample, dict) and "prompt" in sample:
+        prompt = sample.get("prompt")
+        explicit_shortname = sample.get("shortname") or sample.get("name")
+        if isinstance(explicit_shortname, str) and explicit_shortname.strip():
+            shortname = explicit_shortname.strip()
+        try:
+            adapter_strength = None if sample.get("adapter_strength") is None else float(sample.get("adapter_strength"))
+        except Exception:
+            adapter_strength = None
+    elif isinstance(sample, tuple):
         if len(sample) == 4:
-            shortname, prompt, image_path, image_data = sample
-            return shortname, prompt, image_path, _coerce_validation_image_input(image_data)
-        if len(sample) == 3:
-            shortname, prompt, image_data = sample
-            return shortname, prompt, _coerce_validation_image_input(image_data)
-    return sample
+            candidate_shortname, prompt, image_path, conditioning = sample
+        elif len(sample) == 3:
+            candidate_shortname, prompt, conditioning = sample
+        else:
+            candidate_shortname = sample[0] if len(sample) > 0 else None
+            prompt = sample[1] if len(sample) > 1 else prompt
+        if isinstance(candidate_shortname, str) and candidate_shortname.strip():
+            shortname = candidate_shortname.strip()
+
+    conditioning = _coerce_validation_image_input(conditioning)
+    if isinstance(conditioning, list) and len(conditioning) == 1:
+        conditioning = conditioning[0]
+    if image_path is not None:
+        image_path = str(image_path)
+        if shortname and "_" in shortname:
+            data_backend_id = shortname.rsplit("_", 1)[0]
+
+    if not isinstance(prompt, str):
+        prompt = str(prompt)
+
+    return ValidationPrompt(
+        shortname=shortname,
+        prompt=prompt,
+        type=_validation_type_for_conditioning(conditioning),
+        conditioning=conditioning,
+        image_path=image_path,
+        data_backend_id=data_backend_id,
+        adapter_strength=adapter_strength,
+        bbox_entities=bbox_entities,
+        bbox_keyframes=bbox_keyframes,
+    )
 
 
 def _validation_input_is_configured(args) -> bool:
     validation_input = getattr(args, "validation_input", None)
-    return validation_input not in (None, "", "None", [])
+    if validation_input in (None, []):
+        return False
+    if isinstance(validation_input, str):
+        candidate = validation_input.strip()
+        if candidate in ("", "None"):
+            return False
+        if candidate.startswith("["):
+            try:
+                return len(json.loads(candidate)) > 0
+            except json.JSONDecodeError:
+                return True
+    return True
 
 
 def _validation_input_payload(args) -> list[dict[str, str]]:
@@ -273,8 +375,8 @@ def _validation_input_payload(args) -> list[dict[str, str]]:
         prompt = entry.get("prompt")
         if not isinstance(image_path, str) or not image_path.strip():
             raise ValueError(f"--validation_input entry {idx} must include a non-empty 'path'.")
-        if not isinstance(prompt, str):
-            raise ValueError(f"--validation_input entry {idx} must include a string 'prompt'.")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(f"--validation_input entry {idx} must include a non-empty string 'prompt'.")
     return validation_input
 
 
@@ -298,16 +400,24 @@ def _load_validation_input_image(image_path: str) -> Image.Image:
         return image.convert("RGB").copy()
 
 
-def retrieve_validation_input_images(args=None) -> list[tuple[str, str, str, Image.Image]]:
+def retrieve_validation_input_images(args=None) -> list[ValidationPrompt]:
     """
-    Convert --validation_input JSON entries into the same validation sample tuple used by dataset validation.
+    Convert --validation_input JSON entries into validation prompts.
     """
     args = args or StateTracker.get_args()
     validation_set = []
     for idx, entry in enumerate(_validation_input_payload(args)):
         image_path = str(Path(entry["path"]).expanduser())
         image = _load_validation_input_image(image_path)
-        validation_set.append((_validation_input_shortname(entry, idx), entry["prompt"], image_path, image))
+        validation_set.append(
+            ValidationPrompt(
+                shortname=_validation_input_shortname(entry, idx),
+                prompt=entry["prompt"].strip(),
+                type=ValidationConditioningType.IMAGE,
+                conditioning=image,
+                image_path=image_path,
+            )
+        )
     logger.info(f"Collected {len(validation_set)} validation input images.")
     return validation_set
 
@@ -459,7 +569,7 @@ def retrieve_validation_images():
                 batch_size=args.num_eval_images
             )
             validation_samples_from_sampler = [
-                _normalise_validation_sample(sample) for sample in validation_samples_from_sampler
+                _normalise_validation_sample(sample, idx=idx) for idx, sample in enumerate(validation_samples_from_sampler)
             ]
             validation_input_image_pixel_edge_len = model.validation_image_input_edge_length()
             if validation_input_image_pixel_edge_len is not None:
@@ -478,9 +588,9 @@ def retrieve_validation_images():
     return validation_set
 
 
-def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]]:
+def retrieve_validation_edit_images() -> list[ValidationPrompt]:
     """
-    Returns [(shortname, *edited-scene caption*, reference_image), ...]
+    Returns validation prompts with edit reference conditioning.
     for models that need **edit** validation (including I2V variants).
 
     Logic
@@ -558,18 +668,25 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
             if len(reference_imgs) != len(cond_backends):
                 logger.warning(f"Didn't find enough conditioning samples for {rel_path}.")
                 continue
-            validation_set.append((shortname, edited_prompt, reference_imgs))
+            validation_set.append(
+                ValidationPrompt(
+                    shortname=shortname,
+                    prompt=edited_prompt,
+                    type=ValidationConditioningType.EDIT_REFERENCES,
+                    conditioning=reference_imgs[0] if len(reference_imgs) == 1 else reference_imgs,
+                )
+            )
 
     logger.info(f"Collected {len(validation_set)} edit-validation samples.")
     return validation_set
 
 
-def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
+def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
     """
     Retrieve validation samples for S2V (Speech-to-Video) models.
 
     Returns:
-        list of (shortname, prompt, conditioning_dict) where conditioning_dict contains:
+        list of validation prompts where conditioning contains:
         - "image": PIL Image (first frame / reference image)
         - "audio_path": str path to audio file
     """
@@ -651,7 +768,15 @@ def retrieve_validation_s2v_samples() -> list[tuple[str, str, dict]]:
                 "image": reference_image,
                 "audio_path": audio_path,
             }
-            validation_set.append((shortname, prompt, conditioning))
+            validation_set.append(
+                ValidationPrompt(
+                    shortname=shortname,
+                    prompt=prompt,
+                    type=ValidationConditioningType.S2V,
+                    conditioning=conditioning,
+                    image_path=sample_path,
+                )
+            )
 
     logger.info(f"Collected {len(validation_set)} S2V validation samples.")
     return validation_set
@@ -720,21 +845,14 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                     total=len(validation_sample_images),
                     current=idx,
                 )
-                validation_prompt = None
-                shortname = None
-                reference_images = None
-                image_path = None
-                if isinstance(_validation_sample, tuple):
-                    if len(_validation_sample) == 3:
-                        shortname, validation_prompt, reference_images = _validation_sample
-                    elif len(_validation_sample) == 4:
-                        shortname, validation_prompt, image_path, reference_images = _validation_sample
+                validation_sample = _normalise_validation_sample(_validation_sample, idx=idx)
+                validation_prompt = validation_sample.prompt
+                shortname = validation_sample.shortname
+                reference_images = validation_sample.conditioning
+                image_path = validation_sample.image_path
                 if not validation_prompt:
                     logger.debug("Skipping validation sample without prompt while preparing embeds.")
                     continue
-
-                if shortname is None:
-                    shortname = f"validation_{len(sample_shortnames)}"
 
                 # For models that require image context for text encoding (e.g., Qwen edit-v1),
                 # pass the reference image path so the model can load it from the backend
@@ -1956,8 +2074,6 @@ class Validation:
             or self.model.requires_conditioning_validation_inputs()
         ):
             self.validation_image_inputs = retrieve_validation_images()
-            # Validation inputs are in the format of a list of tuples:
-            # [(shortname, prompt, image), ...]
             logger.debug(f"Image inputs discovered for validation: {self.validation_image_inputs}")
 
     def _pipeline_cls(self):
@@ -3534,62 +3650,19 @@ class Validation:
             metadata_shortnames = self.validation_prompt_metadata.get("validation_shortnames", []) or []
         work_items: list[_ValidationWorkItem] = []
         for idx, entry in enumerate(content):
-            prompt_text: Any = entry
-            conditioning: Any = None
-            shortname: str | None = None
-            adapter_strength: float | None = None
-            image_path: str | None = None
-            bbox_entities: list[dict] | None = None
-            bbox_keyframes: list[dict] | None = None
-            if isinstance(entry, PromptLibraryEntry):
-                prompt_text = entry.prompt
-                adapter_strength = entry.adapter_strength
-                bbox_entities = entry.bbox_entities
-                bbox_keyframes = entry.bbox_keyframes
-            elif isinstance(entry, dict) and "prompt" in entry:
-                prompt_text = entry.get("prompt")
-                try:
-                    adapter_strength = (
-                        None if entry.get("adapter_strength", None) is None else float(entry.get("adapter_strength"))
-                    )
-                except Exception:
-                    adapter_strength = None
-            if isinstance(entry, tuple):
-                if len(entry) == 3 and isinstance(entry[2], list):
-                    shortname, prompt_text, conditioning = entry
-                    if isinstance(conditioning, list) and len(conditioning) == 1:
-                        conditioning = conditioning[0]
-                elif len(entry) == 3 and isinstance(entry[2], Image.Image):
-                    shortname, prompt_text, conditioning = entry
-                elif len(entry) == 4 and isinstance(entry[3], Image.Image):
-                    shortname, prompt_text, image_path, conditioning = entry
-                else:
-                    candidate_shortname = entry[0] if len(entry) > 0 else None
-                    candidate_prompt = entry[1] if len(entry) > 1 else prompt_text
-                    shortname = candidate_shortname if isinstance(candidate_shortname, str) else None
-                    prompt_text = candidate_prompt
-            if shortname is None:
-                if idx < len(metadata_shortnames):
-                    shortname = metadata_shortnames[idx]
-                else:
-                    shortname = f"validation_{idx}"
-            if not isinstance(prompt_text, str):
-                prompt_text = str(prompt_text)
-            # Derive data_backend_id from the shortname prefix (format: "{backend_id}_{idx}")
-            data_backend_id = None
-            if image_path is not None and shortname and "_" in shortname:
-                data_backend_id = shortname.rsplit("_", 1)[0]
+            fallback_shortname = metadata_shortnames[idx] if idx < len(metadata_shortnames) else None
+            validation_prompt = _normalise_validation_sample(entry, idx=idx, fallback_shortname=fallback_shortname)
             work_items.append(
                 _ValidationWorkItem(
                     index=idx,
-                    shortname=shortname,
-                    prompt=prompt_text,
-                    conditioning=conditioning,
-                    adapter_strength=adapter_strength,
-                    image_path=str(image_path) if image_path is not None else None,
-                    data_backend_id=data_backend_id,
-                    bbox_entities=bbox_entities,
-                    bbox_keyframes=bbox_keyframes,
+                    shortname=validation_prompt.shortname,
+                    prompt=validation_prompt.prompt,
+                    conditioning=validation_prompt.conditioning,
+                    adapter_strength=validation_prompt.adapter_strength,
+                    image_path=validation_prompt.image_path,
+                    data_backend_id=validation_prompt.data_backend_id,
+                    bbox_entities=validation_prompt.bbox_entities,
+                    bbox_keyframes=validation_prompt.bbox_keyframes,
                 )
             )
         return work_items
