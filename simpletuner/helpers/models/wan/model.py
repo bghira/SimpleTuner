@@ -254,6 +254,7 @@ class Wan(VideoModelFoundation):
     WAN22_T2V_A14B_PATH = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
     ANIMEGEN_T2V_HIGH_PATH = "https://huggingface.co/aidealab/AnimeGen-T2V/resolve/main/high_noise.safetensors"
     ANIMEGEN_T2V_LOW_PATH = "https://huggingface.co/aidealab/AnimeGen-T2V/resolve/main/low_noise.safetensors"
+    SUPPORTS_MULTISTAGE_VALIDATION = True
     HUGGINGFACE_PATHS = {
         "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
@@ -907,6 +908,12 @@ class Wan(VideoModelFoundation):
             return False
         return bool(getattr(self.config, "wan_validation_load_other_stage", False))
 
+    def supports_multistage_validation(self) -> bool:
+        return self._should_load_other_stage()
+
+    def run_multistage_validation(self, pipeline_kwargs, pipeline_call):
+        return pipeline_call(self.pipeline, pipeline_kwargs)
+
     def _get_or_load_wan_stage_module(
         self,
         subfolder: Optional[str],
@@ -944,6 +951,10 @@ class Wan(VideoModelFoundation):
         super().unload_model()
         self._wan_cached_stage_modules.clear()
 
+    def unload_validation_models(self) -> None:
+        super().unload_validation_models()
+        self._wan_cached_stage_modules.clear()
+
     def set_prepared_model(self, model, base_model: bool = False):
         super().set_prepared_model(model, base_model)
         if not base_model:
@@ -956,7 +967,7 @@ class Wan(VideoModelFoundation):
             pipeline.config.expand_timesteps = bool(self._wan_expand_timesteps)
         stage_info = self._wan_stage_info()
         if stage_info is not None:
-            load_other = self._should_load_other_stage()
+            load_other = not load_base_model and self._should_load_other_stage()
             trained_stage = stage_info["trained_stage"]
             other_subfolder = stage_info["other_stage_subfolder"]
             other_model_path = stage_info.get("other_stage_model_path")

@@ -772,6 +772,12 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 - **Qué**: Nivel de ruido pasado al upscaler SD x4.
 - **Predeterminado**: `100`
 
+### `--wan_validation_load_other_stage`
+
+- **Qué**: Carga la etapa opuesta de Wan 2.2 durante la validación.
+- **Predeterminado**: `false`
+- **Por qué**: Wan 2.2 y sabores por etapas compatibles, como AnimeGen, pueden entrenar cada etapa por separado. Al activarlo, se carga la etapa par fija para que la validación use la pipeline completa de dos etapas y cambie de denoiser en el límite configurado.
+
 
 ### `--validation_adapter_path`
 

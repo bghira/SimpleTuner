@@ -90,6 +90,11 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         details = self.service.get_model_details("ltxvideo2")
         self.assertFalse(details["capabilities"]["supports_multistage_validation"])
 
+    def test_wan_supports_multistage(self):
+        """Wan supports paired-stage validation for staged flavours."""
+        details = self.service.get_model_details("wan")
+        self.assertTrue(details["capabilities"]["supports_multistage_validation"])
+
     def test_deepfloyd_supports_multistage(self):
         """DeepFloyd supports model-owned multi-stage validation."""
         details = self.service.get_model_details("deepfloyd")

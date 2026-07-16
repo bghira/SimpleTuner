@@ -776,6 +776,12 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：传给 SD x4 放大器的噪声级别。
 - **默认值**：`100`
 
+### `--wan_validation_load_other_stage`
+
+- **内容**：验证时加载 Wan 2.2 的相反阶段。
+- **默认值**：`false`
+- **原因**：Wan 2.2 以及 AnimeGen 等兼容的分阶段模型可以单独训练任一阶段。启用后会加载固定的配对阶段，使验证使用完整的双阶段管线，并在配置的边界处切换 denoiser。
+
 ### `--validation_adapter_path`
 
 - **内容**：在计划验证时临时加载单个 LoRA 适配器。

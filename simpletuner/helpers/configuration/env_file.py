@@ -59,6 +59,7 @@ env_to_args_map = {
     "DEEPFLOYD_VALIDATION_STAGE2_GUIDANCE": "--deepfloyd_validation_stage2_guidance",
     "DEEPFLOYD_VALIDATION_STAGE3_GUIDANCE": "--deepfloyd_validation_stage3_guidance",
     "DEEPFLOYD_VALIDATION_STAGE3_NOISE_LEVEL": "--deepfloyd_validation_stage3_noise_level",
+    "WAN_VALIDATION_LOAD_OTHER_STAGE": "--wan_validation_load_other_stage",
     "POST_CHECKPOINT_SCRIPT": "--post_checkpoint_script",
     "POST_UPLOAD_SCRIPT": "--post_upload_script",
     "VALIDATION_GUIDANCE_RESCALE": "--validation_guidance_rescale",

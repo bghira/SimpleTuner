@@ -779,6 +779,12 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 - **What**: Noise level passed to the SD x4 upscaler.
 - **Default**: `100`
 
+### `--wan_validation_load_other_stage`
+
+- **What**: Load the opposite Wan 2.2 stage during validation.
+- **Default**: `false`
+- **Why**: Wan 2.2 and compatible staged flavours such as AnimeGen can train either stage independently. Enabling this loads the fixed peer stage so validation uses the full paired-stage pipeline and switches denoisers at the configured boundary.
+
 ### `--validation_adapter_path`
 
 - **What**: Temporarily loads a single LoRA adapter when running scheduled validations.

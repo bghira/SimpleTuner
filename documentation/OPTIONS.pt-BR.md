@@ -771,6 +771,12 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 - **O que**: Nivel de ruido passado ao upscaler SD x4.
 - **Padrao**: `100`
 
+### `--wan_validation_load_other_stage`
+
+- **O que**: Carrega o stage oposto do Wan 2.2 durante a validacao.
+- **Padrao**: `false`
+- **Por que**: Wan 2.2 e flavours staged compativeis, como AnimeGen, podem treinar cada stage separadamente. Ao ativar, o stage par fixo e carregado para que a validacao use a pipeline completa de dois stages e troque denoisers no boundary configurado.
+
 ### `--validation_adapter_path`
 
 - **O que**: Carrega temporariamente um unico adaptador LoRA durante validacoes agendadas.

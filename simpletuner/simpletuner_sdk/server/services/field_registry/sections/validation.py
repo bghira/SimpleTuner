@@ -1151,6 +1151,25 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="wan_validation_load_other_stage",
+            arg_name="--wan_validation_load_other_stage",
+            ui_label="Wan Paired-Stage Validation",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Load the opposite Wan 2.2 stage during validation so the pipeline can switch denoisers at the stage boundary.",
+            tooltip="For Wan 2.2 and compatible staged flavours such as AnimeGen, this loads the fixed peer stage alongside the trained stage for validation renders.",
+            importance=ImportanceLevel.ADVANCED,
+            order=32,
+            subsection="advanced",
+            model_specific=["wan"],
+            documentation="OPTIONS.md#--wan_validation_load_other_stage",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="validation_adapter_path",
             arg_name="--validation_adapter_path",
             ui_label="Validation Adapter Path",
