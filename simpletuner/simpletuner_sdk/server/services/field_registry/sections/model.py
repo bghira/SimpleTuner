@@ -866,44 +866,6 @@ def register_model_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
-            name="wan_force_2_1_time_embedding",
-            arg_name="--wan_force_2_1_time_embedding",
-            ui_label="Force Wan 2.1 Time Embedding",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="model_specific",
-            default_value=False,
-            dependencies=[FieldDependency(field="model_family", operator="equals", value="wan", action="show")],
-            help_text="Use Wan 2.1 style time embeddings even when running Wan 2.2 checkpoints.",
-            tooltip="Enable this if Wan 2.2 checkpoints report shape mismatches in the time embedding layers.",
-            importance=ImportanceLevel.ADVANCED,
-            order=30,
-        )
-    )
-
-    # Fused QKV Projections
-    registry._add_field(
-        ConfigField(
-            name="fused_qkv_projections",
-            arg_name="--fuse_qkv_projections",
-            ui_label="Fused QKV Projections",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="architecture",
-            default_value=False,
-            dependencies=[FieldDependency(field="model_family", operator="equals", value="flux")],
-            help_text="Enables Flash Attention 3 when supported; otherwise falls back to PyTorch SDPA.",
-            tooltip="Improves attention efficiency on modern NVIDIA GPUs. Uses native SDPA when Flash Attention 3 is unavailable.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            model_specific=["flux"],
-            order=19,
-            aliases=["--fused_qkv_projections"],
-            documentation="OPTIONS.md#--fuse_qkv_projections",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
             name="rescale_betas_zero_snr",
             arg_name="--rescale_betas_zero_snr",
             ui_label="Rescale Betas Zero SNR",
@@ -1247,28 +1209,6 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             model_specific=["sd15", "sd20", "sdxl", "deepfloyd"],
             order=33,
-        )
-    )
-
-    # Custom Text Encoder Intermediary Layers
-    registry._add_field(
-        ConfigField(
-            name="custom_text_encoder_intermediary_layers",
-            arg_name="--custom_text_encoder_intermediary_layers",
-            ui_label="Custom Text Encoder Layers",
-            field_type=FieldType.TEXT,
-            tab="model",
-            section="architecture",
-            subsection="advanced",
-            default_value=None,
-            placeholder="[10, 20, 30]",
-            dependencies=[FieldDependency(field="model_family", operator="in", values=["flux2"])],
-            help_text="Override which hidden state layers to extract from the text encoder. Provide as JSON array (e.g., [10, 20, 30]). Leave blank to use model defaults.",
-            tooltip="FLUX.2-dev uses layers [10, 20, 30] from Mistral-3, Klein models use [9, 18, 27] from Qwen3. Override for experimentation.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            model_specific=["flux2"],
-            order=34,
-            documentation="OPTIONS.md#--custom_text_encoder_intermediary_layers",
         )
     )
 

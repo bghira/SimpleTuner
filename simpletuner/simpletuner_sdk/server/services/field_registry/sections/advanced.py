@@ -414,22 +414,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
-            name="flux_fast_schedule",
-            arg_name="--flux_fast_schedule",
-            ui_label="Flow Fast Schedule",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="model_specific",
-            default_value=False,
-            help_text="Use experimental fast schedule for Flux.1S training",
-            tooltip="Experimental feature that may improve training speed for Flux.1S models.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=11,
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
             name="flow_use_uniform_schedule",
             arg_name="--flow_use_uniform_schedule",
             ui_label="Use Uniform Schedule",
@@ -571,115 +555,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Flux Guidance Configuration
-    registry._add_field(
-        ConfigField(
-            name="flux_guidance_mode",
-            arg_name="--flux_guidance_mode",
-            ui_label="Flux Guidance Mode",
-            field_type=FieldType.SELECT,
-            tab="model",
-            section="model_specific",
-            default_value="constant",
-            choices=[{"value": "constant", "label": "Constant"}, {"value": "random-range", "label": "Random Range"}],
-            help_text="Guidance mode for Flux training",
-            tooltip="Constant uses same guidance for all samples. Random Range varies guidance per sample.",
-            importance=ImportanceLevel.ADVANCED,
-            order=40,
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
-        )
-    )
-
-    # Flux Attention Masked Training
-    registry._add_field(
-        ConfigField(
-            name="flux_attention_masked_training",
-            arg_name="--flux_attention_masked_training",
-            ui_label="Attention Masked Training",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="model_specific",
-            default_value=False,
-            model_specific=["flux"],
-            help_text="Enable attention masked training for Flux models",
-            tooltip="Experimental feature for Flux models that masks certain attention patterns during training.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=10,
-        )
-    )
-
-    # Flux Fast Schedule
-    registry._add_field(
-        ConfigField(
-            name="flux_fast_schedule",
-            arg_name="--flux_fast_schedule",
-            ui_label="Fast Training Schedule",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="model_specific",
-            default_value=False,
-            model_specific=["flux"],
-            help_text="Use experimental fast schedule for Flux training",
-            tooltip="Experimental feature that may speed up Flux.1S training at the cost of quality.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=11,
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="flux_guidance_value",
-            arg_name="--flux_guidance_value",
-            ui_label="Flux Guidance Value",
-            field_type=FieldType.NUMBER,
-            tab="model",
-            section="model_specific",
-            default_value=1.0,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
-            help_text="Guidance value for constant mode",
-            tooltip="1.0 preserves CFG distillation. Higher values require CFG at inference.",
-            importance=ImportanceLevel.ADVANCED,
-            order=41,
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="flux_guidance_min",
-            arg_name="--flux_guidance_min",
-            ui_label="Flux Guidance Min",
-            field_type=FieldType.NUMBER,
-            tab="model",
-            section="model_specific",
-            default_value=0.0,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
-            help_text="Minimum guidance value for random-range mode",
-            tooltip="Lower bound of guidance range when using random-range mode.",
-            importance=ImportanceLevel.ADVANCED,
-            order=42,
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="flux_guidance_max",
-            arg_name="--flux_guidance_max",
-            ui_label="Flux Guidance Max",
-            field_type=FieldType.NUMBER,
-            tab="model",
-            section="model_specific",
-            default_value=4.0,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
-            help_text="Maximum guidance value for random-range mode",
-            tooltip="Upper bound of guidance range when using random-range mode.",
-            importance=ImportanceLevel.ADVANCED,
-            order=43,
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
-        )
-    )
-
     # T5 Configuration
     registry._add_field(
         ConfigField(
@@ -697,44 +572,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Zero pads with zeros. Unmodified leaves original padding. Affects model behavior.",
             importance=ImportanceLevel.ADVANCED,
             order=10,
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="sd3_clip_uncond_behaviour",
-            arg_name="--sd3_clip_uncond_behaviour",
-            ui_label="SD3 CLIP Unconditional Behavior",
-            field_type=FieldType.SELECT,
-            tab="training",
-            section="text_encoder",
-            subsection="advanced",
-            default_value="empty_string",
-            choices=[{"value": "empty_string", "label": "Empty String"}, {"value": "zero", "label": "Zero"}],
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
-            help_text="How SD3 handles unconditional prompts",
-            tooltip="Affects how SD3 processes prompts without conditioning. Empty string is default.",
-            importance=ImportanceLevel.ADVANCED,
-            order=11,
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="sd3_t5_uncond_behaviour",
-            arg_name="--sd3_t5_uncond_behaviour",
-            ui_label="SD3 T5 Unconditional Behavior",
-            field_type=FieldType.SELECT,
-            tab="training",
-            section="text_encoder",
-            subsection="advanced",
-            default_value=None,
-            choices=[{"value": "empty_string", "label": "Empty String"}, {"value": "zero", "label": "Zero"}],
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
-            help_text="How SD3 T5 handles unconditional prompts",
-            tooltip="Overrides CLIP behavior for T5. If not set, follows CLIP setting.",
-            importance=ImportanceLevel.ADVANCED,
-            order=12,
         )
     )
 
