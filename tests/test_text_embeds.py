@@ -236,6 +236,44 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(saved[1][1]["attention_mask"].shape, torch.Size([1, 3]))
         self.assertEqual(saved[0][1]["add_text_embeds"].shape, torch.Size([1, 5]))
 
+    def test_batched_encode_normalizes_single_sample_pooled_outputs(self):
+        for pooled_is_batched in (False, True):
+            with self.subTest(pooled_is_batched=pooled_is_batched):
+                cache = _make_cache(TextEmbedCacheKey.CAPTION)
+                saved = []
+                cache.save_to_cache = lambda filename, embeddings: saved.append((filename, embeddings))
+
+                class BatchModel(_DummyModel):
+                    def __init__(self):
+                        super().__init__(TextEmbedCacheKey.CAPTION)
+
+                    def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                        pooled_prompt_embeds = torch.arange(5, dtype=torch.float32)
+                        negative_pooled_prompt_embeds = torch.arange(5, 10, dtype=torch.float32)
+                        if pooled_is_batched:
+                            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)
+                            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.unsqueeze(0)
+                        return {
+                            "prompt_embeds": torch.ones(1, 2, 3),
+                            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+                            "pooled_prompt_embeds": pooled_prompt_embeds,
+                            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+                        }
+
+                cache.model = BatchModel()
+                records = [{"prompt": "short", "key": "short", "metadata": {}}]
+
+                cache._encode_and_cache_prompt_batch(records, ["short.pt"])
+
+                self.assertEqual(len(saved), 1)
+                embeddings = saved[0][1]
+                self.assertEqual(embeddings["pooled_prompt_embeds"].shape, torch.Size([5]))
+                self.assertEqual(embeddings["negative_pooled_prompt_embeds"].shape, torch.Size([5]))
+                torch.testing.assert_close(embeddings["pooled_prompt_embeds"], torch.arange(5, dtype=torch.float32))
+                torch.testing.assert_close(
+                    embeddings["negative_pooled_prompt_embeds"], torch.arange(5, 10, dtype=torch.float32)
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
