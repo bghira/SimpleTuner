@@ -117,6 +117,7 @@ env_to_args_map = {
     "METADATA_UPDATE_INTERVAL": "--metadata_update_interval",
     "READ_BATCH_SIZE": "--read_batch_size",
     "WRITE_BATCH_SIZE": "--write_batch_size",
+    "TEXT_ENCODER_BATCH_SIZE": "--text_encoder_batch_size",
     "AWS_MAX_POOL_CONNECTIONS": "--aws_max_pool_connections",
     "TORCH_NUM_THREADS": "--torch_num_threads",
     "IMAGE_PROCESSING_BATCH_SIZE": "--image_processing_batch_size",

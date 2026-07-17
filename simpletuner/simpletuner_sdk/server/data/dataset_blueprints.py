@@ -672,6 +672,16 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "text_encoder_batch_size",
+                    "label": "text encoder batch size",
+                    "description": "batch size when precomputing uncached text embeddings",
+                    "type": "number",
+                    "defaultValue": 1,
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "preserve_data_backend_cache",
                     "label": "preserve backend cache",
                     "description": "keep data backend cache between runs",

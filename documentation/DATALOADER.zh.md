@@ -77,6 +77,12 @@
 - **说明:** 单次批量写入的文本嵌入数量。数值越大写入吞吐越高，但内存占用也更高。
 - **默认值:** 回退到训练器的 `--write_batch_size` 参数（通常为 128）。
 
+### `text_encoder_batch_size`
+
+- **仅适用于 `dataset_type=text_embeds`**
+- **说明:** 预计算未缓存的文本嵌入时，每次文本编码器 forward 编码的 caption 数量。较大的值可提高吞吐，但会占用更多 VRAM。
+- **默认值:** 回退到训练器的 `--text_encoder_batch_size` 参数（默认 1）。
+
 ### `text_embeds`
 
 - **仅适用于 `dataset_type=image`**

@@ -77,6 +77,12 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 - **Description:** Number of text embeds to write in a single batch operation. Higher values can improve write throughput but use more memory.
 - **Default:** Falls back to the trainer's `--write_batch_size` argument (typically 128).
 
+### `text_encoder_batch_size`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Description:** Number of captions to encode in one text encoder forward while precomputing uncached text embeddings. Higher values can improve throughput but use more VRAM.
+- **Default:** Falls back to the trainer's `--text_encoder_batch_size` argument (default 1).
+
 ### `text_embeds`
 
 - **Only applies to `dataset_type=image`**

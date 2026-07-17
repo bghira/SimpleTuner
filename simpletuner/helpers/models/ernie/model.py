@@ -264,7 +264,7 @@ class Ernie(ImageModelFoundation):
         tokenizer = self.tokenizers[0]
         tokenization_kwargs = {
             "add_special_tokens": True,
-            "padding": False,
+            "padding": "longest",
             "truncation": True,
             "return_tensors": "pt",
         }

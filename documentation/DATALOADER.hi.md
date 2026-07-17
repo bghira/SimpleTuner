@@ -77,6 +77,12 @@
 - **Description:** एक batch operation में कितने text embeds लिखे जाएँ। उच्च मान write throughput बढ़ा सकते हैं लेकिन अधिक memory लेते हैं।
 - **Default:** trainer के `--write_batch_size` argument (आमतौर पर 128) पर fallback करता है।
 
+### `text_encoder_batch_size`
+
+- **केवल `dataset_type=text_embeds` पर लागू**
+- **Description:** uncached text embeddings precompute करते समय एक text encoder forward में कितने captions encode किए जाएँ। उच्च मान throughput बढ़ा सकते हैं लेकिन अधिक VRAM लेते हैं।
+- **Default:** trainer के `--text_encoder_batch_size` argument (default 1) पर fallback करता है।
+
 ### `text_embeds`
 
 - **केवल `dataset_type=image` पर लागू**

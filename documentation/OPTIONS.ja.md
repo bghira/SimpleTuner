@@ -1863,6 +1863,7 @@ usage: train.py [-h] --model_family
                 [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
                 [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
+                [--text_encoder_batch_size TEXT_ENCODER_BATCH_SIZE]
                 [--enable_multiprocessing [ENABLE_MULTIPROCESSING]]
                 [--max_workers MAX_WORKERS]
                 [--aws_max_pool_connections AWS_MAX_POOL_CONNECTIONS]
@@ -2454,6 +2455,10 @@ options:
   --read_batch_size READ_BATCH_SIZE
                         Used by the VAE cache to prefetch image data. This is
                         the number of images to read ahead
+  --text_encoder_batch_size TEXT_ENCODER_BATCH_SIZE
+                        Batch size used when precomputing uncached text
+                        embeddings. A value of 1 preserves the original one-
+                        caption-per-forward behavior.
   --enable_multiprocessing [ENABLE_MULTIPROCESSING]
                         If set, will use processes instead of threads during
                         metadata caching operations

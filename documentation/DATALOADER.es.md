@@ -77,6 +77,12 @@ Aquí está el ejemplo más básico de un archivo de configuración del dataload
 - **Descripción:** Número de text embeds que se escriben en una sola operación por batch. Valores más altos pueden mejorar el throughput de escritura pero usan más memoria.
 - **Default:** Usa el argumento `--write_batch_size` del trainer (normalmente 128).
 
+### `text_encoder_batch_size`
+
+- **Solo aplica a `dataset_type=text_embeds`**
+- **Descripción:** Número de captions que se codifican en un solo forward del encoder de texto al precomputar text embeddings no cacheados. Valores más altos pueden mejorar el throughput pero usan más VRAM.
+- **Default:** Usa el argumento `--text_encoder_batch_size` del trainer (predeterminado 1).
+
 ### `text_embeds`
 
 - **Solo aplica a `dataset_type=image`**
