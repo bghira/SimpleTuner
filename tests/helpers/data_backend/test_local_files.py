@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 
@@ -60,6 +61,41 @@ class TestLocalDataBackendListFiles(unittest.TestCase):
         listed_files = self._flatten_listing(listing)
 
         self.assertEqual(listed_files, [str((self.root / "visible.jpg").absolute())])
+
+    def test_read_image_batch_preserves_order_and_skips_failures(self):
+        paths = ["first.jpg", "bad.jpg", "second.jpg"]
+
+        def read_image(filepath, delete_problematic_images=False):
+            if filepath == "bad.jpg":
+                raise ValueError("corrupt")
+            return f"image:{filepath}"
+
+        self.backend.read_image = Mock(side_effect=read_image)
+
+        keys, images = self.backend.read_image_batch(paths)
+
+        self.assertEqual(keys, ["first.jpg", "second.jpg"])
+        self.assertEqual(images, ["image:first.jpg", "image:second.jpg"])
+
+    def test_read_image_batch_deletes_problematic_images_when_requested(self):
+        self.backend.read_image = Mock(side_effect=ValueError("corrupt"))
+        self.backend.delete = Mock()
+
+        keys, images = self.backend.read_image_batch(["bad.jpg"], delete_problematic_images=True)
+
+        self.assertEqual(keys, [])
+        self.assertEqual(images, [])
+        self.backend.delete.assert_called_once_with("bad.jpg")
+
+    def test_write_batch_raises_worker_errors(self):
+        def write(filepath, data):
+            if filepath == "bad.pt":
+                raise OSError("disk full")
+
+        self.backend.write = Mock(side_effect=write)
+
+        with self.assertRaises(OSError):
+            self.backend.write_batch(["ok.pt", "bad.pt"], [b"ok", b"bad"])
 
 
 if __name__ == "__main__":
