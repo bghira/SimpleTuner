@@ -33,20 +33,21 @@ LARGE_ENOUGH_NUMBER = 100
 PngImagePlugin.MAX_TEXT_CHUNK = LARGE_ENOUGH_NUMBER * (1024**2)
 
 
+def _trainingsample_array_to_rgb_image(img_tsr: np.ndarray) -> Image.Image:
+    # trainingsample's imdecode already returns RGB tensors, no extra swap needed
+    if len(img_tsr.shape) == 2:
+        img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
+    elif img_tsr.shape[2] == 1:
+        img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
+    elif img_tsr.shape[2] == 4:
+        img_tsr, _timing = tsr.rgba_to_rgb_optimized(img_tsr)
+    return Image.fromarray(img_tsr)
+
+
 def decode_image_with_trainingsample(img_bytes: bytes) -> Union[Image.Image, None]:
     """Decode image using trainingsample with optimized format conversions."""
     img_tsr = tsr.imdecode_py(img_bytes, 1)  # 1 = IMREAD_COLOR
-    if img_tsr is not None:
-        # trainingsample's imdecode already returns RGB tensors, no extra swap needed
-        # Handle grayscale with ultra-fast conversion if needed
-        if len(img_tsr.shape) == 2:
-            # Convert grayscale to RGB using optimized method
-            img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
-        elif img_tsr.shape[2] == 1:
-            # Single channel to RGB
-            img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
-
-    return img_tsr if img_tsr is None else Image.fromarray(img_tsr)
+    return img_tsr if img_tsr is None else _trainingsample_array_to_rgb_image(img_tsr)
 
 
 def decode_image_with_pil(img_data: bytes) -> Image.Image:
@@ -127,21 +128,23 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     # remove iCCP chunk if found
     img_data = remove_iccp_chunk(img_data)
 
-    # Try to preload the image bytes with channels unchanged to determine
-    # if the image has an alpha channel. If it does we should add a white
-    # background to it using PIL.
-    has_alpha = False
+    # Decode once with channels unchanged so alpha detection and the common
+    # RGB conversion can share the same array.
+    image_preload = None
     try:
         image_preload = tsr.imdecode_py(img_data, -1)  # -1 = IMREAD_UNCHANGED
-        if image_preload is not None and len(image_preload.shape) >= 3 and image_preload.shape[2] == 4:
-            has_alpha = True
-        del image_preload
     except Exception:
         # If trainingsample fails, we'll use PIL fallback regardless
         pass
 
     img = None
-    if not has_alpha:
+    if image_preload is not None:
+        try:
+            img = _trainingsample_array_to_rgb_image(image_preload)
+        except Exception:
+            # If trainingsample conversion fails, fall back to PIL
+            pass
+    if img is None:
         try:
             img = decode_image_with_trainingsample(img_data)
         except Exception:

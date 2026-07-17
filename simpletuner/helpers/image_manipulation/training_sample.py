@@ -9,6 +9,7 @@ import time
 from math import sqrt
 
 import numpy as np
+import trainingsample as tsr
 from diffusers.utils.export_utils import export_to_gif
 from PIL import Image
 from PIL.ImageOps import exif_transpose
@@ -722,9 +723,7 @@ class TrainingSample:
                         try:
                             img_array = np.array(self.image)
                             if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                                resized_arrays = self.batch_processor.batch_resize_images(
-                                    [img_array], [self.intermediary_size]
-                                )
+                                resized_arrays = tsr.batch_resize_images([img_array], [self.intermediary_size])
                                 if resized_arrays and len(resized_arrays) > 0:
                                     self.image = Image.fromarray(resized_arrays[0])
                                 else:
@@ -790,8 +789,7 @@ class TrainingSample:
                 try:
                     img_array = np.array(self.image)
                     if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                        # Use BatchedTrainingSamples for better performance
-                        resized_arrays = self.batch_processor.batch_resize_images([img_array], [size])
+                        resized_arrays = tsr.batch_resize_images([img_array], [size])
                         if resized_arrays and len(resized_arrays) > 0:
                             self.image = Image.fromarray(resized_arrays[0])
                         else:
