@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from PIL import Image
@@ -112,6 +112,33 @@ class TestTrainingSample(unittest.TestCase):
         original_size = sample.image.size
         sample.prepare()
         self.assertNotEqual(sample.image.size, original_size)  # Ensure resizing occurs
+
+    def test_intermediary_image_resize_uses_direct_trainingsample_call(self):
+        sample = TrainingSample(Image.new("RGB", (64, 64), "white"), self.data_backend_id, {"original_size": (64, 64)})
+        sample.valid_metadata = True
+        sample.target_size = (32, 32)
+        sample.intermediary_size = (48, 32)
+        sample.target_aspect_ratio = 1.0
+        sample.batch_processor.batch_resize_images = MagicMock()
+
+        resized_array = np.zeros((32, 48, 3), dtype=np.uint8)
+        cropper = MagicMock()
+        cropper.crop.side_effect = lambda _width, _height: (sample.image, (0, 0))
+        sample.cropper = cropper
+
+        with patch(
+            "simpletuner.helpers.image_manipulation.training_sample.tsr.batch_resize_images",
+            return_value=[resized_array],
+        ) as resize_images:
+            sample.resize()
+
+        resize_images.assert_called_once()
+        image_args, size_args = resize_images.call_args.args
+        self.assertEqual(len(image_args), 1)
+        self.assertEqual(image_args[0].shape, (64, 64, 3))
+        self.assertEqual(size_args, [(48, 32)])
+        sample.batch_processor.batch_resize_images.assert_not_called()
+        self.assertEqual(sample.image.size, (48, 32))
 
     def test_crop_coordinates(self):
         """Test that cropping returns correct coordinates."""
