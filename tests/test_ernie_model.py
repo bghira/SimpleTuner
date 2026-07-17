@@ -235,6 +235,46 @@ class ErnieModelTests(unittest.TestCase):
 
         self.assertEqual(tuple(encoded["prompt_embeds"].shape), (1, 3, Ernie.TEXT_EMBED_DIM))
 
+    def test_encode_prompts_pads_batched_prompts_to_longest(self):
+        model = self._build_model()
+
+        class _Tokenizer:
+            def __init__(self):
+                self.called = None
+
+            def __call__(self, prompts, **kwargs):
+                del prompts
+                self.called = kwargs
+                return types.SimpleNamespace(
+                    input_ids=torch.tensor([[1, 2, 0], [1, 2, 3]]),
+                    attention_mask=torch.tensor([[1, 1, 0], [1, 1, 1]]),
+                )
+
+        class _LanguageModel:
+            def __call__(self, **kwargs):
+                del kwargs
+                hs = torch.randn(2, 3, Ernie.TEXT_EMBED_DIM)
+                return types.SimpleNamespace(hidden_states=[hs, hs + 1, hs + 2])
+
+        class _TextEncoder:
+            def __init__(self):
+                self.language_model = _LanguageModel()
+
+            def get_input_embeddings(self):
+                def _embed(input_ids):
+                    return torch.randn(input_ids.shape[0], input_ids.shape[1], Ernie.TEXT_EMBED_DIM)
+
+                return _embed
+
+        model.tokenizers = [_Tokenizer()]
+        model.text_encoders = [_TextEncoder()]
+
+        encoded = model._encode_prompts(["short", "longer prompt"])
+
+        self.assertEqual(model.tokenizers[0].called["padding"], "longest")
+        self.assertEqual(tuple(encoded["prompt_embeds"].shape), (2, 3, Ernie.TEXT_EMBED_DIM))
+        self.assertTrue(torch.equal(encoded["attention_mask"], torch.tensor([[True, True, False], [True, True, True]])))
+
     def test_encode_prompts_honors_explicit_tokenizer_max_length(self):
         model = self._build_model()
         model.config.tokenizer_max_length = 256
