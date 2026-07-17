@@ -316,7 +316,6 @@ class TestTrainingBatchCompat(unittest.TestCase):
             prompt_embeds=None,
             add_text_embeds=None,
             batch_time_ids=None,
-            batch_luminance=None,
             conditioning_pixel_values=None,
             conditioning_latents=None,
             conditioning_image_embeds=None,

@@ -646,10 +646,6 @@
                                         <td class="text-muted">Aspect Ratio</td>
                                         <td x-text="Number(selectedFile?.aspect_ratio).toFixed(3)"></td>
                                     </tr>
-                                    <tr x-show="selectedFile?.luminance != null">
-                                        <td class="text-muted">Luminance</td>
-                                        <td x-text="Number(selectedFile?.luminance).toFixed(3)"></td>
-                                    </tr>
                                     <template x-for="[key, val] in Object.entries(selectedFile?.extra || {})" :key="key">
                                         <tr>
                                             <td class="text-muted" x-text="key.replace(/_/g, ' ')"></td>

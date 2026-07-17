@@ -58,7 +58,6 @@ from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
-from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler

@@ -594,13 +594,6 @@ def collate_fn(batch):
 
     assert isinstance(data_backend_id, str)
     batch_backend_id = data_backend_id
-    debug_log("Collect luminance values")
-    if "luminance" in examples[0]:
-        batch_luminance = [example.get("luminance", 0) for example in examples]
-    else:
-        batch_luminance = [0] * len(examples)
-    # average it
-    batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     data_backend = StateTracker.get_data_backend(batch_backend_id)
@@ -1243,7 +1236,6 @@ def collate_fn(batch):
         "t5xxl_ids": all_text_encoder_outputs.get("t5xxl_ids"),
         "t5xxl_weights": all_text_encoder_outputs.get("t5xxl_weights"),
         "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),
-        "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,
         "conditioning_latents": conditioning_latents,
         "conditioning_latents_type": conditioning_latents_type,

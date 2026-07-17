@@ -100,7 +100,6 @@ class CollateFunctionTests(unittest.TestCase):
                     {
                         "image_path": "sample.png",
                         "instance_prompt_text": "caption",
-                        "luminance": 0.5,
                         "original_size": (64, 64),
                         "image_data": MagicMock(),
                         "crop_coordinates": [0, 0, 32, 32],

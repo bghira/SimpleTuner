@@ -8,7 +8,6 @@ from typing import Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
@@ -522,8 +521,6 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 "intermediary_size": prepared_sample.intermediary_size,
                 "aspect_ratio": prepared_sample.aspect_ratio,
             }
-            if image is not None:
-                cur_image_metadata["luminance"] = calculate_luminance(image)
             bbox_entities = self._discover_bbox_metadata(image_path_str)
             if bbox_entities:
                 cur_image_metadata["bbox_entities"] = bbox_entities

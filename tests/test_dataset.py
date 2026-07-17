@@ -29,7 +29,6 @@ class TestMultiAspectDataset(unittest.TestCase):
             "crop_coordinates": (0, 0),
             "target_size": (16, 8),
             "aspect_ratio": 1.0,
-            "luminance": 0.5,
         }
         self.metadata_backend.get_metadata_by_filepath = Mock(return_value=self.image_metadata)
         self.data_backend = Mock(spec=BaseDataBackend)
@@ -68,7 +67,6 @@ class TestMultiAspectDataset(unittest.TestCase):
                         "original_size": (16, 8),
                         "target_size": (16, 8),
                         "aspect_ratio": 1.0,
-                        "luminance": 0.5,
                     }
                 ]
             )
