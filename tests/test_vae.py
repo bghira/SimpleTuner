@@ -164,6 +164,17 @@ class TestVaeCache(unittest.TestCase):
             file_extensions=video_file_extensions,
         )
 
+    def test_local_unprocessed_file_set_tracks_reassigned_file_list(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.local_unprocessed_files = ["/data/first.png"]
+
+        self.assertIn("/data/first.png", vae_cache._local_unprocessed_file_set())
+
+        vae_cache.local_unprocessed_files = ["/data/second.png"]
+
+        self.assertNotIn("/data/first.png", vae_cache._local_unprocessed_file_set())
+        self.assertIn("/data/second.png", vae_cache._local_unprocessed_file_set())
+
 
 class DummyAccelerator:
     def __init__(self):
