@@ -667,7 +667,7 @@ class TestTrainer(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("FSDP_CPU_RAM_EFFICIENT_LOADING", None)
             trainer.init_text_encoder()
-            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+            self.assertNotIn("FSDP_CPU_RAM_EFFICIENT_LOADING", os.environ)
 
     def test_init_text_encoder_leaves_env_unchanged_without_fsdp_cpu_ram_efficient_loading(self):
         trainer = object.__new__(Trainer)

@@ -2341,7 +2341,7 @@ class Trainer:
             yield
         finally:
             if previous_value is None:
-                os.environ[env_name] = str(bool(getattr(fsdp_plugin, "cpu_ram_efficient_loading", False)))
+                os.environ.pop(env_name, None)
             else:
                 os.environ[env_name] = previous_value
 
