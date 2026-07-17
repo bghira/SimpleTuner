@@ -3937,7 +3937,7 @@ class Trainer:
         # this runs on all processes to ensure shapes are aligned.
         self.model.pre_ema_creation()
         fsdp_version = getattr(self.config, "fsdp_version", 1)
-        fsdp_enabled = getattr(self.config, "fsdp_enable", getattr(self.config, "use_fsdp", False))
+        fsdp_enabled = getattr(self.config, "fsdp_enable", False) or getattr(self.config, "use_fsdp", False)
         is_fsdp2_run = fsdp_enabled and fsdp_version == 2 and self.accelerator.distributed_type == DistributedType.FSDP
 
         if is_fsdp2_run and getattr(self.config, "ema_cpu_only", False):
