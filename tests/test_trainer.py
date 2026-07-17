@@ -610,6 +610,86 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_init_text_encoder_disables_fsdp_cpu_ram_efficient_loading_during_load(self):
+        trainer = object.__new__(Trainer)
+        observed_env_values = []
+
+        def load_text_encoder(move_to_device: bool = True):
+            observed_env_values.append((move_to_device, os.environ.get("FSDP_CPU_RAM_EFFICIENT_LOADING")))
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=True),
+            )
+        )
+
+        with patch.dict(os.environ, {"FSDP_CPU_RAM_EFFICIENT_LOADING": "True"}, clear=False):
+            trainer.init_text_encoder(move_to_accelerator=False)
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+        self.assertEqual(observed_env_values, [(False, "False")])
+
+    def test_init_text_encoder_restores_fsdp_cpu_ram_efficient_loading_after_error(self):
+        trainer = object.__new__(Trainer)
+
+        def load_text_encoder(move_to_device: bool = True):
+            raise RuntimeError("load failed")
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=True),
+            )
+        )
+
+        with patch.dict(os.environ, {"FSDP_CPU_RAM_EFFICIENT_LOADING": "True"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "load failed"):
+                trainer.init_text_encoder()
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+    def test_init_text_encoder_restores_missing_env_from_fsdp_plugin_state(self):
+        trainer = object.__new__(Trainer)
+
+        def load_text_encoder(move_to_device: bool = True):
+            self.assertEqual(os.environ.get("FSDP_CPU_RAM_EFFICIENT_LOADING"), "False")
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=True),
+            )
+        )
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FSDP_CPU_RAM_EFFICIENT_LOADING", None)
+            trainer.init_text_encoder()
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+    def test_init_text_encoder_leaves_env_unchanged_without_fsdp_cpu_ram_efficient_loading(self):
+        trainer = object.__new__(Trainer)
+        observed_env_values = []
+
+        def load_text_encoder(move_to_device: bool = True):
+            observed_env_values.append(os.environ.get("FSDP_CPU_RAM_EFFICIENT_LOADING"))
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=False),
+            )
+        )
+
+        with patch.dict(os.environ, {"FSDP_CPU_RAM_EFFICIENT_LOADING": "True"}, clear=False):
+            trainer.init_text_encoder()
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+        self.assertEqual(observed_env_values, ["True"])
+
     def test_resolve_ddp_find_unused_parameters_uses_explicit_config(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(find_unused_parameters=False, model_family="ltxvideo2")

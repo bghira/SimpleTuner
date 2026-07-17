@@ -24,6 +24,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -2323,8 +2324,30 @@ class Trainer:
         StateTracker.set_vae_dtype(self.model.vae.dtype)
         StateTracker.set_vae(self.model.vae)
 
+    @contextmanager
+    def _disable_fsdp_cpu_ram_efficient_loading_for_text_encoder(self):
+        accelerator = getattr(self, "accelerator", None)
+        state = getattr(accelerator, "state", None)
+        distributed_type = getattr(state, "distributed_type", getattr(accelerator, "distributed_type", None))
+        fsdp_plugin = getattr(state, "fsdp_plugin", None)
+        if distributed_type != DistributedType.FSDP or not getattr(fsdp_plugin, "cpu_ram_efficient_loading", False):
+            yield
+            return
+
+        env_name = "FSDP_CPU_RAM_EFFICIENT_LOADING"
+        previous_value = os.environ.get(env_name)
+        os.environ[env_name] = "False"
+        try:
+            yield
+        finally:
+            if previous_value is None:
+                os.environ[env_name] = str(bool(getattr(fsdp_plugin, "cpu_ram_efficient_loading", False)))
+            else:
+                os.environ[env_name] = previous_value
+
     def init_text_encoder(self, move_to_accelerator: bool = True):
-        self.model.load_text_encoder(move_to_device=move_to_accelerator)
+        with self._disable_fsdp_cpu_ram_efficient_loading_for_text_encoder():
+            self.model.load_text_encoder(move_to_device=move_to_accelerator)
 
     def init_freeze_models(self):
         self.model.freeze_components()
