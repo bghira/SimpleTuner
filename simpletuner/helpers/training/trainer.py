@@ -6088,7 +6088,6 @@ class Trainer:
 
         # Some values that are required to be initialised later.
         step = self.state["global_step"]
-        training_luminance_values = []
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
@@ -6205,10 +6204,6 @@ class Trainer:
                     raise ValueError(
                         f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
                     )
-
-                # Add the current batch of training data's avg luminance to a list.
-                if "batch_luminance" in prepared_batch:
-                    training_luminance_values.append(prepared_batch["batch_luminance"])
 
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
@@ -6627,11 +6622,6 @@ class Trainer:
                     self.timesteps_buffer = []
                     self.twinflow_traj_buffer = []
 
-                    # Average out the luminance values of each batch, so that we can store that in this step.
-                    if training_luminance_values:
-                        avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
-                        wandb_logs["train_luminance"] = avg_training_data_luminance
-
                     logger.debug(
                         f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {loss.item()}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {self.train_loss}"
                     )
@@ -6745,7 +6735,6 @@ class Trainer:
                         logger.error(f"Failed to log to accelerator; ignoring error: {e}")
 
                     # Reset some values for the next go.
-                    training_luminance_values = []
                     self.train_loss = 0.0
                     self.train_diffusion_loss = 0.0
                     last_step_saved_checkpoint = checkpoint_saved_this_step

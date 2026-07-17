@@ -81,7 +81,6 @@ class FileMetadata(BaseModel):
     intermediary_size: Optional[List[int]] = None
     aspect_ratio: Optional[float] = None
     crop_coordinates: Optional[List[int]] = None
-    luminance: Optional[float] = None
     bucket_key: Optional[str] = None
     caption: Optional[str] = None
     bbox_entities: Optional[List[Dict[str, Any]]] = None
@@ -570,7 +569,6 @@ class DatasetViewerService:
             "intermediary_size",
             "aspect_ratio",
             "crop_coordinates",
-            "luminance",
             "bucket_key",
             "bbox_entities",
         }
@@ -584,7 +582,6 @@ class DatasetViewerService:
             intermediary_size=meta.get("intermediary_size"),
             aspect_ratio=meta.get("aspect_ratio"),
             crop_coordinates=meta.get("crop_coordinates"),
-            luminance=meta.get("luminance"),
             bucket_key=meta.get("bucket_key"),
             bbox_entities=meta.get("bbox_entities"),
             extra=extra,

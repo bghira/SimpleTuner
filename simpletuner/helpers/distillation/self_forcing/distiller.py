@@ -258,7 +258,6 @@ class SelfForcingDistillation(DistillationBase):
             "conditioning_pixel_values": None,
             "conditioning_latents": None,
             "conditioning_image_embeds": None,
-            "batch_luminance": 0.0,
             "is_regularisation_data": False,
             "is_i2v_data": False,
             "caption_records": caption_batch.get("records", []),

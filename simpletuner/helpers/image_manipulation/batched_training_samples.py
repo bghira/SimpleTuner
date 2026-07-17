@@ -80,28 +80,6 @@ class BatchedTrainingSamples:
             logger.error(f"Batch random crop failed: {e}", exc_info=True)
             return []
 
-    def batch_calculate_luminance(self, images: List[np.ndarray]) -> List[float]:
-        try:
-            if not images:
-                return []
-
-            # only RGB arrays with shape (H, W, 3)
-            valid_images = [
-                img for img in images if isinstance(img, np.ndarray) and len(img.shape) == 3 and img.shape[2] == 3
-            ]
-
-            if not valid_images:
-                return []
-
-            luminances = ts.batch_calculate_luminance(valid_images)
-            if self.debug_enabled:
-                logger.debug(f"Calculated luminance for {len(luminances)} images")
-            return luminances
-
-        except Exception as e:
-            logger.error(f"Batch luminance calculation failed: {e}", exc_info=True)
-            return []
-
     def batch_resize_videos(self, videos: List[np.ndarray], target_sizes: List[Tuple[int, int]]) -> List[np.ndarray]:
         try:
             if not videos or not target_sizes:
@@ -196,25 +174,6 @@ class BatchedTrainingSamples:
 
                 if not batch_images:
                     continue
-
-                if len(batch_images) > 1:
-                    try:
-                        luminances = self.batch_calculate_luminance(batch_images)
-                        can_update_metadata = hasattr(metadata_backend, "update_metadata_attribute")
-                        if luminances and metadata_backend:
-                            for i, (filepath, luminance) in enumerate(zip(batch_filepaths, luminances)):
-                                # store luminance if missing
-                                if batch_metadata[i] and "luminance" not in batch_metadata[i]:
-                                    if can_update_metadata:
-                                        try:
-                                            metadata_backend.update_metadata_attribute(filepath, "luminance", luminance)
-                                            batch_metadata[i]["luminance"] = luminance
-                                        except Exception as e:
-                                            logger.debug(f"Failed to update luminance metadata for {filepath}: {e}")
-                                    else:
-                                        batch_metadata[i]["luminance"] = luminance
-                    except Exception as e:
-                        logger.error(f"Batch luminance calculation failed: {e}", exc_info=True)
 
                 # check resize requirements
                 image_resize_indices: List[int] = []

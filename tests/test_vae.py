@@ -17,7 +17,6 @@ if "trainingsample" not in sys.modules:
     trainingsample_stub.batch_resize_images = lambda *args, **kwargs: []
     trainingsample_stub.batch_center_crop_images = lambda *args, **kwargs: []
     trainingsample_stub.batch_random_crop_images = lambda *args, **kwargs: []
-    trainingsample_stub.batch_calculate_luminance = lambda *args, **kwargs: []
     trainingsample_stub.batch_resize_videos = lambda *args, **kwargs: []
     trainingsample_stub.__spec__ = importlib.machinery.ModuleSpec("trainingsample", loader=None)
     sys.modules["trainingsample"] = trainingsample_stub
