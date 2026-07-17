@@ -2,7 +2,6 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from pathlib import Path
 from typing import Any, List, Tuple, Union
 
 import torch
@@ -128,7 +127,6 @@ class LocalDataBackend(BaseDataBackend):
     def list_files(self, file_extensions: List[str], instance_data_dir: str) -> List[Tuple[str, List, List[str]]]:
         """
         List all files matching the given file extensions.
-        Creates Path objects of each file found.
         """
         logger.debug(
             f"LocalDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
@@ -147,7 +145,7 @@ class LocalDataBackend(BaseDataBackend):
             ".zfs",
             ".ipynb_checkpoints",
         }
-        extensions = {ext.lower().lstrip(".") for ext in file_extensions} if file_extensions else None
+        extensions = tuple(f".{ext.lower().lstrip('.')}" for ext in file_extensions) if file_extensions else None
 
         path_dict = {}
         seen_directories = set()
@@ -159,14 +157,14 @@ class LocalDataBackend(BaseDataBackend):
             seen_directories.add(real_root)
             dirs[:] = [directory for directory in dirs if directory not in forbidden_directories]
 
+            absolute_root = os.path.abspath(root)
+            matching_files = []
             for filename in files:
-                if extensions:
-                    ext = os.path.splitext(filename)[1].lower().lstrip(".")
-                    if ext not in extensions:
-                        continue
-                path = Path(root) / filename
-                parent = str(path.parent)
-                path_dict.setdefault(parent, []).append(str(path.absolute()))
+                if extensions and not filename.lower().endswith(extensions):
+                    continue
+                matching_files.append(os.path.join(absolute_root, filename))
+            if matching_files:
+                path_dict.setdefault(root, []).extend(matching_files)
 
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
