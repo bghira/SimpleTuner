@@ -1337,6 +1337,68 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaises(ValueError):
             trainer._load_fsdp_plugin()
 
+    def test_resume_and_prepare_initializes_ema_after_prepare(self):
+        trainer = object.__new__(Trainer)
+        trainer.ema_model = None
+        trainer.validation = SimpleNamespace(ema_model=None)
+        trainer.model_hooks = None
+        events = []
+        ema_model = object()
+
+        trainer.init_optimizer = Mock(side_effect=lambda: events.append("optimizer"))
+        trainer.init_lr_scheduler = Mock(side_effect=lambda: events.append("lr_scheduler") or object())
+        trainer.init_hooks = Mock(
+            side_effect=lambda: (
+                events.append("hooks"),
+                setattr(trainer, "model_hooks", SimpleNamespace(ema_model=None)),
+            )
+        )
+        trainer.init_prepare_models = Mock(side_effect=lambda lr_scheduler: events.append("prepare"))
+
+        def init_ema_model():
+            events.append("ema")
+            trainer.ema_model = ema_model
+
+        def init_resume_checkpoint(lr_scheduler):
+            events.append("resume")
+            self.assertIs(trainer.model_hooks.ema_model, ema_model)
+            self.assertIs(trainer.validation.ema_model, ema_model)
+            return lr_scheduler
+
+        trainer.init_ema_model = Mock(side_effect=init_ema_model)
+        trainer.init_resume_checkpoint = Mock(side_effect=init_resume_checkpoint)
+        trainer.init_post_load_freeze = Mock(side_effect=lambda: events.append("post_load_freeze"))
+
+        trainer.resume_and_prepare()
+
+        self.assertEqual(
+            events,
+            ["optimizer", "lr_scheduler", "hooks", "prepare", "ema", "resume", "post_load_freeze"],
+        )
+
+    def test_init_ema_model_rejects_cpu_only_with_fsdp2(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            use_ema=True,
+            fsdp_enable=True,
+            fsdp_version=2,
+            ema_cpu_only=True,
+            ema_device="cpu",
+        )
+        trainer.accelerator = SimpleNamespace(distributed_type=DistributedType.FSDP)
+        trainer.model = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "ema_cpu_only is not supported with FSDP2"):
+            trainer.init_ema_model()
+
+    def test_place_ema_model_skips_dtensor_weights_for_fsdp2(self):
+        trainer = object.__new__(Trainer)
+        trainer.ema_model = Mock()
+
+        trainer._place_ema_model(is_fsdp2_run=True)
+
+        trainer.ema_model.to.assert_not_called()
+
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
         """Test that FSDP with reshard_after_forward now supports validation"""
