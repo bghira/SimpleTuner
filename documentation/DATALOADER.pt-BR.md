@@ -77,6 +77,12 @@ Aqui está o exemplo mais básico de um arquivo de configuração do dataloader,
 - **Descrição:** Número de text embeds a serem gravados em uma única operação de batch. Valores maiores podem melhorar a vazão de escrita, mas usam mais memória.
 - **Padrão:** Usa o argumento `--write_batch_size` do trainer (tipicamente 128).
 
+### `text_encoder_batch_size`
+
+- **Aplica-se apenas a `dataset_type=text_embeds`**
+- **Descrição:** Número de captions codificadas em um único forward do text encoder ao pré-computar text embeddings não cacheados. Valores maiores podem melhorar a vazão, mas usam mais VRAM.
+- **Padrão:** Usa o argumento `--text_encoder_batch_size` do trainer (padrão 1).
+
 ### `text_embeds`
 
 - **Aplica-se apenas a `dataset_type=image`**

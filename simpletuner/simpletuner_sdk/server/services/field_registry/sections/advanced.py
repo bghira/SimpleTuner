@@ -1462,6 +1462,26 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Text Encoder Batch Size
+    registry._add_field(
+        ConfigField(
+            name="text_encoder_batch_size",
+            arg_name="--text_encoder_batch_size",
+            ui_label="Text Encoder Batch Size",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
+            help_text="Batch size used when precomputing uncached text embeddings. A value of 1 preserves the original one-caption-per-forward behavior.",
+            tooltip="Batch size used when precomputing uncached text embeddings. Increase this to improve text encoder throughput when VRAM allows.",
+            importance=ImportanceLevel.ADVANCED,
+            order=61,
+            documentation="OPTIONS.md#--text_encoder_batch_size",
+        )
+    )
+
     # Enable Multiprocessing
     registry._add_field(
         ConfigField(
@@ -1476,7 +1496,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="For some systems, multiprocessing may be faster than threading, but will consume a lot more memory. Use this option with caution, and monitor your system's memory usage.",
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             importance=ImportanceLevel.ADVANCED,
-            order=61,
+            order=62,
         )
     )
 

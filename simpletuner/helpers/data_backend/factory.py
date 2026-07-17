@@ -2470,6 +2470,9 @@ class FactoryRegistry:
                 cache_dir=text_cache_dir,
                 model_type=StateTracker.get_model_family(),
                 write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
+                text_encoder_batch_size=backend.get(
+                    "text_encoder_batch_size", getattr(self.args, "text_encoder_batch_size", 1)
+                ),
                 model=self.model,
             )
             logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
