@@ -129,6 +129,80 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual([record["prompt"] for record in normalized], ["caption one", "caption two"])
         self.assertEqual([record["key"] for record in normalized], ["caption one", "caption two"])
 
+    def test_normalize_prompts_allows_multi_prompt_single_key(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        normalized = cache._normalize_prompt_records([{"prompt": ["caption one", "caption two"], "key": "shared-key"}])
+        self.assertEqual([record["prompt"] for record in normalized], ["caption one", "caption two"])
+        self.assertEqual([record["key"] for record in normalized], ["shared-key", "shared-key"])
+
+    def test_normalize_prompts_accepts_multi_prompt_key_list(self):
+        cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
+        normalized = cache._normalize_prompt_records(
+            [
+                {
+                    "prompt": ["caption one", "caption two"],
+                    "key": ["dataset-1:path/to/sample.png:0", "dataset-1:path/to/sample.png:1"],
+                    "metadata": {"image_path": "path/to/sample.png"},
+                }
+            ]
+        )
+        self.assertEqual([record["prompt"] for record in normalized], ["caption one", "caption two"])
+        self.assertEqual(
+            [record["key"] for record in normalized],
+            ["dataset-1:path/to/sample.png:0", "dataset-1:path/to/sample.png:1"],
+        )
+
+    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
+    def test_compute_embeddings_deduplicates_uncached_multi_prompt_key(self, _mock_cache_files):
+        cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
+        saved = []
+        cache.save_to_cache = lambda filename, embeddings: saved.append((filename, embeddings))
+
+        class BatchModel(_DummyModel):
+            TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.DATASET_AND_FILENAME)
+                self.calls = []
+
+            def requires_text_embed_image_context(self):
+                return False
+
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                self.calls.append((prompts, prompt_contexts))
+                return {
+                    "prompt_embeds": torch.ones(1, 2, 3),
+                    "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+                }
+
+            def pack_text_embeddings_for_cache(self, embeddings):
+                return embeddings
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = BatchModel()
+
+        cache.compute_embeddings_for_prompts(
+            [
+                {
+                    "prompt": ["caption one", "caption two"],
+                    "metadata": {
+                        "data_backend_id": "dataset-1",
+                        "dataset_relative_path": "path/to/sample.png",
+                    },
+                }
+            ],
+            return_concat=False,
+            load_from_cache=False,
+        )
+
+        self.assertEqual(
+            cache.model.calls,
+            [(["caption one"], [{"data_backend_id": "dataset-1", "dataset_relative_path": "path/to/sample.png"}])],
+        )
+        self.assertEqual(len(saved), 1)
+
     def test_batched_encode_saves_trimmed_per_caption_outputs(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         saved = []

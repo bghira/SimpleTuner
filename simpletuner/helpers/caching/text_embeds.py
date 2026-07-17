@@ -470,11 +470,13 @@ class TextEmbeddingCache(WebhookMixin):
         existing_cache_filenames_set = set(existing_cache_filenames)
 
         # Determine which prompts are not cached
-        uncached_records = [
-            record
-            for record, filename in zip(prompt_records, all_cache_filenames)
-            if filename not in existing_cache_filenames_set
-        ]
+        uncached_records = []
+        uncached_cache_filenames_set = set()
+        for record, filename in zip(prompt_records, all_cache_filenames):
+            if filename in existing_cache_filenames_set or filename in uncached_cache_filenames_set:
+                continue
+            uncached_records.append(record)
+            uncached_cache_filenames_set.add(filename)
 
         # If all prompts are cached and certain conditions are met, return None
         if not uncached_records and not return_concat:
