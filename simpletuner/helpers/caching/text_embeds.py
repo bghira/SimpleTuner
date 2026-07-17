@@ -229,11 +229,15 @@ class TextEmbeddingCache(WebhookMixin):
             if not isinstance(value, torch.Tensor):
                 per_sample_output[key] = value
                 continue
+            if value.ndim > 0 and value.shape[0] != batch_size and batch_size == 1:
+                value = value.unsqueeze(0)
             if value.shape[0] != batch_size:
                 raise ValueError(
                     f"Batched text encoder output '{key}' shape {tuple(value.shape)} does not match batch size {batch_size}."
                 )
             sample_value = value[batch_index : batch_index + 1]
+            if key in {"pooled_prompt_embeds", "negative_pooled_prompt_embeds"} and sample_value.ndim == 2:
+                sample_value = sample_value.squeeze(0)
             if true_length is not None and key in {"prompt_embeds", "attention_mask"} and sample_value.ndim >= 2:
                 sample_value = sample_value[:, :true_length]
             per_sample_output[key] = sample_value.clone().contiguous()
