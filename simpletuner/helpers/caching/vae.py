@@ -230,6 +230,8 @@ class VAECache(WebhookMixin):
         self.process_queue = Queue()
         self.write_queue = Queue()
         self.vae_input_queue = Queue()
+        self._local_unprocessed_files_set_source = None
+        self._local_unprocessed_files_set = None
 
         # Initialize batch processing helper
         self.batch_processor = BatchedTrainingSamples()
@@ -969,6 +971,8 @@ class VAECache(WebhookMixin):
                 continue
 
         self.local_unprocessed_files = list(set(all_image_files) - set(already_cached_images))
+        self._local_unprocessed_files_set_source = None
+        self._local_unprocessed_files_set = None
         if os.environ.get("SIMPLETUNER_LOG_LEVEL", None) == "DEBUG":
             self.debug_log(f"All ({len(all_image_files)}) image files: (truncated) {list(all_image_files)[:5]}")
             self.debug_log(f"Existing cache files: (truncated) {list(existing_cache_files)[:5]}")
@@ -976,6 +980,13 @@ class VAECache(WebhookMixin):
             self.debug_log(f"VAECache Mapping: (truncated) {list(self.image_path_to_vae_path.items())[:5]}")
 
         return self.local_unprocessed_files
+
+    def _local_unprocessed_file_set(self):
+        source = self.local_unprocessed_files
+        if source is not getattr(self, "_local_unprocessed_files_set_source", None):
+            self._local_unprocessed_files_set_source = source
+            self._local_unprocessed_files_set = set(source)
+        return self._local_unprocessed_files_set
 
     def _reduce_bucket(
         self,
@@ -986,13 +997,14 @@ class VAECache(WebhookMixin):
         relevant_files = []
         total_files = 0
         skipped_files = 0
+        local_unprocessed_files = self._local_unprocessed_file_set()
         for full_image_path in aspect_bucket_cache[bucket]:
             total_files += 1
             comparison_path = self.generate_vae_cache_filename(full_image_path)[0]
             if os.path.splitext(comparison_path)[0] in processed_images:
                 skipped_files += 1
                 continue
-            if full_image_path not in self.local_unprocessed_files:
+            if full_image_path not in local_unprocessed_files:
                 skipped_files += 1
                 continue
             relevant_files.append(full_image_path)
@@ -1986,6 +1998,7 @@ class VAECache(WebhookMixin):
                         "total": 0,
                     }
                     last_reported_index = 0
+                    local_unprocessed_files = self._local_unprocessed_file_set()
 
                     for raw_filepath in tqdm(
                         relevant_files,
@@ -2002,7 +2015,7 @@ class VAECache(WebhookMixin):
                         test_filepath = self._image_filename_from_vaecache_filename(filepath)
                         if test_filepath is None:
                             continue
-                        if test_filepath not in self.local_unprocessed_files:
+                        if test_filepath not in local_unprocessed_files:
                             statistics["not_local"] += 1
                             continue
                         try:
