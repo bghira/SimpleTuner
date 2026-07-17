@@ -267,7 +267,7 @@ class LocalDataBackend(BaseDataBackend):
 
         max_workers = min(16, max(1, len(filepaths)))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = list(executor.map(read_one, filepaths))
+            results = executor.map(read_one, filepaths)
 
         for filepath, image_data, error in results:
             if error is None:
