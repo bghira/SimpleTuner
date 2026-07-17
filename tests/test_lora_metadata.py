@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from accelerate.utils import DistributedType
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -163,6 +164,49 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertFalse(materialized["regular"].requires_grad)
         self.assertTrue(materialized["regular"].is_contiguous())
         self.assertIsNot(materialized["regular"], regular)
+
+    def test_fsdp2_ema_save_uses_distributed_checkpoint(self):
+        manager, _, _ = self._make_manager(args_overrides={"use_ema": True, "model_type": "full"})
+        manager.accelerator.distributed_type = DistributedType.FSDP
+        manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
+        manager.ema_model = SimpleNamespace(
+            shadow_params=[torch.ones(2), torch.zeros(3)],
+            state_dict=lambda exclude_params=False: {"decay": 0.95, "optimization_step": 12},
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("simpletuner.helpers.training.save_hooks.dcp.save") as save_checkpoint:
+                manager._save_ema_state(tmpdir, is_main_process=True)
+
+            ema_dir = os.path.join(tmpdir, "transformer_ema")
+            save_checkpoint.assert_called_once()
+            self.assertEqual(save_checkpoint.call_args.kwargs["checkpoint_id"], ema_dir)
+            self.assertEqual(list(save_checkpoint.call_args.args[0].keys()), ["shadow_params.0", "shadow_params.1"])
+            metadata = torch.load(os.path.join(ema_dir, "ema_metadata.pt"), map_location="cpu", weights_only=True)
+
+        self.assertEqual(metadata["decay"], 0.95)
+        self.assertEqual(metadata["optimization_step"], 12)
+
+    def test_fsdp2_ema_load_uses_distributed_checkpoint_and_metadata(self):
+        manager, _, _ = self._make_manager(args_overrides={"use_ema": True, "model_type": "full"})
+        manager.accelerator.distributed_type = DistributedType.FSDP
+        manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
+        manager.ema_model = SimpleNamespace(shadow_params=[torch.ones(2)], decay=0.1, optimization_step=0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ema_dir = os.path.join(tmpdir, "transformer_ema")
+            os.makedirs(ema_dir, exist_ok=True)
+            torch.save({"decay": 0.99, "optimization_step": 42}, os.path.join(ema_dir, "ema_metadata.pt"))
+
+            with patch("simpletuner.helpers.training.save_hooks.dcp.load") as load_checkpoint:
+                manager._load_ema_state(tmpdir)
+
+            load_checkpoint.assert_called_once()
+            self.assertEqual(load_checkpoint.call_args.kwargs["checkpoint_id"], ema_dir)
+            self.assertEqual(list(load_checkpoint.call_args.args[0].keys()), ["shadow_params.0"])
+
+        self.assertEqual(manager.ema_model.decay, 0.99)
+        self.assertEqual(manager.ema_model.optimization_step, 42)
 
     def test_save_hook_collects_metadata_for_transformer_and_text_encoder(self):
         text_encoder = _DummyTextEncoder("text_encoder")
