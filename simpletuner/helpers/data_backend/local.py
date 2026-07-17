@@ -378,4 +378,5 @@ class LocalDataBackend(BaseDataBackend):
 
         max_workers = min(16, max(1, len(filepaths)))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            list(executor.map(write_one, zip(filepaths, data_list)))
+            for _ in executor.map(write_one, zip(filepaths, data_list)):
+                pass
