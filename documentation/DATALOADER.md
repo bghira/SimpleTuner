@@ -856,6 +856,14 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 - **Description:** When enabled on a dataset, that dataset encodes VAE latents on demand and does not write newly generated latents to disk. This is useful for large datasets where disk space is a concern or writing is impractical.
 - **Note:** The global `--vae_cache_disable` option still applies to every dataset. Use this dataset option to disable VAE cache writes only for selected datasets when the global option is false. The removed `disable_vae_cache` spelling is rejected; use `vae_cache_disable`.
 
+### Choosing a VAE cache strategy
+
+`vae_cache_ondemand` trades startup time for work during training; it is not a VRAM optimization. Choose the strategy per dataset based on expected cache reuse and whether the VAE can remain available during training:
+
+1. **Extremely large, reusable dataset:** Set `vae_cache_ondemand=true` when a complete precache pass would delay training for too long. Training begins without waiting for every image, and each missing latent is written to the cache so later visits can reuse it.
+2. **Very high-resolution dataset:** Leave `vae_cache_ondemand=false` (and keep the global option false) when VAE encoding could OOM with the training model loaded. The default startup precache allows the VAE to be unloaded before training. Neither on-demand mode nor `vae_cache_disable` solves this memory constraint because both require VAE encoding during training. VAE tiling or slicing may reduce peak memory during the startup precache.
+3. **Web-scale dataset with little expected reuse:** Set `vae_cache_disable=true` when the dataset contains millions or billions of images and the planned run is unlikely to approach one epoch. This still encodes sampled images on demand, but avoids cache writes and storage growth when most latents would never be read again. It has the same training-time VAE memory requirement as on-demand caching.
+
 ### `skip_file_discovery`
 
 - You probably don't want to ever set this - it is useful only for very large datasets.

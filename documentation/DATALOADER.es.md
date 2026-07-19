@@ -855,6 +855,14 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 - **Descripción:** Cuando está habilitado en un dataset, ese dataset codifica latentes VAE bajo demanda y no escribe en disco los latentes generados nuevos. Esto es útil para datasets grandes donde el espacio en disco es una preocupación o escribir no es práctico.
 - **Nota:** La opción global `--vae_cache_disable` sigue aplicándose a todos los datasets. Usa esta opción de dataset para desactivar la escritura de caché VAE solo en datasets seleccionados cuando la opción global es falsa. La forma eliminada `disable_vae_cache` se rechaza; usa `vae_cache_disable`.
 
+### Elegir una estrategia de caché VAE
+
+`vae_cache_ondemand` intercambia tiempo de inicio por trabajo durante el entrenamiento; no es una optimización de VRAM. Elige la estrategia por dataset según la reutilización esperada de la caché y si el VAE puede permanecer disponible durante el entrenamiento:
+
+1. **Dataset extremadamente grande y reutilizable:** Configura `vae_cache_ondemand=true` cuando una pasada completa de precaché retrasaría demasiado el entrenamiento. El entrenamiento comienza sin esperar a todas las imágenes y cada latente que falta se escribe en la caché para reutilizarlo en visitas posteriores.
+2. **Dataset de resolución muy alta:** Deja `vae_cache_ondemand=false` (y mantén falsa la opción global) cuando la codificación VAE podría causar un OOM con el modelo de entrenamiento cargado. El precaché de inicio predeterminado permite descargar el VAE antes del entrenamiento. Ni el modo bajo demanda ni `vae_cache_disable` resuelven esta limitación de memoria, porque ambos requieren codificación VAE durante el entrenamiento. El tiling o slicing del VAE puede reducir el pico de memoria durante el precaché inicial.
+3. **Dataset a escala web con poca reutilización esperada:** Configura `vae_cache_disable=true` cuando el dataset contiene millones o miles de millones de imágenes y es poco probable que la ejecución prevista se acerque a una época. Las imágenes muestreadas se siguen codificando bajo demanda, pero se evitan las escrituras de caché y el crecimiento del almacenamiento cuando la mayoría de los latentes no volverían a leerse. Requiere la misma memoria del VAE durante el entrenamiento que la caché bajo demanda.
+
 ### `skip_file_discovery`
 
 - Probablemente no quieras configurar esto nunca; solo es útil para datasets muy grandes.
