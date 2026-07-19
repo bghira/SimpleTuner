@@ -1756,6 +1756,80 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_dataset_modal", scenario)
 
+    def test_dataset_vae_cache_disable_marks_unsaved(self) -> None:
+        """Toggling per-dataset VAE cache disable should update Alpine state and mark datasets dirty."""
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            datasets_tab.add_dataset("image")
+            dataset_index = datasets_tab.get_dataset_count() - 1
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) { store.hasUnsavedChanges = false; }"
+            )
+
+            dataset_id = driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;"
+                "const dataset = comp && comp.datasets ? comp.datasets[arguments[0]] : null;"
+                "if (!dataset) { return null; }"
+                "if (typeof comp.expandSectionIfCollapsed === 'function') { comp.expandSectionIfCollapsed(dataset, 'card'); }"
+                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'advanced'); }"
+                "comp.parameterFilterQuery = '';"
+                "return dataset.id;",
+                dataset_index,
+            )
+            self.assertIsInstance(dataset_id, str)
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return !!document.getElementById('vae-cache-disable-' + arguments[0]);",
+                    dataset_id,
+                )
+            )
+            self.assertFalse(
+                driver.execute_script(
+                    "return document.getElementById('vae-cache-disable-' + arguments[0]).checked;",
+                    dataset_id,
+                )
+            )
+            self.assertTrue(
+                driver.execute_script(
+                    "const checkbox = document.getElementById('vae-cache-disable-' + arguments[0]);"
+                    "checkbox.scrollIntoView({ block: 'center' });"
+                    "checkbox.click();"
+                    "return checkbox.checked;",
+                    dataset_id,
+                )
+            )
+
+            state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const comp = window.dataloaderSectionComponentInstance;"
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "const dataset = comp && Array.isArray(comp.datasets)"
+                    "  ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])"
+                    "  : null;"
+                    "const state = {"
+                    "  enabled: !!(dataset && dataset.vae_cache_disable === true),"
+                    "  unsaved: !!(store && store.hasUnsavedChanges === true)"
+                    "};"
+                    "return state.enabled && state.unsaved ? state : null;",
+                    dataset_id,
+                )
+            )
+            self.assertTrue(state["enabled"])
+            self.assertTrue(state["unsaved"])
+
+        self.for_each_browser("test_dataset_vae_cache_disable_marks_unsaved", scenario)
+
     def test_dataset_search(self) -> None:
         """Test searching/filtering datasets."""
         self.seed_defaults()

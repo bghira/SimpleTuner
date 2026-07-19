@@ -259,6 +259,31 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.maximum_image_size, 10.0)
         self.assertEqual(config.target_downsample_size, 5.0)
 
+    def test_vae_cache_disable_round_trip(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "vae_cache_disable": True,
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertTrue(config.vae_cache_disable)
+        self.assertTrue(output["config"]["vae_cache_disable"])
+
+    def test_removed_disable_vae_cache_key_raises(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "disable_vae_cache": True,
+        }
+
+        with self.assertRaisesRegex(ValueError, "vae_cache_disable"):
+            ImageBackendConfig.from_dict(backend_dict, self.args)
+
     def test_crop_aspect_random_with_buckets(self):
         """Test crop_aspect=random with crop_aspect_buckets"""
         backend_dict = {"id": "image_test", "type": "local", "crop_aspect": "random", "crop_aspect_buckets": [1.0, 1.5, 2.0]}

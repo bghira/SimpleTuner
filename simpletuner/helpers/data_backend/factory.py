@@ -46,6 +46,24 @@ def _set_arg_value(args: Any, key: str, value: Any) -> None:
         setattr(args, key, value)
 
 
+def _as_bool(value: Any) -> bool:
+    """Coerce common config boolean values without inventing fallback behavior."""
+
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
 def _coerce_bucket_keys(indices: Dict[Any, Iterable]) -> Dict[Any, list]:
     """Return a copy of aspect ratio bucket indices with numeric keys coerced to float."""
     coerced: Dict[Any, list] = {}
@@ -271,6 +289,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
     else:
         logger.setLevel(logging.ERROR)
+    if "disable_vae_cache" in backend:
+        raise ValueError(f"(id={backend.get('id')}) disable_vae_cache has been removed. Use vae_cache_disable instead.")
     dataset_type = _backend_dataset_type(backend)
     output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
     is_audio_dataset = dataset_type is DatasetType.AUDIO
@@ -411,6 +431,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(f"(id={backend['id']}) dataset_type must be one of {[choice.value for choice in choices]}.")
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
+    if "vae_cache_disable" in backend:
+        output["config"]["vae_cache_disable"] = backend["vae_cache_disable"]
     if "probability" in backend:
         probability = backend["probability"]
         if probability is None or probability == "":
@@ -3927,10 +3949,6 @@ class FactoryRegistry:
         text_embed_cache_dir_paths: List[str],
         conditioning_type: Optional[str],
     ) -> None:
-        disable_vae_cache = backend.get("disable_vae_cache") or init_backend["config"].get("disable_vae_cache")
-        if disable_vae_cache:
-            info_log(f"(id={init_backend['id']}) Skipping VAE cache configuration (disable_vae_cache=True).")
-            return
         """Configure VAE cache for the backend."""
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
         allowed_types = {
@@ -4043,6 +4061,13 @@ class FactoryRegistry:
             if vae_batch_size is None:
                 vae_batch_size = self.args.vae_batch_size
 
+        dataset_vae_cache_disable = _as_bool(getattr(self.args, "vae_cache_disable", False)) or _as_bool(
+            backend.get("vae_cache_disable", init_backend["config"].get("vae_cache_disable", False))
+        )
+        dataset_vae_cache_ondemand = _as_bool(self.args.vae_cache_ondemand) or dataset_vae_cache_disable
+
+        init_backend["config"]["vae_cache_disable"] = dataset_vae_cache_disable
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
@@ -4061,8 +4086,8 @@ class FactoryRegistry:
             cache_dir=vae_cache_dir,
             max_workers=backend.get("max_workers", self.args.max_workers),
             process_queue_size=process_queue_size,
-            vae_cache_ondemand=self.args.vae_cache_ondemand,
-            vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
+            vae_cache_ondemand=dataset_vae_cache_ondemand,
+            vae_cache_disable=dataset_vae_cache_disable,
             hash_filenames=True,  # always enabled
             enable_nsfw_check=getattr(self.args, "enable_nsfw_check", False),
             nsfw_check_models=getattr(self.args, "nsfw_check_models", None) or DEFAULT_NSFW_CHECK_MODELS_CSV,
@@ -4076,7 +4101,7 @@ class FactoryRegistry:
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
-        if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
+        if not init_backend["vaecache"].vae_cache_ondemand:
             info_log(f"(id={init_backend['id']}) Discovering cache objects..")
             if self.accelerator.is_local_main_process:
                 try:
@@ -4467,9 +4492,8 @@ class FactoryRegistry:
         self._handle_error_scanning_and_metadata(backend, init_backend, conditioning_type)
 
         if (
-            not self.args.vae_cache_ondemand
-            and not getattr(self.args, "vae_cache_disable", False)
-            and "vaecache" in init_backend
+            "vaecache" in init_backend
+            and not init_backend["vaecache"].vae_cache_ondemand
             and "vae" not in self.args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
             and "deepfloyd" not in StateTracker.get_args().model_type
@@ -4481,10 +4505,9 @@ class FactoryRegistry:
         ):
             unprocessed_files = init_backend["vaecache"].discover_unprocessed_files()
             logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
-            if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
-                logger.info(f"Executing VAE cache update..")
-                init_backend["vaecache"].process_buckets()
-            logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")
+            logger.info(f"Executing VAE cache update..")
+            init_backend["vaecache"].process_buckets()
+            logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
 

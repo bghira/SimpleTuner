@@ -647,6 +647,12 @@
                 datasetToAdd.is_regularisation_data =
                     datasetToAdd.is_regularisation_data === true ||
                     datasetToAdd.is_regularisation_data === 'true';
+                datasetToAdd.vae_cache_disable =
+                    datasetToAdd.vae_cache_disable === true ||
+                    datasetToAdd.vae_cache_disable === 'true';
+                if (!datasetToAdd.vae_cache_disable) {
+                    delete datasetToAdd.vae_cache_disable;
+                }
 
                 // Clean up parquet config if not using parquet caption strategy
                 if (datasetToAdd.caption_strategy !== 'parquet') {

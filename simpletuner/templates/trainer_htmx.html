@@ -1866,6 +1866,7 @@ function trainerComponent() {
             dataset.only_instance_prompt = this.normalizeBoolean(dataset.only_instance_prompt);
             dataset.disabled = this.normalizeBoolean(dataset.disabled);
             dataset.vae_cache_clear_each_epoch = this.normalizeBoolean(dataset.vae_cache_clear_each_epoch);
+            dataset.vae_cache_disable = this.normalizeBoolean(dataset.vae_cache_disable);
 
             // max_upscale_threshold (nullable float)
             if (dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== '') {
@@ -2606,6 +2607,12 @@ function trainerComponent() {
                     cleaned.vae_cache_clear_each_epoch = true;
                 } else {
                     delete cleaned.vae_cache_clear_each_epoch;
+                }
+
+                if (this.normalizeBoolean(dataset.vae_cache_disable)) {
+                    cleaned.vae_cache_disable = true;
+                } else {
+                    delete cleaned.vae_cache_disable;
                 }
 
                 // max_upscale_threshold (nullable float)

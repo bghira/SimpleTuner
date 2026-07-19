@@ -4256,7 +4256,12 @@ class Trainer:
         prepared_model.eval()
 
     def init_unload_vae(self):
-        if self.config.keep_vae_loaded or self.config.vae_cache_ondemand or getattr(self.config, "vae_cache_disable", False):
+        if (
+            self.config.keep_vae_loaded
+            or self.config.vae_cache_ondemand
+            or getattr(self.config, "vae_cache_disable", False)
+            or StateTracker.any_vae_cache_uses_ondemand()
+        ):
             return
         memory_before_unload = self.stats_memory_used()
         self.model.unload_vae()

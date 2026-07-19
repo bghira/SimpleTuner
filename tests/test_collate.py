@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 
 import tests.test_stubs  # noqa: F401
-from simpletuner.helpers.training.collate import collate_fn, describe_missing_conditioning_pairs
+from simpletuner.helpers.training.collate import collate_fn, compute_latents, describe_missing_conditioning_pairs
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -174,6 +174,21 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["add_text_embeds"], text_outputs["pooled_prompt_embeds"]))
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
+
+    def test_compute_latents_uses_backend_ondemand_mode(self):
+        vae_cache = SimpleNamespace(
+            vae_cache_ondemand=True,
+            encode_images=MagicMock(return_value=["latent"]),
+        )
+
+        with (
+            patch.object(StateTracker, "get_args", return_value=self.base_args),
+            patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
+        ):
+            latents = compute_latents(["sample.png"], "backend-1", MagicMock())
+
+        self.assertEqual(latents, ["latent"])
+        vae_cache.encode_images.assert_called_once_with([None], ["sample.png"])
 
     def test_collate_fn_stacks_conditioning_image_embeds(self):
         conditioning_tensor = torch.ones(2, 4)

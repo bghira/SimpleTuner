@@ -758,6 +758,14 @@ class StateTracker:
         return cls.data_backends[id].get("vaecache", None)
 
     @classmethod
+    def any_vae_cache_uses_ondemand(cls) -> bool:
+        for data_backend in cls.data_backends.values():
+            vae_cache = data_backend.get("vaecache") if isinstance(data_backend, dict) else None
+            if vae_cache is not None and getattr(vae_cache, "vae_cache_ondemand", False):
+                return True
+        return False
+
+    @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
         cls.default_text_embed_cache = default_text_embed_cache
 

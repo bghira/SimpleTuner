@@ -368,6 +368,14 @@ function datasetAdvancedOptionsComponent() {
                                                x-model="dataset.cache_dir_vae"
                                                placeholder="cache/vae">
                                     </div>
+
+                                    <div class="dataset-form-group" style="grid-column: 1 / -1;">
+                                        <label class="dataset-form-label">
+                                            <input type="checkbox"
+                                                   x-model="dataset.vae_cache_disable">
+                                            Disable VAE cache writes
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                         </div>
