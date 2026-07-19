@@ -83,6 +83,20 @@ Aquí está el ejemplo más básico de un archivo de configuración del dataload
 - **Descripción:** Número de captions que se codifican en un solo forward del encoder de texto al precomputar text embeddings no cacheados. Valores más altos pueden mejorar el throughput pero usan más VRAM.
 - **Default:** Usa el argumento `--text_encoder_batch_size` del trainer (predeterminado 1).
 
+### `text_cache_ondemand`
+
+- **Solo aplica a `dataset_type=text_embeds`**
+- **Valores:** `true` | `false`
+- **Descripción:** Omite el cálculo previo completo de embeddings de texto. Las entradas existentes se leen de este caché; los embeddings que falten se codifican durante el entrenamiento o la validación y se escriben en el caché.
+- **Nota:** Cada dataset de imagen o vídeo asignado a este backend `text_embeds` hereda este comportamiento. Para usar otro comportamiento en determinados datasets de origen, crea otro backend `text_embeds` y asígnalo mediante el campo `text_embeds` del dataset de origen.
+
+### `text_cache_disable`
+
+- **Solo aplica a `dataset_type=text_embeds`**
+- **Valores:** `true` | `false`
+- **Descripción:** Lee embeddings de texto existentes, pero no escribe los recién codificados. Las entradas que falten se codifican durante el entrenamiento o la validación, por lo que esta opción implica `text_cache_ondemand`.
+- **Nota:** La opción global `--text_cache_disable` se aplica a todos los cachés de texto. Usa esta opción de backend cuando la opción global sea false y solo ciertos backends `text_embeds` deban evitar escrituras.
+
 ### `text_embeds`
 
 - **Solo aplica a `dataset_type=image`**

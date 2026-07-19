@@ -68,6 +68,32 @@
                                    placeholder="128">
                             <div class="form-text">Controls embed cache flush size.</div>
                         </div>
+                        <div class="col-md-4" x-show="dataset.dataset_type === 'text_embeds'">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       :id="`text-cache-ondemand-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.text_cache_ondemand"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label" :for="`text-cache-ondemand-${datasetSafeId(dataset)}`">
+                                    Encode misses on demand
+                                </label>
+                            </div>
+                            <div class="form-text ps-4">Skip full text-cache pre-computation.</div>
+                        </div>
+                        <div class="col-md-4" x-show="dataset.dataset_type === 'text_embeds'">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       :id="`text-cache-disable-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.text_cache_disable"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label" :for="`text-cache-disable-${datasetSafeId(dataset)}`">
+                                    Disable text cache writes
+                                </label>
+                            </div>
+                            <div class="form-text ps-4">Implies on-demand mode while retaining cache reads.</div>
+                        </div>
                     </div>
                 </div>
                 <div class="dataset-subgroup mt-3"

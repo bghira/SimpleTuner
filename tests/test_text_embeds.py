@@ -1,7 +1,7 @@
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import torch
 
@@ -18,6 +18,9 @@ class _DummyModel:
 
     def pack_text_embeddings_for_cache(self, embeddings):
         return embeddings
+
+    def requires_text_embed_image_context(self):
+        return False
 
 
 class _DummyDataBackend:
@@ -60,7 +63,7 @@ class _DummyThread:
         return None
 
 
-def _make_cache(key_type):
+def _make_cache(key_type, **cache_kwargs):
     backend = _DummyDataBackend()
     text_encoders = [SimpleNamespace(device="cpu")]
     tokenizers = [object()]
@@ -86,11 +89,67 @@ def _make_cache(key_type):
             model_type="test",
             prompt_handler=prompt_handler,
             model=model,
+            **cache_kwargs,
         )
     return cache
 
 
 class TextEmbeddingCacheKeyTests(unittest.TestCase):
+    def test_text_cache_disable_implies_ondemand(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_disable=True)
+
+        self.assertTrue(cache.text_cache_disable)
+        self.assertTrue(cache.text_cache_ondemand)
+
+    def test_ondemand_cache_miss_encodes_without_writing_when_disabled(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_disable=True)
+
+        class BatchModel(_DummyModel):
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+                self.encode_text_batch = MagicMock(return_value={"prompt_embeds": torch.ones(1, 2, 3)})
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = BatchModel()
+        cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
+
+        output = cache.compute_prompt_embeddings_with_model(
+            prompt_records=[{"prompt": "uncached prompt", "key": "uncached prompt", "metadata": {}}]
+        )
+
+        cache.model.encode_text_batch.assert_called_once()
+        self.assertEqual(output["prompt_embeds"].shape, torch.Size([1, 2, 3]))
+        self.assertEqual(cache.write_queue.qsize(), 0)
+
+    def test_ondemand_cache_miss_rejects_missing_required_image_context(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
+
+        class ImageContextModel(_DummyModel):
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+                self.encode_text_batch = MagicMock(return_value={"prompt_embeds": torch.ones(1, 2, 3)})
+
+            def requires_text_embed_image_context(self):
+                return True
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = ImageContextModel()
+        cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
+
+        with self.assertRaisesRegex(ValueError, "requires image-context metadata") as context:
+            cache.compute_prompt_embeddings_with_model(
+                prompt_records=[{"prompt": "uncached prompt", "key": "uncached prompt", "metadata": {}}]
+            )
+
+        self.assertIn("text cache id: backend", str(context.exception))
+        self.assertIn("data backend id: backend", str(context.exception))
+        cache.model.encode_text_batch.assert_not_called()
+        self.assertEqual(cache.write_queue.qsize(), 0)
+
     def test_resolve_key_value_caption_fallback(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         record = {"prompt": "hello world"}

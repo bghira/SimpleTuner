@@ -766,6 +766,16 @@ class StateTracker:
         return False
 
     @classmethod
+    def any_text_cache_uses_ondemand(cls) -> bool:
+        caches = [
+            data_backend.get("text_embed_cache")
+            for data_backend in cls.data_backends.values()
+            if isinstance(data_backend, dict)
+        ]
+        caches.append(cls.default_text_embed_cache)
+        return any(cache is not None and getattr(cache, "text_cache_ondemand", False) for cache in caches)
+
+    @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
         cls.default_text_embed_cache = default_text_embed_cache
 

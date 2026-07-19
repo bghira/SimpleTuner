@@ -1276,6 +1276,42 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="text_cache_ondemand",
+            arg_name="--text_cache_ondemand",
+            ui_label="Text Cache On-Demand",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=False,
+            help_text="Encode missing text embeddings during training instead of pre-computing the full text cache.",
+            tooltip="Existing cached embeddings are reused. Missing embeddings are encoded when requested and written to the cache.",
+            importance=ImportanceLevel.ADVANCED,
+            order=50.1,
+            documentation="OPTIONS.md#--text_cache_ondemand",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="text_cache_disable",
+            arg_name="--text_cache_disable",
+            ui_label="Disable Text Cache Writes",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=False,
+            help_text="Disable text embedding cache writes and encode missing embeddings on demand.",
+            tooltip="Existing cached embeddings are still read, but newly encoded embeddings are not stored. This implies on-demand mode.",
+            importance=ImportanceLevel.ADVANCED,
+            order=50.2,
+            documentation="OPTIONS.md#--text_cache_disable",
+        )
+    )
+
     # Text Embed Full Cache
     registry._add_field(
         ConfigField(
