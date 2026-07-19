@@ -260,6 +260,19 @@
                                 </div>
                             </div>
 
+                            <div class="form-check mb-3">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       id="wizardVaeCacheDisable"
+                                       x-model="currentDataset.vae_cache_disable">
+                                <label class="form-check-label" for="wizardVaeCacheDisable">
+                                    Disable VAE cache writes for this dataset
+                                </label>
+                                <div class="form-text">
+                                    Encodes latents on demand without saving generated VAE latents to disk.
+                                </div>
+                            </div>
+
                             <!-- Text Embed Cache Directory (conditional) -->
                             <div class="mb-3" x-show="(createNewConfig || !existingTextEmbeds) && !separateTextEmbeds" x-init="if (currentDataset.id && currentDataset.cache_dir_text === 'cache/text') { currentDataset.cache_dir_text = `cache/text/${currentDataset.id}` }">
                                 <label class="form-label">

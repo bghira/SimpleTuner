@@ -50,6 +50,7 @@ class TestFactoryComparison(unittest.TestCase):
         self.args.aws_max_pool_connections = 128
         self.args.vae_cache_scan_behaviour = "ignore"
         self.args.vae_cache_ondemand = False
+        self.args.vae_cache_disable = False
         self.args.offload_during_startup = False
         self.args.skip_file_discovery = ""
         self.args.delete_unwanted_images = False

@@ -921,7 +921,7 @@ class VAECache(WebhookMixin):
         self.discover_unprocessed_files()
         self.debug_log("-> Load VAE")
         self.init_vae()
-        if not StateTracker.get_args().vae_cache_ondemand:
+        if not self.vae_cache_ondemand:
             self.debug_log("-> Process VAE cache")
             self.process_buckets()
             if self.accelerator.is_local_main_process:

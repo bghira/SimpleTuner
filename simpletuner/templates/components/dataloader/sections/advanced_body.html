@@ -91,9 +91,22 @@
     </div>
 
     <!-- VAE Cache Behavior -->
-    <div class="section-group" x-show="!['text_embeds','image_embeds','audio'].includes(editingDataset.dataset_type) && matchesParamFilter('vae', 'cache', 'epoch', 'clear', 'random', 'crop')">
+    <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type) && matchesParamFilter('vae', 'cache', 'epoch', 'clear', 'random', 'crop', 'disable', 'ondemand', 'disk')">
         <h6 class="modal-section-title">VAE Cache Behavior</h6>
-        <div class="form-check">
+        <div class="form-check mb-2">
+            <input class="form-check-input"
+                   type="checkbox"
+                   :id="'vae-cache-disable-' + editingDataset.id"
+                   x-model="editingDataset.vae_cache_disable"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label small" :for="'vae-cache-disable-' + editingDataset.id">
+                Disable VAE cache writes <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#vae_cache_disable') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+            </label>
+        </div>
+        <div class="form-text small text-muted ps-4 mb-2">
+            Encodes latents on demand for this dataset without writing generated latents to disk.
+        </div>
+        <div class="form-check" x-show="editingDataset.dataset_type !== 'audio'">
             <input class="form-check-input"
                    type="checkbox"
                    :id="'vae-cache-clear-' + editingDataset.id"

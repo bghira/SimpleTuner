@@ -5068,6 +5068,7 @@ class Validation:
             not self.config.keep_vae_loaded
             and not self.config.vae_cache_ondemand
             and not getattr(self.config, "vae_cache_disable", False)
+            and not StateTracker.any_vae_cache_uses_ondemand()
         ):
             self.model.unload_vae()
         self.model.pipeline = None

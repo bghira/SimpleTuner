@@ -832,8 +832,8 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 ### `vae_cache_disable`
 
 - **Valores:** `true` | `false`
-- **Descripción:** Cuando está habilitado (mediante el argumento de línea de comandos `--vae_cache_disable`), esta opción habilita implícitamente el cacheo VAE bajo demanda, pero desactiva la escritura de los embeddings generados a disco. Esto es útil para datasets grandes donde el espacio en disco es una preocupación o escribir no es práctico.
-- **Nota:** Este es un argumento a nivel de trainer, no una opción de configuración por dataset, pero afecta cómo el dataloader interactúa con la caché VAE.
+- **Descripción:** Cuando está habilitado en un dataset, ese dataset codifica latentes VAE bajo demanda y no escribe en disco los latentes generados nuevos. Esto es útil para datasets grandes donde el espacio en disco es una preocupación o escribir no es práctico.
+- **Nota:** La opción global `--vae_cache_disable` sigue aplicándose a todos los datasets. Usa esta opción de dataset para desactivar la escritura de caché VAE solo en datasets seleccionados cuando la opción global es falsa. La forma eliminada `disable_vae_cache` se rechaza; usa `vae_cache_disable`.
 
 ### `skip_file_discovery`
 

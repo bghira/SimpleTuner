@@ -405,6 +405,7 @@ class TestFactoryDistillerRequirements(unittest.TestCase):
             maximum_image_size=2.0,
             vae_cache_scan_behaviour="ignore",
             vae_cache_ondemand=False,
+            vae_cache_disable=False,
             skip_file_discovery="",
             caption_strategy="filename",
             prepend_instance_prompt=False,

@@ -833,8 +833,8 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 ### `vae_cache_disable`
 
 - **Values:** `true` | `false`
-- **Description:** When enabled (via the command-line argument `--vae_cache_disable`), this option implicitly enables on-demand VAE caching but disables writing the generated embeddings to disk. This is useful for large datasets where disk space is a concern or writing is impractical.
-- **Note:** This is a trainer-level argument, not a per-dataset configuration option, but it affects how the dataloader interacts with the VAE cache.
+- **Description:** When enabled on a dataset, that dataset encodes VAE latents on demand and does not write newly generated latents to disk. This is useful for large datasets where disk space is a concern or writing is impractical.
+- **Note:** The global `--vae_cache_disable` option still applies to every dataset. Use this dataset option to disable VAE cache writes only for selected datasets when the global option is false. The removed `disable_vae_cache` spelling is rejected; use `vae_cache_disable`.
 
 ### `skip_file_discovery`
 

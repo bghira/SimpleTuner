@@ -832,8 +832,8 @@ Veja a seção [Solução de Problemas](#solucionando-problemas-de-datasets-filt
 ### `vae_cache_disable`
 
 - **Valores:** `true` | `false`
-- **Descrição:** Quando habilitado (via argumento de linha de comando `--vae_cache_disable`), esta opção habilita implicitamente o cache VAE sob demanda, mas desativa a gravação dos embeddings gerados em disco. Isso é útil para datasets grandes em que espaço em disco é uma preocupação ou a escrita é impraticável.
-- **Nota:** Este é um argumento de nível do trainer, não uma opção por dataset, mas afeta como o dataloader interage com o cache do VAE.
+- **Descrição:** Quando habilitado em um dataset, esse dataset codifica latentes VAE sob demanda e não grava em disco os latentes recém-gerados. Isso é útil para datasets grandes em que espaço em disco é uma preocupação ou a escrita é impraticável.
+- **Nota:** A opção global `--vae_cache_disable` ainda se aplica a todos os datasets. Use esta opção de dataset para desativar a escrita do cache VAE apenas em datasets selecionados quando a opção global estiver falsa. A grafia removida `disable_vae_cache` é rejeitada; use `vae_cache_disable`.
 
 ### `skip_file_discovery`
 
