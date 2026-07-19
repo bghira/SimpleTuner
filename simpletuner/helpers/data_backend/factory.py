@@ -431,8 +431,16 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(f"(id={backend['id']}) dataset_type must be one of {[choice.value for choice in choices]}.")
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
-    if "vae_cache_disable" in backend:
-        output["config"]["vae_cache_disable"] = backend["vae_cache_disable"]
+    dataset_vae_cache_disable = _as_bool(_get_arg_value(args, "vae_cache_disable", False)) or _as_bool(
+        backend.get("vae_cache_disable", False)
+    )
+    dataset_vae_cache_ondemand = (
+        _as_bool(_get_arg_value(args, "vae_cache_ondemand", False))
+        or _as_bool(backend.get("vae_cache_ondemand", False))
+        or dataset_vae_cache_disable
+    )
+    output["config"]["vae_cache_ondemand"] = dataset_vae_cache_ondemand
+    output["config"]["vae_cache_disable"] = dataset_vae_cache_disable
     if "probability" in backend:
         probability = backend["probability"]
         if probability is None or probability == "":
@@ -3925,7 +3933,7 @@ class FactoryRegistry:
                 f"{len(init_backend['conditioning_image_embed_cache'].image_path_to_embed_path)} entries."
             )
 
-        if not self.args.vae_cache_ondemand:
+        if not init_backend["config"]["vae_cache_ondemand"]:
             pending_files = init_backend["conditioning_image_embed_cache"].discover_unprocessed_files()
             logger.info(f"Conditioning image embed cache has {len(pending_files)} unprocessed files.")
             if is_i2v_video:
@@ -4061,12 +4069,8 @@ class FactoryRegistry:
             if vae_batch_size is None:
                 vae_batch_size = self.args.vae_batch_size
 
-        dataset_vae_cache_disable = _as_bool(getattr(self.args, "vae_cache_disable", False)) or _as_bool(
-            backend.get("vae_cache_disable", init_backend["config"].get("vae_cache_disable", False))
-        )
-        dataset_vae_cache_ondemand = _as_bool(self.args.vae_cache_ondemand) or dataset_vae_cache_disable
-
-        init_backend["config"]["vae_cache_disable"] = dataset_vae_cache_disable
+        dataset_vae_cache_disable = init_backend["config"]["vae_cache_disable"]
+        dataset_vae_cache_ondemand = init_backend["config"]["vae_cache_ondemand"]
 
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],

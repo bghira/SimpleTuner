@@ -83,6 +83,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
     video: Optional[Dict[str, Any]] = None
 
+    vae_cache_ondemand: bool = False
     vae_cache_disable: bool = False
 
     is_regularisation_data: bool = False
@@ -206,6 +207,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config.video = backend_dict.get("video")
 
         config.vae_cache_disable = bool(backend_dict.get("vae_cache_disable", False))
+        config.vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or config.vae_cache_disable
 
         config.is_regularisation_data = backend_dict.get(
             "is_regularisation_data", backend_dict.get("is_regularization_data", False)
@@ -289,6 +291,8 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.caption_strategy is None:
                 self.caption_strategy = "webshart"
 
+        if self.vae_cache_ondemand:
+            self.config["vae_cache_ondemand"] = True
         if self.vae_cache_disable:
             self.config["vae_cache_disable"] = True
 
@@ -436,6 +440,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config["crop_aspect_buckets"] = self.crop_aspect_buckets
         if self.vae_cache_clear_each_epoch is not None:
             config["vae_cache_clear_each_epoch"] = self.vae_cache_clear_each_epoch
+        if self.vae_cache_ondemand:
+            config["vae_cache_ondemand"] = True
         if self.vae_cache_disable:
             config["vae_cache_disable"] = True
         if self.hash_filenames is not None:

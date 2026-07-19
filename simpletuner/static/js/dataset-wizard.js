@@ -38,6 +38,8 @@
         cache_dir_text: '{output_dir}/cache/text/{model_family}/{id}',
         probability: 1,
         repeats: 0,
+        vae_cache_ondemand: false,
+        vae_cache_disable: false,
         parquet: {
             path: '',
             filename_column: 'id',
@@ -647,6 +649,12 @@
                 datasetToAdd.is_regularisation_data =
                     datasetToAdd.is_regularisation_data === true ||
                     datasetToAdd.is_regularisation_data === 'true';
+                datasetToAdd.vae_cache_ondemand =
+                    datasetToAdd.vae_cache_ondemand === true ||
+                    datasetToAdd.vae_cache_ondemand === 'true';
+                if (!datasetToAdd.vae_cache_ondemand) {
+                    delete datasetToAdd.vae_cache_ondemand;
+                }
                 datasetToAdd.vae_cache_disable =
                     datasetToAdd.vae_cache_disable === true ||
                     datasetToAdd.vae_cache_disable === 'true';

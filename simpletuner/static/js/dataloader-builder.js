@@ -266,7 +266,7 @@
             // Convert boolean strings
             const booleanFields = ['crop', 'disabled', 'default', 'prepend_instance_prompt',
                                  'only_instance_prompt', 'vae_cache_clear_each_epoch',
-                                 'vae_cache_disable',
+                                 'vae_cache_ondemand', 'vae_cache_disable',
                                  'hash_filenames', 'preserve_data_backend_cache',
                                  'is_regularisation_data'];
 

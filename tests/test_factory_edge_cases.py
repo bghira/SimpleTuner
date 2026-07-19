@@ -238,8 +238,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         self.assertIn("unique 'id' field", str(context.exception))
 
-    def test_dataset_vae_cache_disable_uses_dataset_ondemand_mode(self):
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+    def test_dataset_vae_cache_modes_use_dataset_ondemand_mode(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
 
         factory = FactoryRegistry(
             args=self.args,
@@ -248,54 +248,63 @@ class TestFactoryEdgeCases(unittest.TestCase):
             tokenizers=self.tokenizers,
             model=self.model,
         )
-        backend = {
-            "id": "dataset-disabled-cache",
-            "type": "local",
-            "dataset_type": "image",
-            "instance_data_dir": self.temp_dir,
-            "cache_dir_vae": os.path.join(self.temp_dir, "vae"),
-            "vae_cache_disable": True,
-        }
-        init_backend = {
-            "id": backend["id"],
-            "dataset_type": "image",
-            "config": {"dataset_type": "image", "vae_cache_disable": True},
-            "data_backend": MagicMock(id=backend["id"], type="local"),
-            "metadata_backend": MagicMock(),
-            "instance_data_dir": self.temp_dir,
-        }
-        image_embed_backend = {"data_backend": MagicMock(type="local")}
+        modes = [
+            ({"vae_cache_ondemand": True}, False),
+            ({"vae_cache_disable": True}, True),
+        ]
 
-        with (
-            patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker,
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-            patch("simpletuner.helpers.data_backend.factory.VAECache", autospec=True) as mock_vae_cache,
-        ):
-            mock_state_tracker.get_vae.return_value = MagicMock()
-            mock_state_tracker.get_webhook_handler.return_value = None
-            mock_state_tracker.get_image_files.return_value = {}
+        for backend_mode, expected_disable in modes:
+            with self.subTest(backend_mode=backend_mode):
+                backend = {
+                    "id": "dataset-ondemand-cache",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": self.temp_dir,
+                    "cache_dir_vae": os.path.join(self.temp_dir, "vae"),
+                    **backend_mode,
+                }
+                init_backend = init_backend_config(backend, self.args, self.accelerator)
+                init_backend.update(
+                    {
+                        "data_backend": MagicMock(id=backend["id"], type="local"),
+                        "metadata_backend": MagicMock(),
+                        "instance_data_dir": self.temp_dir,
+                    }
+                )
+                image_embed_backend = {"data_backend": MagicMock(type="local")}
 
-            mock_vae_instance = MagicMock()
-            mock_vae_instance.vae_cache_ondemand = True
-            mock_vae_instance.set_webhook_handler.return_value = None
-            mock_vae_instance.build_vae_cache_filename_map.return_value = None
-            mock_vae_cache.return_value = mock_vae_instance
+                with (
+                    patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker,
+                    patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                    patch("simpletuner.helpers.data_backend.factory.VAECache", autospec=True) as mock_vae_cache,
+                ):
+                    mock_state_tracker.get_vae.return_value = MagicMock()
+                    mock_state_tracker.get_webhook_handler.return_value = None
+                    mock_state_tracker.get_image_files.return_value = {}
 
-            factory._configure_vae_cache(
-                backend,
-                init_backend,
-                image_embed_backend,
-                vae_cache_dir_paths=[],
-                text_embed_cache_dir_paths=[],
-                conditioning_type=None,
-            )
+                    mock_vae_instance = MagicMock()
+                    mock_vae_instance.vae_cache_ondemand = True
+                    mock_vae_instance.set_webhook_handler.return_value = None
+                    mock_vae_instance.build_vae_cache_filename_map.return_value = None
+                    mock_vae_cache.return_value = mock_vae_instance
 
-        kwargs = mock_vae_cache.call_args.kwargs
-        self.assertFalse(self.args.vae_cache_ondemand)
-        self.assertTrue(kwargs["vae_cache_disable"])
-        self.assertTrue(kwargs["vae_cache_ondemand"])
-        self.assertTrue(init_backend["config"]["vae_cache_disable"])
-        mock_vae_instance.discover_all_files.assert_not_called()
+                    factory._configure_vae_cache(
+                        backend,
+                        init_backend,
+                        image_embed_backend,
+                        vae_cache_dir_paths=[],
+                        text_embed_cache_dir_paths=[],
+                        conditioning_type=None,
+                    )
+
+                kwargs = mock_vae_cache.call_args.kwargs
+                self.assertFalse(self.args.vae_cache_ondemand)
+                self.assertFalse(self.args.vae_cache_disable)
+                self.assertEqual(expected_disable, kwargs["vae_cache_disable"])
+                self.assertTrue(kwargs["vae_cache_ondemand"])
+                self.assertEqual(expected_disable, init_backend["config"]["vae_cache_disable"])
+                self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
+                mock_vae_instance.discover_all_files.assert_not_called()
 
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""

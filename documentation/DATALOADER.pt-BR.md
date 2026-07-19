@@ -829,6 +829,12 @@ Veja a seção [Solução de Problemas](#solucionando-problemas-de-datasets-filt
 - Quando habilitado, todos os objetos de cache do VAE são deletados do sistema de arquivos no final de cada ciclo de repeats do dataset. Isso pode ser intensivo em recursos para datasets grandes, mas combinado com `crop_style=random` e/ou `crop_aspect=random` você vai querer isso habilitado para garantir que uma faixa completa de cortes seja amostrada de cada imagem.
 - Na verdade, esta opção é **habilitada por padrão** ao usar bucketing ou cortes aleatórios.
 
+### `vae_cache_ondemand`
+
+- **Valores:** `true` | `false`
+- **Descrição:** Quando habilitado em um dataset, latentes VAE ausentes são codificados durante o treinamento e gravados no cache VAE desse dataset, em vez de serem pré-computados na inicialização.
+- **Nota:** A opção global `--vae_cache_ondemand` ainda se aplica a todos os datasets. Use esta opção de dataset quando a opção global estiver falsa e apenas datasets selecionados devam codificar latentes VAE sob demanda.
+
 ### `vae_cache_disable`
 
 - **Valores:** `true` | `false`
