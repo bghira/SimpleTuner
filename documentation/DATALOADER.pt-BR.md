@@ -855,6 +855,14 @@ Veja a seção [Solução de Problemas](#solucionando-problemas-de-datasets-filt
 - **Descrição:** Quando habilitado em um dataset, esse dataset codifica latentes VAE sob demanda e não grava em disco os latentes recém-gerados. Isso é útil para datasets grandes em que espaço em disco é uma preocupação ou a escrita é impraticável.
 - **Nota:** A opção global `--vae_cache_disable` ainda se aplica a todos os datasets. Use esta opção de dataset para desativar a escrita do cache VAE apenas em datasets selecionados quando a opção global estiver falsa. A grafia removida `disable_vae_cache` é rejeitada; use `vae_cache_disable`.
 
+### Escolhendo uma estratégia de cache VAE
+
+`vae_cache_ondemand` troca tempo de inicialização por trabalho durante o treinamento; não é uma otimização de VRAM. Escolha a estratégia por dataset com base no reuso esperado do cache e na possibilidade de manter o VAE disponível durante o treinamento:
+
+1. **Dataset extremamente grande e reutilizável:** Defina `vae_cache_ondemand=true` quando uma passagem completa de pré-cache atrasaria demais o treinamento. O treinamento começa sem esperar por todas as imagens, e cada latente ausente é gravado no cache para ser reutilizado em acessos posteriores.
+2. **Dataset de resolução muito alta:** Mantenha `vae_cache_ondemand=false` (e a opção global falsa) quando a codificação VAE puder causar OOM com o modelo de treinamento carregado. O pré-cache padrão na inicialização permite descarregar o VAE antes do treinamento. Nem o modo sob demanda nem `vae_cache_disable` resolvem essa limitação de memória, pois ambos exigem codificação VAE durante o treinamento. Tiling ou slicing do VAE pode reduzir o pico de memória durante o pré-cache inicial.
+3. **Dataset em escala web com pouco reuso esperado:** Defina `vae_cache_disable=true` quando o dataset contiver milhões ou bilhões de imagens e for improvável que a execução planejada se aproxime de uma época. As imagens amostradas continuam sendo codificadas sob demanda, mas as gravações de cache e o crescimento do armazenamento são evitados quando a maioria dos latentes nunca seria lida novamente. O requisito de memória do VAE durante o treinamento é o mesmo do cache sob demanda.
+
 ### `skip_file_discovery`
 
 - Você provavelmente não quer definir isso - ele é útil apenas para datasets muito grandes.
