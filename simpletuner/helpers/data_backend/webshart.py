@@ -76,6 +76,7 @@ class WebshartDataBackend(BaseDataBackend):
         self.max_file_size = int(max_file_size)
         self.compress_cache = compress_cache
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        self._shard_sample_index_cache: dict[int, dict[str, int]] = {}
 
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
         Path(self.metadata_cache_dir).mkdir(parents=True, exist_ok=True)
@@ -111,8 +112,16 @@ class WebshartDataBackend(BaseDataBackend):
         return f"{cls.SAMPLE_PREFIX}{int(shard_idx)}/{int(sample_idx)}/{filename}"
 
     @classmethod
-    def parse_sample_id(cls, identifier: Union[str, Path]) -> WebshartSampleRef:
+    def normalize_sample_id(cls, identifier: Union[str, Path]) -> str:
         value = str(identifier)
+        marker = value.find(cls.SAMPLE_PREFIX)
+        if marker >= 0:
+            return value[marker:]
+        return value
+
+    @classmethod
+    def parse_sample_id(cls, identifier: Union[str, Path]) -> WebshartSampleRef:
+        value = cls.normalize_sample_id(identifier)
         if not value.startswith(cls.SAMPLE_PREFIX):
             raise ValueError(f"Invalid webshart sample id: {identifier}")
         remainder = value[len(cls.SAMPLE_PREFIX) :]
@@ -128,7 +137,39 @@ class WebshartDataBackend(BaseDataBackend):
 
     @classmethod
     def is_sample_id(cls, identifier: Union[str, Path]) -> bool:
-        return str(identifier).startswith(cls.SAMPLE_PREFIX)
+        value = str(identifier)
+        if cls.SAMPLE_PREFIX not in value:
+            return False
+        sample_id = cls.normalize_sample_id(value)
+        filename = sample_id.split("/", 2)[-1] if "/" in sample_id else sample_id
+        return Path(filename).suffix.lower() not in {".pt", ".safetensors"}
+
+    @classmethod
+    def _normalise_file_extensions(cls, file_extensions: Optional[list]) -> set[str]:
+        return {
+            extension.lower() if str(extension).startswith(".") else f".{str(extension).lower()}"
+            for extension in file_extensions or []
+        }
+
+    def _list_cache_files(
+        self,
+        file_extensions: Optional[list] = None,
+        instance_data_dir: str = None,
+    ) -> List[Tuple[str, List, List[str]]]:
+        root = Path(instance_data_dir) if instance_data_dir else Path(self.cache_dir)
+        if not root.exists():
+            return []
+
+        wanted_extensions = self._normalise_file_extensions(file_extensions)
+        results = []
+        for current_root, dirs, files in os.walk(root):
+            matched_files = []
+            for filename in files:
+                if wanted_extensions and Path(filename).suffix.lower() not in wanted_extensions:
+                    continue
+                matched_files.append(filename)
+            results.append((current_root, dirs, matched_files))
+        return results
 
     def _cache_path(self, identifier: Union[str, Path]) -> Path:
         path = Path(identifier)
@@ -150,8 +191,34 @@ class WebshartDataBackend(BaseDataBackend):
         entry = self.loader.load_sample(sample_ref.shard_idx, sample_ref.sample_idx)
         return bytes(entry.data)
 
+    def _sample_index_for_filename(self, shard_idx: int, filename: str) -> Optional[int]:
+        shard_idx = int(shard_idx)
+        if shard_idx not in self._shard_sample_index_cache:
+            self._shard_sample_index_cache[shard_idx] = {
+                str(sample_filename): sample_idx
+                for sample_idx, sample_filename in enumerate(self.dataset.list_samples_in_shard(shard_idx))
+            }
+        return self._shard_sample_index_cache[shard_idx].get(str(filename))
+
+    def get_caption(self, image_path: str) -> Optional[str]:
+        if not self.is_sample_id(image_path):
+            return None
+
+        sample_ref = self.parse_sample_id(image_path)
+        caption_filename = Path(sample_ref.filename).with_suffix(".txt").name
+        caption_sample_idx = self._sample_index_for_filename(sample_ref.shard_idx, caption_filename)
+        if caption_sample_idx is None:
+            return None
+
+        caption_sample_id = self.sample_id(sample_ref.shard_idx, caption_sample_idx, caption_filename)
+        caption = self.read(caption_sample_id)
+        if isinstance(caption, bytes):
+            caption = caption.decode("utf-8")
+        return str(caption).strip()
+
     def read(self, identifier: Union[str, Path], as_byteIO: bool = False) -> Any:
         if self.is_sample_id(identifier):
+            identifier = self.normalize_sample_id(identifier)
             data = self._read_sample_bytes(identifier)
             return BytesIO(data) if as_byteIO else data
 
@@ -190,6 +257,7 @@ class WebshartDataBackend(BaseDataBackend):
     def exists(self, identifier: Union[str, Path]) -> bool:
         if self.is_sample_id(identifier):
             try:
+                identifier = self.normalize_sample_id(identifier)
                 sample_ref = self.parse_sample_id(identifier)
                 shard_info = self.dataset.get_shard_info(sample_ref.shard_idx)
                 num_samples = shard_info.get("num_samples")
@@ -204,6 +272,10 @@ class WebshartDataBackend(BaseDataBackend):
         return BytesIO(self.read(identifier))
 
     def list_files(self, file_extensions: list = None, instance_data_dir: str = None) -> List[Tuple[str, List, List[str]]]:
+        requested_extensions = self._normalise_file_extensions(file_extensions)
+        if requested_extensions and requested_extensions.issubset(self.CACHE_EXTENSIONS):
+            return self._list_cache_files(file_extensions=file_extensions, instance_data_dir=instance_data_dir)
+
         files = []
         for shard_idx in range(self.num_shards()):
             for sample_idx, filename in enumerate(self.dataset.list_samples_in_shard(shard_idx)):
@@ -218,7 +290,7 @@ class WebshartDataBackend(BaseDataBackend):
         if sample_path is None:
             return None
         if self.is_sample_id(sample_path) and self.exists(sample_path):
-            return sample_path
+            return self.normalize_sample_id(sample_path)
         cache_path = self._cache_path(sample_path)
         return str(cache_path) if cache_path.exists() else None
 

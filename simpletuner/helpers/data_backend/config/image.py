@@ -72,6 +72,7 @@ class ImageBackendConfig(BaseBackendConfig):
     minimum_image_size: Optional[Union[int, float]] = None
     minimum_aspect_ratio: Optional[Union[int, float]] = None
     maximum_aspect_ratio: Optional[Union[int, float]] = None
+    max_num_samples: Optional[int] = None
 
     conditioning: Optional[Dict[str, Any]] = None
     conditioning_config: Optional[Dict[str, Any]] = None
@@ -116,6 +117,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config.minimum_image_size = backend_dict.get("minimum_image_size", _get_arg("minimum_image_size"))
         config.maximum_image_size = backend_dict.get("maximum_image_size", _get_arg("maximum_image_size"))
         config.target_downsample_size = backend_dict.get("target_downsample_size", _get_arg("target_downsample_size"))
+        config.max_num_samples = backend_dict.get("max_num_samples")
         config.minimum_aspect_ratio = backend_dict.get("minimum_aspect_ratio")
         config.maximum_aspect_ratio = backend_dict.get("maximum_aspect_ratio")
 
@@ -181,7 +183,9 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
-        config.timestep_sampling_offset = float(backend_dict.get("timestep_sampling_offset", 0.0)) if backend_dict.get("timestep_sampling_offset") else 0.0
+        config.timestep_sampling_offset = (
+            float(backend_dict.get("timestep_sampling_offset", 0.0)) if backend_dict.get("timestep_sampling_offset") else 0.0
+        )
         config.repeats = int(backend_dict.get("repeats", 0)) if backend_dict.get("repeats") else 0
         config.disable_validation = backend_dict.get("disable_validation", False)
         if "hash_filenames" in backend_dict and config.backend_type != "csv":
@@ -440,6 +444,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config["minimum_aspect_ratio"] = self.minimum_aspect_ratio
         if self.maximum_aspect_ratio is not None:
             config["maximum_aspect_ratio"] = self.maximum_aspect_ratio
+        if self.max_num_samples is not None:
+            config["max_num_samples"] = self.max_num_samples
 
         if self.conditioning is not None:
             config["conditioning"] = self.conditioning

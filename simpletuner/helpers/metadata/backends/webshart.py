@@ -95,8 +95,33 @@ class WebshartMetadataBackend(MetadataBackend):
         if hasattr(accelerator, "wait_for_everyone"):
             accelerator.wait_for_everyone()
 
+    def _bucketed_sample_ids(self) -> list[str]:
+        sample_ids = []
+        seen = set()
+        for bucket in self.aspect_ratio_bucket_indices.values():
+            for sample_path in bucket:
+                sample_path = str(sample_path)
+                if sample_path in seen:
+                    continue
+                sample_ids.append(sample_path)
+                seen.add(sample_path)
+        return sample_ids
+
+    def _sync_image_files_with_buckets(self) -> None:
+        sample_ids = self._bucketed_sample_ids()
+        if not sample_ids:
+            return
+        StateTracker.set_image_files([("", [], sample_ids)], data_backend_id=self.data_backend.id)
+
     def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
-        return self.caption_cache.get(str(index), None)
+        index = self.data_backend.normalize_sample_id(index)
+        caption = self.caption_cache.get(index, None)
+        if caption is not None:
+            return caption
+        caption = self.data_backend.get_caption(index)
+        if caption is not None:
+            self.caption_cache[index] = caption
+        return caption
 
     def _caption_cache_path(self):
         return f"{self.cache_file}_captions.json"
@@ -129,6 +154,7 @@ class WebshartMetadataBackend(MetadataBackend):
             self.aspect_ratio_bucket_indices = _coerce_bucket_keys_to_float(
                 cache_data.get("aspect_ratio_bucket_indices", {})
             )
+            self._sync_image_files_with_buckets()
             if set_config:
                 self.config = cache_data.get("config", {})
                 if self.config:
@@ -337,9 +363,25 @@ class WebshartMetadataBackend(MetadataBackend):
         self.save_image_metadata()
         self._save_caption_cache()
         self.save_cache(enforce_constraints=True)
+        self._sync_image_files_with_buckets()
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+
+    def __len__(self):
+        """
+        Returns:
+            int: The number of complete batches available across aspect ratio buckets.
+        """
+
+        def repeat_len(bucket):
+            return len(bucket) * (self.repeats + 1)
+
+        return sum(
+            (repeat_len(bucket) + (self.batch_size - 1)) // self.batch_size
+            for bucket in self.aspect_ratio_bucket_indices.values()
+            if repeat_len(bucket) >= self.batch_size
+        )
 
     def refresh_buckets(self, rank: int = None):
         self.compute_aspect_ratio_bucket_indices()
