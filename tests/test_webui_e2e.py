@@ -1855,7 +1855,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 "const dataset = comp && comp.datasets ? comp.datasets[arguments[0]] : null;"
                 "if (!dataset) { return null; }"
                 "if (typeof comp.expandSectionIfCollapsed === 'function') { comp.expandSectionIfCollapsed(dataset, 'card'); }"
-                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'advanced'); }"
+                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'storage'); }"
                 "comp.parameterFilterQuery = '';"
                 "return dataset.id;",
                 dataset_index,

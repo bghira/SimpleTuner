@@ -631,6 +631,12 @@ class TextEmbeddingCache(WebhookMixin):
                                 "skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is "
                                 "disabled or unset."
                             ) from e
+                        if self.model.requires_text_embed_image_context() and not record.get("metadata"):
+                            raise ValueError(
+                                f"Text embed cache miss for '{filename}' cannot be encoded on demand because this "
+                                "model requires image-context metadata for every prompt. "
+                                f"Prompt: {prompt!r}; text cache id: {self.id}; data backend id: {self.data_backend.id}."
+                            ) from e
                         self.debug_log(f"Text embed cache miss for {filename}; encoding on demand.")
                         encode_current_prompt = True
                 if encode_current_prompt and not return_concat and self.text_encoder_batch_size > 1:
