@@ -243,7 +243,11 @@ class WorkerAgent:
             pass  # Keepalive, no action needed
 
     async def _start_job(self, event: Dict[str, Any]):
-        """Start a training job"""
+        """Start a training job received from the orchestrator.
+
+        Args:
+            event: Job payload containing the training configuration and job ID.
+        """
         if self.current_job:
             logger.warning("Already running a job, ignoring new job request")
             return
@@ -256,14 +260,14 @@ class WorkerAgent:
         job_dir = Path(f"/tmp/simpletuner_job_{job_id}")
         job_dir.mkdir(exist_ok=True)
 
-        config_path = job_dir / "config.yaml"
+        config_path = job_dir / "config.json"
         dataloader_path = job_dir / "dataloader.yaml"
 
         # Import yaml here to avoid import at module level
         import yaml
 
-        with open(config_path, "w") as f:
-            yaml.dump(event["config"], f)
+        with config_path.open("w", encoding="utf-8") as f:
+            json.dump(event["config"], f)
         with open(dataloader_path, "w") as f:
             yaml.dump(event["dataloader"], f)
 
@@ -273,6 +277,8 @@ class WorkerAgent:
             {
                 "SIMPLETUNER_UPLOAD_ENDPOINT": f"{self.config.orchestrator_url}{event['upload_endpoint']}",
                 "SIMPLETUNER_UPLOAD_TOKEN": event.get("upload_token", ""),
+                "CONFIG_PATH": str(config_path),
+                "SIMPLETUNER_CONFIG_BACKEND": "json",
             }
         )
         if event.get("hf_token"):
@@ -287,10 +293,6 @@ class WorkerAgent:
             sys.executable,
             "-m",
             "simpletuner.train",
-            "--config",
-            str(config_path),
-            "--data_config",
-            str(dataloader_path),
         ]
 
         logger.info(f"Launching training: {' '.join(cmd)}")
