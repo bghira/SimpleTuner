@@ -118,6 +118,8 @@ env_to_args_map = {
     "READ_BATCH_SIZE": "--read_batch_size",
     "WRITE_BATCH_SIZE": "--write_batch_size",
     "TEXT_ENCODER_BATCH_SIZE": "--text_encoder_batch_size",
+    "TEXT_CACHE_ONDEMAND": "--text_cache_ondemand",
+    "TEXT_CACHE_DISABLE": "--text_cache_disable",
     "AWS_MAX_POOL_CONNECTIONS": "--aws_max_pool_connections",
     "TORCH_NUM_THREADS": "--torch_num_threads",
     "IMAGE_PROCESSING_BATCH_SIZE": "--image_processing_batch_size",

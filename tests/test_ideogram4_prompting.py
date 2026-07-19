@@ -539,6 +539,48 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertTrue(any(call[0][0]["prompt"] == "a domokun plush" for call in embed_cache.generic_calls))
         self.assertFalse(any(call[0] == ["bad"] for call in embed_cache.generic_calls))
 
+    def test_validation_prompt_precomputation_is_skipped_for_ondemand_text_cache(self):
+        class DummyEmbedCache:
+            model_type = "test"
+            text_cache_ondemand = True
+
+            def __init__(self):
+                self.compute_embeddings_for_prompts = mock.MagicMock()
+                self.encode_validation_negative_prompt = mock.MagicMock()
+
+        class DummyModel:
+            def requires_conditioning_validation_inputs(self):
+                return False
+
+            def should_precompute_validation_negative_prompt(self):
+                return True
+
+        args = types.SimpleNamespace(
+            model_family="flux",
+            model_flavour="base",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_prompt_library=False,
+            user_prompt_library=None,
+            validation_prompt="on demand prompt",
+            validation_negative_prompt="bad",
+            validation_disable_unconditional=True,
+        )
+        embed_cache = DummyEmbedCache()
+
+        with (
+            mock.patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            mock.patch(
+                "simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=None
+            ),
+        ):
+            metadata = prepare_validation_prompt_list(args, embed_cache, DummyModel())
+
+        embed_cache.compute_embeddings_for_prompts.assert_not_called()
+        embed_cache.encode_validation_negative_prompt.assert_not_called()
+        self.assertEqual([entry.prompt for entry in metadata["validation_prompts"]], ["on demand prompt"])
+
     def test_pipeline_saves_lora_weights_with_transformer_prefix(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             Ideogram4Pipeline.save_lora_weights(

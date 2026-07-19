@@ -112,6 +112,21 @@ class TestTextEmbedBackendConfig(unittest.TestCase):
 
         self.assertEqual(config.caption_filter_list, ["nsfw", "violence", "inappropriate"])
 
+    def test_text_cache_disable_implies_ondemand_and_round_trips(self):
+        backend_dict = {
+            "id": "text_test",
+            "dataset_type": "text_embeds",
+            "text_cache_disable": True,
+        }
+
+        config = TextEmbedBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertTrue(config.text_cache_disable)
+        self.assertTrue(config.text_cache_ondemand)
+        self.assertTrue(output["config"]["text_cache_disable"])
+        self.assertTrue(output["config"]["text_cache_ondemand"])
+
     def test_to_dict_output(self):
         """Test to_dict method produces correct output"""
         backend_dict = {"id": "text_test", "dataset_type": "text_embeds", "caption_filter_list": ["test_filter"]}

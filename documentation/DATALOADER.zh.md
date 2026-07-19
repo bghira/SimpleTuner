@@ -83,6 +83,20 @@
 - **说明:** 预计算未缓存的文本嵌入时，每次文本编码器 forward 编码的 caption 数量。较大的值可提高吞吐，但会占用更多 VRAM。
 - **默认值:** 回退到训练器的 `--text_encoder_batch_size` 参数（默认 1）。
 
+### `text_cache_ondemand`
+
+- **仅适用于 `dataset_type=text_embeds`**
+- **取值:** `true` | `false`
+- **说明:** 跳过完整的文本嵌入预计算。已有条目会从该缓存读取；缺失的嵌入会在训练或验证时编码并写入缓存。
+- **注记:** 分配到该 `text_embeds` 后端的所有图像或视频数据集都会继承此行为。如需为部分源数据集使用不同的缓存行为，请创建另一个 `text_embeds` 后端，并通过源数据集的 `text_embeds` 字段进行分配。
+
+### `text_cache_disable`
+
+- **仅适用于 `dataset_type=text_embeds`**
+- **取值:** `true` | `false`
+- **说明:** 读取已有文本嵌入，但不写入新编码的嵌入。缺失条目会在训练或验证时编码，因此该选项隐含启用 `text_cache_ondemand`。
+- **注记:** 全局 `--text_cache_disable` 会应用于所有文本缓存。当全局选项为 false 且仅需禁止部分 `text_embeds` 后端写入时，请使用此后端选项。
+
 ### `text_embeds`
 
 - **仅适用于 `dataset_type=image`**

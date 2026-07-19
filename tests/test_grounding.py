@@ -402,6 +402,27 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
         self.assertAlmostEqual(result.validity_mask[0, 0].item(), 1.0)
         self.assertAlmostEqual(result.validity_mask[0, 1].item(), 0.0)
 
+    def test_build_batch_retrieves_entity_embed_with_label(self):
+        collate = GroundingCollate(max_entities=1, vae_scale_factor=8)
+        captured_prompts = []
+
+        class _SpyCache:
+            def compute_prompt_embeddings_with_model(self, prompt_records):
+                captured_prompts.extend(record["prompt"] for record in prompt_records)
+                return {"pooled_prompt_embeds": torch.randn(1, 768)}
+
+        examples = [
+            {
+                "image_path": "/fake/img.png",
+                "target_size": (512, 512),
+                "bbox_entities": [{"label": "cat", "bbox": [0.1, 0.1, 0.5, 0.5]}],
+            }
+        ]
+        with self._patch_state_tracker():
+            collate.build_batch(examples, "test", _SpyCache())
+
+        self.assertEqual(captured_prompts, ["cat"])
+
     def test_build_batch_no_bbox_entities_returns_none(self):
         """When no examples have bbox_entities, build_batch returns None."""
         collate = GroundingCollate(max_entities=2, vae_scale_factor=8)
@@ -466,11 +487,13 @@ class TestBuildInlineGroundingBatch(unittest.TestCase):
         from simpletuner.helpers.training.validation import _build_validation_grounding_batch
 
         captured_keys = []
+        captured_prompts = []
 
         class _SpyCache:
             def compute_prompt_embeddings_with_model(self, prompt_records):
                 for r in prompt_records:
                     captured_keys.append(r.get("key"))
+                    captured_prompts.append(r.get("prompt"))
                 return {"pooled_prompt_embeds": torch.randn(1, 768)}
 
         cache = _SpyCache()
@@ -484,6 +507,7 @@ class TestBuildInlineGroundingBatch(unittest.TestCase):
             target_size=(256, 256),
         )
         self.assertIn("__grounding_val_my_prompt__bbox_0", captured_keys)
+        self.assertEqual(captured_prompts[0], "dog")
 
     def test_inline_returns_none_without_entities(self):
         """When bbox_entities is None and no image_path, returns None."""

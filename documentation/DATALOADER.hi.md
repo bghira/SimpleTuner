@@ -83,6 +83,20 @@
 - **Description:** uncached text embeddings precompute करते समय एक text encoder forward में कितने captions encode किए जाएँ। उच्च मान throughput बढ़ा सकते हैं लेकिन अधिक VRAM लेते हैं।
 - **Default:** trainer के `--text_encoder_batch_size` argument (default 1) पर fallback करता है।
 
+### `text_cache_ondemand`
+
+- **केवल `dataset_type=text_embeds` पर लागू**
+- **Values:** `true` | `false`
+- **Description:** सभी text embeddings की pre-computation छोड़ देता है। मौजूदा entries इस cache से पढ़ी जाती हैं; missing embeddings training या validation के दौरान encode होकर cache में लिखी जाती हैं।
+- **Note:** इस `text_embeds` backend को assign किए गए सभी image या video datasets यही behavior अपनाते हैं। चुने हुए source datasets के लिए अलग behavior चाहिए तो दूसरा `text_embeds` backend बनाएँ और source dataset के `text_embeds` field से उसे assign करें।
+
+### `text_cache_disable`
+
+- **केवल `dataset_type=text_embeds` पर लागू**
+- **Values:** `true` | `false`
+- **Description:** मौजूदा text embeddings पढ़ता है, लेकिन नए encoded embeddings नहीं लिखता। Missing entries training या validation के दौरान encode होती हैं, इसलिए यह option `text_cache_ondemand` को implicitly enable करता है।
+- **Note:** global `--text_cache_disable` सभी text caches पर लागू होता है। जब global option false हो और केवल चुने हुए `text_embeds` backends के writes रोकने हों, तब यह backend option उपयोग करें।
+
 ### `text_embeds`
 
 - **केवल `dataset_type=image` पर लागू**

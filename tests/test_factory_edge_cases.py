@@ -306,6 +306,44 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
                 mock_vae_instance.discover_all_files.assert_not_called()
 
+    def test_ondemand_text_embed_backend_skips_dataset_precomputation(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        cache = MagicMock(text_cache_ondemand=True)
+        init_backend = {
+            "id": "image-dataset",
+            "config": {},
+            "text_embed_cache": cache,
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config") as set_config:
+            factory._process_text_embeddings({}, init_backend, None)
+
+        cache.compute_embeddings_for_prompts.assert_not_called()
+        self.assertTrue(init_backend["config"]["hash_filenames"])
+        set_config.assert_called_once_with("image-dataset", init_backend["config"])
+
+    def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.text_cache_ondemand = False
+        self.args.text_cache_disable = False
+        backend = {
+            "id": "text-disabled-cache",
+            "type": "local",
+            "dataset_type": "text_embeds",
+            "text_cache_disable": True,
+        }
+
+        result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertTrue(result["config"]["text_cache_disable"])
+        self.assertTrue(result["config"]["text_cache_ondemand"])
+        self.assertFalse(self.args.text_cache_disable)
+        self.assertFalse(self.args.text_cache_ondemand)
+
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry

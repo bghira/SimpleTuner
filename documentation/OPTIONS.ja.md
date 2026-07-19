@@ -87,6 +87,20 @@ simpletuner configure config/foo/config.json
 - **理由**: 既定ではモデル固有の compact cache layout を使えます。たとえば Ideogram 4 は、cache file に書き込む前に 13 層の Qwen hidden-state stack を transformer の凍結された `llm_cond_norm` と `llm_cond_proj` で投影します。これらの layer は LoRA と full transformer training の両方で凍結されます。
 - **使用タイミング**: cache 互換性のデバッグ、raw で未投影の text encoder features が必要な場合、または text projection が固定済み pretrained component ではない Ideogram 風 architecture を scratch training に適用する場合に有効化します。
 
+### `--text_cache_ondemand`
+
+- **内容**: テキストキャッシュ全体の事前計算を省略し、学習または検証で不足するプロンプト埋め込みが要求されたときにエンコードします。
+- **既定値**: `False`
+- **動作**: 既存キャッシュは読み込み、新しくエンコードした不足エントリは書き込みます。起動後も必要なため、テキストエンコーダはロードしたままになります。
+- **データローダー設定**: `text_embeds` バックエンドごとに `"text_cache_ondemand": true` で有効化できます。
+
+### `--text_cache_disable`
+
+- **内容**: 既存エントリの読み込みを維持したまま、すべてのテキスト埋め込みキャッシュへの書き込みを無効化します。
+- **既定値**: `False`
+- **動作**: `--text_cache_ondemand` を暗黙に有効化します。不足する埋め込みは要求時にエンコードされますが保存されません。
+- **データローダー設定**: グローバル設定が false のとき、個別の `text_embeds` バックエンドで `"text_cache_disable": true` を設定できます。
+
 ### `--trust_remote_code`
 
 - **内容**: チェックポイントが upstream の独自クラスに依存している場合に、Transformers と tokenizer がモデルリポジトリ内のカスタム Python コードを実行できるようにします。
@@ -1854,6 +1868,8 @@ usage: train.py [-h] --model_family
                 [--preserve_data_backend_cache [PRESERVE_DATA_BACKEND_CACHE]]
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
+                [--text_cache_ondemand [TEXT_CACHE_ONDEMAND]]
+                [--text_cache_disable [TEXT_CACHE_DISABLE]]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
@@ -2406,6 +2422,12 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_cache_ondemand [TEXT_CACHE_ONDEMAND]
+                        テキストキャッシュ全体を事前計算せず、学習中に不足する埋め込みを
+                        オンデマンドでエンコードします。既存エントリは再利用されます。
+  --text_cache_disable [TEXT_CACHE_DISABLE]
+                        既存キャッシュを読み込みながら書き込みを無効化し、不足エントリを
+                        オンデマンドでエンコードします。--text_cache_ondemand を暗黙に有効化します。
   --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
                         Store full raw text encoder outputs in the text embed
                         cache. This opts out of model-specific cache size

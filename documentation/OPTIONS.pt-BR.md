@@ -87,6 +87,20 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Por que**: O padrão permite layouts de cache compactos específicos do modelo. Por exemplo, o Ideogram 4 projeta sua pilha Qwen de 13 camadas pelas camadas congeladas `llm_cond_norm` e `llm_cond_proj` do transformer antes de gravar os arquivos de cache; essas camadas ficam congeladas tanto em LoRA quanto em treinamento full do transformer.
 - **Quando usar**: Ative para depurar compatibilidade de cache, quando precisar explicitamente de features raw e não projetadas do text encoder, ou ao adaptar uma arquitetura estilo Ideogram para treinamento do zero em que a projeção de texto não seja um componente pretreinado fixo.
 
+### `--text_cache_ondemand`
+
+- **O que**: Ignora a pré-computação completa do cache de texto e codifica embeddings de prompt ausentes quando o treinamento ou a validação os solicita.
+- **Padrão**: `False`
+- **Comportamento**: Entradas existentes continuam sendo lidas e ausências recém-codificadas são gravadas. Os text encoders permanecem carregados porque são necessários após o startup.
+- **Configuração do dataloader**: Um backend `text_embeds` pode ativar isso independentemente com `"text_cache_ondemand": true`.
+
+### `--text_cache_disable`
+
+- **O que**: Desativa gravações em todos os caches de text embeddings, mantendo a leitura de entradas existentes.
+- **Padrão**: `False`
+- **Comportamento**: Implica `--text_cache_ondemand`; embeddings ausentes são codificados quando solicitados, mas não são armazenados.
+- **Configuração do dataloader**: Quando a opção global estiver falsa, backends `text_embeds` individuais podem ativar isso com `"text_cache_disable": true`.
+
 ### `--trust_remote_code`
 
 - **O que**: Permite que Transformers e tokenizers executem codigo Python personalizado do repositorio do modelo quando o checkpoint depende de classes customizadas upstream.
@@ -1849,6 +1863,8 @@ usage: train.py [-h] --model_family
                 [--preserve_data_backend_cache [PRESERVE_DATA_BACKEND_CACHE]]
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
+                [--text_cache_ondemand [TEXT_CACHE_ONDEMAND]]
+                [--text_cache_disable [TEXT_CACHE_DISABLE]]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
@@ -2401,6 +2417,12 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_cache_ondemand [TEXT_CACHE_ONDEMAND]
+                        Codifica embeddings de texto ausentes durante o treinamento,
+                        sem pré-computar todo o cache. Entradas existentes são reutilizadas.
+  --text_cache_disable [TEXT_CACHE_DISABLE]
+                        Desativa escritas no cache e codifica ausências sob demanda.
+                        Entradas existentes ainda são lidas. Implica --text_cache_ondemand.
   --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
                         Store full raw text encoder outputs in the text embed
                         cache. This opts out of model-specific cache size

@@ -2661,6 +2661,13 @@ class Trainer:
     def init_unload_text_encoder(self):
         if self.config.model_type != "full" and self.config.train_text_encoder:
             return
+        if (
+            getattr(self.config, "text_cache_ondemand", False)
+            or getattr(self.config, "text_cache_disable", False)
+            or StateTracker.any_text_cache_uses_ondemand()
+        ):
+            logger.info("Keeping text encoders loaded for on-demand text embedding.")
+            return
         memory_before_unload = self.stats_memory_used()
         if self.accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")

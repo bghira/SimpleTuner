@@ -370,14 +370,21 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
             normalized_entries.append(entry)
         else:
             normalized_entries.append({"prompt": entry, "key": entry, "metadata": {}})
-    with ThreadPoolExecutor() as executor:
-        text_encoder_output = list(
-            executor.map(
-                compute_single_embedding,
-                normalized_entries,
-                [text_embed_cache] * len(normalized_entries),
+    default_cache = StateTracker.get_default_text_embed_cache()
+    empty_prompt_uses_ondemand = any(not entry.get("prompt") for entry in normalized_entries) and getattr(
+        default_cache, "text_cache_ondemand", False
+    )
+    if getattr(text_embed_cache, "text_cache_ondemand", False) or empty_prompt_uses_ondemand:
+        text_encoder_output = [compute_single_embedding(entry, text_embed_cache) for entry in normalized_entries]
+    else:
+        with ThreadPoolExecutor() as executor:
+            text_encoder_output = list(
+                executor.map(
+                    compute_single_embedding,
+                    normalized_entries,
+                    [text_embed_cache] * len(normalized_entries),
+                )
             )
-        )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
 
     def _collate_tensors(tensors):

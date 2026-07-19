@@ -1781,7 +1781,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 "const dataset = comp && comp.datasets ? comp.datasets[arguments[0]] : null;"
                 "if (!dataset) { return null; }"
                 "if (typeof comp.expandSectionIfCollapsed === 'function') { comp.expandSectionIfCollapsed(dataset, 'card'); }"
-                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'advanced'); }"
+                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'storage'); }"
                 "comp.parameterFilterQuery = '';"
                 "return dataset.id;",
                 dataset_index,
@@ -1862,6 +1862,74 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(state["unsaved"])
 
         self.for_each_browser("test_dataset_vae_cache_options_mark_unsaved", scenario)
+
+    def test_text_embed_cache_options_mark_unsaved(self) -> None:
+        """Text cache mode controls should update the text_embeds entry and mark datasets dirty."""
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            datasets_tab.add_dataset("text_embeds")
+            dataset_index = datasets_tab.get_dataset_count() - 1
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) { store.hasUnsavedChanges = false; }"
+            )
+
+            dataset_id = driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;"
+                "const dataset = comp && comp.datasets ? comp.datasets[arguments[0]] : null;"
+                "if (!dataset) { return null; }"
+                "if (typeof comp.expandSectionIfCollapsed === 'function') { comp.expandSectionIfCollapsed(dataset, 'card'); }"
+                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'storage'); }"
+                "comp.parameterFilterQuery = '';"
+                "return dataset.id;",
+                dataset_index,
+            )
+            self.assertIsInstance(dataset_id, str)
+
+            for field in ("text-cache-ondemand-storage-", "text-cache-disable-storage-"):
+                WebDriverWait(driver, 10).until(
+                    lambda d, prefix=field: d.execute_script(
+                        "return !!document.getElementById(arguments[0] + arguments[1]);",
+                        prefix,
+                        dataset_id,
+                    )
+                )
+                self.assertTrue(
+                    driver.execute_script(
+                        "const checkbox = document.getElementById(arguments[0] + arguments[1]);"
+                        "checkbox.scrollIntoView({ block: 'center' });"
+                        "checkbox.click();"
+                        "return checkbox.checked;",
+                        field,
+                        dataset_id,
+                    )
+                )
+
+            state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const comp = window.dataloaderSectionComponentInstance;"
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "const dataset = comp && Array.isArray(comp.datasets)"
+                    "  ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])"
+                    "  : null;"
+                    "return dataset && dataset.text_cache_ondemand === true"
+                    "  && dataset.text_cache_disable === true"
+                    "  && store && store.hasUnsavedChanges === true;",
+                    dataset_id,
+                )
+            )
+            self.assertTrue(state)
+
+        self.for_each_browser("test_text_embed_cache_options_mark_unsaved", scenario)
 
     def test_dataset_search(self) -> None:
         """Test searching/filtering datasets."""

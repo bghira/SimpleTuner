@@ -87,6 +87,20 @@ simpletuner configure config/foo/config.json
 - **原因**：默认值允许按模型定制的紧凑 cache 布局。例如，Ideogram 4 会在写入 cache 文件前，通过 transformer 中冻结的 `llm_cond_norm` 和 `llm_cond_proj` 层投影 13 层 Qwen hidden-state 堆栈；这些层在 LoRA 和 full transformer 训练中都会保持冻结。
 - **何时使用**：用于调试缓存兼容性、确实需要 raw 未投影的 text encoder features，或在改造类似 Ideogram 的架构进行从零训练且 text projection 不是固定预训练组件时启用。
 
+### `--text_cache_ondemand`
+
+- **内容**：跳过完整的文本缓存预计算，在训练或验证请求缺失的提示词嵌入时再进行编码。
+- **默认值**：`False`
+- **行为**：仍会读取已有缓存条目，并写入新编码的缺失条目。文本编码器会保持加载，因为启动后仍需要使用。
+- **数据加载器覆盖**：`text_embeds` 后端可通过 `"text_cache_ondemand": true` 独立启用。
+
+### `--text_cache_disable`
+
+- **内容**：禁止所有文本嵌入缓存写入，同时保留对已有条目的读取。
+- **默认值**：`False`
+- **行为**：隐含启用 `--text_cache_ondemand`；缺失嵌入会在请求时编码，但不会存储。
+- **数据加载器覆盖**：当全局选项为 false 时，可在单个 `text_embeds` 后端设置 `"text_cache_disable": true`。
+
 ### `--trust_remote_code`
 
 - **内容**：当 checkpoint 依赖上游自定义类时，允许 Transformers 和 tokenizer 执行模型仓库中的自定义 Python 代码。
@@ -1856,6 +1870,8 @@ usage: train.py [-h] --model_family
                 [--preserve_data_backend_cache [PRESERVE_DATA_BACKEND_CACHE]]
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
+                [--text_cache_ondemand [TEXT_CACHE_ONDEMAND]]
+                [--text_cache_disable [TEXT_CACHE_DISABLE]]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
@@ -2408,6 +2424,12 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_cache_ondemand [TEXT_CACHE_ONDEMAND]
+                        在训练期间按需编码缺失的文本嵌入，而不是预计算完整文本缓存。
+                        已有条目会被复用，新编码的缺失条目会写入缓存。
+  --text_cache_disable [TEXT_CACHE_DISABLE]
+                        禁止文本缓存写入，并按需编码缺失嵌入。已有缓存条目仍会读取。
+                        该选项隐含启用 --text_cache_ondemand。
   --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
                         Store full raw text encoder outputs in the text embed
                         cache. This opts out of model-specific cache size

@@ -83,6 +83,20 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 - **Description:** Number of captions to encode in one text encoder forward while precomputing uncached text embeddings. Higher values can improve throughput but use more VRAM.
 - **Default:** Falls back to the trainer's `--text_encoder_batch_size` argument (default 1).
 
+### `text_cache_ondemand`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Values:** `true` | `false`
+- **Description:** Skips full text-embedding pre-computation. Existing entries are read from this cache, while missing embeddings are encoded during training or validation and then written to the cache.
+- **Note:** Every image or video dataset assigned to this `text_embeds` backend inherits this behavior. To use different cache behavior for selected source datasets, create another `text_embeds` backend and assign it with the source dataset's `text_embeds` field.
+
+### `text_cache_disable`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Values:** `true` | `false`
+- **Description:** Reads existing text embeddings but does not write newly encoded embeddings. Missing entries are encoded during training or validation, so this option implies `text_cache_ondemand`.
+- **Note:** The global `--text_cache_disable` option applies to every text cache. Use this backend option when the global option is false and only selected `text_embeds` backends should avoid writes.
+
 ### `text_embeds`
 
 - **Only applies to `dataset_type=image`**
