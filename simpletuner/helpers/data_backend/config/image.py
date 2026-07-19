@@ -83,6 +83,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
     video: Optional[Dict[str, Any]] = None
 
+    vae_cache_ondemand: bool = False
     vae_cache_disable: bool = False
 
     is_regularisation_data: bool = False
@@ -100,10 +101,14 @@ class ImageBackendConfig(BaseBackendConfig):
                 return args.get(key, default)
             return getattr(args, key, default)
 
+        vae_cache_disable = bool(backend_dict.get("vae_cache_disable", False))
+        vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or vae_cache_disable
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
             dataset_type=DatasetType.from_value(backend_dict.get("dataset_type"), DatasetType.IMAGE),
+            vae_cache_ondemand=vae_cache_ondemand,
+            vae_cache_disable=vae_cache_disable,
         )
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
@@ -205,6 +210,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config.parquet = backend_dict.get("parquet")
         config.video = backend_dict.get("video")
 
+        config.vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or config.vae_cache_disable
         vae_cache_disable_raw = backend_dict.get("vae_cache_disable", False)
         if isinstance(vae_cache_disable_raw, str):
             normalized = vae_cache_disable_raw.strip().lower()
@@ -233,6 +239,11 @@ class ImageBackendConfig(BaseBackendConfig):
         config.apply_defaults(args)
 
         return config
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.vae_cache_disable = bool(self.vae_cache_disable)
+        self.vae_cache_ondemand = bool(self.vae_cache_ondemand) or self.vae_cache_disable
 
     # compatibility helpers
     @property
@@ -296,6 +307,8 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.caption_strategy is None:
                 self.caption_strategy = "webshart"
 
+        if self.vae_cache_ondemand:
+            self.config["vae_cache_ondemand"] = True
         if self.vae_cache_disable:
             self.config["vae_cache_disable"] = True
 
@@ -443,6 +456,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config["crop_aspect_buckets"] = self.crop_aspect_buckets
         if self.vae_cache_clear_each_epoch is not None:
             config["vae_cache_clear_each_epoch"] = self.vae_cache_clear_each_epoch
+        if self.vae_cache_ondemand:
+            config["vae_cache_ondemand"] = True
         if self.vae_cache_disable:
             config["vae_cache_disable"] = True
         if self.hash_filenames is not None:

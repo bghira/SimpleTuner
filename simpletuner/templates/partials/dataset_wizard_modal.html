@@ -263,6 +263,19 @@
                             <div class="form-check mb-3">
                                 <input type="checkbox"
                                        class="form-check-input"
+                                       id="wizardVaeCacheOndemand"
+                                       x-model="currentDataset.vae_cache_ondemand">
+                                <label class="form-check-label" for="wizardVaeCacheOndemand">
+                                    Encode VAE latents on demand for this dataset
+                                </label>
+                                <div class="form-text">
+                                    Encodes missing latents during training and saves them to the VAE cache.
+                                </div>
+                            </div>
+
+                            <div class="form-check mb-3">
+                                <input type="checkbox"
+                                       class="form-check-input"
                                        id="wizardVaeCacheDisable"
                                        x-model="currentDataset.vae_cache_disable">
                                 <label class="form-check-label" for="wizardVaeCacheDisable">

@@ -844,6 +844,12 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
 - In fact, this option is **enabled by default** when using random bucketing or crops.
 
+### `vae_cache_ondemand`
+
+- **Values:** `true` | `false`
+- **Description:** When enabled on a dataset, missing VAE latents are encoded during training and written to that dataset's VAE cache instead of being precomputed at startup.
+- **Note:** The global `--vae_cache_ondemand` option still applies to every dataset. Use this dataset option when the global option is false and only selected datasets should encode VAE latents on demand.
+
 ### `vae_cache_disable`
 
 - **Values:** `true` | `false`

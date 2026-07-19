@@ -372,6 +372,14 @@ function datasetAdvancedOptionsComponent() {
                                     <div class="dataset-form-group" style="grid-column: 1 / -1;">
                                         <label class="dataset-form-label">
                                             <input type="checkbox"
+                                                   x-model="dataset.vae_cache_ondemand">
+                                            Encode VAE latents on demand
+                                        </label>
+                                    </div>
+
+                                    <div class="dataset-form-group" style="grid-column: 1 / -1;">
+                                        <label class="dataset-form-label">
+                                            <input type="checkbox"
                                                    x-model="dataset.vae_cache_disable">
                                             Disable VAE cache writes
                                         </label>

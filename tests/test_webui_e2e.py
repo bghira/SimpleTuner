@@ -1756,8 +1756,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_dataset_modal", scenario)
 
-    def test_dataset_vae_cache_disable_marks_unsaved(self) -> None:
-        """Toggling per-dataset VAE cache disable should update Alpine state and mark datasets dirty."""
+    def test_dataset_vae_cache_options_mark_unsaved(self) -> None:
+        """Toggling per-dataset VAE cache options should update Alpine state and mark datasets dirty."""
         self.seed_defaults()
 
         def scenario(driver, _browser):
@@ -1787,6 +1787,39 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 dataset_index,
             )
             self.assertIsInstance(dataset_id, str)
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    "return !!document.getElementById('vae-cache-ondemand-' + arguments[0]);",
+                    dataset_id,
+                )
+            )
+            self.assertTrue(
+                driver.execute_script(
+                    "const checkbox = document.getElementById('vae-cache-ondemand-' + arguments[0]);"
+                    "checkbox.scrollIntoView({ block: 'center' });"
+                    "checkbox.click();"
+                    "return checkbox.checked;",
+                    dataset_id,
+                )
+            )
+            ondemand_state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const comp = window.dataloaderSectionComponentInstance;"
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "const dataset = comp && Array.isArray(comp.datasets)"
+                    "  ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])"
+                    "  : null;"
+                    "return dataset && dataset.vae_cache_ondemand === true"
+                    "  && store && store.hasUnsavedChanges === true;",
+                    dataset_id,
+                )
+            )
+            self.assertTrue(ondemand_state)
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) { store.hasUnsavedChanges = false; }"
+            )
 
             WebDriverWait(driver, 10).until(
                 lambda d: d.execute_script(
@@ -1828,7 +1861,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(state["enabled"])
             self.assertTrue(state["unsaved"])
 
-        self.for_each_browser("test_dataset_vae_cache_disable_marks_unsaved", scenario)
+        self.for_each_browser("test_dataset_vae_cache_options_mark_unsaved", scenario)
 
     def test_text_embed_cache_options_mark_unsaved(self) -> None:
         """Text cache mode controls should update the text_embeds entry and mark datasets dirty."""

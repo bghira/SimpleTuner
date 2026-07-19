@@ -274,7 +274,23 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.maximum_image_size, 10.0)
         self.assertEqual(config.target_downsample_size, 5.0)
 
-    def test_vae_cache_disable_round_trip(self):
+    def test_vae_cache_ondemand_round_trip(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "vae_cache_ondemand": True,
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertTrue(config.vae_cache_ondemand)
+        self.assertFalse(config.vae_cache_disable)
+        self.assertTrue(output["config"]["vae_cache_ondemand"])
+        self.assertNotIn("vae_cache_disable", output["config"])
+
+    def test_vae_cache_disable_implies_ondemand_and_round_trips(self):
         backend_dict = {
             "id": "image_test",
             "type": "local",
@@ -285,8 +301,16 @@ class TestImageBackendConfig(unittest.TestCase):
         config = ImageBackendConfig.from_dict(backend_dict, self.args)
         output = config.to_dict()
 
+        self.assertTrue(config.vae_cache_ondemand)
         self.assertTrue(config.vae_cache_disable)
+        self.assertTrue(output["config"]["vae_cache_ondemand"])
         self.assertTrue(output["config"]["vae_cache_disable"])
+
+    def test_direct_construction_normalizes_vae_cache_disable(self):
+        config = ImageBackendConfig(id="image_test", vae_cache_disable=True)
+
+        self.assertTrue(config.vae_cache_ondemand)
+        self.assertTrue(config.vae_cache_disable)
 
     def test_removed_disable_vae_cache_key_raises(self):
         backend_dict = {

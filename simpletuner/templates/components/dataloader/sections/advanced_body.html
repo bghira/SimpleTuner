@@ -96,6 +96,19 @@
         <div class="form-check mb-2">
             <input class="form-check-input"
                    type="checkbox"
+                   :id="'vae-cache-ondemand-' + editingDataset.id"
+                   x-model="editingDataset.vae_cache_ondemand"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label small" :for="'vae-cache-ondemand-' + editingDataset.id">
+                Encode VAE latents on demand <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#vae_cache_ondemand') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+            </label>
+        </div>
+        <div class="form-text small text-muted ps-4 mb-2">
+            Encodes missing latents during training and saves them to the VAE cache.
+        </div>
+        <div class="form-check mb-2">
+            <input class="form-check-input"
+                   type="checkbox"
                    :id="'vae-cache-disable-' + editingDataset.id"
                    x-model="editingDataset.vae_cache_disable"
                    @change="markAsUnsaved()">
