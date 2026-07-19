@@ -383,6 +383,16 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if dataset_type is DatasetType.TEXT_EMBEDS:
         if "caption_filter_list" in backend:
             output["config"]["caption_filter_list"] = backend["caption_filter_list"]
+        text_cache_disable = _as_bool(_get_arg_value(args, "text_cache_disable", False)) or _as_bool(
+            backend.get("text_cache_disable", False)
+        )
+        text_cache_ondemand = (
+            _as_bool(_get_arg_value(args, "text_cache_ondemand", False))
+            or _as_bool(backend.get("text_cache_ondemand", False))
+            or text_cache_disable
+        )
+        output["config"]["text_cache_ondemand"] = text_cache_ondemand
+        output["config"]["text_cache_disable"] = text_cache_disable
 
         return output
     elif dataset_type is DatasetType.IMAGE_EMBEDS:
@@ -2483,6 +2493,8 @@ class FactoryRegistry:
             logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device, force_move=True)
             text_cache_dir = init_backend.get("cache_dir", self.args.cache_dir_text)
+            text_cache_disable = init_backend["config"]["text_cache_disable"]
+            text_cache_ondemand = init_backend["config"]["text_cache_ondemand"]
             init_backend["text_embed_cache"] = TextEmbeddingCache(
                 id=init_backend["id"],
                 data_backend=init_backend["data_backend"],
@@ -2496,6 +2508,8 @@ class FactoryRegistry:
                     "text_encoder_batch_size", getattr(self.args, "text_encoder_batch_size", 1)
                 ),
                 model=self.model,
+                text_cache_ondemand=text_cache_ondemand,
+                text_cache_disable=text_cache_disable,
             )
             logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
 
@@ -2507,8 +2521,9 @@ class FactoryRegistry:
                 else nullcontext()
             )
             with main_process_context:
-                logger.debug(f"rank {get_rank()} is discovering all files")
-                init_backend["text_embed_cache"].discover_all_files()
+                if not text_cache_ondemand:
+                    logger.debug(f"rank {get_rank()} is discovering all files")
+                    init_backend["text_embed_cache"].discover_all_files()
             logger.debug(f"rank {get_rank()} is waiting for other processes")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
@@ -2517,7 +2532,10 @@ class FactoryRegistry:
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
                 logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
 
-                info_log("Pre-computing null embedding")
+                if text_cache_ondemand:
+                    info_log("Skipping null embedding pre-computation for on-demand text cache.")
+                else:
+                    info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
                 main_process_context = (
                     self.accelerator.main_process_first()
@@ -2525,9 +2543,10 @@ class FactoryRegistry:
                     else nullcontext()
                 )
                 with main_process_context:
-                    logger.debug(f"rank {get_rank()} is computing the null embed")
-                    init_backend["text_embed_cache"].encode_dropout_caption()
-                    logger.debug(f"rank {get_rank()} has completed computing the null embed")
+                    if not text_cache_ondemand:
+                        logger.debug(f"rank {get_rank()} is computing the null embed")
+                        init_backend["text_embed_cache"].encode_dropout_caption()
+                        logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
                 if self._is_multi_process():
@@ -3558,6 +3577,11 @@ class FactoryRegistry:
     ) -> None:
         """Process text embeddings for captions."""
         if not self._uses_text_embeddings_cache():
+            return
+        if init_backend["text_embed_cache"].text_cache_ondemand:
+            info_log(f"(id={init_backend['id']}) Skipping text embed pre-computation for on-demand cache.")
+            init_backend["config"]["hash_filenames"] = True
+            StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
             return
         # Skip text embed processing for audio datasets that source from video.
         # These datasets inherit captions from their parent dataset during training

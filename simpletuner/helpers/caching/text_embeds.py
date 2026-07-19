@@ -58,6 +58,8 @@ class TextEmbeddingCache(WebhookMixin):
         text_encoder_batch_size: int = 1,
         max_workers: int = 32,
         model: ModelFoundation = None,
+        text_cache_ondemand: bool = False,
+        text_cache_disable: bool = False,
     ):
         self.id = id
         if data_backend.id != id:
@@ -70,6 +72,8 @@ class TextEmbeddingCache(WebhookMixin):
         self.cache_dir = cache_dir
         self.model_type = model_type
         self.model = model
+        self.text_cache_disable = bool(text_cache_disable)
+        self.text_cache_ondemand = bool(text_cache_ondemand) or self.text_cache_disable
         self.pipeline = None
         self.prompt_handler = prompt_handler
         self.write_batch_size = write_batch_size
@@ -294,6 +298,8 @@ class TextEmbeddingCache(WebhookMixin):
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
+        if self.text_cache_disable:
+            return
         if not self.batch_write_thread.is_alive():
             logger.debug("Restarting background write thread.")
             # Start the thread again.
@@ -466,7 +472,7 @@ class TextEmbeddingCache(WebhookMixin):
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)
             self.batch_write_thread.start()
 
-        existing_cache_filenames = list(StateTracker.get_text_cache_files(data_backend_id=self.id).keys())
+        existing_cache_filenames = list((StateTracker.get_text_cache_files(data_backend_id=self.id) or {}).keys())
 
         all_cache_filenames = [self.hash_prompt_with_path(record) for record in prompt_records]
 
@@ -612,19 +618,21 @@ class TextEmbeddingCache(WebhookMixin):
                             f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}"
                         )
                     except Exception as e:
-                        # We failed to load. Now encode the prompt.
-                        logger.error(
-                            f"Failed retrieving prompt from cache:"
-                            f"\n-> prompt: {prompt}"
-                            f"\n-> filename: {filename}"
-                            f"\n-> error: {e}"
-                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
-                        )
-                        raise Exception(
-                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for "
-                            "skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is "
-                            "disabled or unset."
-                        )
+                        if not self.text_cache_ondemand:
+                            logger.error(
+                                f"Failed retrieving prompt from cache:"
+                                f"\n-> prompt: {prompt}"
+                                f"\n-> filename: {filename}"
+                                f"\n-> error: {e}"
+                                f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
+                            )
+                            raise Exception(
+                                "Cache retrieval for text embed file failed. Ensure your dataloader config value for "
+                                "skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is "
+                                "disabled or unset."
+                            ) from e
+                        self.debug_log(f"Text embed cache miss for {filename}; encoding on demand.")
+                        encode_current_prompt = True
                 if encode_current_prompt and not return_concat and self.text_encoder_batch_size > 1:
                     pending_records.append(record)
                     pending_filenames.append(filename)

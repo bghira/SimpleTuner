@@ -208,10 +208,12 @@ class GroundingCollate:
         dataset_root = StateTracker.get_data_backend(data_backend_id).get("instance_data_dir")
         normalized_id = normalize_data_path(str(image_path), dataset_root)
         entity_key = f"{normalized_id}__bbox_{entity_idx}"
+        entities = example.get("bbox_entities") or []
+        entity_label = entities[entity_idx].get("label", "") if entity_idx < len(entities) else ""
 
         try:
             text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(
-                prompt_records=[{"prompt": "", "key": entity_key, "metadata": {}}],
+                prompt_records=[{"prompt": entity_label, "key": entity_key, "metadata": {}}],
             )
             return self._pool_text_encoder_output(text_encoder_output)
         except Exception as exc:

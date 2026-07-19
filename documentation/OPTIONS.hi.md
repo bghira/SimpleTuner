@@ -87,6 +87,20 @@ simpletuner configure config/foo/config.json
 - **Why**: default setting model-specific compact cache layouts को allow करती है। उदाहरण के लिए, Ideogram 4 cache files लिखने से पहले अपने 13-layer Qwen hidden-state stack को transformer की frozen `llm_cond_norm` और `llm_cond_proj` layers से project करता है; ये layers LoRA और full transformer training दोनों में frozen रहती हैं।
 - **When to use**: cache compatibility debugging के लिए, जब आपको raw unprojected text encoder features चाहिए हों, या जब आप Ideogram-style architecture को scratch training के लिए adapt कर रहे हों और text projection fixed pretrained component न हो।
 
+### `--text_cache_ondemand`
+
+- **What**: पूरे text cache की pre-computation छोड़ता है और training या validation द्वारा माँगे जाने पर missing prompt embeddings encode करता है।
+- **Default**: `False`
+- **Behavior**: मौजूदा cache entries पढ़ी जाती हैं और नए encoded misses लिखे जाते हैं। Startup के बाद आवश्यकता होने के कारण text encoders loaded रहते हैं।
+- **Dataloader override**: कोई `text_embeds` backend इसे `"text_cache_ondemand": true` से independently enable कर सकता है।
+
+### `--text_cache_disable`
+
+- **What**: मौजूदा entries को पढ़ते हुए सभी text embedding cache writes disable करता है।
+- **Default**: `False`
+- **Behavior**: `--text_cache_ondemand` को implicitly enable करता है; missing embeddings request पर encode होते हैं लेकिन store नहीं होते।
+- **Dataloader override**: global option false होने पर individual `text_embeds` backends इसे `"text_cache_disable": true` से enable कर सकते हैं।
+
 ### `--trust_remote_code`
 
 - **What**: जब checkpoint upstream custom classes पर निर्भर हो, तब Transformers और tokenizer को model repository से custom Python code चलाने की अनुमति देता है।
@@ -1851,6 +1865,8 @@ usage: train.py [-h] --model_family
                 [--preserve_data_backend_cache [PRESERVE_DATA_BACKEND_CACHE]]
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
+                [--text_cache_ondemand [TEXT_CACHE_ONDEMAND]]
+                [--text_cache_disable [TEXT_CACHE_DISABLE]]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
@@ -2404,6 +2420,12 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_cache_ondemand [TEXT_CACHE_ONDEMAND]
+                        पूरा text cache precompute करने के बजाय training के दौरान missing
+                        embeddings encode करता है। मौजूदा entries reuse होती हैं।
+  --text_cache_disable [TEXT_CACHE_DISABLE]
+                        cache writes disable करके misses को on demand encode करता है।
+                        मौजूदा entries पढ़ी जाती हैं। --text_cache_ondemand implied है।
   --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
                         Store full raw text encoder outputs in the text embed
                         cache. This opts out of model-specific cache size

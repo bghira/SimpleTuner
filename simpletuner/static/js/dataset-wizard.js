@@ -111,7 +111,9 @@
             textEmbedsDataset: {
                 id: 'text-embeds',
                 cache_dir: '{output_dir}/cache/text/{model_family}',
-                type: 'local'
+                type: 'local',
+                text_cache_ondemand: false,
+                text_cache_disable: false
             },
             vaeCacheDataset: {
                 id: 'vae-cache',
@@ -1097,6 +1099,14 @@
 
                 clone.cache_dir = this.resolveTextCacheDirectory(clone.cache_dir, queueDatasets);
                 clone.default = clone.default === undefined ? true : Boolean(clone.default);
+                clone.text_cache_ondemand = clone.text_cache_ondemand === true || clone.text_cache_ondemand === 'true';
+                clone.text_cache_disable = clone.text_cache_disable === true || clone.text_cache_disable === 'true';
+                if (!clone.text_cache_ondemand) {
+                    delete clone.text_cache_ondemand;
+                }
+                if (!clone.text_cache_disable) {
+                    delete clone.text_cache_disable;
+                }
 
                 return clone;
             },

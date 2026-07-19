@@ -267,6 +267,7 @@
             const booleanFields = ['crop', 'disabled', 'default', 'prepend_instance_prompt',
                                  'only_instance_prompt', 'vae_cache_clear_each_epoch',
                                  'vae_cache_disable',
+                                 'text_cache_ondemand', 'text_cache_disable',
                                  'hash_filenames', 'preserve_data_backend_cache',
                                  'is_regularisation_data'];
 
@@ -416,6 +417,8 @@
                 default: false,
                 cache_dir: '{output_dir}/cache/text/{model_family}',
                 write_batch_size: 128,
+                text_cache_ondemand: false,
+                text_cache_disable: false,
                 disabled: false
             },
             image_embeds: {
