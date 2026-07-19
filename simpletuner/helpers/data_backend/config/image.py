@@ -101,10 +101,14 @@ class ImageBackendConfig(BaseBackendConfig):
                 return args.get(key, default)
             return getattr(args, key, default)
 
+        vae_cache_disable = bool(backend_dict.get("vae_cache_disable", False))
+        vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or vae_cache_disable
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
             dataset_type=DatasetType.from_value(backend_dict.get("dataset_type"), DatasetType.IMAGE),
+            vae_cache_ondemand=vae_cache_ondemand,
+            vae_cache_disable=vae_cache_disable,
         )
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
@@ -235,6 +239,11 @@ class ImageBackendConfig(BaseBackendConfig):
         config.apply_defaults(args)
 
         return config
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.vae_cache_disable = bool(self.vae_cache_disable)
+        self.vae_cache_ondemand = bool(self.vae_cache_ondemand) or self.vae_cache_disable
 
     # compatibility helpers
     @property

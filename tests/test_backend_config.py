@@ -306,6 +306,12 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertTrue(output["config"]["vae_cache_ondemand"])
         self.assertTrue(output["config"]["vae_cache_disable"])
 
+    def test_direct_construction_normalizes_vae_cache_disable(self):
+        config = ImageBackendConfig(id="image_test", vae_cache_disable=True)
+
+        self.assertTrue(config.vae_cache_ondemand)
+        self.assertTrue(config.vae_cache_disable)
+
     def test_removed_disable_vae_cache_key_raises(self):
         backend_dict = {
             "id": "image_test",
