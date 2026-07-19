@@ -653,6 +653,15 @@ class VAECache(WebhookMixin):
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         if filepath.endswith(".pt"):
             return filepath, os.path.basename(filepath)
+        if (
+            hasattr(self.image_data_backend, "is_sample_id")
+            and hasattr(self.image_data_backend, "normalize_sample_id")
+            and self.image_data_backend.is_sample_id(filepath)
+        ):
+            sample_id = self.image_data_backend.normalize_sample_id(filepath)
+            base_filename = str(sha256(sample_id.encode()).hexdigest()) if self.hash_filenames else sample_id
+            base_filename = str(base_filename).replace("/", "_").replace(":", "_") + ".pt"
+            return os.path.join(self.cache_dir, base_filename), base_filename
         base_filename = os.path.splitext(os.path.basename(filepath))[0]
         if self.hash_filenames:
             base_filename = str(sha256(str(base_filename).encode()).hexdigest())
