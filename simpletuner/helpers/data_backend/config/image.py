@@ -205,7 +205,14 @@ class ImageBackendConfig(BaseBackendConfig):
         config.parquet = backend_dict.get("parquet")
         config.video = backend_dict.get("video")
 
-        config.vae_cache_disable = bool(backend_dict.get("vae_cache_disable", False))
+        vae_cache_disable_raw = backend_dict.get("vae_cache_disable", False)
+        if isinstance(vae_cache_disable_raw, str):
+            normalized = vae_cache_disable_raw.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                vae_cache_disable_raw = True
+            elif normalized in {"false", "0", "no", "off", ""}:
+                vae_cache_disable_raw = False
+        config.vae_cache_disable = bool(vae_cache_disable_raw)
 
         config.is_regularisation_data = backend_dict.get(
             "is_regularisation_data", backend_dict.get("is_regularization_data", False)
