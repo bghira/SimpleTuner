@@ -89,7 +89,7 @@ class TextEmbeddingCache(WebhookMixin):
             TextEmbedCacheKey.DATASET_AND_FILENAME,
         )
         self.prompt_records: List[PromptCacheRecord] = []
-        if self.data_backend.type == "local":
+        if self.data_backend.type in {"local", "memory"}:
             self.cache_dir = os.path.abspath(self.cache_dir)
         self.data_backend.create_directory(self.cache_dir)
         self.write_queue = Queue()

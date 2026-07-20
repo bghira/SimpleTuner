@@ -1253,6 +1253,37 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     # Image embed setup should not instantiate the cache; the owning dataset does.
                     mock_vae_cache.assert_not_called()
 
+    def test_memory_image_embed_backend_uses_tmpfs_mount_as_cache_dir(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "memory-image-embeds",
+            "dataset_type": "image_embeds",
+            "type": "memory",
+            "cache_dir": "/cache/vae",
+        }
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        memory_backend = MagicMock(type="memory", mount_path="/mnt/simpletuner-memory/vae")
+        builder = MagicMock()
+        builder.build.return_value = memory_backend
+
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker,
+            patch("simpletuner.helpers.data_backend.factory.create_backend_builder", return_value=builder),
+        ):
+            self._setup_state_tracker_mocks(mock_state_tracker)
+            factory.configure_image_embed_backends([backend])
+
+        configured = factory.image_embed_backends[backend["id"]]
+        self.assertIs(configured["data_backend"], memory_backend)
+        self.assertEqual(configured["cache_dir"], memory_backend.mount_path)
+
     def test_qwen_edit_model_invalid_conditioning_type(self):
         """Test that Qwen edit models reject invalid conditioning_type values."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
