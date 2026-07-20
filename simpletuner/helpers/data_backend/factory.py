@@ -2480,7 +2480,7 @@ class FactoryRegistry:
             init_backend = init_backend_config(backend, self.args, self.accelerator)
             StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
-            if backend["type"] == "local":
+            if backend["type"] in {"local", "memory"}:
                 text_embed_cache_dir_paths.append(backend.get("cache_dir", self.args.cache_dir_text))
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
