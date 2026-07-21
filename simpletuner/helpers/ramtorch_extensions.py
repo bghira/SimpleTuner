@@ -13,9 +13,116 @@ CPU RAM and are streamed to GPU on-demand during forward pass.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.profiler import record_function
+
+from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
 
 # Per-device state for async transfers (shared with ramtorch)
 _DEVICE_STATE = {}
+
+
+def _device_obj(device):
+    if isinstance(device, torch.device):
+        return device
+    if isinstance(device, int) and torch.cuda.is_available():
+        return torch.device("cuda", device)
+    return torch.device(device)
+
+
+def _tensor_version(tensor: torch.Tensor | None):
+    return tensor._version if tensor is not None else None
+
+
+def _tensor_versions(tensors):
+    return tuple(_tensor_version(tensor) for tensor in tensors)
+
+
+def _prefetch_forward_tensors(module: nn.Module, *tensors: torch.Tensor | None) -> bool:
+    device = _device_obj(module.device)
+    if device.type != "cuda":
+        return False
+
+    versions = _tensor_versions(tensors)
+    key = id(module)
+    existing = getattr(module, "_ramtorch_forward_prefetch", None)
+    if existing is not None and existing["versions"] == versions:
+        ramtorch_profile.record_prefetch_existing(
+            "extensions",
+            key,
+            device,
+            ramtorch_profile.tensor_bytes(tensors),
+        )
+        return False
+
+    allowed, bytes_to_prefetch, free_before, total_before = ramtorch_profile.should_prefetch(
+        "extensions",
+        key,
+        device,
+        tensors,
+    )
+    if not allowed:
+        return False
+
+    state = _get_device_state(device)
+    transfer_stream = state["transfer_stream"]
+    with torch.cuda.stream(transfer_stream):
+        with record_function("forward_weight_bias_prefetch"):
+            copied = tuple(tensor.to(device, non_blocking=True) if tensor is not None else None for tensor in tensors)
+        event = torch.cuda.Event()
+        event.record()
+
+    module._ramtorch_forward_prefetch = {
+        "event": event,
+        "versions": versions,
+        "tensors": copied,
+    }
+    ramtorch_profile.record_prefetch_enqueued(
+        "extensions",
+        key,
+        device,
+        bytes_to_prefetch,
+        free_before=free_before,
+        total_before=total_before,
+    )
+    return True
+
+
+def _consume_forward_prefetch(module: nn.Module, *tensors: torch.Tensor | None):
+    prefetched = getattr(module, "_ramtorch_forward_prefetch", None)
+    if prefetched is None:
+        return None
+
+    delattr(module, "_ramtorch_forward_prefetch")
+    device = _device_obj(module.device)
+    key = id(module)
+    if prefetched["versions"] != _tensor_versions(tensors):
+        ramtorch_profile.record_prefetch_stale("extensions", key, device)
+        return None
+
+    torch.cuda.current_stream().wait_event(prefetched["event"])
+    ramtorch_profile.record_prefetch_consumed("extensions", key, device)
+    return prefetched["tensors"]
+
+
+def _transfer_forward_tensors(module: nn.Module, *tensors: torch.Tensor | None):
+    prefetched = _consume_forward_prefetch(module, *tensors)
+    if prefetched is not None:
+        return prefetched
+
+    device = _device_obj(module.device)
+    if device.type != "cuda":
+        return tuple(tensor.to(device) if tensor is not None else None for tensor in tensors)
+
+    ramtorch_profile.record_fallback_forward_transfer(device, tensors)
+    state = _get_device_state(device)
+    transfer_stream = state["transfer_stream"]
+
+    with torch.cuda.stream(transfer_stream):
+        with record_function("forward_weight_bias_transfer"):
+            copied = tuple(tensor.to(device, non_blocking=True) if tensor is not None else None for tensor in tensors)
+
+    torch.cuda.current_stream().wait_stream(transfer_stream)
+    return copied
 
 
 # thanks to Nerogar for fast stochastic pytorch implementation
@@ -150,14 +257,11 @@ class CPUBouncingEmbedding(nn.Module):
     def cpu(self):
         return self
 
+    def prefetch_forward(self) -> bool:
+        return _prefetch_forward_tensors(self, self.weight)
+
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        state = _get_device_state(self.device)
-        transfer_stream = state["transfer_stream"]
-
-        with torch.cuda.stream(transfer_stream):
-            weight_gpu = self.weight.to(self.device, non_blocking=True)
-
-        torch.cuda.current_stream().wait_stream(transfer_stream)
+        (weight_gpu,) = _transfer_forward_tensors(self, self.weight)
 
         # Apply stochastic rounding when autocast is enabled
         if torch.is_autocast_enabled():
@@ -264,15 +368,11 @@ class CPUBouncingConv2d(nn.Module):
     def cpu(self):
         return self
 
+    def prefetch_forward(self) -> bool:
+        return _prefetch_forward_tensors(self, self.weight, self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        state = _get_device_state(self.device)
-        transfer_stream = state["transfer_stream"]
-
-        with torch.cuda.stream(transfer_stream):
-            weight_gpu = self.weight.to(self.device, non_blocking=True)
-            bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
-
-        torch.cuda.current_stream().wait_stream(transfer_stream)
+        weight_gpu, bias_gpu = _transfer_forward_tensors(self, self.weight, self.bias)
 
         # Apply stochastic rounding when autocast is enabled
         if torch.is_autocast_enabled():
@@ -377,15 +477,11 @@ class CPUBouncingConv3d(nn.Module):
     def cpu(self):
         return self
 
+    def prefetch_forward(self) -> bool:
+        return _prefetch_forward_tensors(self, self.weight, self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        state = _get_device_state(self.device)
-        transfer_stream = state["transfer_stream"]
-
-        with torch.cuda.stream(transfer_stream):
-            weight_gpu = self.weight.to(self.device, non_blocking=True)
-            bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
-
-        torch.cuda.current_stream().wait_stream(transfer_stream)
+        weight_gpu, bias_gpu = _transfer_forward_tensors(self, self.weight, self.bias)
 
         # Apply stochastic rounding when autocast is enabled
         if torch.is_autocast_enabled():
@@ -460,18 +556,16 @@ class CPUBouncingLayerNorm(nn.Module):
     def cpu(self):
         return self
 
+    def prefetch_forward(self) -> bool:
+        if not self.elementwise_affine:
+            return False
+        return _prefetch_forward_tensors(self, self.weight, self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if not self.elementwise_affine:
             return F.layer_norm(x, self.normalized_shape, None, None, self.eps)
 
-        state = _get_device_state(self.device)
-        transfer_stream = state["transfer_stream"]
-
-        with torch.cuda.stream(transfer_stream):
-            weight_gpu = self.weight.to(self.device, non_blocking=True)
-            bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
-
-        torch.cuda.current_stream().wait_stream(transfer_stream)
+        weight_gpu, bias_gpu = _transfer_forward_tensors(self, self.weight, self.bias)
 
         # Apply stochastic rounding when autocast is enabled
         if torch.is_autocast_enabled():
@@ -551,6 +645,11 @@ class CPUBouncingRMSNorm(nn.Module):
     def cpu(self):
         return self
 
+    def prefetch_forward(self) -> bool:
+        if not self.elementwise_affine:
+            return False
+        return _prefetch_forward_tensors(self, self.weight, self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Do all computations in float32 for precision (matches Gemma3RMSNorm behavior)
         # Only convert back to original dtype at the very end
@@ -563,14 +662,7 @@ class CPUBouncingRMSNorm(nn.Module):
         if not self.elementwise_affine:
             return output.to(dtype=original_dtype)
 
-        state = _get_device_state(self.device)
-        transfer_stream = state["transfer_stream"]
-
-        with torch.cuda.stream(transfer_stream):
-            weight_gpu = self.weight.to(self.device, non_blocking=True)
-            bias_gpu = self.bias.to(self.device, non_blocking=True) if self.bias is not None else None
-
-        torch.cuda.current_stream().wait_stream(transfer_stream)
+        weight_gpu, bias_gpu = _transfer_forward_tensors(self, self.weight, self.bias)
 
         # Apply stochastic rounding when autocast is enabled
         if torch.is_autocast_enabled():
@@ -771,6 +863,7 @@ def add_ramtorch_sync_hooks(module: nn.Module) -> list:
 
     def make_sync_hook():
         def hook(mod, inp, out):
+            ramtorch_profile.record_sync_hook()
             torch.cuda.synchronize()
             return out
 
@@ -781,6 +874,44 @@ def add_ramtorch_sync_hooks(module: nn.Module) -> list:
         if getattr(child, "is_ramtorch", False) or "CPUBouncing" in child.__class__.__name__:
             h = child.register_forward_hook(make_sync_hook())
             hooks.append(h)
+
+    return hooks
+
+
+def add_ramtorch_prefetch_hooks(module: nn.Module) -> list:
+    """
+    Prefetch the next RamTorch layer's forward weights in module traversal order.
+
+    Returns an empty list if any RamTorch module lacks ``prefetch_forward`` so
+    callers can keep using the older synchronization path for compatibility.
+    """
+    if not ramtorch_profile.prefetch_hooks_allowed():
+        return []
+
+    ramtorch_modules = []
+    missing_prefetch = 0
+
+    for child in module.modules():
+        is_ramtorch_module = getattr(child, "is_ramtorch", False) or "CPUBouncing" in child.__class__.__name__
+        if not is_ramtorch_module:
+            continue
+        if callable(getattr(child, "prefetch_forward", None)):
+            ramtorch_modules.append(child)
+        else:
+            missing_prefetch += 1
+
+    if missing_prefetch or len(ramtorch_modules) < 2:
+        return []
+
+    hooks = []
+    for current, next_layer in zip(ramtorch_modules, ramtorch_modules[1:]):
+
+        def hook(_mod, _inp, _out, target=next_layer):
+            success = target.prefetch_forward()
+            ramtorch_profile.record_hook_prefetch(bool(success))
+            return None
+
+        hooks.append(current.register_forward_hook(hook))
 
     return hooks
 

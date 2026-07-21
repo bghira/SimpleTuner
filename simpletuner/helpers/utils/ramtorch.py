@@ -18,15 +18,12 @@ def _ramtorch_imports():
     """
     Import RamTorch lazily to avoid hard dependencies when the feature is unused.
     """
-    importlib.import_module("ramtorch")  # noqa: F401
+    importlib.import_module("simpletuner.helpers.ramtorch")  # noqa: F401
 
-    from simpletuner.helpers import ramtorch_workarounds
-
-    ramtorch_workarounds.apply_ramtorch_workarounds()
-    from ramtorch.helpers import replace_linear_with_ramtorch
-    from ramtorch.modules.linear import Linear as RamTorchLinear
-    from ramtorch.zero1 import broadcast_zero_params, create_zero_param_groups
-    from ramtorch.zero2 import setup_grad_sharding_hooks
+    from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
+    from simpletuner.helpers.ramtorch.utils import replace_linear_with_ramtorch
+    from simpletuner.helpers.ramtorch.zero1 import broadcast_zero_params, create_zero_param_groups
+    from simpletuner.helpers.ramtorch.zero2 import setup_grad_sharding_hooks
 
     return {
         "Linear": RamTorchLinear,
@@ -54,8 +51,8 @@ def ensure_available() -> dict:
         return imports
     except ImportError as exc:
         raise ImportError(
-            "RamTorch is required for --ramtorch but is not installed. Install from the RamTorch checkout (e.g. "
-            "`pip install -e ~/src/ramtorch`) or disable --ramtorch."
+            "SimpleTuner's bundled RamTorch implementation could not be imported. "
+            "Reinstall SimpleTuner or disable --ramtorch."
         ) from exc
     except Exception as exc:
         raise ImportError(f"RamTorch import failed: {exc}") from exc
@@ -303,7 +300,8 @@ def register_lora_custom_module(lora_config) -> bool:
     try:
         import torch
         from peft.tuners.lora.layer import Linear as PeftLinear
-        from ramtorch.modules.linear import Linear as RamTorchLinear
+
+        from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
     except Exception:
         return False
 
@@ -417,7 +415,8 @@ def _maybe_patch_peft_lora_config() -> bool:
             try:
                 register_lora_custom_module(config)
                 from peft.tuners.lora.layer import Linear as PeftLinear
-                from ramtorch.modules.linear import Linear as RamTorchLinear
+
+                from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
 
                 custom_modules = getattr(config, "_custom_modules", None)
                 if not isinstance(custom_modules, dict):
@@ -476,7 +475,8 @@ def _maybe_patch_peft_lora_model() -> bool:
         from peft.tuners.lora.layer import Linear as PeftLinear
         from peft.tuners.lora.model import LoraModel
         from peft.tuners.tuners_utils import BaseTuner, BaseTunerLayer
-        from ramtorch.modules.linear import Linear as RamTorchLinear
+
+        from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
     except Exception:
         return False
 

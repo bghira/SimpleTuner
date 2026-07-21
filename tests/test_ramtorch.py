@@ -195,6 +195,86 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIn("linear_b.weight", ignore_set)
         self.assertIn("linear_b.bias", ignore_set)
 
+    def test_prefetch_hooks_follow_ramtorch_module_order(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, calls):
+                super().__init__()
+                self.label = label
+                self.calls = calls
+
+            def prefetch_forward(self):
+                self.calls.append(self.label)
+                return True
+
+            def forward(self, x):
+                return x
+
+        calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", calls),
+            nn.ReLU(),
+            _PrefetchModule("second", calls),
+            _PrefetchModule("third", calls),
+        )
+
+        hooks = add_ramtorch_prefetch_hooks(model)
+        try:
+            self.assertEqual(len(hooks), 2)
+            model(torch.ones(1))
+        finally:
+            for hook in hooks:
+                hook.remove()
+
+        self.assertEqual(calls, ["second", "third"])
+
+    def test_prefetch_hooks_decline_when_ramtorch_module_lacks_prefetch(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+
+        class _MissingPrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def forward(self, x):
+                return x
+
+        model = nn.Sequential(_MissingPrefetchModule(), _MissingPrefetchModule())
+        self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_prefetch_hooks_decline_when_policy_is_sync(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def prefetch_forward(self):
+                return True
+
+            def forward(self, x):
+                return x
+
+        model = nn.Sequential(_PrefetchModule(), _PrefetchModule())
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PREFETCH_POLICY": "sync"}):
+            self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_bundled_linear_skips_frozen_weight_gradients(self):
+        from simpletuner.helpers.ramtorch.modules.linear import Linear
+
+        linear = Linear(3, 2, device="cpu")
+        linear.weight.requires_grad = False
+        if linear.bias is not None:
+            linear.bias.requires_grad = False
+
+        x = torch.randn(4, 3, requires_grad=True)
+        linear(x).sum().backward()
+
+        self.assertIsNotNone(x.grad)
+        self.assertIsNone(linear.weight.grad)
+        if linear.bias is not None:
+            self.assertIsNone(linear.bias.grad)
+
 
 class RamTorchConfigTests(unittest.TestCase):
     def _base_args(self, tmp_dir: str) -> list[str]:

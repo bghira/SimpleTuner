@@ -3662,17 +3662,28 @@ class ModelFoundation(ABC):
                     include_conv=True,
                     include_layernorm=True,
                     percent=percent,
-                    add_sync_hooks=use_sync_hooks,
+                    add_sync_hooks=False,
                 )
                 total = counts.get("linear", 0) + counts.get("other", 0)
-                sync_hooks = counts.get("sync_hooks", [])
+                prefetch_hooks = []
+                sync_hooks = []
+                if use_sync_hooks:
+                    from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks, add_ramtorch_sync_hooks
+
+                    prefetch_hooks = add_ramtorch_prefetch_hooks(module)
+                    if not prefetch_hooks:
+                        sync_hooks = add_ramtorch_sync_hooks(module)
                 if total:
                     logger.info(
                         "Applied full RamTorch to %s: %d Linear, %d other layers%s.",
                         component_label,
                         counts.get("linear", 0),
                         counts.get("other", 0),
-                        f", {len(sync_hooks)} sync hooks" if use_sync_hooks else "",
+                        (
+                            f", {len(prefetch_hooks)} prefetch hooks"
+                            if prefetch_hooks
+                            else f", {len(sync_hooks)} sync hooks" if sync_hooks else ""
+                        ),
                     )
                 # Log diagnostic info about ramtorch conversion
                 ramtorch_params = 0
@@ -3722,15 +3733,27 @@ class ModelFoundation(ABC):
                 )
                 if replaced:
                     if use_sync_hooks:
-                        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_sync_hooks
-
-                        hooks = add_ramtorch_sync_hooks(module)
-                        logger.info(
-                            "Applied RamTorch to %s Linear layers on %s, %d sync hooks.",
-                            replaced,
-                            component_label,
-                            len(hooks),
+                        from simpletuner.helpers.ramtorch_extensions import (
+                            add_ramtorch_prefetch_hooks,
+                            add_ramtorch_sync_hooks,
                         )
+
+                        prefetch_hooks = add_ramtorch_prefetch_hooks(module)
+                        if prefetch_hooks:
+                            logger.info(
+                                "Applied RamTorch to %s Linear layers on %s, %d prefetch hooks.",
+                                replaced,
+                                component_label,
+                                len(prefetch_hooks),
+                            )
+                        else:
+                            hooks = add_ramtorch_sync_hooks(module)
+                            logger.info(
+                                "Applied RamTorch to %s Linear layers on %s, %d sync hooks.",
+                                replaced,
+                                component_label,
+                                len(hooks),
+                            )
                     else:
                         logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
 
